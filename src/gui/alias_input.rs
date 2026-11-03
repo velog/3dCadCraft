@@ -3,10 +3,15 @@
 //! the option on, a letter typed over the view opens a small field 16 px
 //! right of the cursor holding it; the list below it shows the matching
 //! commands (`commands::search`: exact alias first, recent commands, then
-//! prefixes and fuzzy). Nothing starts by itself — Enter, Space or a click
-//! on a row starts the highlighted command; ↑/↓/Tab move; Esc or a click
-//! elsewhere closes it. With the option off a letter starts its command at
-//! once, as before.
+//! prefixes and fuzzy), also those of other environments, greyed with the
+//! reason. What the letters can only mean starts by itself: one command has
+//! an alias starting with them (E, SMF, RCT); two letters or more that are a
+//! whole alias with longer ones beside it (RC next to RCT) start after a short
+//! wait, unless the user is choosing (arrows, or the mouse over the list). A
+//! single letter with longer ones (R) only shows the list. Enter, Space or a
+//! click on a row starts the highlighted command; ↑/↓/Tab move; Esc or a click
+//! elsewhere closes it. With the option off the letters gather in the
+//! status bar, as before.
 
 use eframe::egui::{self, Color32, Key, RichText};
 
@@ -15,7 +20,10 @@ use super::commands::{self, Command};
 use super::icons::{self, Palette};
 
 /// Rows of the list at most.
-const ROWS: usize = 8;
+const ROWS: usize = 40;
+
+/// Height of the list before it scrolls (points).
+const LIST_HEIGHT: f32 = 340.0;
 
 /// State of the alias field.
 #[derive(Default)]
@@ -28,6 +36,10 @@ pub(super) struct AliasInput {
     pub row: usize,
     /// The field still has to take the focus (once).
     pub focus: bool,
+    /// When the text last changed (egui time, s).
+    pub last: f64,
+    /// The user is choosing a row with the arrows: nothing starts by itself.
+    pub choosing: bool,
 }
 
 /// The typed alias without the field (spec 0.15, alias input rule 2),
@@ -213,6 +225,14 @@ impl CadCraftApp {
             })
         });
         let Some(t) = first else { return false };
+        let env = self.alias_env();
+        let only = commands::alias_candidates(&t, env, &self.keymap);
+        // A letter nothing answers to is left to the built-in keys.
+        if only.is_empty()
+            && commands::search_in(&t, env, &self.recent_commands, &self.keymap).is_empty()
+        {
+            return false;
+        }
         let at = ctx.input(|i| i.pointer.hover_pos()).unwrap_or_default();
         // The letter belongs to the field, not to the single-letter keys.
         ctx.input_mut(|i| {
@@ -222,11 +242,18 @@ impl CadCraftApp {
                         if key.name().len() == 1 && key.name().chars().all(|c| c.is_ascii_alphabetic()))
             })
         });
+        // It can only mean one command (E, H, L): at once, no list.
+        if let [c] = only.as_slice() {
+            self.start_command(c);
+            return true;
+        }
         self.alias = AliasInput {
             at: Some(at),
             text: t,
             row: 0,
             focus: true,
+            last: ctx.input(|i| i.time),
+            choosing: false,
         };
         true
     }
@@ -263,15 +290,7 @@ impl CadCraftApp {
                 i.consume_key(egui::Modifiers::NONE, Key::Escape),
             )
         });
-        let env = if self.is_drawing() {
-            commands::Env::Drawing
-        } else if self.is_assembly() {
-            commands::Env::Assembly
-        } else if self.editing.is_some() {
-            commands::Env::Sketch
-        } else {
-            commands::Env::Part
-        };
+        let env = self.alias_env();
         let hits: Vec<_> =
             commands::search_in(&self.alias.text, env, &self.recent_commands, &self.keymap)
                 .into_iter()
@@ -284,15 +303,19 @@ impl CadCraftApp {
         if up {
             self.alias.row = (self.alias.row + n - 1) % n;
         }
+        self.alias.choosing |= up || down;
         self.alias.row = self.alias.row.min(n - 1);
         let mut run: Option<&'static Command> = None;
         let mut close = esc;
+        let mut edited = false;
         let bg = super::i18n::bulgarian();
         let current = self.alias.row;
         let area = egui::Area::new(egui::Id::new("alias_area"))
             .fixed_pos(at + egui::vec2(16.0, -26.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
+                // A label that can be selected would take a click meant for its row.
+                ui.style_mut().interaction.selectable_labels = false;
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut self.alias.text)
@@ -309,10 +332,15 @@ impl CadCraftApp {
                             st.store(ui.ctx(), id);
                         }
                     } else if r.lost_focus() && !enter {
-                        close = true;
+                        // A click on a row takes the focus before it counts as a click: the
+                        // field keeps the typing; a click outside closes it (below).
+                        r.request_focus();
                     }
                     if r.changed() {
                         self.alias.row = 0;
+                        self.alias.last = ui.input(|i| i.time);
+                        self.alias.choosing = false;
+                        edited = true;
                     }
                     if hits.is_empty() {
                         ui.colored_label(
@@ -320,38 +348,55 @@ impl CadCraftApp {
                             format!("{} — no such command here", self.alias.text),
                         );
                     }
-                    for (k, h) in hits.iter().enumerate() {
-                        let can = h.ready && h.valid;
-                        ui.horizontal(|ui| {
-                            let (rect, _) = ui
-                                .allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                            let pal = if can {
-                                Palette::enabled()
-                            } else {
-                                Palette::disabled()
-                            };
-                            icons::paint(ui.painter(), rect, h.cmd.icon, &pal);
-                            let mut t = RichText::new(if bg { h.cmd.bg } else { h.cmd.name });
-                            if k == current {
-                                t = t.strong();
-                            }
-                            if !can {
-                                t = t.color(super::theme::tokens().text_weak);
-                            }
-                            let b = ui.add(egui::Button::new(t).frame(k == current));
-                            if let Some(key) = self.keymap.shown_key(h.cmd) {
-                                ui.label(RichText::new(key).monospace().weak());
-                            }
-                            ui.label(RichText::new(h.cmd.path()).small().weak());
-                            let tip = h
-                                .cmd
-                                .unavailable(env)
-                                .unwrap_or_else(|| h.cmd.tip.to_owned());
-                            if b.on_hover_text(tip).clicked() && can {
-                                run = Some(h.cmd);
+                    egui::ScrollArea::vertical()
+                        .max_height(LIST_HEIGHT)
+                        .show(ui, |ui| {
+                            for (k, h) in hits.iter().enumerate() {
+                                let can = h.ready && h.valid;
+                                let row = ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(16.0, 16.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    let pal = if can {
+                                        Palette::enabled()
+                                    } else {
+                                        Palette::disabled()
+                                    };
+                                    icons::paint(ui.painter(), rect, h.cmd.icon, &pal);
+                                    let mut t =
+                                        RichText::new(if bg { h.cmd.bg } else { h.cmd.name });
+                                    if k == current {
+                                        t = t.strong();
+                                    }
+                                    if !can {
+                                        t = t.color(super::theme::tokens().text_weak);
+                                    }
+                                    let b = ui.add(egui::Button::new(t).frame(k == current));
+                                    if let Some(key) = self.keymap.shown_key(h.cmd) {
+                                        ui.label(RichText::new(key).monospace().weak());
+                                    }
+                                    // Why it cannot run here, else where it lives.
+                                    let why = h.cmd.unavailable(env);
+                                    ui.label(
+                                        RichText::new(why.clone().unwrap_or_else(|| h.cmd.path()))
+                                            .small()
+                                            .weak(),
+                                    );
+                                    if k == current {
+                                        b.scroll_to_me(None);
+                                    }
+                                    let tip = why.unwrap_or_else(|| h.cmd.tip.to_owned());
+                                    if b.on_hover_text(tip).clicked() && can {
+                                        run = Some(h.cmd);
+                                    }
+                                });
+                                // The whole row is the target, not only the name.
+                                if row.response.interact(egui::Sense::click()).clicked() && can {
+                                    run = Some(h.cmd);
+                                }
                             }
                         });
-                    }
                 });
             });
         // A click outside the field closes it.
@@ -372,6 +417,32 @@ impl CadCraftApp {
                     )));
                 }
                 None => {}
+            }
+        }
+        // What the letters can only mean starts by itself.
+        if run.is_none() {
+            let cands = commands::alias_candidates(&self.alias.text, env, &self.keymap);
+            let m = commands::alias_match_in(&self.alias.text, env, &self.keymap);
+            let idle = ctx.input(|i| i.time) - self.alias.last;
+            if edited && let [c] = cands.as_slice() {
+                run = Some(*c);
+            } else if self.alias.text.chars().count() >= 2
+                && m.exact.is_some()
+                // Choosing with the arrows or the mouse: the list waits.
+                && !self.alias.choosing
+                && !ctx.input(|i| {
+                    i.pointer
+                        .hover_pos()
+                        .is_some_and(|p| area.response.rect.contains(p))
+                })
+            {
+                if idle > ALIAS_WAIT {
+                    run = m.exact;
+                } else {
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                        ALIAS_WAIT + 0.05,
+                    ));
+                }
             }
         }
         if let Some(c) = run {

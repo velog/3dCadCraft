@@ -254,7 +254,7 @@ pub struct AppOptions {
     /// (`Extrusion1:End`), for debugging; off: kind, feature and body.
     pub internal_names: bool,
     /// Show command alias input dialog (spec 0.15 §5.1, G6).
-    pub alias_input: bool,
+    pub alias_popup: bool,
     /// Parameters table: text size (1 = normal) and the widths of the
     /// Name, Equation and Comment columns.
     pub param_font: f32,
@@ -353,7 +353,7 @@ impl Default for AppOptions {
             default_visual_style: Default::default(),
             internal_names: false,
             keymap: Default::default(),
-            alias_input: false,
+            alias_popup: true,
             param_font: 1.0,
             param_cols: [80.0, 150.0, 120.0],
             home_view: None,
@@ -995,7 +995,7 @@ impl CadCraftApp {
             default_visual_style: self.default_visual_style,
             internal_names: self.internal_names,
             keymap: self.keymap.clone(),
-            alias_input: self.alias_input,
+            alias_popup: self.alias_input,
             param_font: self.param_font,
             param_cols: self.param_cols,
             home_view: self.home_view,
@@ -1048,7 +1048,7 @@ impl CadCraftApp {
             self.keymap = o.keymap;
             self.keymap_tips_dirty = true;
         }
-        self.alias_input = o.alias_input;
+        self.alias_input = o.alias_popup;
         self.param_font = o.param_font.clamp(0.7, 2.5);
         self.param_cols = o.param_cols.map(|w| w.clamp(40.0, 600.0));
         self.home_view = o.home_view;

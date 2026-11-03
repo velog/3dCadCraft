@@ -2929,6 +2929,81 @@ pub fn alias_match(buf: &str, env: Env) -> AliasMatch {
     alias_match_in(buf, env, &super::keymap::Keymap::default())
 }
 
+/// Whether Space / Enter / the menu's *Repeat* may run `action` again: every modelling or
+/// sketching command, not what acts once on the application (Save, Undo, a view, a toggle).
+pub fn repeats(action: Action) -> bool {
+    use super::Tool;
+    match action {
+        Action::Tool(t) => t != Tool::Select,
+        Action::StartSketch
+        | Action::Extrude
+        | Action::Revolve
+        | Action::Primitive(_)
+        | Action::WorkPlane
+        | Action::WorkAxis
+        | Action::WorkPoint
+        | Action::Ucs
+        | Action::Fillet
+        | Action::Chamfer
+        | Action::Shell
+        | Action::Sweep
+        | Action::Loft
+        | Action::Coil
+        | Action::Rib
+        | Action::Draft
+        | Action::Combine
+        | Action::Split
+        | Action::RectPattern
+        | Action::CircPattern
+        | Action::MirrorFeature
+        | Action::Hole
+        | Action::Thread
+        | Action::Thicken
+        | Action::DeleteFace
+        | Action::MoveBodies
+        | Action::ProjectGeometry
+        | Action::PartPlanned(_)
+        | Action::SmConvert
+        | Action::SmFace
+        | Action::SmFlange
+        | Action::SmHem
+        | Action::SmFold
+        | Action::SmContour
+        | Action::SmCut
+        | Action::SmUnfold
+        | Action::SmRefold
+        | Action::SmCornerSeam
+        | Action::SmPlanned(_)
+        | Action::AsmPlace
+        | Action::AsmFreeMove
+        | Action::AsmFreeRotate
+        | Action::AsmConstrain
+        | Action::AsmJoint
+        | Action::AsmPlanned(_)
+        | Action::Drawing(_) => true,
+        _ => false,
+    }
+}
+
+/// The commands that can run in `env` with an alias starting with `buf`.
+pub fn alias_candidates(
+    buf: &str,
+    env: Env,
+    keymap: &super::keymap::Keymap,
+) -> Vec<&'static Command> {
+    let b = buf.to_ascii_uppercase();
+    COMMANDS
+        .iter()
+        .filter(|c| c.ready() && !c.held && c.valid_in(env))
+        .filter(|c| {
+            keymap
+                .aliases_of(c)
+                .iter()
+                .any(|a| a.to_ascii_uppercase().starts_with(&b))
+        })
+        .collect()
+}
+
 /// [`alias_match`] with the user's aliases (`keymap`) in place of the
 /// defaults of the commands they change.
 pub fn alias_match_in(buf: &str, env: Env, keymap: &super::keymap::Keymap) -> AliasMatch {
@@ -3064,6 +3139,51 @@ mod tests {
             .map(|c| c.id)
             .collect();
         assert!(missing.is_empty(), "no key or alias: {missing:?}");
+    }
+
+    #[test]
+    fn space_repeats_commands_and_not_one_shot_actions() {
+        for a in [
+            Action::Extrude,
+            Action::Thicken,
+            Action::PartPlanned(Pp::Emboss),
+            Action::SmFlange,
+            Action::AsmConstrain,
+            Action::Tool(Tool::Line),
+        ] {
+            assert!(repeats(a), "{a:?}");
+        }
+        for a in [
+            Action::Undo,
+            Action::Redo,
+            Action::Options,
+            Action::Tool(Tool::Select),
+        ] {
+            assert!(!repeats(a), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn the_list_narrows_until_one_command_starts() {
+        let keys = crate::gui::keymap::Keymap::default();
+        let ids = |b: &str, e: Env| -> Vec<&str> {
+            alias_candidates(b, e, &keys).iter().map(|c| c.id).collect()
+        };
+        // R means several things; one more letter narrows it.
+        assert!(ids("R", Env::Sketch).len() > 1);
+        assert_eq!(
+            ids("RC", Env::Sketch),
+            ["sketch.rect_center", "sketch.rect_center3"]
+        );
+        assert_eq!(ids("RCT", Env::Sketch), ["sketch.rect_center3"]);
+        assert_eq!(ids("E", Env::Part), ["part.extrude"]);
+        // Case does not matter, and another environment's command is not a candidate.
+        assert_eq!(ids("rct", Env::Sketch), ["sketch.rect_center3"]);
+        assert!(ids("RCT", Env::Part).is_empty());
+        // It is still listed there, greyed, with the reason.
+        let hits = search("RCT", Env::Part, &[]);
+        let h = hits.iter().find(|h| h.cmd.id == "sketch.rect_center3");
+        assert!(h.is_some_and(|h| !h.valid && h.cmd.unavailable(Env::Part).is_some()));
     }
 
     #[test]

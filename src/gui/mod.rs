@@ -1051,7 +1051,7 @@ impl CadCraftApp {
             default_visual_style: Default::default(),
             view_defaults_taken: false,
             internal_names: false,
-            alias_input: false,
+            alias_input: true,
             alias: Default::default(),
             alias_buf: Default::default(),
             keymap: Default::default(),
@@ -1535,8 +1535,15 @@ impl CadCraftApp {
 
     /// The last command, if it can run now (sketch tools need a sketch).
     fn repeatable(&self) -> Option<Action> {
-        self.last_command
-            .filter(|a| !matches!(a, Action::Tool(_)) || self.editing.is_some())
+        let env = self.alias_env();
+        self.last_command.filter(|a| {
+            // A command of another environment waits until it can run again.
+            commands::COMMANDS
+                .iter()
+                .find(|c| c.action == Some(*a))
+                .is_none_or(|c| c.valid_in(env))
+                && (!matches!(a, Action::Tool(_)) || self.editing.is_some())
+        })
     }
 
     /// F1: opens the specification of what the user is doing
@@ -4284,30 +4291,8 @@ impl CadCraftApp {
         // The recent-command list (alias input, command search).
         commands::remember(&mut self.recent_commands, action);
         // Remember commands for Repeat (Inventor: Enter / right-click).
-        match action {
-            Action::Tool(t) if t != Tool::Select => self.last_command = Some(action),
-            Action::Extrude
-            | Action::Revolve
-            | Action::StartSketch
-            | Action::WorkPlane
-            | Action::WorkAxis
-            | Action::WorkPoint
-            | Action::Ucs
-            | Action::Fillet
-            | Action::Chamfer
-            | Action::Shell
-            | Action::Sweep
-            | Action::Loft
-            | Action::Coil
-            | Action::Rib
-            | Action::Draft
-            | Action::Combine
-            | Action::Split
-            | Action::RectPattern
-            | Action::CircPattern
-            | Action::MirrorFeature => self.last_command = Some(action),
-            Action::Hole | Action::Thread => self.last_command = Some(action),
-            _ => {}
+        if commands::repeats(action) {
+            self.last_command = Some(action);
         }
         match action {
             Action::Drawing(c) => self.drw_apply(c),
