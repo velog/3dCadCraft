@@ -109,6 +109,27 @@ pub fn png(scene: &Scene, view: Vector3, size: u32) -> Option<Vec<u8>> {
     encode_png(&rgba, size, size)
 }
 
+/// [`png`] on a solid `back` colour (Colors › Preview Image Background) instead
+/// of a transparent background.
+pub fn png_on(scene: &Scene, view: Vector3, size: u32, back: Option<[u8; 3]>) -> Option<Vec<u8>> {
+    let mut rgba = render(scene, view, size)?;
+    if let Some(b) = back {
+        on_background(&mut rgba, b);
+    }
+    encode_png(&rgba, size, size)
+}
+
+/// Lays straight-alpha sRGB pixels over a solid colour.
+fn on_background(rgba: &mut [u8], back: [u8; 3]) {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let a = u32::from(px[3]);
+        for (c, b) in px.iter_mut().zip(back) {
+            *c = ((u32::from(*c) * a + u32::from(b) * (255 - a) + 127) / 255) as u8;
+        }
+        px[3] = 255;
+    }
+}
+
 /// `scene` as `size`² RGBA pixels (sRGB, straight alpha); `None` when empty.
 pub fn render(scene: &Scene, view: Vector3, size: u32) -> Option<Vec<u8>> {
     if scene.is_empty() || size == 0 {
@@ -310,6 +331,15 @@ pub fn decode_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fixed_background_shows_where_the_picture_is_empty() {
+        let mut px = [10, 20, 30, 255, 99, 99, 99, 0, 200, 100, 0, 128];
+        on_background(&mut px, [40, 50, 60]);
+        assert_eq!(px[..4], [10, 20, 30, 255]);
+        assert_eq!(px[4..8], [40, 50, 60, 255]);
+        assert_eq!(px[8..12], [120, 75, 30, 255]);
+    }
 
     fn boxed() -> PartDocument {
         PartDocument::with_box("Box1", [40.0, 20.0, 10.0]).unwrap_or_default()

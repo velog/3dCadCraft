@@ -225,6 +225,17 @@ pub struct AppOptions {
     pub canvas_scheme: String,
     /// Colors › Background: Gradient (else 1 Color).
     pub canvas_gradient: bool,
+    /// Colors › Background Image and its file.
+    pub canvas_image: bool,
+    pub canvas_image_path: String,
+    /// Colors › Section Capping Plane Texture: Bitmap Image and its file.
+    pub section_bitmap: bool,
+    pub section_bitmap_path: String,
+    /// Colors › Preview Image Background: `#rrggbb`, empty for none (transparent).
+    pub preview_background: String,
+    /// Colors › Enable Enhanced Highlighting, Highlight Hidden Faces.
+    pub enhanced_highlight: bool,
+    pub highlight_hidden: bool,
     pub mouse: MousePreset,
     pub invert_wheel: bool,
     /// Default Orbit Type (Free: relative to the screen).
@@ -337,6 +348,13 @@ impl Default for AppOptions {
             ui_theme: super::theme::UiTheme::Dark,
             canvas_scheme: super::theme::scheme::DEFAULT_SCHEME.to_owned(),
             canvas_gradient: true,
+            canvas_image: false,
+            canvas_image_path: String::new(),
+            section_bitmap: false,
+            section_bitmap_path: String::new(),
+            preview_background: String::new(),
+            enhanced_highlight: false,
+            highlight_hidden: false,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
             orbit_type: super::camera::OrbitType::Free,
@@ -989,6 +1007,13 @@ impl CadCraftApp {
             ui_theme: super::theme::current(),
             canvas_scheme: self.colors.active.clone(),
             canvas_gradient: self.colors.gradient,
+            canvas_image: self.colors.background.on,
+            canvas_image_path: self.colors.background.path.clone(),
+            section_bitmap: self.colors.cap.on,
+            section_bitmap_path: self.colors.cap.path.clone(),
+            preview_background: self.colors.preview_text(),
+            enhanced_highlight: self.colors.enhanced,
+            highlight_hidden: self.colors.hidden_faces,
             cursor_value: self.cursor_value_enabled,
             constraint_ring: self.constraint_ring,
             default_projection: self.default_projection,
@@ -1043,6 +1068,19 @@ impl CadCraftApp {
         self.internal_names = o.internal_names;
         super::theme::set_current(o.ui_theme);
         self.colors.load(&o.canvas_scheme, o.canvas_gradient);
+        self.colors.enhanced = o.enhanced_highlight;
+        self.colors.hidden_faces = o.highlight_hidden;
+        self.colors.set_preview_text(&o.preview_background);
+        self.colors.load_picture(
+            super::theme::ImageSlot::Background,
+            o.canvas_image,
+            &o.canvas_image_path,
+        );
+        self.colors.load_picture(
+            super::theme::ImageSlot::Cap,
+            o.section_bitmap,
+            &o.section_bitmap_path,
+        );
         self.scene_dirty = true;
         if self.keymap != o.keymap {
             self.keymap = o.keymap;

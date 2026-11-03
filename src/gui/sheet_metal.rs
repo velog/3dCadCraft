@@ -33,7 +33,9 @@ use crate::part::sheet_metal::{
 use crate::part::{Feature, PartDocument, PartError, ProfileRef};
 
 /// Hover highlight.
-const PICK: Color32 = Color32::from_rgb(60, 190, 90);
+fn pick_color() -> Color32 {
+    crate::gui::theme::canvas().hover_edge
+}
 /// What a selector holds.
 const CHOSEN: Color32 = Color32::from_rgb(40, 120, 230);
 /// The preview's edges.
@@ -2121,7 +2123,7 @@ impl CadCraftApp {
                 .or_else(|| self.sm_hover(p, rect));
             if let Some((_, lines)) = &hover {
                 for line in lines {
-                    self.draw_visible_polyline(painter, rect, line, Stroke::new(3.0, PICK));
+                    self.draw_visible_polyline(painter, rect, line, Stroke::new(3.0, pick_color()));
                 }
             }
             if clicked && let Some((pick, _)) = hover {

@@ -402,8 +402,8 @@ pub fn draw(
     hot: Option<usize>,
     label: Option<String>,
 ) {
-    let base = Color32::from_rgb(40, 120, 230);
-    let lit = Color32::from_rgb(255, 150, 30);
+    let scheme = super::theme::canvas();
+    let (base, lit) = (scheme.handle, scheme.handle_hot);
     for (i, h) in handles.iter().enumerate() {
         let col = if hot == Some(i) { lit } else { base };
         let pts: Vec<Pos2> = h.path.iter().filter_map(|p| cam.project(p, rect)).collect();
@@ -436,12 +436,15 @@ pub fn draw(
             && let Some(t) = &label
         {
             let at = g + egui::vec2(14.0, -14.0);
-            let galley =
-                painter.layout_no_wrap(t.clone(), egui::FontId::proportional(13.0), Color32::BLACK);
+            let galley = painter.layout_no_wrap(
+                t.clone(),
+                egui::FontId::proportional(13.0),
+                scheme.label_text,
+            );
             let r = egui::Rect::from_min_size(at, galley.size()).expand(3.0);
-            painter.rect_filled(r, 3.0, Color32::from_rgb(255, 250, 225));
+            painter.rect_filled(r, 3.0, scheme.label_fill);
             painter.rect_stroke(r, 3.0, Stroke::new(1.0, lit), egui::StrokeKind::Inside);
-            painter.galley(at, galley, Color32::BLACK);
+            painter.galley(at, galley, scheme.label_text);
         }
     }
 }

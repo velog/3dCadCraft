@@ -30,7 +30,7 @@ const CLEAR: wgpu::Color = wgpu::Color {
 };
 
 /// `Uniforms` in the shader: a matrix and six vectors.
-const UNIFORM_SIZE: u64 = 16 * 4 + 6 * 4 * 4;
+const UNIFORM_SIZE: u64 = 16 * 4 + 7 * 4 * 4;
 
 /// CPU-side geometry for one upload: triangles and line segments.
 #[derive(Default)]
@@ -49,9 +49,22 @@ pub struct SceneGeometry {
     thread_vertices: Vec<u8>,
     thread_count: u32,
     thread_indices: Vec<u32>,
+    /// Highlights seen through what is in front of them (Colors › Highlight).
+    through_vertices: Vec<u8>,
+    through_count: u32,
+    through_indices: Vec<u32>,
+    /// What gets a selection tint also shows through what stands in front of it
+    /// (Enable Enhanced Highlighting; `material::add_part_meshes_with`).
+    pub tints_show_through: bool,
 }
 
 impl SceneGeometry {
+    /// Index count of the highlights over everything.
+    #[cfg(test)]
+    pub fn through_count(&self) -> usize {
+        self.through_indices.len()
+    }
+
     /// Index counts of the opaque and the transparent triangles.
     #[cfg(test)]
     pub fn counts(&self) -> (usize, usize) {
@@ -120,6 +133,28 @@ impl SceneGeometry {
         }
         self.alpha_count += positions.len() as u32;
         self.alpha_indices
+            .extend(triangles.iter().flatten().map(|i| base + i));
+    }
+
+    /// Adds a highlight drawn over everything, also over what stands in front of it.
+    pub fn add_mesh_through(
+        &mut self,
+        positions: &[Point3],
+        normals: &[Vector3],
+        triangles: &[[u32; 3]],
+        color: [f32; 4],
+    ) {
+        let base = self.through_count;
+        for (p, n) in positions.iter().zip(normals) {
+            for v in [
+                p.x as f32, p.y as f32, p.z as f32, n.x as f32, n.y as f32, n.z as f32, color[0],
+                color[1], color[2], color[3],
+            ] {
+                self.through_vertices.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        self.through_count += positions.len() as u32;
+        self.through_indices
             .extend(triangles.iter().flatten().map(|i| base + i));
     }
 
@@ -198,12 +233,93 @@ pub struct Cut {
     pub union: bool,
 }
 
+use super::theme::{ImageSlot, Picture};
+
+/// How much of a picture a view shows when the picture fills it and keeps its
+/// proportions: 1 along the side that fits, less along the side cut off.
+pub fn cover_scale(picture: [u32; 2], view: [u32; 2]) -> [f64; 2] {
+    let aspect = |s: [u32; 2]| f64::from(s[0].max(1)) / f64::from(s[1].max(1));
+    let (p, v) = (aspect(picture), aspect(view));
+    if v > p { [1.0, p / v] } else { [v / p, 1.0] }
+}
+
 fn push_vertex(buf: &mut Vec<u8>, p: &Point3, n: &Vector3, c: [f32; 3]) {
     for v in [
         p.x as f32, p.y as f32, p.z as f32, n.x as f32, n.y as f32, n.z as f32, c[0], c[1], c[2],
     ] {
         buf.extend_from_slice(&v.to_le_bytes());
     }
+}
+
+/// A picture's binding in the viewport's bind group.
+fn picture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// RGBA pixels on the GPU, kept gamma-encoded: the target holds gamma data too.
+fn picture_view(rs: &RenderState, width: u32, height: u32, rgba: &[u8]) -> wgpu::TextureView {
+    rs.device
+        .create_texture_with_data(
+            &rs.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("viewport picture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: COLOR_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            rgba,
+        )
+        .create_view(&Default::default())
+}
+
+fn make_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniforms: &wgpu::Buffer,
+    sampler: &wgpu::Sampler,
+    background: &wgpu::TextureView,
+    cap: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("viewport bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniforms.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(background),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(cap),
+            },
+        ],
+    })
 }
 
 /// Geometry resident on the GPU.
@@ -221,6 +337,9 @@ struct GpuGeometry {
     thread_vbuf: Option<wgpu::Buffer>,
     thread_ibuf: Option<wgpu::Buffer>,
     thread_index_count: u32,
+    through_vbuf: Option<wgpu::Buffer>,
+    through_ibuf: Option<wgpu::Buffer>,
+    through_index_count: u32,
 }
 
 /// Offscreen render target, recreated when the viewport is resized.
@@ -245,8 +364,20 @@ pub struct ViewportRenderer {
     hidden_lines: wgpu::RenderPipeline,
     transparent: wgpu::RenderPipeline,
     threads: wgpu::RenderPipeline,
+    /// Highlights over everything (Colors › Highlight).
+    through: wgpu::RenderPipeline,
     uniform_buf: wgpu::Buffer,
+    bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
     bind_group: wgpu::BindGroup,
+    /// The pictures and their sizes; 1 x 1 until one is set.
+    background_view: wgpu::TextureView,
+    background_size: Option<[u32; 2]>,
+    cap_view: wgpu::TextureView,
+    cap_size: Option<[u32; 2]>,
+    /// Colors › Background Image and Section Capping: Bitmap Image are on.
+    pub use_background: bool,
+    pub use_cap: bool,
     sample_count: u32,
     geometry: Option<GpuGeometry>,
     target: Option<Target>,
@@ -292,25 +423,45 @@ impl ViewportRenderer {
         });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("viewport bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                picture_entry(2),
+                picture_entry(3),
+            ],
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("viewport bind group"),
-            layout: &bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            }],
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("viewport pictures"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
+        let background_view = picture_view(rs, 1, 1, &[128, 128, 128, 255]);
+        let cap_view = picture_view(rs, 1, 1, &[128, 128, 128, 255]);
+        let bind_group = make_bind_group(
+            device,
+            &bgl,
+            &uniform_buf,
+            &sampler,
+            &background_view,
+            &cap_view,
+        );
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("viewport layout"),
             bind_group_layouts: &[Some(&bgl)],
@@ -482,49 +633,61 @@ impl ViewportRenderer {
         // but not written (faces behind stay visible), both sides.
         let alpha_attributes =
             wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4];
-        let transparent = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("transparent faces"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_alpha"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: ALPHA_STRIDE,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &alpha_attributes,
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: Topo::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: Default::default(),
-                bias: bias(2),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_alpha"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: COLOR_FORMAT,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let blended = |label, compare, bias| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_alpha"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: ALPHA_STRIDE,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &alpha_attributes,
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: Topo::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(compare),
+                    stencil: Default::default(),
+                    bias,
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_alpha"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: COLOR_FORMAT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let transparent = blended(
+            "transparent faces",
+            wgpu::CompareFunction::LessEqual,
+            bias(2),
+        );
+        let through = blended(
+            "highlight through",
+            wgpu::CompareFunction::Always,
+            Default::default(),
+        );
         // Thread texture: a sleeve just off the threaded face, depth-tested
         // but not written, multiplying the shaded face below by 2 * band
         // (0.5 = unchanged), so it follows the face's appearance and light.
@@ -595,13 +758,54 @@ impl ViewportRenderer {
             transparent,
             background,
             threads,
+            through,
             uniform_buf,
+            bind_group_layout: bgl,
+            sampler,
             bind_group,
+            background_view,
+            background_size: None,
+            cap_view,
+            cap_size: None,
+            use_background: false,
+            use_cap: false,
             sample_count,
             geometry: None,
             target: None,
             texture_id: None,
         }
+    }
+
+    /// Puts a picture in use for `slot`; one over the device's limit is left out.
+    pub fn set_picture(&mut self, rs: &RenderState, slot: ImageSlot, p: &Picture) {
+        let most = rs.device.limits().max_texture_dimension_2d;
+        if p.width == 0 || p.height == 0 || p.width > most || p.height > most {
+            log::warn!(
+                "viewport: a {} x {} picture, over the GPU's {most}",
+                p.width,
+                p.height
+            );
+            return;
+        }
+        let view = picture_view(rs, p.width, p.height, &p.rgba);
+        match slot {
+            ImageSlot::Background => {
+                self.background_view = view;
+                self.background_size = Some([p.width, p.height]);
+            }
+            ImageSlot::Cap => {
+                self.cap_view = view;
+                self.cap_size = Some([p.width, p.height]);
+            }
+        }
+        self.bind_group = make_bind_group(
+            &rs.device,
+            &self.bind_group_layout,
+            &self.uniform_buf,
+            &self.sampler,
+            &self.background_view,
+            &self.cap_view,
+        );
     }
 
     /// Replaces the displayed geometry.
@@ -635,6 +839,11 @@ impl ViewportRenderer {
             .collect();
         let thread_index_bytes: Vec<u8> = g
             .thread_indices
+            .iter()
+            .flat_map(|i| i.to_le_bytes())
+            .collect();
+        let through_index_bytes: Vec<u8> = g
+            .through_indices
             .iter()
             .flat_map(|i| i.to_le_bytes())
             .collect();
@@ -676,6 +885,17 @@ impl ViewportRenderer {
                 wgpu::BufferUsages::INDEX,
             ),
             thread_index_count: g.thread_indices.len() as u32,
+            through_vbuf: buffer(
+                "highlight vertices",
+                &g.through_vertices,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            through_ibuf: buffer(
+                "highlight indices",
+                &through_index_bytes,
+                wgpu::BufferUsages::INDEX,
+            ),
+            through_index_count: g.through_indices.len() as u32,
         });
     }
 
@@ -710,15 +930,23 @@ impl ViewportRenderer {
         let (cn, cw) = cut.a.unwrap_or((Vector3::zeros(), 0.0));
         let (dn, dw) = cut.b.unwrap_or((Vector3::zeros(), 0.0));
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
+        let shown_background = self.background_size.filter(|_| self.use_background);
+        let cover = cover_scale(shown_background.unwrap_or(size), size);
         for v in view_proj
             .iter()
             .copied()
             .chain([eye.x, eye.y, eye.z, 1.0])
             .chain([cn.x, cn.y, cn.z, cw])
             .chain([dn.x, dn.y, dn.z, dw])
-            .chain([flag(style.monochrome), flag(cut.union), 0.0, 0.0])
+            .chain([
+                flag(style.monochrome),
+                flag(cut.union),
+                flag(shown_background.is_some()),
+                flag(self.use_cap && self.cap_size.is_some()),
+            ])
             .chain([unit(top.r()), unit(top.g()), unit(top.b()), 1.0])
             .chain([unit(bottom.r()), unit(bottom.g()), unit(bottom.b()), 1.0])
+            .chain([cover[0], cover[1], 0.0, 0.0])
         {
             uniforms.extend_from_slice(&(v as f32).to_le_bytes()); // column-major, as WGSL expects
         }
@@ -815,6 +1043,12 @@ impl ViewportRenderer {
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..g.alpha_index_count, 0, 0..1);
                 }
+                if let (Some(vb), Some(ib)) = (&g.through_vbuf, &g.through_ibuf) {
+                    pass.set_pipeline(&self.through);
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..g.through_index_count, 0, 0..1);
+                }
             }
         }
         // Submitted before egui's own frame submission, so the texture is
@@ -898,10 +1132,21 @@ impl ViewportRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_fills_the_view_and_keeps_its_proportions() {
+        assert_eq!(cover_scale([100, 100], [100, 100]), [1.0, 1.0]);
+        // A wide view shows the picture's whole width, a tall one its height.
+        assert_eq!(cover_scale([100, 100], [200, 100]), [1.0, 0.5]);
+        assert_eq!(cover_scale([100, 100], [100, 200]), [0.5, 1.0]);
+        assert_eq!(cover_scale([200, 100], [200, 100]), [1.0, 1.0]);
+    }
+
     use crate::part::{CosmeticThread, ThreadBands};
 
     /// The viewport shader parses and validates (a broken entry point would
     /// only show up as a panic when the window opens).
+
     #[test]
     fn viewport_shader_validates() {
         use wgpu::naga;

@@ -5521,7 +5521,7 @@ impl CadCraftApp {
             .bounding_box()
             .map_or(1e-3, |(a, b)| ((b - a).norm() * 2e-4).max(1e-4));
         let opts = TessellationOptions::default();
-        let mut paint = |faces: Vec<crate::kernel::FaceId>, color: [f32; 3]| {
+        let mut paint = |faces: Vec<crate::kernel::FaceId>, color: [f32; 3], through: bool| {
             for f in faces {
                 if let Ok(m) = body.face_mesh(f, &opts) {
                     let pos: Vec<Point3> = m
@@ -5531,6 +5531,10 @@ impl CadCraftApp {
                         .map(|(p, n)| p + n * eps)
                         .collect();
                     g.add_mesh(&pos, &m.normals, &m.triangles, color);
+                    if through {
+                        let [r, g2, b] = color;
+                        g.add_mesh_through(&pos, &m.normals, &m.triangles, [r, g2, b, 0.35]);
+                    }
                     // A surface is seen from both sides: its highlight goes on the back too
                     // (turned over), or a face whose normal points away stayed hidden behind it.
                     if crate::part::select::face_on_surface(body, f) {
@@ -5553,6 +5557,7 @@ impl CadCraftApp {
             paint(
                 self.item_faces(x),
                 theme::scene_rgb(theme::canvas().selected_face),
+                self.colors.hidden_faces,
             );
         }
         if let Some(h) = hover
@@ -5561,6 +5566,7 @@ impl CadCraftApp {
             paint(
                 self.item_faces(h),
                 theme::scene_rgb(theme::canvas().hover_face),
+                false,
             );
         }
         self.add_trim_preview(&mut g);
@@ -5630,6 +5636,16 @@ impl CadCraftApp {
                 if let Some(scene) = scene {
                     renderer.upload(rs, &scene);
                 }
+                for (slot, picture) in self.colors.finished_pictures() {
+                    renderer.set_picture(rs, slot, &picture);
+                }
+                if self.colors.pictures_pending() {
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(100));
+                }
+                renderer.use_background = self.colors.background.on;
+                renderer.use_cap = self.colors.cap.on;
+                theme::set_prehighlight(self.select.prehighlight);
                 let ppp = ui.ctx().pixels_per_point();
                 let size = [
                     (rect.width() * ppp).round() as u32,
@@ -7128,10 +7144,15 @@ impl CadCraftApp {
                 None,
             );
             for input in &d.picks {
-                self.draw_wp_input(&painter, rect, input, Color32::from_rgb(40, 110, 230));
+                self.draw_wp_input(
+                    &painter,
+                    rect,
+                    input,
+                    crate::gui::theme::canvas().selected_edge,
+                );
             }
             if let Some(h) = &wp_hover {
-                self.draw_wp_input(&painter, rect, h, Color32::from_rgb(60, 190, 90));
+                self.draw_wp_input(&painter, rect, h, crate::gui::theme::hover_edge());
             }
         }
         self.draw_work_features(&painter, rect, hovered_work.as_deref());
@@ -7302,7 +7323,7 @@ impl CadCraftApp {
                         &painter,
                         rect,
                         &pts,
-                        egui::Stroke::new(4.0, egui::Color32::from_rgb(60, 190, 90)),
+                        egui::Stroke::new(4.0, crate::gui::theme::hover_edge()),
                     );
                 }
             }
@@ -7311,6 +7332,7 @@ impl CadCraftApp {
             self.draw_cursor_value(ui.ctx(), &painter, rect, pointer);
             self.draw_split_arrow(&painter, rect);
             self.draw_pattern_refs(&painter, rect);
+            let want_hover = want_hover.filter(|_| self.select.prehighlight);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);
                 self.scene_dirty = true;
@@ -7344,7 +7366,7 @@ impl CadCraftApp {
                     &painter,
                     rect,
                     &pts,
-                    egui::Stroke::new(4.0, egui::Color32::from_rgb(60, 190, 90)),
+                    egui::Stroke::new(4.0, crate::gui::theme::hover_edge()),
                 );
             }
             let preview = if self.shell_draft.is_some() {
@@ -7460,75 +7482,78 @@ impl CadCraftApp {
                 continue;
             }
             let active = self.editing == Some(i);
-            let style = overlay::SketchStyle {
-                dim_display: self.dim_display,
-                fully_color: theme::canvas().sketch_full,
-                fully: if active {
-                    self.dof
-                        .as_ref()
-                        .map(|d| d.fully_constrained.clone())
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                },
-                dof: if active && self.show_dof {
-                    self.dof.clone()
-                } else {
-                    None
-                },
-                hovered_constraint: if active {
-                    label_hit.or(self.list_hover)
-                } else {
-                    None
-                },
-                selected_constraints: if active {
-                    self.tools.selected_constraints.clone()
-                } else {
-                    Vec::new()
-                },
-                color: if active {
-                    self.sketch_view_color()
-                } else if source && !shown {
-                    Self::project_source_color()
-                } else {
-                    Color32::from_gray(110)
-                },
-                reference: if active {
-                    overlay::reference_color()
-                } else {
-                    Color32::from_gray(140)
-                },
-                show_labels: (active || (profile_sketch && self.editing.is_none()))
-                    && self.show_labels,
-                selected_points: if active {
-                    self.tools.selected_points.clone()
-                } else {
-                    Vec::new()
-                },
-                highlighted: if active {
-                    self.dragging.or(hovered)
-                } else {
-                    None
-                },
-                selected: if active {
-                    // Hovering a pattern element lights up the whole pattern.
-                    let pattern: Vec<EntityId> = hovered_entity
-                        .and_then(|e| ps.sketch.pattern_containing(e))
-                        .and_then(|(id, _)| ps.sketch.pattern(id))
-                        .map(|p| p.all_entities().collect())
-                        .unwrap_or_default();
-                    self.tools
-                        .selected
-                        .iter()
-                        .copied()
-                        // Trim marks only the piece that goes (its preview).
-                        .chain(hovered_entity.filter(|_| self.tools.tool != Tool::Trim))
-                        .chain(pattern)
-                        .collect()
-                } else {
-                    Vec::new()
-                },
-            };
+            let style =
+                overlay::SketchStyle {
+                    dim_display: self.dim_display,
+                    fully_color: theme::canvas().sketch_full,
+                    fully: if active {
+                        self.dof
+                            .as_ref()
+                            .map(|d| d.fully_constrained.clone())
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    },
+                    dof: if active && self.show_dof {
+                        self.dof.clone()
+                    } else {
+                        None
+                    },
+                    hovered_constraint: if active {
+                        label_hit.or(self.list_hover)
+                    } else {
+                        None
+                    },
+                    selected_constraints: if active {
+                        self.tools.selected_constraints.clone()
+                    } else {
+                        Vec::new()
+                    },
+                    color: if active {
+                        self.sketch_view_color()
+                    } else if source && !shown {
+                        Self::project_source_color()
+                    } else {
+                        Color32::from_gray(110)
+                    },
+                    reference: if active {
+                        overlay::reference_color()
+                    } else {
+                        Color32::from_gray(140)
+                    },
+                    show_labels: (active || (profile_sketch && self.editing.is_none()))
+                        && self.show_labels,
+                    selected_points: if active {
+                        self.tools.selected_points.clone()
+                    } else {
+                        Vec::new()
+                    },
+                    highlighted: if active {
+                        self.dragging.or(hovered)
+                    } else {
+                        None
+                    },
+                    selected: if active {
+                        // Hovering a pattern element lights up the whole pattern.
+                        let pattern: Vec<EntityId> = hovered_entity
+                            .and_then(|e| ps.sketch.pattern_containing(e))
+                            .and_then(|(id, _)| ps.sketch.pattern(id))
+                            .map(|p| p.all_entities().collect())
+                            .unwrap_or_default();
+                        self.tools
+                            .selected
+                            .iter()
+                            .copied()
+                            // Trim marks only the piece that goes (its preview).
+                            .chain(hovered_entity.filter(|_| {
+                                self.tools.tool != Tool::Trim && self.select.prehighlight
+                            }))
+                            .chain(pattern)
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
+                };
             if active {
                 let regions = self.sketch_regions(&ps.sketch);
                 overlay::draw_regions(

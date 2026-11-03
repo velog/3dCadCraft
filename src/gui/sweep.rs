@@ -60,7 +60,9 @@ pub(super) struct LoftDraft {
     pub map_set: usize,
 }
 
-const PICK: egui::Color32 = egui::Color32::from_rgb(60, 190, 90);
+fn pick_color() -> egui::Color32 {
+    crate::gui::theme::canvas().hover_edge
+}
 const CHOSEN: egui::Color32 = egui::Color32::from_rgb(40, 120, 230);
 
 impl CadCraftApp {
@@ -175,7 +177,12 @@ impl CadCraftApp {
             let hover = self.sweep_loft_hover(p, rect);
             if let Some((_, pts)) = &hover {
                 for line in pts {
-                    self.draw_visible_polyline(painter, rect, line, egui::Stroke::new(3.0, PICK));
+                    self.draw_visible_polyline(
+                        painter,
+                        rect,
+                        line,
+                        egui::Stroke::new(3.0, pick_color()),
+                    );
                 }
             }
             if clicked && let Some((pick, _)) = hover {

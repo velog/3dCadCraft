@@ -21,7 +21,9 @@ pub(super) const BLUE: [f32; 3] = [0.2, 0.45, 0.95];
 const ANCHOR_PICK_PX: f32 = 9.0;
 
 /// A face or member under the cursor that the active selector takes.
-const HOVER: Color32 = Color32::from_rgb(110, 220, 120);
+fn hover_color() -> Color32 {
+    crate::gui::theme::hover_edge()
+}
 
 fn color(c: [f32; 3]) -> Color32 {
     let b = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -279,7 +281,7 @@ impl CadCraftApp {
             && face_colour(d, key).is_some()
             && let Some(g @ GeomRef::Face { .. }) = self.geom_under_pub(p, rect)
         {
-            self.draw_geom(painter, rect, &g, HOVER);
+            self.draw_geom(painter, rect, &g, hover_color());
         }
         if d.kind == Planned::Asm(AsmPlanned::LengthenShorten) {
             self.lengthen_dots(d, painter, rect);
@@ -344,7 +346,7 @@ impl CadCraftApp {
             let (r, fill) = if k == current {
                 (6.0, Color32::from_rgb(255, 150, 40))
             } else if hot {
-                (5.0, HOVER)
+                (5.0, hover_color())
             } else {
                 (4.0, Color32::from_rgb(70, 130, 230))
             };

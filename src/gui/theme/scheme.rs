@@ -6,6 +6,7 @@ use eframe::egui::Color32;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The name of the default scheme.
 pub const DEFAULT_SCHEME: &str = "3DCadCraft Light";
@@ -34,6 +35,34 @@ pub struct CanvasColors {
     pub region_fill: Color32,
     pub profile_fill: Color32,
     pub profile_chosen: Color32,
+    /// Edges and points: selected, and what a click would take.
+    pub selected_edge: Color32,
+    pub hover_edge: Color32,
+    /// Work features and origin planes.
+    pub work_feature: Color32,
+    pub work_fill: Color32,
+    pub work_hot: Color32,
+    pub work_label: Color32,
+    /// The X, Y and Z of triads, sketch axes and coordinate systems.
+    pub axis_x: Color32,
+    pub axis_y: Color32,
+    pub axis_z: Color32,
+    /// Drag handles, and a command's preview outlines.
+    pub handle: Color32,
+    pub handle_hot: Color32,
+    pub command_preview: Color32,
+    /// The plate behind a value in the view, and its text.
+    pub label_fill: Color32,
+    pub label_text: Color32,
+    /// Degrees of freedom glyphs.
+    pub dof_glyph: Color32,
+    pub view_cube: Color32,
+    pub view_cube_hot: Color32,
+}
+
+/// An opaque colour at `alpha`.
+pub fn with_alpha(c: Color32, alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha)
 }
 
 impl CanvasColors {
@@ -58,6 +87,23 @@ impl CanvasColors {
             region_fill: Color32::from_rgba_unmultiplied_const(60, 130, 220, 28),
             profile_fill: Color32::from_rgba_unmultiplied_const(90, 190, 90, 50),
             profile_chosen: Color32::from_rgba_premultiplied(30, 110, 30, 120),
+            selected_edge: Color32::from_rgb(40, 110, 230),
+            hover_edge: Color32::from_rgb(60, 190, 90),
+            work_feature: Color32::from_rgb(195, 130, 30),
+            work_fill: Color32::from_rgba_unmultiplied_const(235, 195, 90, 42),
+            work_hot: Color32::from_rgba_unmultiplied_const(255, 160, 40, 85),
+            work_label: Color32::from_rgb(120, 80, 0),
+            axis_x: Color32::from_rgb(210, 45, 40),
+            axis_y: Color32::from_rgb(35, 150, 50),
+            axis_z: Color32::from_rgb(50, 95, 225),
+            handle: Color32::from_rgb(40, 120, 230),
+            handle_hot: Color32::from_rgb(255, 150, 30),
+            command_preview: Color32::from_rgb(60, 150, 255),
+            label_fill: Color32::from_rgba_unmultiplied_const(255, 254, 230, 225),
+            label_text: Color32::from_rgb(0, 0, 0),
+            dof_glyph: Color32::from_rgb(150, 60, 200),
+            view_cube: Color32::from_rgb(222, 228, 238),
+            view_cube_hot: Color32::from_rgb(110, 165, 240),
         }
     }
 
@@ -82,6 +128,23 @@ impl CanvasColors {
             region_fill: Color32::from_rgba_unmultiplied_const(90, 150, 240, 40),
             profile_fill: Color32::from_rgba_unmultiplied_const(90, 190, 90, 50),
             profile_chosen: Color32::from_rgba_premultiplied(40, 120, 40, 120),
+            selected_edge: Color32::from_rgb(110, 175, 255),
+            hover_edge: Color32::from_rgb(110, 225, 140),
+            work_feature: Color32::from_rgb(235, 180, 80),
+            work_fill: Color32::from_rgba_unmultiplied_const(235, 190, 90, 34),
+            work_hot: Color32::from_rgba_unmultiplied_const(255, 170, 60, 80),
+            work_label: Color32::from_rgb(240, 205, 130),
+            axis_x: Color32::from_rgb(250, 110, 100),
+            axis_y: Color32::from_rgb(110, 215, 125),
+            axis_z: Color32::from_rgb(125, 170, 255),
+            handle: Color32::from_rgb(110, 175, 255),
+            handle_hot: Color32::from_rgb(255, 170, 60),
+            command_preview: Color32::from_rgb(120, 190, 255),
+            label_fill: Color32::from_rgba_unmultiplied_const(32, 36, 43, 225),
+            label_text: Color32::from_rgb(232, 236, 244),
+            dof_glyph: Color32::from_rgb(205, 150, 250),
+            view_cube: Color32::from_rgb(205, 212, 224),
+            view_cube_hot: Color32::from_rgb(120, 175, 250),
         }
     }
 }
@@ -130,6 +193,28 @@ pub const ELEMENTS: &[Element] = &[
     element!(region_fill, "Closed region", "Profiles", true),
     element!(profile_fill, "Offered profile", "Profiles", true),
     element!(profile_chosen, "Chosen profile", "Profiles", true),
+    element!(selected_edge, "Selected edge", "Model", false),
+    element!(hover_edge, "Prehighlighted edge", "Model", false),
+    element!(dof_glyph, "Degrees of freedom", "Sketch", false),
+    element!(label_fill, "Value plate", "Sketch", true),
+    element!(label_text, "Value text", "Sketch", false),
+    element!(work_feature, "Lines", "Work features", false),
+    element!(work_fill, "Plane", "Work features", true),
+    element!(work_hot, "Plane under the cursor", "Work features", true),
+    element!(work_label, "Names", "Work features", false),
+    element!(axis_x, "X", "Axes", false),
+    element!(axis_y, "Y", "Axes", false),
+    element!(axis_z, "Z", "Axes", false),
+    element!(handle, "Drag handle", "Commands", false),
+    element!(
+        handle_hot,
+        "Drag handle under the cursor",
+        "Commands",
+        false
+    ),
+    element!(command_preview, "Preview", "Commands", false),
+    element!(view_cube, "Faces", "View Cube", false),
+    element!(view_cube_hot, "Under the cursor", "View Cube", false),
 ];
 
 /// A scheme: built-in or the user's.
@@ -155,7 +240,7 @@ pub fn builtin_schemes() -> Vec<CanvasScheme> {
 }
 
 /// `#rrggbb`, or `#rrggbbaa` when see-through.
-fn to_hex(c: Color32) -> String {
+pub(super) fn to_hex(c: Color32) -> String {
     let [r, g, b, a] = c.to_srgba_unmultiplied();
     if a == 255 {
         format!("#{r:02x}{g:02x}{b:02x}")
@@ -164,7 +249,7 @@ fn to_hex(c: Color32) -> String {
     }
 }
 
-fn from_hex(text: &str) -> Option<Color32> {
+pub(super) fn from_hex(text: &str) -> Option<Color32> {
     let h = text.strip_prefix('#')?;
     if !(h.len() == 6 || h.len() == 8) || !h.is_ascii() {
         return None;
@@ -317,6 +402,22 @@ pub fn set_canvas(c: CanvasColors) {
     }
 }
 
+static PREHIGHLIGHT: AtomicBool = AtomicBool::new(true);
+
+/// Colors › Enable Prehighlight, for what draws a hover outside the selection code.
+pub fn set_prehighlight(on: bool) {
+    PREHIGHLIGHT.store(on, Ordering::Relaxed);
+}
+
+/// The colour of an edge under the cursor: nothing with Prehighlight off.
+pub fn hover_edge() -> Color32 {
+    if PREHIGHLIGHT.load(Ordering::Relaxed) {
+        canvas().hover_edge
+    } else {
+        Color32::TRANSPARENT
+    }
+}
+
 /// A colour for the 3D scene's geometry (linear; the shader gamma-encodes it).
 pub fn scene_rgb(c: Color32) -> [f32; 3] {
     let f = |v: u8| (f32::from(v) / 255.0).powf(2.2);
@@ -368,6 +469,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn text_and_lines_of_the_view_read_on_their_ground() {
+        for s in builtin_schemes() {
+            let c = s.colors;
+            let [r, g, b, _] = c.label_fill.to_srgba_unmultiplied();
+            let k = contrast(c.label_text, Color32::from_rgb(r, g, b));
+            assert!(k >= 7.0, "{}: value text {k:.2}", s.name);
+            for bg in [c.background_top, c.background_bottom] {
+                for (name, fg, least) in [
+                    ("work label", c.work_label, 3.0),
+                    ("work feature", c.work_feature, 1.7),
+                    ("x", c.axis_x, 2.0),
+                    ("y", c.axis_y, 2.0),
+                    ("z", c.axis_z, 2.0),
+                    ("handle", c.handle, 2.0),
+                    ("selected edge", c.selected_edge, 2.0),
+                    ("dof", c.dof_glyph, 2.0),
+                ] {
+                    let k = contrast(fg, bg);
+                    assert!(k >= least, "{}: {name} {k:.2}", s.name);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_scheme_file_of_an_older_build_keeps_its_colours() {
+        let v = json!({ "name": "Old", "colors": { "dimension": "#010203" } });
+        let (s, bad) = CanvasScheme::from_json(&v).unwrap_or_else(|| panic!("no name"));
+        assert!(bad.is_empty());
+        assert_eq!(s.colors.dimension, Color32::from_rgb(1, 2, 3));
+        assert_eq!(s.colors.view_cube, CanvasColors::light().view_cube);
+    }
+
+    #[test]
+    fn prehighlight_off_draws_no_hover() {
+        set_prehighlight(false);
+        assert_eq!(hover_edge(), Color32::TRANSPARENT);
+        set_prehighlight(true);
+        assert_eq!(hover_edge(), canvas().hover_edge);
     }
 
     #[test]

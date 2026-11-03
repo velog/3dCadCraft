@@ -879,8 +879,30 @@ impl CadCraftApp {
         hover: Option<&SelItem>,
     ) {
         let hover = hover.filter(|_| self.select.prehighlight);
-        let blue = Color32::from_rgb(40, 110, 230);
+        let blue = crate::gui::theme::canvas().selected_edge;
         self.draw_items(painter, rect, &self.sel, hover, false, blue);
+        if self.colors.hidden_faces {
+            self.draw_hidden_outlines(painter, rect);
+        }
+    }
+
+    /// Highlight Hidden Faces: a thin line round the selected faces, also where they
+    /// are hidden, to tell them from what they show through.
+    fn draw_hidden_outlines(&self, painter: &egui::Painter, rect: egui::Rect) {
+        let stroke = egui::Stroke::new(1.0, crate::gui::theme::canvas().label_text);
+        let polys = self.edge_polylines();
+        for x in self.sel.iter().filter(|x| matches!(x, SelItem::Face(_))) {
+            let faces = self.item_faces(x);
+            for (e, pts) in polys.iter() {
+                if self.picker().faces_of(*e).iter().any(|f| faces.contains(f)) {
+                    let s: Vec<_> = pts
+                        .iter()
+                        .filter_map(|q| self.camera.project(q, rect))
+                        .collect();
+                    painter.add(egui::Shape::line(s, stroke));
+                }
+            }
+        }
     }
 
     /// The selected edges of a command's panel (`gui/part_planned.rs`) and the item under the
@@ -952,7 +974,7 @@ impl CadCraftApp {
                 }
             }
         };
-        let green = Color32::from_rgb(60, 190, 90);
+        let green = crate::gui::theme::hover_edge();
         let draw = |x: &SelItem, color: Color32| match x {
             SelItem::Edge(e) => line(*e, color),
             SelItem::Sketch(i) => sketch(*i, color),

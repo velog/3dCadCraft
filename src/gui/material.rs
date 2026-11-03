@@ -280,6 +280,8 @@ pub(super) fn add_part_meshes_with(
         let mut opaque: Vec<[u32; 3]> = Vec::new();
         // Transparent triangles by colour.
         let mut clear: Vec<([f32; 4], Vec<[u32; 3]>)> = Vec::new();
+        // Tinted triangles by tint (Enable Enhanced Highlighting).
+        let mut through: Vec<([f32; 3], Vec<[u32; 3]>)> = Vec::new();
         for (fid, range) in &mesh.face_triangles {
             let (look, src) = looks.get(fid).unwrap_or(&fallback);
             let o = over(body.face(*fid).and_then(|f| f.name.as_deref()));
@@ -293,6 +295,13 @@ pub(super) fn add_part_meshes_with(
             if let Some(c) = o.tint {
                 for (x, t) in paint.rgb.iter_mut().zip(c) {
                     *x = 0.5 * (*x + t);
+                }
+                if g.tints_show_through {
+                    let tris = &f.triangles[range.clone()];
+                    match through.iter_mut().find(|(k, _)| *k == c) {
+                        Some((_, v)) => v.extend_from_slice(tris),
+                        None => through.push((c, tris.to_vec())),
+                    }
                 }
             }
             let tris = &f.triangles[range.clone()];
@@ -323,6 +332,9 @@ pub(super) fn add_part_meshes_with(
         }
         for (c, tris) in &clear {
             g.add_mesh_transparent(&f.positions, &f.normals, tris, *c);
+        }
+        for (c, tris) in &through {
+            g.add_mesh_through(&f.positions, &f.normals, tris, [c[0], c[1], c[2], 0.35]);
         }
         for edge in &mesh.edges {
             g.add_edge_polyline(
@@ -1524,6 +1536,29 @@ impl CadCraftApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tint is blended with the face's colour: what shows through is decided where
+    /// it is applied, by the face (a search by colour found nothing in the running app).
+    #[test]
+    fn only_tinted_faces_show_through() {
+        let part =
+            PartDocument::with_box("Box1", [10.0, 10.0, 10.0]).unwrap_or_else(|e| panic!("{e}"));
+        let tint = Some([0.1, 0.2, 0.9]);
+        let top = |name: Option<&str>| FaceOver {
+            look: None,
+            tint: tint.filter(|_| name == Some("Box1:Top")),
+        };
+        let whole = |_: Option<&str>| FaceOver { look: None, tint };
+        let count = |on: bool, over: &dyn Fn(Option<&str>) -> FaceOver| {
+            let mut g = SceneGeometry::default();
+            g.tints_show_through = on;
+            add_part_meshes_with(&mut g, &part, None, None, over);
+            g.through_count()
+        };
+        assert_eq!(count(false, &whole), 0);
+        let (one, all) = (count(true, &top), count(true, &whole));
+        assert!(one > 0 && one < all, "{one} of {all}");
+    }
 
     /// The viewport colour of the default look is the old body blue, a
     /// material's look shows, surface bodies stay amber unless assigned,

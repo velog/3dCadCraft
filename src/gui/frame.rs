@@ -17,7 +17,9 @@ use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 /// Colour of component sketches in the assembly view.
 const SKETCH: Color32 = Color32::from_rgb(70, 110, 170);
 /// Colour of picked skeleton lines.
-const PICKED: Color32 = Color32::from_rgb(110, 220, 120);
+fn picked_color() -> Color32 {
+    crate::gui::theme::canvas().hover_edge
+}
 /// Colour of the line under the cursor.
 const HOVER: Color32 = Color32::from_rgb(255, 160, 50);
 
@@ -488,7 +490,7 @@ impl CadCraftApp {
         if let Some((_, _, at)) = &d.between_first
             && let Some(q) = self.camera.project(at, rect)
         {
-            painter.circle(q, 5.0, PICKED, Stroke::new(1.5, Color32::WHITE));
+            painter.circle(q, 5.0, picked_color(), Stroke::new(1.5, Color32::WHITE));
         }
     }
 
@@ -615,21 +617,21 @@ impl CadCraftApp {
         self.between_start_dot(d, painter, rect);
         for s in &d.skeletons {
             match s {
-                Skeleton::Edge(g) => self.draw_geom(painter, rect, g, PICKED),
+                Skeleton::Edge(g) => self.draw_geom(painter, rect, g, picked_color()),
                 Skeleton::Between { .. } => {
                     if let Some(a) = self.assembly()
                         && let Ok((p, q)) =
                             frame::skeleton_line(&self.project, &self.linked(), a, s)
                         && let Some(s) = seg(&p, &q)
                     {
-                        painter.line_segment(s, Stroke::new(3.0, PICKED));
+                        painter.line_segment(s, Stroke::new(3.0, picked_color()));
                     }
                 }
                 Skeleton::SketchLine { .. } => {
                     if let Some((_, _, a, b)) = lines.iter().find(|l| &l.0 == s)
                         && let Some(s) = seg(a, b)
                     {
-                        painter.line_segment(s, Stroke::new(3.0, PICKED));
+                        painter.line_segment(s, Stroke::new(3.0, picked_color()));
                     }
                 }
             }

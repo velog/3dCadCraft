@@ -532,6 +532,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **The view's colours are `theme::canvas()`** (`gui/theme/scheme.rs`, spec 0.18), the frame's `theme::tokens()`: never draw on the
   view with a token (a sketch's state in the UI Theme's light green was unreadable on the light view). Scene colours through
   `theme::scene_rgb`; changing a scheme needs `scene_dirty`. A see-through colour must be valid premultiplied (r, g, b <= a).
+- **Pictures of the view are gamma data** (`theme::read_picture`, `ViewportRenderer::set_picture`): the shader returns them without `to_gamma`, and samples with `textureSampleLevel` (a plain sample is not allowed after a `discard` branch's non-uniform flow). Hover on the view through `theme::hover_edge()` (nothing with Prehighlight off), a pick that stays lit through `canvas().hover_edge`.
 - **A command panel's OK row goes through `theme::panel_footer`**: it stays on the bottom edge while the panel scrolls.
 - **`gui_win.py`'s input is global, even with an explicit HWND**: it focuses the window, then sends keys and clicks to
   whatever is in front. Another session's window that came forward in between gets them (a scripted `r` opened Revolve there).

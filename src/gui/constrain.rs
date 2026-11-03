@@ -907,7 +907,7 @@ impl CadCraftApp {
         for (g, col) in [
             (a, Color32::from_rgb(80, 160, 255)),
             (b, Color32::from_rgb(200, 110, 255)),
-            (self.cons.hover.clone(), Color32::from_rgb(110, 220, 120)),
+            (self.cons.hover.clone(), crate::gui::theme::hover_edge()),
         ] {
             if let Some(g) = g {
                 self.draw_geom(painter, rect, &g, col);

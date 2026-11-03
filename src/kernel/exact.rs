@@ -66,9 +66,30 @@ impl std::fmt::Debug for ExactSolid {
 fn guarded<T>(what: &str, f: impl FnOnce() -> sk::Result<T>) -> Result<T, String> {
     match crate::diagnostics::crash::guard(f) {
         Ok(Ok(v)) => Ok(v),
-        Ok(Err(e)) => Err(e.to_string()),
+        Ok(Err(e)) => Err(plain_kernel_text(&e.to_string())),
         Err(_) => Err(format!("{what}: internal error in the geometry kernel")),
     }
+}
+
+/// A kernel error for the user: its messages already say what to change, the
+/// error kind's prefix only says it in programmers' words.
+fn plain_kernel_text(text: &str) -> String {
+    text.strip_prefix("invalid input: ")
+        .unwrap_or(text)
+        .to_owned()
+}
+
+#[cfg(test)]
+#[test]
+fn a_kernel_error_keeps_its_advice_and_loses_its_kind() {
+    assert_eq!(
+        plain_kernel_text("invalid input: the edge at [1, 2, 3] is smooth; pick the sharp edges"),
+        "the edge at [1, 2, 3] is smooth; pick the sharp edges"
+    );
+    assert_eq!(
+        plain_kernel_text("the operation failed: x"),
+        "the operation failed: x"
+    );
 }
 
 fn v3(p: &Point3) -> sg::Vec3 {

@@ -1907,7 +1907,9 @@ impl CadCraftApp {
             } else {
                 None
             };
+            g.tints_show_through = self.colors.enhanced;
             self.add_occurrence_mesh(g, o, &place, alpha, &looks);
+            g.tints_show_through = false;
             if self.thread_texture && o.enabled {
                 self.occurrence_threads(o, &place, &mut threads);
             }
@@ -2270,7 +2272,7 @@ impl CadCraftApp {
         self.frame_corner_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_corner_menu(&ctx);
         if let Some(g) = self.cons.browser_hover.clone() {
-            self.draw_geom(&painter, rect, &g, Color32::from_rgb(110, 220, 120));
+            self.draw_geom(&painter, rect, &g, crate::gui::theme::hover_edge());
         }
         if let (Some(p), Some(text)) = (pointer, self.asm_cursor_hint()) {
             super::command_ui::cursor_hint(&painter, rect, p, &text);

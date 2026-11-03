@@ -381,7 +381,7 @@ impl CadCraftApp {
         };
         for r in d.def.all_edges() {
             let col = if active.contains(&r) || d.def.fillet_type == FilletType::Variable {
-                Color32::from_rgb(40, 110, 230)
+                crate::gui::theme::canvas().selected_edge
             } else {
                 Color32::from_rgb(110, 140, 190)
             };
@@ -394,16 +394,16 @@ impl CadCraftApp {
             && let Some(f) = body.find_face(name)
         {
             for e in crate::part::select::edges_of_face(body, f) {
-                line(e, Color32::from_rgb(40, 110, 230));
+                line(e, crate::gui::theme::canvas().selected_edge);
             }
         }
         if let Some(e) = hover {
-            line(e, Color32::from_rgb(60, 190, 90));
+            line(e, crate::gui::theme::hover_edge());
         }
         // A face under the cursor (Loop / Feature / Full Round): its outline.
         if let Some(f) = face_hover.and_then(|n| body.find_face(n)) {
             for e in crate::part::select::edges_of_face(body, f) {
-                line(e, Color32::from_rgb(60, 190, 90));
+                line(e, crate::gui::theme::hover_edge());
             }
         }
         if let Ok(edges) = self.blend_preview() {

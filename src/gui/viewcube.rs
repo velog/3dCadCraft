@@ -302,8 +302,9 @@ pub fn draw(
     };
     let hit = hover.and_then(|p| pick(cam, viewport, p));
     let proj = Proj::new(cam, viewport);
-    let hot = Color32::from_rgb(120, 170, 235);
-    let hot_fill = Color32::from_rgba_unmultiplied(110, 165, 240, 200);
+    let scheme = super::theme::canvas();
+    let hot = scheme.view_cube_hot;
+    let hot_fill = super::theme::with_alpha(hot, 200);
     let edge = Stroke::new(1.0, k.c(Color32::from_gray(80)));
 
     // Compass ring: behind the cube unless seen from below.
@@ -337,7 +338,8 @@ pub fn draw(
     for f in visible_faces(&proj) {
         // Shaded: brighter the more the face looks at the viewer.
         let l = 0.72 + 0.28 * f.facing as f32;
-        let base = [222.0, 228.0, 238.0].map(|c: f32| (c * l) as u8);
+        let c = scheme.view_cube;
+        let base = [c.r(), c.g(), c.b()].map(|v| (f32::from(v) * l) as u8);
         let fill = k.c(Color32::from_rgb(base[0], base[1], base[2]));
         let quad = cell(&proj, &f, -1.0, 1.0, -1.0, 1.0);
         painter.add(Shape::convex_polygon(quad.clone(), fill, edge));
@@ -419,7 +421,7 @@ pub fn draw(
         painter.rect_filled(
             home,
             3.0,
-            k.c(Color32::from_rgba_unmultiplied(110, 165, 240, 90)),
+            k.c(super::theme::with_alpha(scheme.view_cube_hot, 90)),
         );
     }
     let base = icons::Palette::enabled();
@@ -694,9 +696,9 @@ pub fn draw_triad(painter: &Painter, cam: &OrbitCamera, viewport: Rect) {
     let origin = triad_origin(viewport);
     let len = 34.0;
     let mut axes = [
-        (Vector3::x(), "X", Color32::from_rgb(220, 60, 55)),
-        (Vector3::y(), "Y", Color32::from_rgb(60, 175, 70)),
-        (Vector3::z(), "Z", Color32::from_rgb(60, 110, 230)),
+        (Vector3::x(), "X", super::theme::canvas().axis_x),
+        (Vector3::y(), "Y", super::theme::canvas().axis_y),
+        (Vector3::z(), "Z", super::theme::canvas().axis_z),
     ]
     .map(|(a, l, c)| (rot * a, l, c));
     // Far axes first, so the nearer ones are drawn over them.

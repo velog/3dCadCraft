@@ -1175,7 +1175,7 @@ impl CadCraftApp {
         if let Some(pw) = &dragged
             && let Ok(WorkResult::Plane(_, plane)) = self.compute_work(&pw.def)
         {
-            let fill = Color32::from_rgba_unmultiplied(60, 150, 255, 70);
+            let fill = super::theme::with_alpha(super::theme::canvas().command_preview, 70);
             self.draw_plane_rect(painter, rect, &plane, fill, true, &pw.name, false);
         }
         for w in self.visible_work() {
@@ -1189,16 +1189,16 @@ impl CadCraftApp {
                 let color = if it.ucs {
                     ucs_color(&it.id)
                 } else {
-                    AXIS_COLOR
+                    super::theme::canvas().work_feature
                 };
                 if let Some(plane) = part.work.planes.get(&it.id) {
                     // Only the outline while a sketch is edited (no tint).
                     let fill = if self.editing.is_some() {
                         Color32::TRANSPARENT
                     } else if hot {
-                        Color32::from_rgba_unmultiplied(255, 160, 40, 80)
+                        super::theme::canvas().work_hot
                     } else {
-                        Color32::from_rgba_unmultiplied(240, 200, 90, 40)
+                        super::theme::canvas().work_fill
                     };
                     let label = if it.ucs { "" } else { it.label.as_str() };
                     self.draw_plane_rect(painter, rect, plane, fill, hot, label, it.ucs);
@@ -1214,8 +1214,8 @@ impl CadCraftApp {
         if let Some(d) = &self.work_draft
             && let Some(Ok(r)) = self.preview_draft(d)
         {
-            let preview = Color32::from_rgb(60, 150, 255);
-            let fill = Color32::from_rgba_unmultiplied(60, 150, 255, 70);
+            let preview = super::theme::canvas().command_preview;
+            let fill = super::theme::with_alpha(super::theme::canvas().command_preview, 70);
             match r {
                 WorkResult::Plane(_, plane) => {
                     self.draw_plane_rect(painter, rect, &plane, fill, true, d.kind.title(), false)
@@ -1234,7 +1234,10 @@ impl CadCraftApp {
                             self.draw_plane_rect(painter, rect, pl, fill, true, "", true);
                         } else if let Some((p, v)) = tmp.axes.get(&sub) {
                             let l = label.split(' ').next().unwrap_or(label);
-                            let c = [UCS_X, UCS_Y, UCS_Z][k.saturating_sub(3).min(2)];
+                            let c = {
+                                let a = super::theme::canvas();
+                                [a.axis_x, a.axis_y, a.axis_z][k.saturating_sub(3).min(2)]
+                            };
                             self.draw_axis(painter, rect, p, v, true, l, c, true);
                         }
                     }
@@ -1317,7 +1320,10 @@ impl CadCraftApp {
             .map(|p| self.camera.project(p, rect))
             .collect();
         let Some(pts) = pts else { return };
-        let stroke = Stroke::new(if hot { 2.0 } else { 1.0 }, Color32::from_rgb(200, 140, 30));
+        let stroke = Stroke::new(
+            if hot { 2.0 } else { 1.0 },
+            super::theme::canvas().work_feature,
+        );
         painter.add(Shape::convex_polygon(pts.clone(), fill, stroke));
         if !label.is_empty() {
             painter.text(
@@ -1325,7 +1331,7 @@ impl CadCraftApp {
                 egui::Align2::LEFT_BOTTOM,
                 label,
                 egui::FontId::proportional(12.0),
-                Color32::from_rgb(130, 85, 0),
+                super::theme::canvas().work_label,
             );
         }
     }
@@ -1392,7 +1398,7 @@ impl CadCraftApp {
             return;
         };
         let r = if hot { 6.0 } else { 4.5 };
-        let color = Color32::from_rgb(200, 120, 20);
+        let color = super::theme::canvas().work_feature;
         // A diamond; grounded points are filled (Inventor's pushpin idea).
         let pts = vec![
             s + egui::vec2(0.0, -r),
@@ -1616,22 +1622,16 @@ fn rename(r: WorkResult, id: String) -> WorkResult {
     }
 }
 
-/// Colour of work axes.
-pub(super) const AXIS_COLOR: Color32 = Color32::from_rgb(200, 120, 20);
-/// UCS triad colours (X red, Y green, Z blue).
-const UCS_X: Color32 = Color32::from_rgb(210, 50, 50);
-const UCS_Y: Color32 = Color32::from_rgb(40, 160, 60);
-const UCS_Z: Color32 = Color32::from_rgb(50, 90, 220);
-
+/// The colour of a UCS part (its X, Y and Z); other work features' otherwise.
 fn ucs_color(id: &str) -> Color32 {
     if id.ends_with(":X") {
-        UCS_X
+        super::theme::canvas().axis_x
     } else if id.ends_with(":Y") {
-        UCS_Y
+        super::theme::canvas().axis_y
     } else if id.ends_with(":Z") {
-        UCS_Z
+        super::theme::canvas().axis_z
     } else {
-        AXIS_COLOR
+        super::theme::canvas().work_feature
     }
 }
 

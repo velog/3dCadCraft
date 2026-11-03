@@ -400,11 +400,11 @@ impl CadCraftApp {
     pub(super) fn asm_sub_overlay(&self, painter: &egui::Painter, rect: Rect) {
         for s in &self.asm.sub {
             if let AsmSub::Geom(g @ GeomRef::Edge { .. }) = s {
-                self.draw_geom(painter, rect, g, Color32::from_rgb(70, 130, 245));
+                self.draw_geom(painter, rect, g, crate::gui::theme::canvas().selected_edge);
             }
         }
         if let Some(AsmSub::Geom(g @ GeomRef::Edge { .. })) = &self.asm.sub_hover {
-            self.draw_geom(painter, rect, g, Color32::from_rgb(110, 220, 120));
+            self.draw_geom(painter, rect, g, crate::gui::theme::hover_edge());
         }
         let dot = |at: &[f64; 3], c: Color32| {
             let w = crate::kernel::Point3::new(at[0], at[1], at[2]);
@@ -415,11 +415,11 @@ impl CadCraftApp {
         };
         for s in &self.asm.sub {
             if let AsmSub::Point { at, .. } = s {
-                dot(at, Color32::from_rgb(70, 130, 245));
+                dot(at, crate::gui::theme::canvas().selected_edge);
             }
         }
         if let Some(AsmSub::Point { at, .. }) = &self.asm.sub_hover {
-            dot(at, Color32::from_rgb(110, 220, 120));
+            dot(at, crate::gui::theme::hover_edge());
         }
     }
 

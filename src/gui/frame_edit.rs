@@ -828,7 +828,7 @@ impl CadCraftApp {
                 .is_some_and(|(mf, mi, _, _)| mf == f && mi == i);
             let hot = open || pointer.is_some_and(|p| r.expand(2.0).contains(p));
             let fill = if hot {
-                egui::Color32::from_rgb(110, 220, 120)
+                crate::gui::theme::hover_edge()
             } else {
                 egui::Color32::from_rgb(255, 150, 40)
             };

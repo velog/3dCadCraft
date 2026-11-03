@@ -12,11 +12,15 @@ struct Uniforms {
     // Section View's second plane (Quarter / Three Quarter); 0 = none.
     clip2: vec4<f32>,
     // x: monochrome faces, y: the two planes cut where either does
-    // (Three Quarter) instead of where both do (Quarter).
+    // (Three Quarter) instead of where both do (Quarter), z: a background
+    // picture, w: a section cap picture.
     style: vec4<f32>,
     // The view's background, gamma-encoded: top and bottom of the gradient.
     bg_top: vec4<f32>,
     bg_bottom: vec4<f32>,
+    // xy: how much of the background picture the view shows (it fills the view
+    // and keeps its proportions).
+    image: vec4<f32>,
 };
 
 fn cut_by(c: vec4<f32>, p: vec3<f32>) -> bool {
@@ -36,6 +40,9 @@ fn sliced(p: vec3<f32>) -> bool {
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var picture_sampler: sampler;
+@group(0) @binding(2) var background_picture: texture_2d<f32>;
+@group(0) @binding(3) var cap_picture: texture_2d<f32>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -68,6 +75,7 @@ fn to_gamma(c: vec3<f32>) -> vec3<f32> {
 struct BackgroundOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) t: f32,
+    @location(1) uv: vec2<f32>,
 };
 
 @vertex
@@ -77,11 +85,17 @@ fn vs_background(@builtin(vertex_index) k: u32) -> BackgroundOut {
     let y = f32(i32(k >> 1u) * 4 - 1);
     o.clip = vec4<f32>(x, y, 1.0, 1.0);
     o.t = (y + 1.0) / 2.0;
+    o.uv = vec2<f32>((x + 1.0) / 2.0, (1.0 - y) / 2.0);
     return o;
 }
 
 @fragment
 fn fs_background(i: BackgroundOut) -> @location(0) vec4<f32> {
+    if (u.style.z > 0.5) {
+        // Pictures hold gamma-encoded colours, as the target does.
+        let uv = vec2<f32>(0.5) + (i.uv - vec2<f32>(0.5)) * u.image.xy;
+        return vec4<f32>(textureSampleLevel(background_picture, picture_sampler, uv, 0.0).xyz, 1.0);
+    }
     return vec4<f32>(mix(u.bg_bottom.xyz, u.bg_top.xyz, clamp(i.t, 0.0, 1.0)), 1.0);
 }
 
@@ -118,7 +132,12 @@ fn fs_backface(i: VsOut) -> @location(0) vec4<f32> {
     if (dot(u.clip.xyz, u.clip.xyz) > 0.0) {
         // Sliced: through the cut we see the inside of the solid, i.e. its
         // back faces — exactly the section area. Paint it as a flat section
-        // fill with 45° hatching in screen space (like Inventor's cut faces).
+        // fill with 45° hatching in screen space (like Inventor's cut faces),
+        // or the user's picture, tiled at its own size.
+        if (u.style.w > 0.5) {
+            let tile = i.clip.xy / vec2<f32>(textureDimensions(cap_picture));
+            return vec4<f32>(textureSampleLevel(cap_picture, picture_sampler, tile, 0.0).xyz, 1.0);
+        }
         let k = (i.clip.x + i.clip.y) / 9.0;
         let line = abs(k - round(k)) * 9.0 < 1.1;
         var c = vec3<f32>(0.62, 0.66, 0.74);

@@ -49,7 +49,9 @@ pub(super) struct RibDraft {
     pub edit: Option<usize>,
 }
 
-const PICK: egui::Color32 = egui::Color32::from_rgb(60, 190, 90);
+fn pick_color() -> egui::Color32 {
+    crate::gui::theme::canvas().hover_edge
+}
 const CHOSEN: egui::Color32 = egui::Color32::from_rgb(40, 120, 230);
 const PREVIEW: egui::Color32 = egui::Color32::from_rgb(230, 120, 20);
 
@@ -277,7 +279,12 @@ impl CadCraftApp {
             let hover = self.coil_rib_hover(p, rect);
             if let Some((_, lines)) = &hover {
                 for line in lines {
-                    self.draw_visible_polyline(painter, rect, line, egui::Stroke::new(3.0, PICK));
+                    self.draw_visible_polyline(
+                        painter,
+                        rect,
+                        line,
+                        egui::Stroke::new(3.0, pick_color()),
+                    );
                 }
             }
             if let Some(text) = self.coil_rib_prompt() {

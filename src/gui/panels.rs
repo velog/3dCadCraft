@@ -5317,7 +5317,14 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 ui.data_mut(|d| d.insert_temp(tab_id, tab));
                 ui.separator();
                 if tab == "Colors" {
-                    let out = super::theme::colors_tab(ui, &mut self.colors);
+                    let out = super::theme::colors_tab(
+                        ui,
+                        &mut self.colors,
+                        &mut self.select.prehighlight,
+                    );
+                    if let Some(slot) = out.pick {
+                        self.open_dialog(super::files::DialogPurpose::Picture(slot));
+                    }
                     self.scene_dirty |= out.scene;
                     if out.export {
                         self.open_dialog(super::files::DialogPurpose::ExportOptions);

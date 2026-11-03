@@ -26,6 +26,8 @@ pub(super) enum DialogPurpose {
     /// Application Options › Colors › Export / Import.
     ExportOptions,
     ImportOptions,
+    /// A picture for Application Options > Colors.
+    Picture(super::theme::ImageSlot),
     /// Parameters → Export CSV / Import CSV.
     ExportParams,
     ImportParams,
@@ -88,6 +90,12 @@ impl DialogPurpose {
             DialogPurpose::Diagnostics => "Save Diagnostics".into(),
             DialogPurpose::ExportOptions => "Export Application Options".into(),
             DialogPurpose::ImportOptions => "Import Application Options".into(),
+            DialogPurpose::Picture(super::theme::ImageSlot::Background) => {
+                "Background Image".into()
+            }
+            DialogPurpose::Picture(super::theme::ImageSlot::Cap) => {
+                "Section Capping Plane Texture".into()
+            }
             DialogPurpose::ExportParams => "Export Parameters".into(),
             DialogPurpose::ImportParams => "Import Parameters".into(),
             DialogPurpose::ExportBom => "Export Bill of Materials".into(),
@@ -118,6 +126,7 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Glb) => &["glb"],
             DialogPurpose::Diagnostics => &["zip"],
             DialogPurpose::ExportOptions | DialogPurpose::ImportOptions => &["json"],
+            DialogPurpose::Picture(_) => &["png", "jpg", "jpeg", "bmp"],
             DialogPurpose::ExportParams
             | DialogPurpose::ImportParams
             | DialogPurpose::ExportBom
@@ -141,6 +150,7 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Glb) => "glTF binary",
             DialogPurpose::Diagnostics => "Zip archive",
             DialogPurpose::ExportOptions | DialogPurpose::ImportOptions => "Settings (JSON)",
+            DialogPurpose::Picture(_) => "Pictures",
             DialogPurpose::ExportParams
             | DialogPurpose::ImportParams
             | DialogPurpose::ExportBom
@@ -158,6 +168,7 @@ impl DialogPurpose {
             DialogPurpose::Open
                 | DialogPurpose::ImportParams
                 | DialogPurpose::ImportOptions
+                | DialogPurpose::Picture(_)
                 | DialogPurpose::TableSource
                 | DialogPurpose::LinkFile
                 | DialogPurpose::InsertDocument
@@ -922,6 +933,7 @@ impl CadCraftApp {
             DialogPurpose::ExportPdf => format!("{stem}.pdf"),
             DialogPurpose::ImportParams
             | DialogPurpose::ImportOptions
+            | DialogPurpose::Picture(_)
             | DialogPurpose::TableSource
             | DialogPurpose::LinkFile
             | DialogPurpose::InsertDocument
@@ -1445,6 +1457,9 @@ impl CadCraftApp {
                         .map_err(|e| format!("Export Application Options: {e}")),
                 );
             }
+            DialogPurpose::Picture(slot) => {
+                self.colors.choose_picture(slot, &path.to_string_lossy());
+            }
             DialogPurpose::ImportOptions => {
                 let read = std::fs::read_to_string(&path)
                     .map_err(|e| e.to_string())
@@ -1797,7 +1812,7 @@ impl CadCraftApp {
         } else {
             scene.add_part(self.part(), None);
         }
-        let png = thumbnail::png(&scene, view, thumbnail::SIZE);
+        let png = thumbnail::png_on(&scene, view, thumbnail::SIZE, self.colors.preview_back());
         log::info!(
             "thumbnail: {} ms, {} bytes",
             started.elapsed().as_millis(),

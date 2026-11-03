@@ -16,8 +16,8 @@ mod colors_tab;
 pub mod scheme;
 mod tokens;
 
-pub use colors_tab::{ColorsUi, colors_tab, export_file, scheme_editor};
-pub use scheme::{canvas, scene_rgb};
+pub use colors_tab::{ColorsUi, ImageSlot, Picture, colors_tab, export_file, scheme_editor};
+pub use scheme::{canvas, hover_edge, scene_rgb, set_prehighlight, with_alpha};
 pub use tokens::{IconColors, Tokens, UiTheme, current, set_current, tokens};
 
 /// Family of text drawn on a drawing sheet: the PDF embeds this same font and

@@ -310,12 +310,13 @@ pub fn draw_sketch(
         for l in label_layout(painter, cam, rect, sketch, style.dim_display) {
             let hot = style.hovered_constraint == Some(l.constraint);
             let sel = style.selected_constraints.contains(&l.constraint);
+            let k = super::theme::canvas();
             let fill = if sel {
-                Color32::from_rgb(255, 170, 60)
+                k.highlight
             } else if hot {
-                Color32::from_rgb(255, 215, 140)
+                k.highlight.lerp_to_gamma(Color32::WHITE, 0.5)
             } else {
-                Color32::from_rgba_unmultiplied(255, 255, 230, 220)
+                k.label_fill
             };
             painter.rect_filled(l.rect, 3.0, fill);
             if sel || hot {
@@ -331,7 +332,11 @@ pub fn draw_sketch(
                 Align2::CENTER_CENTER,
                 &l.text,
                 FontId::proportional(12.0),
-                Color32::BLACK,
+                if sel || hot {
+                    Color32::BLACK
+                } else {
+                    k.label_text
+                },
             );
         }
     }
@@ -692,7 +697,7 @@ fn draw_dof(
 ) {
     use crate::sketch::PointFreedom;
     let sketch = &ps.sketch;
-    let color = Color32::from_rgb(150, 60, 200);
+    let color = super::theme::canvas().dof_glyph;
     let stroke = Stroke::new(1.5, color);
     // Screen direction of a sketch-plane vector at point `at`.
     let dir = |at: Point2, v: Vector2| -> Option<eframe::egui::Vec2> {
@@ -979,19 +984,25 @@ pub fn draw_sketch_frame(
         line(
             (shown.0.0, 0.0),
             (shown.0.1, 0.0),
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(200, 40, 40, 150)),
+            Stroke::new(
+                1.0,
+                super::theme::with_alpha(super::theme::canvas().axis_x, 150),
+            ),
         );
         line(
             (0.0, shown.1.0),
             (0.0, shown.1.1),
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(40, 160, 40, 150)),
+            Stroke::new(
+                1.0,
+                super::theme::with_alpha(super::theme::canvas().axis_y, 150),
+            ),
         );
     }
     if triad {
         let len = extent * 0.15;
         for ((u, v), color, name) in [
-            ((len, 0.0), Color32::from_rgb(210, 30, 30), "X"),
-            ((0.0, len), Color32::from_rgb(30, 160, 30), "Y"),
+            ((len, 0.0), super::theme::canvas().axis_x, "X"),
+            ((0.0, len), super::theme::canvas().axis_y, "Y"),
         ] {
             if let (Some(o), Some(tip)) = (to_screen(0.0, 0.0), to_screen(u, v)) {
                 painter.arrow(o, tip - o, Stroke::new(2.5, color));
@@ -1086,19 +1097,16 @@ pub fn draw_origin_planes(
             .collect();
         let Some(quad) = quad else { continue };
         let hot = hovered == Some(plane);
-        let fill = if hot {
-            Color32::from_rgba_unmultiplied(255, 160, 40, 90)
-        } else {
-            Color32::from_rgba_unmultiplied(230, 190, 90, 45)
-        };
-        let stroke = Stroke::new(if hot { 2.0 } else { 1.0 }, Color32::from_rgb(190, 140, 40));
+        let k = super::theme::canvas();
+        let fill = if hot { k.work_hot } else { k.work_fill };
+        let stroke = Stroke::new(if hot { 2.0 } else { 1.0 }, k.work_feature);
         painter.add(Shape::convex_polygon(quad.clone(), fill, stroke));
         painter.text(
             quad[2],
             Align2::LEFT_BOTTOM,
             plane.label(),
             FontId::proportional(12.0),
-            Color32::from_rgb(120, 80, 0),
+            k.work_label,
         );
     }
 }
@@ -1110,7 +1118,7 @@ pub fn draw_face_highlight(painter: &Painter, cam: &OrbitCamera, rect: Rect, mes
         cam,
         rect,
         mesh,
-        Color32::from_rgba_unmultiplied(255, 150, 40, 110),
+        super::theme::with_alpha(super::theme::canvas().highlight, 110),
     );
 }
 

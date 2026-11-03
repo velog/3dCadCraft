@@ -1,16 +1,67 @@
-//! Application Options › Colors and the Color Scheme editor (spec 0.18). Options
-//! whose logic is not there yet are shown disabled, with their spec row (rule 15).
+//! Application Options › Colors and the Color Scheme editor (spec 0.18).
 
 use super::scheme::{
-    CanvasColors, CanvasScheme, DEFAULT_SCHEME, ELEMENTS, builtin_schemes, canvas, load_schemes,
-    remove_scheme, save_scheme, schemes_dir, set_canvas, unique_name,
+    CanvasColors, CanvasScheme, DEFAULT_SCHEME, ELEMENTS, builtin_schemes, canvas, from_hex,
+    load_schemes, remove_scheme, save_scheme, schemes_dir, set_canvas, to_hex, unique_name,
 };
 use super::{Tokens, UiTheme, current, set_current};
 use eframe::egui::{self, Color32, CornerRadius, Rect, RichText, Sense, Stroke, Vec2};
 use serde_json::{Value, json};
+use std::sync::mpsc::{Receiver, channel};
 
-/// The tooltip of an option without logic.
-const LATER: &str = "Spec 0.18 §3: the logic comes later";
+/// A picture's longest side in memory: a photo's full size only costs memory here.
+const MOST_PICTURE_SIDE: u32 = 4096;
+
+/// Which picture of the view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageSlot {
+    Background,
+    Cap,
+}
+
+/// Decoded pixels: sRGB, straight alpha.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Picture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// Reads a PNG, JPEG or BMP file.
+pub fn read_picture(path: &str) -> Result<Picture, String> {
+    let img = image::ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?
+        .decode()
+        .map_err(|e| e.to_string())?;
+    let img = if img.width().max(img.height()) > MOST_PICTURE_SIDE {
+        img.thumbnail(MOST_PICTURE_SIDE, MOST_PICTURE_SIDE)
+    } else {
+        img
+    };
+    let rgba = img.to_rgba8();
+    Ok(Picture {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    })
+}
+
+/// A picture's setting: in use, and its file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PictureSetting {
+    pub on: bool,
+    pub path: String,
+}
+
+/// A file being read on a worker thread, with the setting to go back to.
+#[derive(Debug)]
+struct PictureJob {
+    slot: ImageSlot,
+    before: PictureSetting,
+    answer: Receiver<Result<Picture, String>>,
+}
 
 /// What the tab asks of the application.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -19,6 +70,8 @@ pub struct TabOut {
     pub scene: bool,
     pub export: bool,
     pub import: bool,
+    /// Asks for a picture's file.
+    pub pick: Option<ImageSlot>,
 }
 
 /// The state of the In-canvas schemes.
@@ -30,6 +83,21 @@ pub struct ColorsUi {
     pub active: String,
     /// Background: gradient (else 1 Color).
     pub gradient: bool,
+    /// Background Image.
+    pub background: PictureSetting,
+    /// Section Capping Plane Texture: Bitmap Image.
+    pub cap: PictureSetting,
+    /// Enable Enhanced Highlighting, Highlight Hidden Faces.
+    pub enhanced: bool,
+    pub hidden_faces: bool,
+    /// Preview Image Background: a fixed colour for saved previews.
+    pub preview_fixed: bool,
+    pub preview_color: Color32,
+    /// The preview box shows the drawing environment.
+    drafting: bool,
+    jobs: Vec<PictureJob>,
+    /// The file each slot's picture last came from.
+    read: [Option<String>; 2],
     /// The editor window is open.
     pub editor: bool,
     /// A scheme's new name being typed.
@@ -46,6 +114,15 @@ impl Default for ColorsUi {
             custom: Vec::new(),
             active: DEFAULT_SCHEME.to_owned(),
             gradient: true,
+            background: PictureSetting::default(),
+            cap: PictureSetting::default(),
+            enhanced: false,
+            hidden_faces: false,
+            preview_fixed: false,
+            preview_color: Color32::WHITE,
+            drafting: false,
+            jobs: Vec::new(),
+            read: [None, None],
             editor: false,
             rename: None,
             message: None,
@@ -89,6 +166,106 @@ impl ColorsUi {
             DEFAULT_SCHEME.to_owned()
         };
         set_canvas(self.colors());
+    }
+
+    fn setting(&mut self, slot: ImageSlot) -> &mut PictureSetting {
+        match slot {
+            ImageSlot::Background => &mut self.background,
+            ImageSlot::Cap => &mut self.cap,
+        }
+    }
+
+    /// The saved setting at start: read the file only when it is in use.
+    pub fn load_picture(&mut self, slot: ImageSlot, on: bool, path: &str) {
+        let before = self.setting(slot).clone();
+        *self.setting(slot) = PictureSetting {
+            on,
+            path: path.to_owned(),
+        };
+        if on && !path.is_empty() {
+            self.start_reading(slot, before);
+        }
+    }
+
+    /// The file chosen in the dialog: in use once it has been read (rule 5: a file
+    /// that cannot be read leaves the setting as it was).
+    pub fn choose_picture(&mut self, slot: ImageSlot, path: &str) {
+        let before = self.setting(slot).clone();
+        *self.setting(slot) = PictureSetting {
+            on: true,
+            path: path.to_owned(),
+        };
+        self.start_reading(slot, before);
+    }
+
+    fn start_reading(&mut self, slot: ImageSlot, before: PictureSetting) {
+        let path = self.setting(slot).path.clone();
+        if self.read[slot as usize].as_deref() == Some(path.as_str()) {
+            return;
+        }
+        let (tell, answer) = channel();
+        std::thread::spawn(move || {
+            let _ = tell.send(read_picture(&path));
+        });
+        self.jobs.push(PictureJob {
+            slot,
+            before,
+            answer,
+        });
+    }
+
+    /// A worker is still reading: keep the frames coming.
+    pub fn pictures_pending(&self) -> bool {
+        !self.jobs.is_empty()
+    }
+
+    /// The pictures read since the last call. A file that failed puts back what
+    /// was set before and says why.
+    pub fn finished_pictures(&mut self) -> Vec<(ImageSlot, Picture)> {
+        let mut out = Vec::new();
+        let mut jobs = std::mem::take(&mut self.jobs);
+        jobs.retain_mut(|job| {
+            let Ok(answer) = job.answer.try_recv() else {
+                return true;
+            };
+            match answer {
+                Ok(p) => {
+                    self.read[job.slot as usize] = Some(self.setting(job.slot).path.clone());
+                    out.push((job.slot, p));
+                }
+                Err(e) => {
+                    let s = self.setting(job.slot);
+                    let message = format!("Picture: {}: {e}", s.path);
+                    log::warn!("{message}");
+                    *s = job.before.clone();
+                    self.message = Some(message);
+                }
+            }
+            false
+        });
+        self.jobs = jobs;
+        out
+    }
+
+    /// Preview Image Background as the options store it.
+    pub fn preview_text(&self) -> String {
+        if self.preview_fixed {
+            to_hex(self.preview_color)
+        } else {
+            String::new()
+        }
+    }
+
+    pub fn set_preview_text(&mut self, text: &str) {
+        let color = from_hex(text);
+        self.preview_fixed = color.is_some();
+        self.preview_color = color.unwrap_or(Color32::WHITE);
+    }
+
+    /// The colour behind a saved preview; `None`: transparent.
+    pub fn preview_back(&self) -> Option<[u8; 3]> {
+        let c = self.preview_color;
+        self.preview_fixed.then(|| [c.r(), c.g(), c.b()])
     }
 
     /// Puts a scheme in use.
@@ -201,21 +378,48 @@ pub fn export_file(options: Value, schemes: Value) -> Value {
     json!({ "options": options, "color_schemes": schemes })
 }
 
-/// A check box that cannot change yet.
-fn later_check(ui: &mut egui::Ui, on: bool, text: &str) {
-    let mut value = on;
-    ui.add_enabled(false, egui::Checkbox::new(&mut value, text))
-        .on_disabled_hover_text(LATER);
+/// A drawing sheet in small: paper in any theme (spec 0.18 §5).
+fn preview_sheet(p: &egui::Painter, view: Rect) {
+    p.rect_filled(view, CornerRadius::ZERO, Color32::from_gray(150));
+    let sheet = view.shrink(12.0);
+    p.rect_filled(sheet, CornerRadius::ZERO, Color32::WHITE);
+    let pen = Stroke::new(1.0, Color32::BLACK);
+    p.rect_stroke(
+        sheet.shrink(5.0),
+        CornerRadius::ZERO,
+        pen,
+        egui::StrokeKind::Inside,
+    );
+    let block = Rect::from_min_max(
+        sheet.right_bottom() - Vec2::new(60.0, 24.0),
+        sheet.right_bottom() - Vec2::new(5.0, 5.0),
+    );
+    p.rect_stroke(block, CornerRadius::ZERO, pen, egui::StrokeKind::Inside);
+    let part = Rect::from_center_size(sheet.center() - Vec2::new(18.0, 6.0), Vec2::new(70.0, 34.0));
+    p.rect_stroke(part, CornerRadius::ZERO, pen, egui::StrokeKind::Inside);
 }
 
-/// A radio button that cannot change yet.
-fn later_radio(ui: &mut egui::Ui, on: bool, text: &str) {
-    ui.add_enabled(false, egui::RadioButton::new(on, text))
-        .on_disabled_hover_text(LATER);
+/// The file's name after the row of a picture, or the Browse button's hint.
+fn picture_row(ui: &mut egui::Ui, setting: &PictureSetting, slot: ImageSlot, out: &mut TabOut) {
+    ui.horizontal(|ui| {
+        if ui
+            .button("Browse...")
+            .on_hover_text("A PNG, JPEG or BMP file")
+            .clicked()
+        {
+            out.pick = Some(slot);
+        }
+        let name = std::path::Path::new(&setting.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("No file chosen");
+        ui.label(RichText::new(name).weak())
+            .on_hover_text(&setting.path);
+    });
 }
 
 /// The frame of a theme and the view of a scheme in small.
-fn preview(ui: &mut egui::Ui, k: &Tokens, c: &CanvasColors) {
+fn preview(ui: &mut egui::Ui, k: &Tokens, c: &CanvasColors, drafting: bool, picture: bool) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(300.0, 170.0), Sense::hover());
     let p = ui.painter();
     p.rect_filled(rect, CornerRadius::same(4), k.panel);
@@ -259,6 +463,19 @@ fn preview(ui: &mut egui::Ui, k: &Tokens, c: &CanvasColors) {
             c.background_top.lerp_to_gamma(bottom, t),
         );
     }
+    if drafting {
+        preview_sheet(p, view);
+        return;
+    }
+    if picture {
+        p.text(
+            view.left_top() + Vec2::new(6.0, 4.0),
+            egui::Align2::LEFT_TOP,
+            "Background Image",
+            egui::FontId::proportional(10.0),
+            c.work_label,
+        );
+    }
     let part = Rect::from_center_size(view.center(), Vec2::new(90.0, 46.0));
     p.rect_filled(
         part,
@@ -291,15 +508,17 @@ fn preview(ui: &mut egui::Ui, k: &Tokens, c: &CanvasColors) {
 }
 
 /// The tab's content.
-pub fn colors_tab(ui: &mut egui::Ui, s: &mut ColorsUi) -> TabOut {
+pub fn colors_tab(ui: &mut egui::Ui, s: &mut ColorsUi, prehighlight: &mut bool) -> TabOut {
     let mut out = TabOut::default();
     ui.horizontal(|ui| {
         ui.label("Show:");
-        later_radio(ui, true, "Design");
-        later_radio(ui, false, "Drafting");
+        ui.radio_value(&mut s.drafting, false, "Design")
+            .on_hover_text("The preview shows the model's view");
+        ui.radio_value(&mut s.drafting, true, "Drafting")
+            .on_hover_text("The preview shows a drawing: sheets are paper in every scheme");
     });
     let mut theme = current();
-    preview(ui, &theme.tokens(), &canvas());
+    preview(ui, &theme.tokens(), &canvas(), s.drafting, s.background.on);
     ui.add_space(6.0);
     ui.label(RichText::new("UI Theme").strong());
     ui.horizontal(|ui| {
@@ -314,9 +533,16 @@ pub fn colors_tab(ui: &mut egui::Ui, s: &mut ColorsUi) -> TabOut {
     }
     ui.add_space(6.0);
     ui.label(RichText::new("Highlight").strong());
-    later_check(ui, true, "Enable Prehighlight");
-    later_check(ui, false, "Enable Enhanced Highlighting");
-    later_check(ui, false, "Highlight Hidden Faces");
+    ui.checkbox(prehighlight, "Enable Prehighlight")
+        .on_hover_text("Light what is under the cursor before you click it");
+    out.scene |= ui
+        .checkbox(&mut s.enhanced, "Enable Enhanced Highlighting")
+        .on_hover_text("In an assembly: selected and prehighlighted components show through others")
+        .changed();
+    out.scene |= ui
+        .checkbox(&mut s.hidden_faces, "Highlight Hidden Faces")
+        .on_hover_text("A selected face behind others shows through them, with a thin outline")
+        .changed();
     ui.add_space(6.0);
     ui.label(RichText::new("In-canvas Color Scheme").strong());
     ui.horizontal(|ui| {
@@ -349,24 +575,83 @@ pub fn colors_tab(ui: &mut egui::Ui, s: &mut ColorsUi) -> TabOut {
     ui.add_space(6.0);
     ui.label(RichText::new("Background").strong());
     ui.horizontal(|ui| {
-        let mut gradient = s.gradient;
-        ui.radio_value(&mut gradient, false, "1 Color");
-        ui.radio_value(&mut gradient, true, "Gradient");
-        later_radio(ui, false, "Background Image");
-        if gradient != s.gradient {
-            s.gradient = gradient;
+        if ui
+            .radio(!s.background.on && !s.gradient, "1 Color")
+            .clicked()
+        {
+            s.background.on = false;
+            s.gradient = false;
             set_canvas(s.colors());
         }
+        if ui
+            .radio(!s.background.on && s.gradient, "Gradient")
+            .clicked()
+        {
+            s.background.on = false;
+            s.gradient = true;
+            set_canvas(s.colors());
+        }
+        if ui
+            .radio(s.background.on, "Background Image")
+            .on_hover_text(
+                "A picture behind the model; it fills the view and keeps its proportions",
+            )
+            .clicked()
+        {
+            if s.background.path.is_empty() {
+                out.pick = Some(ImageSlot::Background);
+            } else {
+                let path = s.background.path.clone();
+                s.choose_picture(ImageSlot::Background, &path);
+            }
+        }
     });
+    if s.background.on {
+        let setting = s.background.clone();
+        picture_row(ui, &setting, ImageSlot::Background, &mut out);
+    }
     ui.add_space(6.0);
     ui.label(RichText::new("Section Capping Plane Texture").strong());
     ui.horizontal(|ui| {
-        later_radio(ui, true, "Default - Gray");
-        later_radio(ui, false, "Bitmap Image");
+        if ui.radio(!s.cap.on, "Default - Gray").clicked() {
+            s.cap.on = false;
+        }
+        if ui
+            .radio(s.cap.on, "Bitmap Image")
+            .on_hover_text("A picture on the section's cut faces, repeated at its own size")
+            .clicked()
+        {
+            if s.cap.path.is_empty() {
+                out.pick = Some(ImageSlot::Cap);
+            } else {
+                let path = s.cap.path.clone();
+                s.choose_picture(ImageSlot::Cap, &path);
+            }
+        }
     });
+    if s.cap.on {
+        let setting = s.cap.clone();
+        picture_row(ui, &setting, ImageSlot::Cap, &mut out);
+    }
+    if let Some(m) = &s.message {
+        ui.colored_label(super::tokens().error, m);
+    }
     ui.add_space(6.0);
     ui.label(RichText::new("Preview Image Background").strong());
-    later_check(ui, false, "Use a fixed background when saving previews");
+    ui.horizontal(|ui| {
+        ui.checkbox(
+            &mut s.preview_fixed,
+            "Use a fixed background when saving previews",
+        )
+        .on_hover_text("Off: the saved preview's background is transparent");
+        ui.add_enabled_ui(s.preview_fixed, |ui| {
+            egui::color_picker::color_edit_button_srgba(
+                ui,
+                &mut s.preview_color,
+                egui::color_picker::Alpha::Opaque,
+            );
+        });
+    });
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         out.export = ui
@@ -555,6 +840,80 @@ mod tests {
         let mut s = ColorsUi::default();
         let name = s.new_scheme();
         (s, name)
+    }
+
+    /// Waits for the workers' answers.
+    fn pictures(s: &mut ColorsUi) -> Vec<(ImageSlot, Picture)> {
+        let mut got = Vec::new();
+        for _ in 0..500 {
+            got.extend(s.finished_pictures());
+            if !s.pictures_pending() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        got
+    }
+
+    fn temp_png(tag: &str, w: u32, h: u32) -> String {
+        let p = std::env::temp_dir().join(format!("cadcraft-pic-{tag}-{}.png", std::process::id()));
+        let rgba: Vec<u8> = [9, 8, 7, 255].repeat((w * h) as usize);
+        let bytes =
+            crate::part::thumbnail::encode_png(&rgba, w, h).unwrap_or_else(|| panic!("no png"));
+        std::fs::write(&p, bytes).unwrap_or_else(|e| panic!("{e}"));
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_chosen_picture_is_read_and_comes_into_use() {
+        let path = temp_png("ok", 3, 2);
+        let mut s = ColorsUi::default();
+        s.choose_picture(ImageSlot::Background, &path);
+        let got = pictures(&mut s);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].1.width, got[0].1.height), (3, 2));
+        assert_eq!(got[0].1.rgba[..4], [9, 8, 7, 255]);
+        assert!(s.background.on);
+        assert_eq!(s.message, None);
+        // Choosing it again reads nothing.
+        s.choose_picture(ImageSlot::Background, &path);
+        assert!(!s.pictures_pending());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_leaves_the_setting_as_it_was() {
+        let path = temp_png("good", 1, 1);
+        let mut s = ColorsUi::default();
+        s.choose_picture(ImageSlot::Cap, &path);
+        pictures(&mut s);
+        s.choose_picture(ImageSlot::Cap, "no such file.png");
+        assert!(pictures(&mut s).is_empty());
+        assert_eq!(
+            s.cap,
+            PictureSetting {
+                on: true,
+                path: path.clone()
+            }
+        );
+        assert!(
+            s.message
+                .as_deref()
+                .is_some_and(|m| m.contains("no such file"))
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_preview_background_comes_back_from_the_options() {
+        let mut s = ColorsUi::default();
+        assert_eq!(s.preview_back(), None);
+        assert_eq!(s.preview_text(), "");
+        s.set_preview_text("#102030");
+        assert_eq!(s.preview_back(), Some([0x10, 0x20, 0x30]));
+        assert_eq!(s.preview_text(), "#102030");
+        s.set_preview_text("not a colour");
+        assert_eq!(s.preview_back(), None);
     }
 
     #[test]
