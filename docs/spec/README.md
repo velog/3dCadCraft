@@ -112,6 +112,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [2.13-combine-split.md](2.13-combine-split.md) | Combine (Base, Toolbodies, Keep Toolbody) and Split (Split Face, Trim Solid, Split Solid) |
 | [2.15-materials.md](2.15-materials.md) | Materials, appearances, overrides, libraries, Styles Editor |
 | [2.16-browser.md](2.16-browser.md) | Model browser: order, nested sketches, bodies, End of Part, reordering, Suppress, Delete, Rename |
+| [2.17-emboss.md](2.17-emboss.md) | Emboss / Engrave: from a face, from the plane with taper, wrapped onto a cylinder |
 | [7.7-export.md](7.7-export.md) | Export: STL, STEP, GLB |
 | [7.7a-import.md](7.7a-import.md) | Import: STEP (AnyCAD Convert / Reference Model) |
 

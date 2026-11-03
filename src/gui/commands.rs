@@ -619,6 +619,8 @@ pub static COMMANDS: &[Command] = &[
         .spec("2.7-rib.md"),
     pp("part.emboss", "Emboss", "Релеф (Emboss)", Icon::Emboss, Pp::Emboss)
         .alias(&["RLF"])
+        .spec("2.17-emboss.md")
+        .tip("Emboss or engrave a sketch's profiles on a face, or from the sketch plane")
         .at(&[M_CREATE]),
     pp("part.derive", "Derive", "Производен детайл", Icon::Derive, Pp::Derive)
         .alias(&["DER"])

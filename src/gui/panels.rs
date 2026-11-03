@@ -7018,6 +7018,7 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
                 crate::part::BodyOp::Sculpt(_) => Icon::Sculpt,
                 crate::part::BodyOp::CopyObject(_) => Icon::CopyObject,
                 crate::part::BodyOp::Import(_) => Icon::Import,
+                crate::part::BodyOp::Emboss(_) => Icon::Emboss,
                 crate::part::BodyOp::Prism(_) => Icon::InsertFrame,
                 crate::part::BodyOp::Axial(_) => Icon::Revolve,
                 crate::part::BodyOp::Freeform(_) => Icon::FfPlane,

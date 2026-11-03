@@ -201,6 +201,8 @@ pub enum BodyOp {
     /// A library fastener's stepped body about Z, built without a Boolean
     /// (format revision 61).
     Axial(super::axial::AxialOp),
+    /// Emboss / Engrave of a sketch's profiles (format revision 62).
+    Emboss(super::emboss::EmbossOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -450,6 +452,7 @@ impl BodyOpFeature {
             BodyOp::Prism(_) => "Prism",
             BodyOp::Freeform(_) => "Freeform",
             BodyOp::Axial(_) => "Axial",
+            BodyOp::Emboss(_) => "Emboss",
         }
     }
 
@@ -458,6 +461,7 @@ impl BodyOpFeature {
         match &self.op {
             BodyOp::Patch(p) => p.sketch.as_deref(),
             BodyOp::Trim(t) => t.sketch(),
+            BodyOp::Emboss(e) => Some(&e.sketch),
             _ => None,
         }
     }
@@ -480,6 +484,7 @@ impl BodyOpFeature {
             BodyOp::Prism(o) => o.validate(),
             BodyOp::Freeform(o) => o.validate(),
             BodyOp::Axial(o) => o.validate(),
+            BodyOp::Emboss(o) => o.validate(),
         }
     }
 
@@ -502,7 +507,8 @@ impl BodyOpFeature {
             | BodyOp::MoveBodies(_)
             | BodyOp::Trim(_)
             | BodyOp::Extend(_)
-            | BodyOp::ReplaceFace(_) => false,
+            | BodyOp::ReplaceFace(_)
+            | BodyOp::Emboss(_) => false,
         }
     }
 
@@ -510,6 +516,7 @@ impl BodyOpFeature {
     pub fn fields(&self) -> Vec<(&'static str, Unit)> {
         match &self.op {
             BodyOp::Thicken(_) => vec![("distance", Unit::Mm)],
+            BodyOp::Emboss(_) => vec![("depth", Unit::Mm), ("taper", Unit::Deg)],
             BodyOp::Freeform(_) => vec![("length", Unit::Mm), ("width", Unit::Mm)],
             BodyOp::Extend(_) | BodyOp::Ruled(_) => vec![("distance", Unit::Mm)],
             BodyOp::DeleteFace(_)
@@ -535,6 +542,8 @@ impl BodyOpFeature {
     pub fn value(&self, field: &str) -> Option<Real> {
         match (&self.op, field) {
             (BodyOp::Thicken(t), "distance") => Some(t.distance),
+            (BodyOp::Emboss(o), "depth") => Some(o.depth),
+            (BodyOp::Emboss(o), "taper") => Some(o.taper),
             (BodyOp::Extend(o), "distance") => Some(o.distance),
             (BodyOp::Ruled(o), "distance") => Some(o.distance),
             (BodyOp::Freeform(o), "length") => Some(o.length),
@@ -548,6 +557,8 @@ impl BodyOpFeature {
     pub fn set(&mut self, field: &str, v: Real) {
         match (&mut self.op, field) {
             (BodyOp::Thicken(t), "distance") => t.distance = v,
+            (BodyOp::Emboss(o), "depth") => o.depth = v,
+            (BodyOp::Emboss(o), "taper") => o.taper = v,
             (BodyOp::Extend(o), "distance") => o.distance = v,
             (BodyOp::Ruled(o), "distance") => o.distance = v,
             (BodyOp::Freeform(o), "length") => o.length = v,
@@ -607,6 +618,7 @@ impl BodyOpFeature {
                 o.surfaces.len()
             ),
             BodyOp::CopyObject(o) => o.describe(),
+            BodyOp::Emboss(o) => o.describe(),
             BodyOp::Import(o) => o.describe(),
             BodyOp::Prism(_) => "Frame member".into(),
             BodyOp::Axial(_) => "Library component".into(),

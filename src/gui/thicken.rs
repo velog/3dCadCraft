@@ -590,6 +590,7 @@ impl CadCraftApp {
             BodyOp::ReplaceFace(_) => Icon::ReplaceFace,
             BodyOp::Sculpt(_) => Icon::Sculpt,
             BodyOp::CopyObject(_) => Icon::CopyObject,
+            BodyOp::Emboss(_) => Icon::Emboss,
             BodyOp::Import(_) => Icon::Import,
             BodyOp::Prism(_) => Icon::InsertFrame,
             BodyOp::Axial(_) => Icon::Revolve,

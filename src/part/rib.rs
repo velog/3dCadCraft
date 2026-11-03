@@ -247,6 +247,11 @@ impl Rays {
         self.hits(p, d).into_iter().skip(1).step_by(2).collect()
     }
 
+    /// The last crossing of the ray, if it has any.
+    pub fn last_hit(&self, p: Point3, d: Vector3) -> Option<Real> {
+        self.hits(p, d).last().copied()
+    }
+
     /// Where the ray enters the material and leaves it again: `(0, exit)`
     /// when it starts inside; `None` when it never meets the body.
     pub fn entry(&self, p: Point3, d: Vector3) -> Option<(Real, Real)> {

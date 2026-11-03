@@ -2860,6 +2860,37 @@ fn freeform_r59_reads() {
     assert!(zmax > 2.0 && zmax < 10.0, "{zmax}");
 }
 
+/// Revision 62: a plate with a pad embossed from its top and a pocket engraved into it.
+fn emboss_r62() -> PartDocument {
+    use cadcraft3d::part::emboss::{EmbossKind, EmbossOp};
+    use cadcraft3d::part::{BodyOp, BodyOpFeature, SketchOptions, SketchPlacement};
+    let mut part = PartDocument::with_box("Box1", [100.0, 60.0, 20.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    for (a, b, style) in [
+        ((10.0, 10.0), (40.0, 30.0), EmbossKind::EmbossFromFace),
+        ((60.0, 10.0), (90.0, 30.0), EmbossKind::EngraveFromFace),
+    ] {
+        let i = part
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap();
+        let plane = part.sketches[i].sketch.plane.clone();
+        let p = |(x, y): (f64, f64)| plane.project(&nalgebra::Point3::new(x, y, 20.0));
+        part.sketches[i]
+            .sketch
+            .add_rectangle_two_point(p(a), p(b))
+            .unwrap();
+        let mut op = EmbossOp::new(part.sketches[i].id.clone(), 2.0);
+        op.style = style;
+        part.add_body_op(BodyOpFeature::new(BodyOp::Emboss(op)))
+            .unwrap();
+    }
+    part
+}
+
 /// Revision 61: a chamfered hex bolt and a nut as one `BodyOp::Axial` each
 /// (the numbers written out: a library table may change).
 fn axial_r61() -> PartDocument {
@@ -3568,6 +3599,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r62/emboss_r62.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("EmbossR62");
+            project.add_document("Part1", DocumentData::Part(emboss_r62()));
             project.save(&f).unwrap();
         }
         let f = root().join("r61/axial_r61.3dcadcraft");

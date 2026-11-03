@@ -538,6 +538,57 @@ impl CadCraftApp {
                     flip: d.check(t, "Flip"),
                 })
             }
+            PartPlanned::Emboss => {
+                use crate::part::emboss::{EmbossKind, EmbossOp, EmbossSide};
+                let prev = match old {
+                    Some(BodyOp::Emboss(o)) => Some(o),
+                    _ => None,
+                };
+                let sketch = d
+                    .items_of("profile")
+                    .iter()
+                    .find_map(|(item, _)| match item {
+                        SelItem::Sketch(i) => self.part().sketches.get(*i).map(|s| s.id.clone()),
+                        _ => None,
+                    });
+                let Some(sketch) = sketch.or_else(|| prev.map(|o| o.sketch.clone())) else {
+                    return Err("select the profile's sketch".into());
+                };
+                let wrap = if d.check(t, "Wrap to Face") {
+                    let picked = d.items_of("face").iter().find_map(|(item, at)| match item {
+                        SelItem::Face(f) => at
+                            .or_else(|| self.item_point(item).map(|q| [q.x, q.y, q.z]))
+                            .map(|hint| FaceRef {
+                                face: f.clone(),
+                                hint,
+                            }),
+                        _ => None,
+                    });
+                    let Some(w) = picked.or_else(|| prev.and_then(|o| o.wrap.clone())) else {
+                        return Err("select the face to wrap onto".into());
+                    };
+                    Some(w)
+                } else {
+                    None
+                };
+                BodyOp::Emboss(EmbossOp {
+                    sketch,
+                    profiles: Vec::new(),
+                    style: match d.index(t, "Type") {
+                        1 => EmbossKind::EngraveFromFace,
+                        2 => EmbossKind::FromPlane,
+                        _ => EmbossKind::EmbossFromFace,
+                    },
+                    depth: d.num(t, "Depth").unwrap_or(1.0),
+                    side: match d.index(t, "Direction") {
+                        1 => EmbossSide::Direction2,
+                        2 => EmbossSide::Symmetric,
+                        _ => EmbossSide::Direction1,
+                    },
+                    taper: d.num(t, "Taper").unwrap_or(0.0).to_radians(),
+                    wrap,
+                })
+            }
             PartPlanned::CopyObject => {
                 let prev = match old {
                     Some(BodyOp::CopyObject(o)) => Some(o),
@@ -798,6 +849,7 @@ impl CadCraftApp {
             BodyOp::ReplaceFace(_) => PartPlanned::ReplaceFace,
             BodyOp::Sculpt(_) => PartPlanned::Sculpt,
             BodyOp::CopyObject(_) => PartPlanned::CopyObject,
+            BodyOp::Emboss(_) => PartPlanned::Emboss,
             BodyOp::Import(_) => PartPlanned::Import,
             // A Freeform edits by its cage (Edit Form); its sizes from that panel's button.
             BodyOp::Freeform(_) => {
@@ -840,6 +892,30 @@ impl CadCraftApp {
                 d.set_index(0, "Condition", usize::from(o.tangent.is_some()));
             }
             BodyOp::Trim(o) => d.set_check(0, "Invert Selection", o.invert),
+            BodyOp::Emboss(o) => {
+                use crate::part::emboss::{EmbossKind, EmbossSide};
+                d.set_index(
+                    0,
+                    "Type",
+                    match o.style {
+                        EmbossKind::EmbossFromFace => 0,
+                        EmbossKind::EngraveFromFace => 1,
+                        EmbossKind::FromPlane => 2,
+                    },
+                );
+                d.set_num(0, "Depth", o.depth);
+                d.set_num(0, "Taper", o.taper.to_degrees());
+                d.set_index(
+                    0,
+                    "Direction",
+                    match o.side {
+                        EmbossSide::Direction1 => 0,
+                        EmbossSide::Direction2 => 1,
+                        EmbossSide::Symmetric => 2,
+                    },
+                );
+                d.set_check(0, "Wrap to Face", o.wrap.is_some());
+            }
             BodyOp::Import(o) => {
                 d.set_index(0, "Import Type", usize::from(o.link.is_none()));
                 d.set_text(0, "File", &o.file);

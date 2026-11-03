@@ -274,5 +274,6 @@
   "r58/between_r58.3dcadcraft": {"volume": 23999999.999999974, "faces": 6, "features": 1, "sketches": 0, "exact": true},
   "r60/drawing_r60.3dcadcraft": {"volume": 31458.121407110833, "faces": 54, "features": 3, "sketches": 1, "exact": true},
   "r59/freeform_r59.3dcadcraft": {"volume": 362.0584112942583, "faces": 1, "features": 1, "sketches": 0, "exact": true},
-  "r61/axial_r61.3dcadcraft": {"volume": 2266.609457108229, "faces": 21, "features": 1, "sketches": 0, "exact": true}
+  "r61/axial_r61.3dcadcraft": {"volume": 2266.609457108229, "faces": 21, "features": 1, "sketches": 0, "exact": true},
+  "r62/emboss_r62.3dcadcraft": {"volume": 120000.0, "faces": 16, "features": 3, "sketches": 2, "exact": true}
 }
