@@ -22,6 +22,9 @@ typed, which a source contradicts, is simply corrected.
 | [Samick listing](https://aimsindustrial.com.au/products/samick-closed-linear-bushing-lm), [3DJake](https://www.3djake.com/brozzl/linear-bearings) | linear ball bushings |
 | [Fabory](https://www.fabory.com/) product pages | two DIN 179 bushes |
 | [PGB Europe](https://www.pgb-europe.com/) product pages | DIN 6334 M4, M5 |
+| [RoyMech](https://roymech.org/Useful_Tables/Flanges/BSEN1092_16_Dimensions.html), [wermac.org](https://www.wermac.org/din/dim_wn_flg_pn16.html) | EN 1092-1 PN 16 weld neck and plate flanges, bolting |
+| [wermac.org fittings](https://www.wermac.org/fittings/submenu_fittings.html), [pipes](https://www.wermac.org/pipes/dim_pipes.html) | ASME B16.9 elbows, tees, reducers, caps; STD walls of ASME B36.10 |
+| [projectmaterials](https://blog.projectmaterials.com/flanges/flange-dimensions/en-1092-blind-flange-sizes), [HT Pipe](https://www.htpipe.com/tools/size-chart/en-1092-1-blind-flange-dimensions.html) | EN 1092-1 PN 16 blind flanges |
 
 Corrected, a typed value against a source:
 
@@ -43,6 +46,10 @@ Both values kept:
 | ISO 4161 | `M10` s 15 and `M10 (s 16)` | ISO 4161 against DIN EN 1661 |
 | ISO 7093-1 | `5` h 1.2 and `5 (h 1)`; `20` d1 22 and `20 (d1 21)` | a model listing and DIN 9021 against the fasten.it page |
 | Series R | `R6`, `R8`, `R10` and a row with the narrower width | catalogues list two widths; which is open or shielded was not confirmed |
+| EN 1092-1 Type 11 | a row per DN where the pages differ in `b`, hub `N`, length `H`, wall `S` (`DN20 (b 18 N 40 H 40)`); `DN65` and `DN65 (n 4)` | RoyMech against wermac.org; four holes at DN 65 by agreement |
+| EN 1092-1 Type 05 | `DN150` b 22 and `DN150 (b 16)`, `DN200` and `DN200 (b 18 n 8)`, and most sizes likewise | projectmaterials against HT Pipe. DN 10 only in HT Pipe, DN 450 only in projectmaterials |
+| DIN 444 B | `M27` d1 24 and `M27 (d1 25)`, likewise M30, M36, M39 | the page prints both holes |
+| DIN 478 | `M16` s 16 and `M16 (s 17)`, `M20` s 21 and `M20 (s 22)` | the page gives a range |
 | DIN 988 | shim thickness and the `s` of the page | the page lists one thickness per size, the shims come in several |
 
 Other findings:
@@ -55,6 +62,8 @@ Types added 2026-11-03 (DIN 84, 85, 94, 434, 508, 557, 603, 661, 929, 937, 938, 
 written from the fasten.it pages, each `checked` cell saying so. Their shapes leave some details out for now, which the numbers do not depend
 on: screw slots, a carriage bolt's square neck, castle slots, washer teeth, a taper washer's slope, a stud's plain middle, and a cotter
 pin is a plain pin; `spec/6.3-content-center.md` §6.5b keeps the list.
+
+DIN 315, 444, 478 and ISO 7379 give limits: the tables hold the largest value of each. DIN 7337's lengths are common trade lengths; a typing slip on its page (`K 1.1.0` at Ø5) is read as 1.10.
 
 Compared only in part: HK2516 and HK3016 (the name gives bore and width, not the outside diameter), DIN 179 (sizes 6 and 12), SAE (1/4, 1/2) and USS (1/2) washers; ISO 2339, DIN 975 and 976, UNC rods: diameters and pitches, not lengths. ASME B18.2.2 lists no No.10 nut.
 

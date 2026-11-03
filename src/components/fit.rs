@@ -32,6 +32,12 @@ pub enum Fit {
         /// Its outside diameter.
         outside: Real,
     },
+    /// Stands on the end of a cylinder of its own diameter and continues it (a
+    /// weld neck flange on its pipe, a blind flange on a flange's rim).
+    Butt {
+        /// The diameter it meets.
+        diameter: Real,
+    },
     /// Placed by hand only (keys, shapes, O-rings).
     Manual,
 }
@@ -56,7 +62,12 @@ impl Fit {
             | Kind::FlatHeadScrew(d, l, ..)
             | Kind::Rod(d, l)
             | Kind::Pin(d, l)
-            | Kind::TaperPin(d, l) => into(d, l),
+            | Kind::TaperPin(d, l)
+            | Kind::EyeBolt(d, l, ..)
+            | Kind::THead(d, l, ..)
+            | Kind::SquareHead(d, l, ..) => into(d, l),
+            // Its shoulder fills the hole, the thread runs on below it.
+            Kind::Shoulder(_, l, ds, ..) => into(ds, l),
             Kind::Countersunk(d, l, _, k, _) | Kind::ConeRivet(d, l, _, k) => Fit::Into {
                 d,
                 length: Some(l),
@@ -65,7 +76,8 @@ impl Fit {
             Kind::HexNut(d, ..)
             | Kind::FlangeNut(d, ..)
             | Kind::CapNut(d, ..)
-            | Kind::SquareNut(d, ..) => Fit::Over { bore: d },
+            | Kind::SquareNut(d, ..)
+            | Kind::WingNut(d, ..) => Fit::Over { bore: d },
             Kind::Washer(d1, ..)
             | Kind::Circlip(d1, ..)
             | Kind::SplitRing(d1, ..)
@@ -74,6 +86,17 @@ impl Fit {
             Kind::Bearing(d, od, _) => Fit::Bearing {
                 bore: d,
                 outside: od,
+            },
+            Kind::PipeElbow(d, ..)
+            | Kind::PipeTee(d, ..)
+            | Kind::PipeReducer(d, ..)
+            | Kind::PipeCap(d, ..) => Fit::Butt { diameter: d },
+            Kind::Flange(f) => match f.neck {
+                Some(n) => Fit::Butt { diameter: n.pipe },
+                None if f.bore > 0.0 => Fit::Over { bore: f.bore },
+                None => Fit::Butt {
+                    diameter: f.outside,
+                },
             },
             // A T-slot nut goes into a slot: its placement comes with the slot rules.
             Kind::Key(..)
@@ -111,6 +134,8 @@ pub struct Target {
 const CLEARANCE: Real = 1.3;
 /// Two diameters taken as one.
 const SAME: Real = 0.05;
+/// A pipe's outside diameter may differ this much from its flange's (series differ).
+const BUTT: Real = 0.02;
 
 /// How well a member's diameter suits the target: `None` does not fit, a
 /// smaller number fits better.
@@ -133,6 +158,10 @@ fn score(fit: Fit, t: &Target) -> Option<Real> {
             // thread data) by the nearest.
             let gap = (bore - at).abs();
             (gap <= (0.2 * at).max(SAME)).then_some(gap)
+        }
+        Fit::Butt { diameter } => {
+            let gap = (diameter - t.diameter).abs();
+            (!t.hole && gap <= BUTT * diameter).then_some(gap)
         }
         Fit::Bearing { bore, outside } => {
             let d = if t.hole { outside } else { bore };
@@ -211,7 +240,7 @@ pub fn goes_in(fit: Fit, t: &Target, from_rim: bool) -> bool {
         && match fit {
             Fit::Bearing { .. } => true,
             Fit::Over { .. } => !t.hole,
-            Fit::Into { .. } | Fit::Manual => false,
+            Fit::Into { .. } | Fit::Butt { .. } | Fit::Manual => false,
         }
 }
 

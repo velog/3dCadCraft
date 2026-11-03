@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::kernel::exact::{AxialCone, AxialRun, AxialSeg, AxialShape};
+pub use crate::kernel::exact::{AxialCone, AxialHole, AxialRun, AxialSeg, AxialShape};
 
 /// The runs of the meridian, in order. Faces are named `<feature id>:<role>`
 /// with the roles given here, so they stay the same at every size (Change Size).
@@ -20,6 +20,9 @@ pub struct AxialOp {
     /// The last run's planar face joins back to the first run (a nut's bore).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub closed: bool,
+    /// Round holes between its planar faces (a flange's bolt holes).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holes: Vec<AxialHole>,
 }
 
 impl AxialOp {

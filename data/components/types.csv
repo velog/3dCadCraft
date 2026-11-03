@@ -9,11 +9,11 @@ Fasteners/Bolts,Countersunk,countersunk_screw,ready,size d P dk k s lengths,"90 
 Fasteners/Bolts,Button Head,button_screw,ready,size d P dk k s lengths,"low round head, hexagon socket"
 Fasteners/Bolts,Pan Head,pan_screw,ready,size d P dk k lengths,"round head, cross recess"
 Fasteners/Bolts,Cheese Head,cheese_screw,ready,size d P dk k n lengths,"cylinder head, slot"
-Fasteners/Bolts,Square Head,square_bolt,planned,size d P s k lengths,square head
-Fasteners/Bolts,Shoulder,shoulder_screw,planned,size d P ds dk k s lengths,precision shoulder
+Fasteners/Bolts,Square Head,square_bolt,ready,size d P s k c dc lengths,square head with a collar
+Fasteners/Bolts,Shoulder,shoulder_screw,ready,size d P ds b dk k s t lengths,precision shoulder
 Fasteners/Bolts,Carriage,carriage_bolt,ready,size d P dk k lengths,round head with a square neck
-Fasteners/Bolts,Eye,eye_bolt,planned,size d P D1 D2 h,lifting eye
-Fasteners/Bolts,T-Bolt,t_bolt,planned,size d P s k lengths,hammer head for slots
+Fasteners/Bolts,Eye,eye_bolt,ready,size d P d1 d2 s lengths,with an eye
+Fasteners/Bolts,T-Bolt,t_bolt,ready,size d P n m k lengths,hammer head for slots
 Fasteners/Set Screws,Flat Point,set_screw,ready,size d P s t lengths,"hexagon socket, flat point"
 Fasteners/Set Screws,Cone Point,set_screw,ready,size d P s t lengths,"hexagon socket, cone point"
 Fasteners/Set Screws,Cup Point,set_screw,ready,size d P s t lengths,"hexagon socket, cup point"
@@ -28,8 +28,8 @@ Fasteners/Nuts,Prevailing Torque,lock_nut,ready,size d P s m,with a polymer inse
 Fasteners/Nuts,Slotted,slotted_nut,ready,size d P s m n,castle and slotted nuts
 Fasteners/Nuts,Cap,cap_nut,ready,size d P s m,domed
 Fasteners/Nuts,Square,square_nut,ready,size d P s m,square
-Fasteners/Nuts,Wing,wing_nut,planned,size d P dk e m,turned by hand
-Fasteners/Nuts,Round,round_nut,planned,size d P dk m n,slotted round nuts
+Fasteners/Nuts,Wing,wing_nut,ready,size d P dk e h g m,turned by hand
+Fasteners/Nuts,Round,round_nut,ready,size d P dk m n,slotted round nuts
 Fasteners/Nuts,T-Slot,t_nut,ready,size d P a e k h,for T slots
 Fasteners/Nuts,Coupling,coupling_nut,ready,size d P s m,long hexagon
 Fasteners/Nuts,Weld,weld_nut,ready,size d P s m,welded on a sheet
@@ -48,7 +48,7 @@ Fasteners/Pins,Cotter,cotter_pin,ready,size d a c lengths,"split, bent on assemb
 Fasteners/Pins,Clevis,clevis_pin,ready,size d dk k lengths,with a head and a cross hole
 Fasteners/Rivets,Round Head,rivet,ready,size d dk k lengths,solid
 Fasteners/Rivets,Countersunk,countersunk_rivet,ready,size d dk k lengths,solid
-Fasteners/Rivets,Blind,blind_rivet,planned,size d dk k lengths,closed from one side
+Fasteners/Rivets,Blind,blind_rivet,ready,size d dk k lengths,closed from one side
 Shaft Parts/Bearings,Deep Groove Ball,ball_bearing,ready,size d D B,radial
 Shaft Parts/Bearings,Angular Contact Ball,ball_bearing,ready,size d D B,radial and axial
 Shaft Parts/Bearings,Self-Aligning Ball,ball_bearing,ready,size d D B,spherical outer race
@@ -85,14 +85,14 @@ Sheet Metal Hardware,Clinch Nuts,clinch_nut,planned,size d P D m,pressed into a 
 Sheet Metal Hardware,Clinch Studs,clinch_stud,planned,size d P D lengths,pressed into a sheet
 Sheet Metal Hardware,Standoffs,standoff,planned,size d P D lengths,spacers
 Sheet Metal Hardware,Cage Nuts,cage_nut,planned,size d P a m,clipped into a square hole
-Pipe Parts/Fittings,Elbow,pipe_elbow,planned,size D t R angle,butt-weld
-Pipe Parts/Fittings,Tee,pipe_tee,planned,size D t C,butt-weld
-Pipe Parts/Fittings,Reducer,pipe_reducer,planned,size D1 D2 L,butt-weld
-Pipe Parts/Fittings,Cap,pipe_cap,planned,size D t E,butt-weld
+Pipe Parts/Fittings,Elbow,pipe_elbow,ready,size D t R angle,butt-weld
+Pipe Parts/Fittings,Tee,pipe_tee,ready,size D t C,butt-weld
+Pipe Parts/Fittings,Reducer,pipe_reducer,ready,size D1 D2 t1 t2 L,butt-weld
+Pipe Parts/Fittings,Cap,pipe_cap,ready,size D t E,butt-weld
 Pipe Parts/Fittings,Threaded Coupling,pipe_coupling,planned,size D L,threaded
-Pipe Parts/Flanges,Weld Neck,flange,planned,size D d1 k n d2 b,with bolt holes
-Pipe Parts/Flanges,Slip-On,flange,planned,size D d1 k n d2 b,with bolt holes
-Pipe Parts/Flanges,Blind,flange,planned,size D d1 k n d2 b,closes a pipe
+Pipe Parts/Flanges,Weld Neck,flange_neck,ready,size D A S N H H3 k n d2 b f d3,with a hub and bolt holes
+Pipe Parts/Flanges,Slip-On,flange_slip,ready,size D d1 k n d2 b,with bolt holes
+Pipe Parts/Flanges,Blind,flange_blind,ready,size D k n d2 b f d3,closes a pipe
 Pipe Parts/Valves,Ball Valve,valve,planned,size D L H,simplified envelope
 Machine Elements/Gears and Chains,Spur Gear,spur_gear,planned,size m z b d,from module and teeth
 Machine Elements/Gears and Chains,Chain Sprocket,sprocket,planned,size pitch z b d,roller chain

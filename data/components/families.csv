@@ -124,3 +124,18 @@ din_6319,Fasteners/Washers,Spherical,DIN 6319 C,Spherical washer,families/din_63
 din_6799,Shaft Parts/Retaining Rings,E-Clip,DIN 6799,E-clip for shafts,families/din_6799.csv,12,fasten.it,DIN
 din_5406,Shaft Parts/Lock Nuts,Tab Washer,DIN 5406,Tab washer for slotted round nuts,families/din_5406.csv,10,fasten.it,DIN
 din_938_stud,Fasteners/Studs,Double End,DIN 938,"Stud, metal end 1 d",families/din_938_stud.csv,6,fasten.it (b2; lengths not compared),DIN
+en_1092_11,Pipe Parts/Flanges,Weld Neck,EN 1092-1 Type 11,"Weld neck flange, PN 16",families/en_1092_11.csv,34,roymech.org; wermac.org (both kept),EN
+en_1092_01,Pipe Parts/Flanges,Slip-On,EN 1092-1 Type 01,"Plate slip-on flange, PN 16",families/en_1092_01.csv,21,roymech.org,EN
+en_1092_05,Pipe Parts/Flanges,Blind,EN 1092-1 Type 05,"Blind flange, PN 16",families/en_1092_05.csv,38,projectmaterials.com; htpipe.com (both kept),EN
+asme_b16_9_elbow,Pipe Parts/Fittings,Elbow,ASME B16.9 90,"90 degree long radius elbow, standard wall",families/asme_b16_9_elbow.csv,19,wermac.org,ANSI
+asme_b16_9_elbow45,Pipe Parts/Fittings,Elbow,ASME B16.9 45,"45 degree long radius elbow, standard wall",families/asme_b16_9_elbow45.csv,19,wermac.org,ANSI
+asme_b16_9_tee,Pipe Parts/Fittings,Tee,ASME B16.9 Tee,"Straight tee, standard wall",families/asme_b16_9_tee.csv,19,wermac.org,ANSI
+asme_b16_9_reducer,Pipe Parts/Fittings,Reducer,ASME B16.9 Reducer,"Concentric reducer, standard wall",families/asme_b16_9_reducer.csv,64,wermac.org,ANSI
+asme_b16_9_cap,Pipe Parts/Fittings,Cap,ASME B16.9 Cap,"Cap, standard wall",families/asme_b16_9_cap.csv,19,wermac.org,ANSI
+din_315,Fasteners/Nuts,Wing,DIN 315,"Wing nut, rounded wings",families/din_315.csv,9,fasten.it,DIN
+din_1804,Fasteners/Nuts,Round,DIN 1804,"Slotted round nut",families/din_1804.csv,36,fasten.it,DIN
+din_444,Fasteners/Bolts,Eye,DIN 444 B,"Eye bolt",families/din_444.csv,17,fasten.it (both values of d1 kept),DIN
+din_261,Fasteners/Bolts,T-Bolt,DIN 261,"Tee-head bolt",families/din_261.csv,8,fasten.it,DIN
+din_478,Fasteners/Bolts,Square Head,DIN 478,"Square head bolt with a collar",families/din_478.csv,10,fasten.it (both across flats kept),DIN
+iso_7379,Fasteners/Bolts,Shoulder,ISO 7379,"Hexagon socket shoulder screw",families/iso_7379.csv,7,fasten.it,ISO
+din_7337,Fasteners/Rivets,Blind,DIN 7337 A,"Blind rivet, standard head",families/din_7337.csv,8,fasten.it (lengths not compared),DIN

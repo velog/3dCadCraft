@@ -232,6 +232,21 @@ pub struct AxialRun {
     pub after: Option<String>,
 }
 
+/// A round hole along Z between two planar faces of a stepped body, off its axis.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AxialHole {
+    /// Its centre in the planes.
+    pub center: [Real; 2],
+    /// Its diameter.
+    pub diameter: Real,
+    /// Height of one end.
+    pub z0: Real,
+    /// Height of the other end.
+    pub z1: Real,
+    /// Role of its wall.
+    pub role: String,
+}
+
 /// A stepped body about Z (a bolt, a nut, a socket screw) built face by face, no Boolean: the
 /// meridian's runs, joined by planar faces at their common heights. `first_cap`: role of the
 /// disc closing the first run's start (`None` at a tip or when `closed`, where the last run's
@@ -240,6 +255,7 @@ pub fn axial_stack(
     runs: &[AxialRun],
     first_cap: Option<&str>,
     closed: bool,
+    holes: &[AxialHole],
     prefix: &str,
 ) -> Result<ExactSolid, String> {
     fn number(role: &str, names: &mut Vec<String>) -> usize {
@@ -325,8 +341,20 @@ pub fn axial_stack(
         input.push(sk::AxialRun { shape, after });
     }
     let first = first_cap.map(|a| number(a, &mut names));
-    let body = guarded("stepped body", || sk::axial_stack(&input, first, closed))
-        .map_err(|e| format!("this part cannot be built ({e})"))?;
+    let drills: Vec<sk::AxialDrill> = holes
+        .iter()
+        .map(|h| sk::AxialDrill {
+            center: sg::Vec2::new(h.center[0], h.center[1]),
+            radius: h.diameter / 2.0,
+            z0: h.z0,
+            z1: h.z1,
+            number: number(&h.role, &mut names),
+        })
+        .collect();
+    let body = guarded("stepped body", || {
+        sk::axial_stack_drilled(&input, first, closed, &drills)
+    })
+    .map_err(|e| format!("this part cannot be built ({e})"))?;
     let face_names = names_from(&body, &[], &|o| match o {
         FaceOrigin::Profile { segment } => names.get(*segment).map(|n| format!("{prefix}:{n}")),
         _ => None,

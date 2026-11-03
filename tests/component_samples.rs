@@ -361,3 +361,191 @@ fn levels_are_separate_files_of_one_component() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A flange's volume from its table: disc, raised face, hub and neck as rings,
+/// less its bolt holes and its bore. EN 1092-1 PN 16.
+#[test]
+fn flanges_weigh_what_their_tables_say() {
+    let of = |family: &str, size: &str| {
+        all()
+            .into_iter()
+            .find(|s| s.family == family && s.size == size)
+            .unwrap_or_else(|| panic!("{family} {size}"))
+    };
+    let disc = |r: f64, h: f64| PI * r * r * h;
+    let cone = |r1: f64, r2: f64, h: f64| PI * h / 3.0 * (r1 * r1 + r1 * r2 + r2 * r2);
+
+    // Blind DN100: D 220, b 20, 8 x 18 on 180, raised 158 x 2.
+    let s = of("EN 1092-1 Type 05", "DN100");
+    let p = s.part().unwrap();
+    let want = disc(110.0, 18.0) + disc(79.0, 2.0) - 8.0 * disc(9.0, 18.0);
+    assert!((volume(&p) - want).abs() / want < 2e-3, "{}", volume(&p));
+    // The Simple level has no holes.
+    let simple = s.part_at(Detail::Simple).unwrap();
+    assert_eq!(s.level_of(Detail::Simple), Detail::Simple);
+    assert!(volume(&simple) > volume(&p));
+
+    // Slip-on DN100: D 220, bore 116, b 22, 8 x 18.
+    let p = of("EN 1092-1 Type 01", "DN100").part().unwrap();
+    let want = disc(110.0, 22.0) - disc(58.0, 22.0) - 8.0 * disc(9.0, 22.0);
+    assert!((volume(&p) - want).abs() / want < 2e-3, "{}", volume(&p));
+
+    // Weld neck DN100: A 114.3, S 3.6, N 131, H 52, H3 12, D 220, b 20, raised 158 x 2.
+    let p = of("EN 1092-1 Type 11", "DN100").part().unwrap();
+    let (rp, rb) = (57.15, 57.15 - 3.6);
+    let want = disc(rp, 12.0) + cone(rp, 65.5, 20.0) + disc(110.0, 18.0) + disc(79.0, 2.0)
+        - disc(rb, 52.0)
+        - 8.0 * disc(9.0, 18.0);
+    assert!((volume(&p) - want).abs() / want < 2e-3, "{}", volume(&p));
+}
+
+/// The largest flange has 20 holes: still one part within a new member's budget.
+#[test]
+fn every_flange_size_builds() {
+    for s in all().iter().filter(|s| matches!(s.kind, Kind::Flange(_))) {
+        let p = s
+            .part()
+            .unwrap_or_else(|e| panic!("{}: {e}", s.designation()));
+        assert!(p.exact, "{} went faceted", s.designation());
+        assert!(p.feature_health.is_empty(), "{}", s.designation());
+    }
+}
+
+/// Spec 6.3 §6.6: the largest flange with its 20 holes stays a direct build.
+#[test]
+fn the_largest_flange_is_built_directly() {
+    let s = all()
+        .into_iter()
+        .find(|s| s.family == "EN 1092-1 Type 11" && s.size == "DN600")
+        .unwrap();
+    let t = Instant::now();
+    let p = s.part().unwrap();
+    let ms = t.elapsed().as_secs_f64() * 1e3;
+    println!("{} {ms:.0} ms", s.designation());
+    assert!(ms < 500.0, "{ms:.0} ms");
+    assert!(
+        p.body
+            .faces()
+            .any(|(_, f)| f.name.as_deref() == Some("Axial1:BoltHole:20")),
+        "a hole's wall has its name"
+    );
+}
+
+/// ASME B16.9 fittings against their tables: a bend's volume by Pappus, a reducer's as
+/// two cones, every size builds exactly.
+#[test]
+fn pipe_fittings_weigh_what_their_tables_say() {
+    let of = |family: &str, size: &str| {
+        all()
+            .into_iter()
+            .find(|s| s.family == family && s.size == size)
+            .unwrap_or_else(|| panic!("{family} {size}"))
+    };
+    // NPS 4: D 114.3, STD wall 6.02, R 152.
+    let ring = PI * (57.15f64.powi(2) - (57.15f64 - 6.02).powi(2));
+    let p = of("ASME B16.9 90", "NPS 4").part().unwrap();
+    let want = ring * 152.0 * PI / 2.0;
+    assert!((volume(&p) - want).abs() / want < 3e-3, "{}", volume(&p));
+    let (lo, hi) = p.body.bounding_box().unwrap();
+    assert!(
+        lo.z.abs() < 1e-6 && (hi.z - 152.0 - 0.0).abs() < 60.0,
+        "{lo:?} {hi:?}"
+    );
+    assert!(hi.x > 150.0, "it turns towards +X: {hi:?}");
+
+    let cone = |a: f64, b: f64, h: f64| PI * h / 3.0 * (a * a + a * b + b * b);
+    let p = of("ASME B16.9 Reducer", "NPS 4 x 2").part().unwrap();
+    let want = cone(57.15, 30.15, 102.0) - cone(57.15 - 6.02, 30.15 - 3.91, 102.0);
+    assert!((volume(&p) - want).abs() / want < 3e-3, "{}", volume(&p));
+
+    let p = of("ASME B16.9 Cap", "NPS 4").part().unwrap();
+    let (_, hi) = p.body.bounding_box().unwrap();
+    assert!((hi.z - 64.0).abs() < 1e-6, "{hi:?}");
+    assert!(volume(&p) > 0.0);
+
+    // A tee: run + branch outside the run, bores taken out. The joint is small
+    // against the rest, so its bound is loose.
+    let p = of("ASME B16.9 Tee", "NPS 4").part().unwrap();
+    let run = ring * 210.0;
+    let v = volume(&p);
+    assert!(v > run && v < run + ring * 105.0, "{v} against run {run}");
+}
+
+#[test]
+fn every_pipe_fitting_builds() {
+    let mut slowest = (0.0, String::new());
+    for s in all().iter().filter(|s| {
+        matches!(
+            s.kind,
+            Kind::PipeElbow(..) | Kind::PipeTee(..) | Kind::PipeReducer(..) | Kind::PipeCap(..)
+        )
+    }) {
+        let t = Instant::now();
+        let p = s
+            .part()
+            .unwrap_or_else(|e| panic!("{}: {e}", s.designation()));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        if ms > slowest.0 {
+            slowest = (ms, s.designation());
+        }
+        assert!(p.exact, "{} went faceted", s.designation());
+        assert!(p.feature_health.is_empty(), "{}", s.designation());
+    }
+    println!("slowest fitting: {} {:.0} ms", slowest.1, slowest.0);
+    assert!(slowest.0 < 500.0, "{}: {:.0} ms", slowest.1, slowest.0);
+}
+
+/// Wing, eye, tee-head, square head and shoulder fasteners build exactly, smallest and largest,
+/// within a new member's budget.
+#[test]
+fn head_fasteners_build_within_the_budget() {
+    let mut seen = std::collections::HashMap::<String, (String, Sample)>::new();
+    let chosen: Vec<Sample> = all()
+        .into_iter()
+        .filter(|s| {
+            matches!(
+                s.kind,
+                Kind::WingNut(..)
+                    | Kind::EyeBolt(..)
+                    | Kind::THead(..)
+                    | Kind::SquareHead(..)
+                    | Kind::Shoulder(..)
+            )
+        })
+        .collect();
+    for s in &chosen {
+        seen.entry(s.family.clone())
+            .and_modify(|e| e.1 = s.clone())
+            .or_insert_with(|| (s.designation(), s.clone()));
+    }
+    let firsts: Vec<Sample> = chosen
+        .iter()
+        .filter(|s| seen.get(&s.family).is_some_and(|e| e.0 == s.designation()))
+        .cloned()
+        .collect();
+    for s in firsts.iter().chain(seen.values().map(|e| &e.1)) {
+        let t = Instant::now();
+        let p = s
+            .part()
+            .unwrap_or_else(|e| panic!("{}: {e}", s.designation()));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        println!("{:<34} {ms:>6.0} ms", s.designation());
+        assert!(p.exact, "{} went faceted", s.designation());
+        assert!(p.feature_health.is_empty(), "{}", s.designation());
+        assert!(ms < 500.0, "{}: {ms:.0} ms", s.designation());
+    }
+}
+
+/// A shoulder screw goes by its shoulder, through a hole as deep as the shoulder is long.
+#[test]
+fn a_shoulder_screw_weighs_what_its_table_says() {
+    let s = all()
+        .into_iter()
+        .find(|s| s.family == "ISO 7379" && s.size == "M8 x 30")
+        .unwrap();
+    let p = s.part().unwrap();
+    // Thread Ø8 x 13.25, shoulder Ø10 x 30, head Ø16 x 7, socket 5 x 4.2.
+    let hex = 5.0f64 * 5.0 * 3f64.sqrt() / 2.0 * 4.2;
+    let want = PI * (16.0 * 13.25 + 25.0 * 30.0 + 64.0 * 7.0) - hex;
+    assert!((volume(&p) - want).abs() / want < 0.02, "{}", volume(&p));
+}

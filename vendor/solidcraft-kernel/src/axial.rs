@@ -68,6 +68,22 @@ pub struct AxialRun {
     pub after: Option<usize>,
 }
 
+/// A round hole straight along Z between two of the body's planar faces, parallel to the axis
+/// and off it (a flange's bolt hole): one cylinder, no Boolean.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AxialDrill {
+    /// Its centre in the planes.
+    pub center: Vec2,
+    /// Its radius.
+    pub radius: f64,
+    /// Height of one end.
+    pub z0: f64,
+    /// Height of the other end.
+    pub z1: f64,
+    /// Profile number of its wall.
+    pub number: usize,
+}
+
 const TAU: f64 = std::f64::consts::TAU;
 
 /// A built run: its faces and the rings at its two ends (`None`: a tip).
@@ -81,6 +97,12 @@ struct Built {
 /// `None` when that start is a tip or the chain is `closed` (the last run's face then joins its
 /// end to the first run's start).
 pub fn axial_stack(runs: &[AxialRun], first_cap: Option<usize>, closed: bool) -> Result<Body> {
+    axial_stack_drilled(runs, first_cap, closed, &[])
+}
+
+/// The same with round holes between its planar faces. Each hole's rings join the planar face
+/// at each of its ends; a hole with no face there is refused.
+pub fn axial_stack_drilled(runs: &[AxialRun], first_cap: Option<usize>, closed: bool, drills: &[AxialDrill]) -> Result<Body> {
     if runs.is_empty() {
         return Err(KernelError::Invalid("a stepped body needs a run".into()));
     }
@@ -90,9 +112,34 @@ pub fn axial_stack(runs: &[AxialRun], first_cap: Option<usize>, closed: bool) ->
         for b in &built {
             faces.extend(b.faces.iter().cloned());
         }
+        let mut holes = Vec::with_capacity(drills.len());
+        for d in drills {
+            let (walls, low, high) = drill(d)?;
+            faces.extend(walls);
+            holes.push((d.z0.min(d.z1), low, d.z0.max(d.z1), high, *d, [false, false]));
+        }
+        // The rings of the holes that end on the planar face at height `z` between these radii.
+        let mut holes_on = |z: f64, inner: f64, outer: f64| -> Vec<mt::Wire> {
+            let mut out = Vec::new();
+            for (low_z, low, high_z, high, d, used) in &mut holes {
+                let c = d.center.len();
+                if c - d.radius <= inner || c + d.radius >= outer {
+                    continue;
+                }
+                if (*low_z - z).abs() < 1e-9 {
+                    out.push(low.clone());
+                    used[0] = true;
+                } else if (*high_z - z).abs() < 1e-9 {
+                    out.push(high.clone());
+                    used[1] = true;
+                }
+            }
+            out
+        };
         if let (Some(n), false) = (first_cap, closed) {
             let ring = built.first().and_then(|b| b.start.clone()).ok_or_else(|| fail("the first run has no ring to close"))?;
-            faces.push((planar(&[ring])?, record::profile(&[n])));
+            let extra = holes_on(ring_height(&ring), 0.0, ring_measure(&ring).0);
+            faces.push((with_holes(&ring, None, &extra)?, record::profile(&[n])));
         }
         for (k, r) in runs.iter().enumerate() {
             let ring = built.get(k).and_then(|b| b.end.clone());
@@ -105,11 +152,22 @@ pub fn axial_stack(runs: &[AxialRun], first_cap: Option<usize>, closed: bool) ->
             };
             let number = r.after;
             match (ring, next, number) {
-                (Some(a), Some(b), Some(n)) => faces.push((step_face(&a, &b)?, record::profile(&[n]))),
-                (Some(a), None, Some(n)) if k + 1 == runs.len() => faces.push((planar(&[a])?, record::profile(&[n]))),
+                (Some(a), Some(b), Some(n)) => {
+                    let (ra, rb) = (ring_measure(&a).0, ring_measure(&b).0);
+                    let extra = holes_on(ring_height(&a), ra.min(rb), ra.max(rb));
+                    let (outer, inner) = if ra >= rb { (&a, &b) } else { (&b, &a) };
+                    faces.push((with_holes(outer, Some(inner), &extra)?, record::profile(&[n])));
+                }
+                (Some(a), None, Some(n)) if k + 1 == runs.len() => {
+                    let extra = holes_on(ring_height(&a), 0.0, ring_measure(&a).0);
+                    faces.push((with_holes(&a, None, &extra)?, record::profile(&[n])));
+                }
                 (None, None, None) if k + 1 == runs.len() => {}
                 _ => return Err(fail("the runs do not join")),
             }
+        }
+        if holes.iter().any(|h| h.5 != [true, true]) {
+            return Err(fail("a hole does not end on planar faces"));
         }
         let (faces, history): (Vec<mt::Face>, Vec<FaceProv>) = oriented(faces)?.into_iter().unzip();
         let shell: mt::Shell = faces.into();
@@ -405,13 +463,39 @@ fn ring_measure(w: &mt::Wire) -> (f64, f64) {
     (radius, area * 0.5)
 }
 
-/// The planar face between two rings at one height: the larger one outside.
-fn step_face(a: &mt::Wire, b: &mt::Wire) -> Result<mt::Face> {
-    let (ma, mb) = (ring_measure(a), ring_measure(b));
-    let ((outer, mo), (inner, mi)) = if ma.0 >= mb.0 { ((a, ma), (b, mb)) } else { ((b, mb), (a, ma)) };
-    let outer = if mo.1 > 0.0 { outer.clone() } else { outer.inverse() };
-    let inner = if mi.1 < 0.0 { inner.clone() } else { inner.inverse() };
-    planar(&[outer, inner])
+/// A ring's height.
+fn ring_height(w: &mt::Wire) -> f64 {
+    w.vertex_iter().next().map_or(f64::NAN, |v| v.point().z)
+}
+
+/// A planar face: its outer ring, the inner ring about the axis if any, and holes.
+fn with_holes(outer: &mt::Wire, inner: Option<&mt::Wire>, holes: &[mt::Wire]) -> Result<mt::Face> {
+    let turned = |w: &mt::Wire, positive: bool| {
+        if (ring_measure(w).1 > 0.0) == positive { w.clone() } else { w.inverse() }
+    };
+    let mut wires = vec![turned(outer, true)];
+    wires.extend(inner.map(|w| turned(w, false)));
+    wires.extend(holes.iter().map(|w| turned(w, false)));
+    planar(&wires)
+}
+
+/// A hole's wall: two half cylinders, with its rings at its lower and upper height.
+fn drill(d: &AxialDrill) -> Result<(Vec<(mt::Face, FaceProv)>, mt::Wire, mt::Wire)> {
+    if d.radius <= 0.0 || (d.z1 - d.z0).abs() < 1e-9 {
+        return Err(fail("a hole needs a radius and a length"));
+    }
+    let (low, high) = (d.z0.min(d.z1), d.z0.max(d.z1));
+    let on = |dx: f64, dy: f64| Vec3::new(d.center.x + dx * d.radius, d.center.y + dy * d.radius, low);
+    let (a, b) = (builder::vertex(p3(on(1.0, 0.0))), builder::vertex(p3(on(-1.0, 0.0))));
+    let base: mt::Wire = vec![builder::circle_arc(&a, &b, p3(on(0.0, 1.0))), builder::circle_arc(&b, &a, p3(on(0.0, -1.0)))].into();
+    let shell: mt::Shell = builder::tsweep(&base, v3(Vec3::Z * (high - low)));
+    let walls = shell.face_iter().map(|f| (f.clone(), record::profile(&[d.number]))).collect();
+    let boundaries = shell.extract_boundaries();
+    let ring = |z: f64| boundaries.iter().find(|w| (ring_height(w) - z).abs() < 1e-9).cloned();
+    match (ring(low), ring(high)) {
+        (Some(l), Some(h)) => Ok((walls, l, h)),
+        _ => Err(fail("a hole lost a ring")),
+    }
 }
 
 /// The faces turned so that every edge is run once each way (truck's sweeps and planes come in

@@ -3,7 +3,7 @@
 //! counterbores' bores, shafts, housings.
 
 use cadcraft3d::components::catalog::Catalog;
-use cadcraft3d::components::fit::{Fit, Target, choose, seat_transform};
+use cadcraft3d::components::fit::{Fit, Target, choose, goes_in, seat_transform};
 use cadcraft3d::components::samples::{self, Sample};
 use cadcraft3d::kernel::{Point3, Vector3};
 use cadcraft3d::part::connection::{Connection, ConnectionRole, next_name};
@@ -128,6 +128,7 @@ fn every_family_that_can_be_dropped_finds_its_own_size() {
             Fit::Into { d, length, .. } => hole(d, length.unwrap_or(1.0)),
             Fit::Over { bore } => shaft(bore),
             Fit::Bearing { bore, .. } => shaft(bore),
+            Fit::Butt { diameter } => shaft(diameter),
             Fit::Manual => continue,
         };
         let fits: Vec<Fit> = all
@@ -494,4 +495,34 @@ fn the_copies_follow_the_holes_of_the_feature() {
 
     run(&mut a, &two).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(a.occurrences.len(), 3, "a removed hole takes its copy");
+}
+
+/// A flange finds its size by the pipe: a weld neck flange butts on the pipe's end, a
+/// slip-on goes over it, a blind flange meets a flange's rim. None goes into a hole.
+#[test]
+fn a_flange_lands_on_its_pipe() {
+    let dropped = |family: &str, t: &Target| {
+        let all = samples::all();
+        let members: Vec<_> = all.iter().filter(|s| s.family == family).collect();
+        let fits: Vec<Fit> = members.iter().map(|s| Fit::of(&s.kind)).collect();
+        choose(&fits, t).map(|i| members[i].size.clone())
+    };
+    assert_eq!(
+        dropped("EN 1092-1 Type 11", &shaft(114.3)).as_deref(),
+        Some("DN100")
+    );
+    assert_eq!(
+        dropped("EN 1092-1 Type 01", &shaft(114.3)).as_deref(),
+        Some("DN100")
+    );
+    assert_eq!(
+        dropped("EN 1092-1 Type 05", &shaft(220.0)).as_deref(),
+        Some("DN100")
+    );
+    assert_eq!(dropped("EN 1092-1 Type 11", &hole(114.3, 10.0)), None);
+    assert_eq!(dropped("EN 1092-1 Type 11", &shaft(100.0)), None);
+    // It continues the pipe; a slip-on runs back along it.
+    let t = shaft(114.3);
+    assert!(!goes_in(Fit::Butt { diameter: 114.3 }, &t, true));
+    assert!(goes_in(Fit::Over { bore: 116.0 }, &t, true));
 }

@@ -11,7 +11,7 @@
 
 use crate::document::iprops::IProperties;
 use crate::kernel::{Point3, Real, Surface};
-use crate::part::axial::{AxialCone, AxialOp, AxialRun, AxialSeg, AxialShape};
+use crate::part::axial::{AxialCone, AxialHole, AxialOp, AxialRun, AxialSeg, AxialShape};
 use crate::part::frame::{Library, Loop, draw_loop, hidden};
 use crate::part::hole::{ThreadFeature, ThreadSpec};
 use crate::part::standards::{ANSI_UNIFIED, ISO_METRIC, Standards};
@@ -86,8 +86,70 @@ pub enum Kind {
     DiscSpring(Real, Real, Real, Real),
     /// Countersunk rivet: diameter, length, head diameter, head height.
     ConeRivet(Real, Real, Real, Real),
+    /// Wing nut: thread diameter, hub diameter, width over the wings, height,
+    /// wing thickness, hub height.
+    WingNut(Real, Real, Real, Real, Real, Real),
+    /// Eye bolt: thread diameter, length, eye's hole, eye's outside, eye's width.
+    /// The seat at the eye's foot.
+    EyeBolt(Real, Real, Real, Real, Real),
+    /// Tee-head bolt: thread diameter, length, head's width, length, height.
+    THead(Real, Real, Real, Real, Real),
+    /// Square head with a collar: thread diameter, length, across flats, head height,
+    /// collar height, collar diameter.
+    SquareHead(Real, Real, Real, Real, Real, Real),
+    /// Shoulder screw: thread diameter, shoulder length, shoulder diameter, thread
+    /// length, head diameter, head height, socket across flats, socket depth.
+    Shoulder(Real, Real, Real, Real, Real, Real, Real, Real),
+    /// Pipe flange, its contact face or weld end on the XY plane.
+    Flange(Flange),
+    /// Butt-weld elbow: outside diameter, wall, bend radius, angle in degrees.
+    /// One end on the XY plane, leaving along +Z and turning towards +X.
+    PipeElbow(Real, Real, Real, Real),
+    /// Straight butt-weld tee: outside diameter, wall, centre to end. The run from
+    /// the XY plane along +Z, the branch along +X.
+    PipeTee(Real, Real, Real),
+    /// Concentric reducer: large and small outside diameter, their walls, length.
+    /// The large end on the XY plane.
+    PipeReducer(Real, Real, Real, Real, Real),
+    /// Butt-weld cap: outside diameter, wall, length. The open end on the XY plane.
+    PipeCap(Real, Real, Real),
     /// Structural shape: family and size of the frame section table, length.
     Shape(&'static str, &'static str, Real),
+}
+
+/// The numbers of a pipe flange. Weld neck: weld end on the XY plane, the hub and
+/// the disc above it. Slip-on and blind: the contact face there, the disc above it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Flange {
+    /// Outside diameter of the disc.
+    pub outside: Real,
+    /// Thickness of the disc, its raised face included.
+    pub thickness: Real,
+    /// Bolt circle.
+    pub circle: Real,
+    /// Number of bolt holes.
+    pub holes: u32,
+    /// Diameter of a bolt hole.
+    pub hole: Real,
+    /// The bore (0: a blind flange).
+    pub bore: Real,
+    /// Raised face: its height and diameter (0: a flat face).
+    pub raised: (Real, Real),
+    /// The neck of a weld neck flange.
+    pub neck: Option<FlangeNeck>,
+}
+
+/// The hub of a weld neck flange.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlangeNeck {
+    /// The pipe's outside diameter, at the weld end.
+    pub pipe: Real,
+    /// Length of the cylinder at the weld end.
+    pub straight: Real,
+    /// The hub's diameter where it meets the disc.
+    pub hub: Real,
+    /// The whole length, weld end to contact face.
+    pub length: Real,
 }
 
 /// How much of a component's shape its part holds (spec 6.3 §6.0a). All levels
@@ -150,6 +212,66 @@ const SHAPE_LENGTH: Real = 1000.0;
 
 /// The family tables built into the program, by their id in `families.csv`.
 const TABLES: &[(&str, &str)] = &[
+    (
+        "din_315",
+        include_str!("../../data/components/families/din_315.csv"),
+    ),
+    (
+        "din_1804",
+        include_str!("../../data/components/families/din_1804.csv"),
+    ),
+    (
+        "din_444",
+        include_str!("../../data/components/families/din_444.csv"),
+    ),
+    (
+        "din_261",
+        include_str!("../../data/components/families/din_261.csv"),
+    ),
+    (
+        "din_478",
+        include_str!("../../data/components/families/din_478.csv"),
+    ),
+    (
+        "iso_7379",
+        include_str!("../../data/components/families/iso_7379.csv"),
+    ),
+    (
+        "din_7337",
+        include_str!("../../data/components/families/din_7337.csv"),
+    ),
+    (
+        "asme_b16_9_elbow",
+        include_str!("../../data/components/families/asme_b16_9_elbow.csv"),
+    ),
+    (
+        "asme_b16_9_elbow45",
+        include_str!("../../data/components/families/asme_b16_9_elbow45.csv"),
+    ),
+    (
+        "asme_b16_9_tee",
+        include_str!("../../data/components/families/asme_b16_9_tee.csv"),
+    ),
+    (
+        "asme_b16_9_reducer",
+        include_str!("../../data/components/families/asme_b16_9_reducer.csv"),
+    ),
+    (
+        "asme_b16_9_cap",
+        include_str!("../../data/components/families/asme_b16_9_cap.csv"),
+    ),
+    (
+        "en_1092_11",
+        include_str!("../../data/components/families/en_1092_11.csv"),
+    ),
+    (
+        "en_1092_01",
+        include_str!("../../data/components/families/en_1092_01.csv"),
+    ),
+    (
+        "en_1092_05",
+        include_str!("../../data/components/families/en_1092_05.csv"),
+    ),
     (
         "din_557",
         include_str!("../../data/components/families/din_557.csv"),
@@ -735,6 +857,112 @@ fn row_members(
         "taper_bearing" | "thrust_bearing" => {
             one((|| Some(Kind::Bearing(get("d")?, get("D")?, get("T")?)))())
         }
+        "wing_nut" => one((|| {
+            Some(Kind::WingNut(
+                get("d")?,
+                get("dk")?,
+                get("e")?,
+                get("h")?,
+                get("g")?,
+                get("m")?,
+            ))
+        })()),
+        "eye_bolt" => per_length(&|l| {
+            Some(Kind::EyeBolt(
+                get("d")?,
+                l,
+                get("d1")?,
+                get("d2")?,
+                get("s")?,
+            ))
+        }),
+        "t_bolt" => per_length(&|l| {
+            Some(Kind::THead(get("d")?, l, get("n")?, get("m")?, get("k")?))
+        }),
+        "square_bolt" => per_length(&|l| {
+            Some(Kind::SquareHead(
+                get("d")?,
+                l,
+                get("s")?,
+                get("k")?,
+                get("c")?,
+                get("dc")?,
+            ))
+        }),
+        "shoulder_screw" => per_length(&|l| {
+            Some(Kind::Shoulder(
+                get("d")?,
+                l,
+                get("ds")?,
+                get("b")?,
+                get("dk")?,
+                get("k")?,
+                get("s")?,
+                get("t")?,
+            ))
+        }),
+        "blind_rivet" => per_length(&|l| Some(Kind::Rivet(get("d")?, l, get("dk")?, get("k")?))),
+        "pipe_elbow" => one((|| {
+            Some(Kind::PipeElbow(
+                get("D")?,
+                get("t")?,
+                get("R")?,
+                get("angle")?,
+            ))
+        })()),
+        "pipe_tee" => one((|| Some(Kind::PipeTee(get("D")?, get("t")?, get("C")?)))()),
+        "pipe_reducer" => one((|| {
+            Some(Kind::PipeReducer(
+                get("D1")?,
+                get("D2")?,
+                get("t1")?,
+                get("t2")?,
+                get("L")?,
+            ))
+        })()),
+        "pipe_cap" => one((|| Some(Kind::PipeCap(get("D")?, get("t")?, get("E")?)))()),
+        "flange_neck" => one((|| {
+            let (pipe, wall) = (get("A")?, get("S")?);
+            Some(Kind::Flange(Flange {
+                outside: get("D")?,
+                thickness: get("b")?,
+                circle: get("k")?,
+                holes: get("n")? as u32,
+                hole: get("d2")?,
+                bore: pipe - 2.0 * wall,
+                raised: (get("f")?, get("d3")?),
+                neck: Some(FlangeNeck {
+                    pipe,
+                    straight: get("H3")?,
+                    hub: get("N")?,
+                    length: get("H")?,
+                }),
+            }))
+        })()),
+        "flange_slip" => one((|| {
+            Some(Kind::Flange(Flange {
+                outside: get("D")?,
+                thickness: get("b")?,
+                circle: get("k")?,
+                holes: get("n")? as u32,
+                hole: get("d2")?,
+                bore: get("d1")?,
+                raised: (0.0, 0.0),
+                neck: None,
+            }))
+        })()),
+        "flange_blind" => one((|| {
+            Some(Kind::Flange(Flange {
+                outside: get("D")?,
+                thickness: get("b")?,
+                circle: get("k")?,
+                holes: get("n")? as u32,
+                hole: get("d2")?,
+                bore: 0.0,
+                raised: (get("f")?, get("d3")?),
+                neck: None,
+            }))
+        })()),
         _ => Vec::new(),
     }
 }
@@ -878,6 +1106,10 @@ impl Sample {
                 | Kind::TaperPin(..)
                 | Kind::Woodruff(..)
                 | Kind::ORing(..)
+                | Kind::PipeElbow(..)
+                | Kind::PipeTee(..)
+                | Kind::PipeReducer(..)
+                | Kind::PipeCap(..)
                 | Kind::Shape(..)
         )
     }
@@ -929,6 +1161,16 @@ impl Sample {
             Kind::CapNut(..) => "Domed cap nut",
             Kind::Woodruff(..) => "Woodruff key",
             Kind::ORing(..) => "O-ring",
+            Kind::WingNut(..) => "Wing nut",
+            Kind::EyeBolt(..) => "Eye bolt",
+            Kind::THead(..) => "Tee-head bolt",
+            Kind::SquareHead(..) => "Square head bolt",
+            Kind::Shoulder(..) => "Shoulder screw",
+            Kind::Flange(..) => "Pipe flange",
+            Kind::PipeElbow(..) => "Pipe elbow",
+            Kind::PipeTee(..) => "Pipe tee",
+            Kind::PipeReducer(..) => "Pipe reducer",
+            Kind::PipeCap(..) => "Pipe cap",
             Kind::Shape(..) => "Structural shape",
         }
     }
@@ -960,6 +1202,10 @@ impl Sample {
             super::fit::Fit::Over { bore } | super::fit::Fit::Bearing { bore, .. } => part
                 .connections
                 .push(Connection::seat(ConnectionRole::Over, bore)),
+            // No role of its own yet: it lands by the part's origin all the same.
+            super::fit::Fit::Butt { diameter } => part
+                .connections
+                .push(Connection::seat(ConnectionRole::Over, diameter)),
             super::fit::Fit::Manual => {}
         }
         Ok(part)
@@ -1029,6 +1275,16 @@ fn standard_part(kind: Kind) -> Result<PartDocument, PartError> {
             Kind::Woodruff(b, h, dia) => woodruff(b, h, dia),
             Kind::ORing(d1, d2) => o_ring(d1, d2),
             Kind::Circlip(d, groove, t) => circlip(d, groove, t),
+            Kind::WingNut(d, dk, e, h, g, m) => wing_nut(d, dk, e, h, g, m),
+            Kind::EyeBolt(d, l, hole, d2, w) => eye_bolt(d, l, hole, d2, w),
+            Kind::THead(d, l, n, m, k) => t_head(d, l, n, m, k),
+            Kind::SquareHead(d, l, s, k, c, dc) => square_head(d, l, s, k, c, dc),
+            Kind::Shoulder(d, l, ds, b, dk, k, s, t) => shoulder(d, l, ds, b, dk, k, s, t),
+            Kind::Flange(f) => flange(f, true),
+            Kind::PipeElbow(d, t, r, angle) => pipe_elbow(d, t, r, angle),
+            Kind::PipeTee(d, t, c) => pipe_tee(d, t, c),
+            Kind::PipeReducer(d1, d2, t1, t2, l) => pipe_reducer(d1, d2, t1, t2, l),
+            Kind::PipeCap(d, t, e) => pipe_cap(d, t, e),
             Kind::Bearing(d, od, b) => {
                 let (r0, r1, c) = (d / 2.0, od / 2.0, (od - d) / 40.0);
                 ring(&[
@@ -1098,6 +1354,12 @@ fn simple_part(kind: Kind) -> Result<PartDocument, PartError> {
             tube(a, b, h)
         }
         Kind::Bearing(d, od, b) => tube(d, od, b),
+        Kind::Flange(f) => flange(f, false),
+        Kind::WingNut(d, dk, _, _, _, m) => tube(d, dk, m),
+        Kind::EyeBolt(d, l, _, d2, _) => head(d, l, d2 / 2.0, d2),
+        Kind::THead(d, l, _, m, k) => head(d, l, m / 2.0, k),
+        Kind::SquareHead(d, l, s, k, _, dc) => head(d, l, (s * 0.71).max(dc / 2.0), k),
+        Kind::Shoulder(_, l, ds, b, dk, k, _, _) => head(ds, l + b, dk / 2.0, k),
         other => standard_part(other),
     }
 }
@@ -1294,10 +1556,12 @@ fn add_thread(
     radius: Real,
     hint: Point3,
 ) -> Result<(), PartError> {
+    // Along Z: an eye bolt's hole may have the shank's radius.
     let on_it = part.body.faces().find(|(_, f)| {
         matches!(
             part.body.surface(f.surface),
-            Some(Surface::Cylinder(c)) if (c.radius - radius).abs() < 1e-6
+            Some(Surface::Cylinder(c))
+                if (c.radius - radius).abs() < 1e-6 && c.axis.z.abs() > 0.9
         )
     });
     let (fid, _) = on_it.ok_or_else(|| bad("the threaded cylinder was not found"))?;
@@ -1318,6 +1582,7 @@ fn axial_part(
         runs,
         first_cap: first_cap.map(str::to_owned),
         closed,
+        holes: Vec::new(),
     })))?;
     Ok(part)
 }
@@ -1535,6 +1800,443 @@ fn t_nut(d: Real, a: Real, e: Real, k: Real, h: Real) -> Result<PartDocument, Pa
         false,
         Operation::Join,
     )?;
+    Ok(part)
+}
+
+/// A rectangle about the origin as a loop.
+fn rectangle(x0: Real, x1: Real, y0: Real, y1: Real) -> Loop {
+    Loop::Corners(vec![
+        (Point2::new(x0, y0), 0.0),
+        (Point2::new(x1, y0), 0.0),
+        (Point2::new(x1, y1), 0.0),
+        (Point2::new(x0, y1), 0.0),
+    ])
+}
+
+/// The hub with its threaded bore, the two wings through it, joined in one Boolean;
+/// they reach into the hub's wall, not the bore.
+fn wing_nut(d: Real, dk: Real, e: Real, h: Real, g: Real, m: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, true)?;
+    let bore = spec.minor / 2.0;
+    let mut part = ring(&[(bore, 0.0), (dk / 2.0, 0.0), (dk / 2.0, m), (bore, m)])?;
+    let inner = (dk / 2.0 + bore) / 2.0;
+    for side in [-1.0, 1.0] {
+        let (a, b) = (side * inner, side * e / 2.0);
+        extrude(
+            &mut part,
+            vec![rectangle(a.min(b), a.max(b), -g / 2.0, g / 2.0)],
+            Point2::new((a + b) / 2.0, 0.0),
+            0.0,
+            h,
+            false,
+            Operation::Join,
+        )?;
+    }
+    add_thread(&mut part, spec, bore, Point3::new(bore, 0.0, m / 2.0))?;
+    Ok(part)
+}
+
+/// A threaded shank below the seat, ending in a chamfer, its top `up` above the seat.
+fn shank(part: &mut PartDocument, d: Real, l: Real, up: Real) -> Result<ThreadSpec, PartError> {
+    let spec = thread_spec(d, false)?;
+    let r = spec.major / 2.0;
+    extrude(
+        part,
+        vec![Loop::Circle(Point2::new(0.0, 0.0), r, false)],
+        Point2::new(r / 2.0, 0.0),
+        up,
+        l + up,
+        true,
+        Operation::Join,
+    )?;
+    Ok(spec)
+}
+
+/// The eye, a ring across Y, and the shank running into its wall.
+fn eye_bolt(d: Real, l: Real, hole: Real, d2: Real, w: Real) -> Result<PartDocument, PartError> {
+    let mut part = blank();
+    let i = part.create_sketch(
+        SketchPlacement::on_origin_plane(OriginPlane::XZ),
+        &options(),
+    )?;
+    let centre = part.sketches[i]
+        .sketch
+        .plane
+        .project(&Point3::new(0.0, 0.0, d2 / 2.0));
+    draw_loop(
+        &mut part.sketches[i].sketch,
+        Loop::Circle(centre, d2 / 2.0, false),
+    )?;
+    draw_loop(
+        &mut part.sketches[i].sketch,
+        Loop::Circle(centre, hole / 2.0, true),
+    )?;
+    let q = Point2::new(centre.x + (d2 + hole) / 4.0, centre.y);
+    let regions = part.sketches[i].sketch.regions();
+    let region = regions
+        .iter()
+        .find(|r| r.contains(q))
+        .ok_or_else(|| bad("the eye has no ring"))?;
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(region, q)], w);
+    e.direction = ExtentDirection::Symmetric;
+    part.add_extrude(i, e)?;
+    let spec = shank(&mut part, d, l, (d2 - hole) / 4.0)?;
+    add_thread(
+        &mut part,
+        spec,
+        d / 2.0,
+        Point3::new(d / 2.0, 0.0, -l / 2.0),
+    )?;
+    Ok(part)
+}
+
+/// A rectangular head on the seat and the shank below it.
+fn t_head(d: Real, l: Real, n: Real, m: Real, k: Real) -> Result<PartDocument, PartError> {
+    let mut part = blank();
+    extrude(
+        &mut part,
+        vec![rectangle(-m / 2.0, m / 2.0, -n / 2.0, n / 2.0)],
+        Point2::new(0.0, 0.0),
+        0.0,
+        k,
+        false,
+        Operation::NewSolid,
+    )?;
+    let spec = shank(&mut part, d, l, 0.0)?;
+    add_thread(
+        &mut part,
+        spec,
+        d / 2.0,
+        Point3::new(d / 2.0, 0.0, -l / 2.0),
+    )?;
+    Ok(part)
+}
+
+/// A collar and a shank in one turned run, the square head joined on the collar.
+fn square_head(
+    d: Real,
+    l: Real,
+    s: Real,
+    k: Real,
+    c: Real,
+    dc: Real,
+) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, false)?;
+    let (r, e) = (spec.major / 2.0, spec.major / 10.0);
+    let mut part = axial_part(
+        vec![AxialRun::turned(
+            &[
+                (r - e, -l, ""),
+                (r, -l + e, "EndChamfer"),
+                (r, 0.0, "Shank"),
+                (dc / 2.0, 0.0, "Seat"),
+                (dc / 2.0, c, "Collar"),
+            ],
+            Some("CollarTop"),
+        )],
+        Some("End"),
+        false,
+    )?;
+    extrude(
+        &mut part,
+        vec![rectangle(-s / 2.0, s / 2.0, -s / 2.0, s / 2.0)],
+        Point2::new(0.0, 0.0),
+        c,
+        k - c,
+        false,
+        Operation::Join,
+    )?;
+    add_thread(&mut part, spec, r, Point3::new(r, 0.0, -l + 2.0 * e))?;
+    Ok(part)
+}
+
+/// Thread, shoulder and socket head as one stepped body. `l` is the shoulder's length.
+#[allow(clippy::too_many_arguments)]
+fn shoulder(
+    d: Real,
+    l: Real,
+    ds: Real,
+    b: Real,
+    dk: Real,
+    k: Real,
+    s: Real,
+    t: Real,
+) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, false)?;
+    let (r, rs, rk, c, e) = (spec.major / 2.0, ds / 2.0, dk / 2.0, spec.major / 10.0, dk / 25.0);
+    let end = -l - b;
+    let mut part = axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r - c, end, ""),
+                    (r, end + c, "EndChamfer"),
+                    (r, -l, "Shank"),
+                    (rs, -l, "Step"),
+                    (rs, 0.0, "Shoulder"),
+                    (rk, 0.0, "Seat"),
+                    (rk, k - e, "Head"),
+                    (rk - e, k, "HeadChamfer"),
+                ],
+                Some("Top"),
+            ),
+            AxialRun::hexagon(s, k, k - t, "Socket", Some("SocketFloor")),
+        ],
+        Some("End"),
+        false,
+    )?;
+    add_thread(&mut part, spec, r, Point3::new(r, 0.0, end + 2.0 * c))?;
+    Ok(part)
+}
+
+/// A bend of pipe: the ring revolved about a line at `r` from the end's centre.
+fn pipe_elbow(d: Real, t: Real, r: Real, angle: Real) -> Result<PartDocument, PartError> {
+    let mut part = blank();
+    let i = part.create_sketch(
+        SketchPlacement::on_origin_plane(OriginPlane::XY),
+        &options(),
+    )?;
+    let sk = &mut part.sketches[i].sketch;
+    let c = Point2::new(0.0, 0.0);
+    sk.add_circle(c, d / 2.0).map_err(|e| bad(&e.to_string()))?;
+    sk.add_circle(c, d / 2.0 - t)
+        .map_err(|e| bad(&e.to_string()))?;
+    let axis = sk.add_line(Point2::new(r, d), Point2::new(r, -d));
+    sk.set_style(axis, crate::sketch::Style::Centerline)
+        .map_err(|e| bad(&e.to_string()))?;
+    let q = Point2::new(d / 2.0 - t / 2.0, 0.0);
+    let regions = sk.regions();
+    let ring_region = regions
+        .iter()
+        .find(|x| x.contains(q))
+        .ok_or_else(|| bad("the pipe's section is not closed"))?;
+    let mut f = RevolveFeature::new(
+        vec![ProfileRef::of(ring_region, q)],
+        AxisRef::SketchLine(axis),
+    );
+    f.extent = crate::part::RevolveExtent::Angle;
+    f.angle = angle.to_radians();
+    part.add_revolve(i, f)?;
+    Ok(part)
+}
+
+/// A straight tee: two solid cylinders joined, then both bores cut in one Boolean.
+fn pipe_tee(d: Real, t: Real, c: Real) -> Result<PartDocument, PartError> {
+    let (r, rb) = (d / 2.0, d / 2.0 - t);
+    let mut part = blank();
+    let circle = |radius: Real| vec![Loop::Circle(Point2::new(0.0, 0.0), radius, false)];
+    extrude(
+        &mut part,
+        circle(r),
+        Point2::new(r / 2.0, 0.0),
+        0.0,
+        2.0 * c,
+        false,
+        Operation::NewSolid,
+    )?;
+    branch(&mut part, r, c, c, Operation::Join)?;
+    branch(&mut part, rb, c, c * 1.0, Operation::Cut)?;
+    extrude(
+        &mut part,
+        circle(rb),
+        Point2::new(rb / 2.0, 0.0),
+        0.0,
+        2.0 * c,
+        false,
+        Operation::Cut,
+    )?;
+    Ok(part)
+}
+
+/// A cylinder from the Z axis along +X, at height `z`.
+fn branch(
+    part: &mut PartDocument,
+    radius: Real,
+    z: Real,
+    length: Real,
+    op: Operation,
+) -> Result<(), PartError> {
+    let i = part.create_sketch(
+        SketchPlacement::on_origin_plane(OriginPlane::YZ),
+        &options(),
+    )?;
+    let sk = &mut part.sketches[i].sketch;
+    let c = sk.plane.project(&Point3::new(0.0, 0.0, z));
+    sk.add_circle(c, radius).map_err(|e| bad(&e.to_string()))?;
+    let flip = sk.plane.normal.x < 0.0;
+    let regions = sk.regions();
+    let r = regions
+        .first()
+        .ok_or_else(|| bad("the branch has no section"))?;
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(r, c)], length);
+    e.operation = op;
+    if flip {
+        e.direction = ExtentDirection::Flipped;
+    }
+    part.add_extrude(i, e)?;
+    Ok(())
+}
+
+/// A cone of pipe, built directly.
+fn pipe_reducer(
+    d1: Real,
+    d2: Real,
+    t1: Real,
+    t2: Real,
+    l: Real,
+) -> Result<PartDocument, PartError> {
+    axial_part(
+        vec![
+            AxialRun::turned(
+                &[(d1 / 2.0, 0.0, ""), (d2 / 2.0, l, "Outside")],
+                Some("SmallEnd"),
+            ),
+            AxialRun::turned(
+                &[(d2 / 2.0 - t2, l, ""), (d1 / 2.0 - t1, 0.0, "Inside")],
+                Some("LargeEnd"),
+            ),
+        ],
+        None,
+        true,
+    )
+}
+
+/// A skirt and a torispherical head built directly: crown radius 0.9 D, knuckle 0.17 D,
+/// the usual stand-in for the ellipse a butt-weld cap's head follows. The wall keeps its
+/// thickness through both arcs.
+fn pipe_cap(d: Real, t: Real, e: Real) -> Result<PartDocument, PartError> {
+    let (crown, knuckle) = (0.9 * d, 0.17 * d);
+    let r = d / 2.0;
+    // The knuckle's centre and the crown's, on the axis.
+    let kx = r - knuckle;
+    let rise = ((crown - knuckle).powi(2) - kx * kx).sqrt();
+    let skirt = e - crown + rise;
+    if skirt <= 0.0 || t >= knuckle {
+        return Err(bad("the cap's table gives no room for its head"));
+    }
+    let centre_crown = [0.0, skirt - rise];
+    let centre_knuckle = [kx, skirt];
+    // Where the two arcs meet: along the line through both centres.
+    let (ux, uz) = (kx / (crown - knuckle), rise / (crown - knuckle));
+    let join = |wall: Real| {
+        (
+            centre_knuckle[0] + (knuckle - wall) * ux,
+            centre_knuckle[1] + (knuckle - wall) * uz,
+        )
+    };
+    let (ox, oz) = join(0.0);
+    let (ix, iz) = join(t);
+    let outside = vec![
+        arc_to(ox, oz, centre_crown, "Crown"),
+        arc_to(r, skirt, centre_knuckle, "Knuckle"),
+        line_to(r, 0.0, "Skirt"),
+    ];
+    // Clockwise on the way back along the inside.
+    let back = |to: (Real, Real), c: [Real; 2], role: &str| AxialSeg {
+        to: [to.0, to.1],
+        arc: Some((c, false)),
+        role: role.to_owned(),
+    };
+    let inside = vec![
+        line_to(r - t, skirt, "InnerSkirt"),
+        back((ix, iz), centre_knuckle, "InnerKnuckle"),
+        back((0.0, e - t), centre_crown, "InnerCrown"),
+    ];
+    let mut part = blank();
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs: vec![
+            chain([0.0, e], outside, Some("End")),
+            chain([r - t, 0.0], inside, None),
+        ],
+        first_cap: None,
+        closed: false,
+        holes: Vec::new(),
+    })))?;
+    Ok(part)
+}
+
+/// A flange as one stepped body with its bolt holes in it, no Boolean: 20 holes cut
+/// from a revolved disc took the kernel ~5 s. The holes straddle the centre lines,
+/// as flanges are drilled.
+fn flange(f: Flange, with_holes: bool) -> Result<PartDocument, PartError> {
+    let (r, rb) = (f.outside / 2.0, f.bore / 2.0);
+    let (rise, rf) = (f.raised.0, f.raised.1 / 2.0);
+    let raised = rise > 0.0;
+    // The outer rim from `back` towards the contact face at `face`, and the raised face.
+    let rim = |back: Real, face: Real, into: Real, next: Option<&str>| {
+        if raised {
+            vec![
+                AxialRun::turned(
+                    &[(r, back, ""), (r, face + into * rise, "Rim")],
+                    Some("Shoulder"),
+                ),
+                AxialRun::turned(
+                    &[(rf, face + into * rise, ""), (rf, face, "RaisedFace")],
+                    next,
+                ),
+            ]
+        } else {
+            vec![AxialRun::turned(&[(r, back, ""), (r, face, "Rim")], next)]
+        }
+    };
+    let (runs, first_cap, closed, from, to) = match f.neck {
+        Some(n) => {
+            let back = n.length - f.thickness;
+            let mut runs = vec![AxialRun::turned(
+                &[
+                    (n.pipe / 2.0, 0.0, ""),
+                    (n.pipe / 2.0, n.straight, "Neck"),
+                    (n.hub / 2.0, back, "Hub"),
+                ],
+                Some("Back"),
+            )];
+            runs.extend(rim(back, n.length, -1.0, Some("Face")));
+            runs.push(AxialRun::turned(
+                &[(rb, n.length, ""), (rb, 0.0, "Bore")],
+                Some("WeldEnd"),
+            ));
+            (runs, None, true, back, n.length - rise)
+        }
+        None if f.bore > 0.0 => {
+            let mut runs = rim(f.thickness, 0.0, 1.0, Some("Face"));
+            runs.push(AxialRun::turned(
+                &[(rb, 0.0, ""), (rb, f.thickness, "Bore")],
+                Some("Back"),
+            ));
+            (runs, None, true, rise, f.thickness)
+        }
+        None => (
+            rim(f.thickness, 0.0, 1.0, Some("Face")),
+            Some("Back"),
+            false,
+            rise,
+            f.thickness,
+        ),
+    };
+    let holes = if with_holes {
+        let step = std::f64::consts::TAU / Real::from(f.holes);
+        (0..f.holes)
+            .map(|k| {
+                let a = (Real::from(k) + 0.5) * step;
+                AxialHole {
+                    center: [f.circle / 2.0 * a.cos(), f.circle / 2.0 * a.sin()],
+                    diameter: f.hole,
+                    z0: from,
+                    z1: to,
+                    role: format!("BoltHole:{}", k + 1),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut part = blank();
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs,
+        first_cap: first_cap.map(str::to_owned),
+        closed,
+        holes,
+    })))?;
     Ok(part)
 }
 
