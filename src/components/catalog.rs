@@ -247,7 +247,7 @@ impl Catalog {
                 }
             }
         }
-        // What was typed as one phrase comes first: `De 20 d 2` is a spring, not every part
+        // What was typed as one phrase comes first: `De 18 d 2` is a spring, not every part
         // whose name holds those letters.
         exact.append(&mut out);
         exact
