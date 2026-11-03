@@ -81,7 +81,11 @@ pub(super) fn selector_row(
         if row.clicked() {
             ev.activate = Some(s.key);
         }
-        if !s.is_empty() && ui.small_button("x").on_hover_text("Clear").clicked() {
+        if !s.is_empty()
+            && super::theme::glyph(ui, super::theme::Glyph::Close)
+                .on_hover_text("Clear")
+                .clicked()
+        {
             ev.clear = Some(s.key);
         }
         if s.required && s.is_empty() {

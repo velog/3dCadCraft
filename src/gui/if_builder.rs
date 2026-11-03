@@ -339,8 +339,7 @@ impl CondBuilder {
                         ui.label("");
                     }
                     if self.rows.len() > 1
-                        && ui
-                            .small_button("x")
+                        && super::theme::glyph(ui, super::theme::Glyph::Close)
                             .on_hover_text("Remove this row")
                             .clicked()
                     {

@@ -1261,7 +1261,7 @@ impl CadCraftApp {
                 )
                 .on_hover_text(summary);
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
+                    if ui.add(super::theme::ok_button("OK")).clicked() {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {

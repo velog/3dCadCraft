@@ -229,6 +229,8 @@ pub enum Icon {
     // assembly
     Assembly,
     Folder,
+    /// File › Save: a diskette.
+    FileSave,
     SheetMetal,
     // sheet metal commands (one each)
     SmFace,
@@ -2232,6 +2234,30 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.line(&[(5.5, 4.5), (5.5, 11.5)], ink);
             p.line(&[(11.0, 4.5), (11.0, 11.5)], ink);
             p.circle(3.25, 8.0, 1.6, acc);
+        }
+        FileSave => {
+            p.fill(
+                &[
+                    (2.5, 2.5),
+                    (11.5, 2.5),
+                    (13.5, 4.5),
+                    (13.5, 13.5),
+                    (2.5, 13.5),
+                ],
+                soft,
+            );
+            p.closed(
+                &[
+                    (2.5, 2.5),
+                    (11.5, 2.5),
+                    (13.5, 4.5),
+                    (13.5, 13.5),
+                    (2.5, 13.5),
+                ],
+                acc,
+            );
+            p.rect(5.0, 2.5, 10.5, 6.0, ink);
+            p.rect(4.5, 9.0, 11.5, 13.5, ink);
         }
         Folder => {
             p.fill(

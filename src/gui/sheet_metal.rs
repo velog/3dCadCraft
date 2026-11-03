@@ -1914,7 +1914,7 @@ impl CadCraftApp {
         ui.horizontal(|ui| {
             let size = egui::vec2(60.0, 22.0);
             if ui
-                .add_enabled(ready, egui::Button::new("OK").min_size(size))
+                .add_enabled(ready, super::theme::ok_button("OK").min_size(size))
                 .on_hover_text("Enter")
                 .clicked()
             {
@@ -3602,7 +3602,7 @@ impl CadCraftApp {
                 }
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(r.validate().is_ok(), egui::Button::new("OK"))
+                        .add_enabled(r.validate().is_ok(), super::theme::ok_button("OK"))
                         .clicked()
                     {
                         apply = true;
@@ -3781,8 +3781,7 @@ fn further_bends(ui: &mut egui::Ui, fx: &mut Fields, f: &mut SheetFlangeFeature,
                     .on_hover_text("Turns the same way as the bend before it");
                 ui.selectable_value(&mut b.flip, true, "Flipped")
                     .on_hover_text("Turns the other way than the bend before it");
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Remove this bend")
                     .clicked()
                 {

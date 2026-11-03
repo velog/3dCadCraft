@@ -319,7 +319,10 @@ impl CadCraftApp {
             ready && (preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING));
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)

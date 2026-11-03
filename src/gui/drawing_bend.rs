@@ -284,7 +284,9 @@ impl CadCraftApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     let ready = dlg.view.is_some();
-                    if ui.add_enabled(ready, egui::Button::new("OK")).clicked()
+                    if ui
+                        .add_enabled(ready, super::theme::ok_button("OK"))
+                        .clicked()
                         || (ready && super::keys::panel_ok_key(ui, false))
                     {
                         ok = true;

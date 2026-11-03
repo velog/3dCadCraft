@@ -15,6 +15,21 @@ Status: ✅ done · 🟡 partial · ⬜ to do.
 
 ## 2. Visual language
 
+### 2.1a Interface theme (`gui/theme.rs`)
+
+The look of everything around the view has one source. New panels take colours from the style or from
+`theme`'s constants and never define their own greys.
+
+| Item | Requirement | Status |
+|---|---|---|
+| Palette | neutral graphite in steps: fields darkest, then panels, floating windows and menus, buttons; one blue accent for the current choice and the main action. Text contrast is held by a test: at least 7:1 for text and labels on panels, 4.5:1 for text on buttons, on the accent and for labels in windows | 🟡 waiting for the owner's check |
+| Labels | quieter than values but clearly readable; only a disabled control looks disabled | 🟡 waiting for the owner's check |
+| Interface font | Inter, regular weight, with Latin and Cyrillic; egui's built-in fonts remain the fallback for symbols | 🟡 waiting for the owner's check |
+| Drawing sheet font | stays Ubuntu-Light (family `theme::SHEET_FAMILY`): the sheet on screen, Format Text's measuring and the PDF must use one font, whatever the interface uses | 🟡 waiting for the owner's check |
+| Small symbols | close, add, remove, arrows, check and help are drawn (`theme::Glyph`), never typed as `x`, `+`, `v`, `^`, `<`, `>` | 🟡 waiting for the owner's check |
+| Quick access toolbar | icons with a tooltip (name + key), no frame until the cursor is over them; File, View and Help are plain words until then | 🟡 waiting for the owner's check |
+| Button kinds | OK has the accent (`theme::ok_button`), Cancel is neutral, deleting from a panel has a red text (`theme::danger_button`) | 🟡 waiting for the owner's check |
+
 ### 2.1 General look
 
 | Item | Requirement | Status |

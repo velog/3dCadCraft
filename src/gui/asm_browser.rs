@@ -773,15 +773,13 @@ impl CadCraftApp {
             {
                 o.modeling = true;
             }
-            if ui
-                .small_button("+")
+            if super::theme::glyph(ui, super::theme::Glyph::Plus)
                 .on_hover_text("Expand All Children")
                 .clicked()
             {
                 super::panels::request_fold_all(ui.ctx(), true);
             }
-            if ui
-                .small_button("-")
+            if super::theme::glyph(ui, super::theme::Glyph::Minus)
                 .on_hover_text("Collapse All Children")
                 .clicked()
             {
@@ -813,7 +811,10 @@ impl CadCraftApp {
                 self.asm.search.clear();
             }
             if ui
-                .add_enabled(!self.asm.search.is_empty(), egui::Button::new("x"))
+                .add_enabled(
+                    !self.asm.search.is_empty(),
+                    super::theme::GlyphButton(super::theme::Glyph::Close),
+                )
                 .on_hover_text("Clear the search")
                 .clicked()
             {

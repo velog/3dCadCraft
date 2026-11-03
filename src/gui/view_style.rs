@@ -288,7 +288,7 @@ impl CadCraftApp {
         ui.horizontal(|ui| {
             let ready = s.planes.len() == s.kind.planes();
             if ui
-                .add_enabled(ready, egui::Button::new("OK"))
+                .add_enabled(ready, super::theme::ok_button("OK"))
                 .on_disabled_hover_text("Pick the plane(s) first")
                 .clicked()
                 || (ready && super::keys::panel_ok_key(ui, true))

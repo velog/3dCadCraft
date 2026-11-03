@@ -127,7 +127,10 @@ impl CadCraftApp {
                 plabel(ui, &format!("{}", k + 1));
                 ui.horizontal(|ui| {
                     ui.label(p.describe()).on_hover_text(p.describe());
-                    if ui.small_button("x").on_hover_text("Remove").clicked() {
+                    if super::theme::glyph(ui, super::theme::Glyph::Close)
+                        .on_hover_text("Remove")
+                        .clicked()
+                    {
                         remove = Some(k);
                     }
                 });
@@ -358,7 +361,10 @@ impl CadCraftApp {
         self.work_draft = Some(d);
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(70.0, 22.0)),
+                )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)

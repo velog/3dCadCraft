@@ -439,7 +439,8 @@ impl CadCraftApp {
                 break_options_ui(ui, &mut e.b, false);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ok = ui.button("OK").clicked() || super::keys::panel_ok_key(ui, true);
+                    ok = ui.add(super::theme::ok_button("OK")).clicked()
+                        || super::keys::panel_ok_key(ui, true);
                     cancel = ui.button("Cancel").clicked();
                 });
             });

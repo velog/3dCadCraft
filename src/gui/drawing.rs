@@ -1889,7 +1889,9 @@ impl CadCraftApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     let ready = dlg.model.is_some();
-                    if ui.add_enabled(ready, egui::Button::new("OK")).clicked()
+                    if ui
+                        .add_enabled(ready, super::theme::ok_button("OK"))
+                        .clicked()
                         || (ready && super::keys::panel_ok_key(ui, false))
                     {
                         ok = true;
@@ -2061,7 +2063,9 @@ impl CadCraftApp {
                     .on_disabled_hover_text("Other corners: planned (spec 4 §3.1)");
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, false) {
+                    if ui.add(super::theme::ok_button("OK")).clicked()
+                        || super::keys::panel_ok_key(ui, false)
+                    {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {

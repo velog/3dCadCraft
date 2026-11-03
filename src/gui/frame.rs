@@ -130,8 +130,7 @@ pub(super) fn sets_ui(ui: &mut egui::Ui, d: &mut PartDialog) {
                         .truncate(),
                     )
                     .on_hover_text(&s.options.family);
-                    if ui
-                        .small_button("x")
+                    if super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Drop this set")
                         .clicked()
                     {

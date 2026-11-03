@@ -133,7 +133,7 @@ pub fn show(
         ui.spacing_mut().item_spacing.x = 4.0;
         for (k, c) in crumbs.iter().enumerate() {
             if k > 0 {
-                ui.label(egui::RichText::new(">").weak());
+                ui.label(egui::RichText::new("›").weak());
             }
             if let Some((rk, text)) = state.renaming.as_mut()
                 && *rk == k

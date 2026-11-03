@@ -2172,7 +2172,7 @@ impl PartDialog {
         let (mut cancel, mut ok) = (false, false);
         let logic = self.kind.has_logic();
         ui.horizontal(|ui| {
-            let b = ui.add_enabled(logic, egui::Button::new("OK"));
+            let b = ui.add_enabled(logic, super::theme::ok_button("OK"));
             ok = b.clicked();
             b.on_disabled_hover_text(&tip);
             if ui.button("Cancel").clicked() {

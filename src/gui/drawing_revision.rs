@@ -660,7 +660,7 @@ impl CadCraftApp {
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, false) {
+                    if ui.add(super::theme::ok_button("OK")).clicked() || super::keys::panel_ok_key(ui, false) {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {
@@ -722,7 +722,9 @@ impl CadCraftApp {
                 rev_settings(ui, &mut d.rt);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, false) {
+                    if ui.add(super::theme::ok_button("OK")).clicked()
+                        || super::keys::panel_ok_key(ui, false)
+                    {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {
@@ -810,7 +812,9 @@ impl CadCraftApp {
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, false) {
+                    if ui.add(super::theme::ok_button("OK")).clicked()
+                        || super::keys::panel_ok_key(ui, false)
+                    {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {
@@ -961,7 +965,10 @@ fn general_editor(ui: &mut egui::Ui, t: &mut GeneralTable, row: &mut usize) {
                                     .suffix(" mm"),
                             );
                             if ui
-                                .add_enabled(n > 1, egui::Button::new("x"))
+                                .add_enabled(
+                                    n > 1,
+                                    super::theme::GlyphButton(super::theme::Glyph::Close),
+                                )
                                 .on_hover_text("Remove the column")
                                 .clicked()
                             {

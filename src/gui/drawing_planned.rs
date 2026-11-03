@@ -855,7 +855,7 @@ impl PlannedDialog {
         ui.label(egui::RichText::new(self.kind.about()).weak());
         let mut cancel = false;
         ui.horizontal(|ui| {
-            ui.add_enabled(false, egui::Button::new("OK"))
+            ui.add_enabled(false, super::theme::ok_button("OK"))
                 .on_disabled_hover_text(tip);
             if ui.button("Cancel").clicked() {
                 cancel = true;
@@ -912,7 +912,11 @@ impl PlannedDialog {
                         Some(v) => format!("{} selected", v.len()),
                     };
                     ui.label(egui::RichText::new(text).weak());
-                    if n > 0 && ui.small_button("x").on_hover_text("Clear").clicked() {
+                    if n > 0
+                        && super::theme::glyph(ui, super::theme::Glyph::Close)
+                            .on_hover_text("Clear")
+                            .clicked()
+                    {
                         self.picks.remove(key);
                     }
                 });

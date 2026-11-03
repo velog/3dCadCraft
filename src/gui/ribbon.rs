@@ -1473,14 +1473,14 @@ pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Op
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (glyph, tip) = if fold.minimized {
-                ("v", "Show the full ribbon")
+                (super::theme::Glyph::Down, "Show the full ribbon")
             } else {
                 (
-                    "^",
+                    super::theme::Glyph::Up,
                     "Minimize the ribbon to its tabs (or double-click the active tab)",
                 )
             };
-            if ui.small_button(glyph).on_hover_text(tip).clicked() {
+            if super::theme::glyph(ui, glyph).on_hover_text(tip).clicked() {
                 fold.minimized = !fold.minimized;
                 fold.peek = false;
             }
@@ -1506,6 +1506,8 @@ pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Op
     let collapsed = collapsed_panels(&widths, &titles, ui.available_width());
     egui::ScrollArea::horizontal().show(ui, |ui| {
         ui.horizontal_top(|ui| {
+            // Columns close together: everyday panels must stay open at 1400 px.
+            ui.spacing_mut().item_spacing.x = 4.0;
             for (k, p) in panels.iter().enumerate() {
                 if collapsed[k] {
                     if let Some(a) = collapsed_panel(ui, p, st) {
@@ -1695,7 +1697,7 @@ pub(super) fn icon_button_in(
     } else {
         ui.visuals().weak_text_color()
     };
-    let font = egui::FontId::proportional(if size == Size::Large { 11.5 } else { 12.5 });
+    let font = egui::FontId::proportional(if size == Size::Large { 11.0 } else { 11.5 });
     let text = match size {
         Size::Large => two_lines(label),
         Size::Small => label.to_owned(),

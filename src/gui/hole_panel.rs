@@ -354,7 +354,9 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
                                 fx.commits.push((field, t));
                                 done = true;
                             }
-                            done |= ui.small_button("x").on_hover_text("Close (Esc)").clicked();
+                            done |= super::theme::glyph(ui, super::theme::Glyph::Close)
+                                .on_hover_text("Close (Esc)")
+                                .clicked();
                         });
                     });
                 });
@@ -451,7 +453,7 @@ impl CadCraftApp {
             {
                 to_sketch = true;
             }
-            ui.label(">");
+            ui.label("›");
             let id = egui::Id::new("hole_crumb_rename");
             let mut editing: Option<String> = ui.data(|x| x.get_temp(id));
             match editing.as_mut() {
@@ -483,7 +485,7 @@ impl CadCraftApp {
                 None => x.remove::<String>(id),
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button("...", |ui| {
+                ui.menu_button("…", |ui| {
                     for (flag, text, tip) in [
                         (
                             &PRESELECT,
@@ -531,7 +533,7 @@ impl CadCraftApp {
                 }
                 if d.edit.is_none()
                     && d.count() > 0
-                    && ui.small_button("x").on_hover_text("Clear Selections").clicked()
+                    && super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("Clear Selections").clicked()
                 {
                     d.points.clear();
                     d.dims.clear();
@@ -562,8 +564,7 @@ impl CadCraftApp {
                         crate::part::HoleCenter::Concentric(_) => "concentric to an edge",
                         crate::part::HoleCenter::Axis(_) => "on a cylinder's axis",
                     });
-                    if ui
-                        .small_button("x")
+                    if super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Remove this centre")
                         .clicked()
                     {
@@ -589,8 +590,7 @@ impl CadCraftApp {
                 plabel(ui, &format!("New centre {}", k + 1));
                 ui.horizontal(|ui| {
                     ui.label("clicked on the face");
-                    if ui
-                        .small_button("x")
+                    if super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Remove this centre")
                         .clicked()
                     {
@@ -649,8 +649,7 @@ impl CadCraftApp {
                             "Follows dimension #{}; at OK its equation is that dimension's name",
                             src + 1
                         ));
-                        if ui
-                            .small_button("x")
+                        if super::theme::glyph(ui, super::theme::Glyph::Close)
                             .on_hover_text("Stop following (keep the value)")
                             .clicked()
                         {
@@ -918,8 +917,7 @@ impl CadCraftApp {
                     d.to_pick = false;
                 }
                 if d.def.direction.is_some()
-                    && ui
-                        .small_button("x")
+                    && super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Square to the face again")
                         .clicked()
                 {
@@ -1178,7 +1176,10 @@ impl CadCraftApp {
                 && ui.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals));
             let key_ok = super::keys::panel_ok_key(ui, ok);
             if (ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
                 || key_ok)

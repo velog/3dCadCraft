@@ -263,7 +263,7 @@ impl CadCraftApp {
                 }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
+                    if ui.add(super::theme::ok_button("OK")).clicked() {
                         answer = Some(true);
                     }
                     if ui.button("Cancel").clicked() {

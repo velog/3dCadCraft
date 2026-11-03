@@ -752,7 +752,10 @@ impl CadCraftApp {
                 }
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(!taken && !text.trim().is_empty(), egui::Button::new("OK"))
+                        .add_enabled(
+                            !taken && !text.trim().is_empty(),
+                            super::theme::ok_button("OK"),
+                        )
                         .clicked()
                     {
                         commit = true;

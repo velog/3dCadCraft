@@ -234,8 +234,7 @@ impl CadCraftApp {
                         ui.close();
                     }
                 });
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Close this document")
                     .clicked()
                 {
@@ -243,8 +242,7 @@ impl CadCraftApp {
                 }
                 ui.separator();
             }
-            if ui
-                .small_button("+")
+            if super::theme::glyph(ui, super::theme::Glyph::Plus)
                 .on_hover_text("New document (Ctrl+N)")
                 .clicked()
             {

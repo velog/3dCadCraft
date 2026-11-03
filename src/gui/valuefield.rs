@@ -178,7 +178,7 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
             }
             ui.data_mut(|d| d.remove::<String>(buf_id));
         }
-        ui.menu_button(">", |ui| {
+        ui.menu_button("›", |ui| {
             ui.menu_button("List Parameters", |ui| {
                 let mut any = false;
                 for p in spec

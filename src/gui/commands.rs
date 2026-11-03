@@ -2687,14 +2687,14 @@ pub static COMMANDS: &[Command] = &[
         .at(&[FILE])
         .tip("A new project with an empty part")
         .spec("0.6-files.md"),
-    c("file.open", "Open", "Отваряне", Icon::Part)
+    c("file.open", "Open", "Отваряне", Icon::Folder)
         .run(Action::App(AppCmd::Open))
         .key("Ctrl+O")
         .bound()
         .at(&[FILE])
         .tip("Open a .3dcadcraft project")
         .spec("0.6-files.md"),
-    c("file.save", "Save", "Запис", Icon::Part)
+    c("file.save", "Save", "Запис", Icon::FileSave)
         .run(Action::App(AppCmd::Save))
         .key("Ctrl+S")
         .bound()

@@ -334,7 +334,7 @@ impl CadCraftApp {
                     ui.separator();
                     ui.horizontal(|ui| {
                         let ready = d.break_out().is_some();
-                        ok = ui.add_enabled(ready, egui::Button::new("OK")).clicked();
+                        ok = ui.add_enabled(ready, super::theme::ok_button("OK")).clicked();
                         cancel = ui.button("Cancel").clicked();
                     });
                 });

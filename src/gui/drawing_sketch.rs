@@ -752,12 +752,10 @@ impl CadCraftApp {
                             }
                             apply |=
                                 r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            apply |= ui
-                                .small_button("✔")
+                            apply |= super::theme::glyph(ui, super::theme::Glyph::Check)
                                 .on_hover_text("Apply (Enter)")
                                 .clicked();
-                            drop |= ui
-                                .small_button("x")
+                            drop |= super::theme::glyph(ui, super::theme::Glyph::Close)
                                 .on_hover_text("Keep the measured value (Esc)")
                                 .clicked();
                         });

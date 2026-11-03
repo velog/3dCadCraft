@@ -124,7 +124,7 @@ impl CadCraftApp {
                         .clicked();
                 });
                 ui.horizontal(|ui| {
-                    ok = ui.button("OK").clicked();
+                    ok = ui.add(super::theme::ok_button("OK")).clicked();
                     cancel = ui.button("Cancel").clicked();
                     verify = ui.button("Verify").clicked();
                     if ui.button("Copy as CSV").clicked() {
@@ -314,8 +314,7 @@ fn table_grid(ui: &mut egui::Ui, t: &mut FamilyTable) {
                         {
                             toggle_key = Some(i);
                         }
-                        if ui
-                            .small_button("x")
+                        if super::theme::glyph(ui, super::theme::Glyph::Close)
                             .on_hover_text("Delete the column")
                             .clicked()
                         {
@@ -331,8 +330,7 @@ fn table_grid(ui: &mut egui::Ui, t: &mut FamilyTable) {
             let n = t.rows.len();
             for r in 0..n {
                 ui.horizontal(|ui| {
-                    if ui
-                        .small_button("x")
+                    if super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Delete the member")
                         .clicked()
                     {

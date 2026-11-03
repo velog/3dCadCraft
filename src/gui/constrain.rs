@@ -1197,7 +1197,7 @@ impl CadCraftApp {
         let mut action = None;
         ui.horizontal(|ui| {
             let ready = d.a.is_some() && d.b.is_some();
-            let ok = ui.add_enabled(ready, egui::Button::new("OK"));
+            let ok = ui.add_enabled(ready, super::theme::ok_button("OK"));
             if ok.clicked() || super::keys::panel_ok_key(ui, ready) {
                 action = Some(true);
             }

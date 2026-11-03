@@ -148,7 +148,7 @@ impl CadCraftApp {
                     ui.horizontal(|ui| {
                         ui.label("New name");
                         let resp = ui.text_edit_singleline(r);
-                        commit = ui.button("OK").clicked()
+                        commit = ui.add(super::theme::ok_button("OK")).clicked()
                             || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                     });
                     if commit {

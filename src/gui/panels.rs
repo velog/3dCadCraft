@@ -238,15 +238,13 @@ impl CadCraftApp {
             });
             if !self.is_assembly() {
                 ui.horizontal(|ui| {
-                    if ui
-                        .small_button("+")
+                    if super::theme::glyph(ui, super::theme::Glyph::Plus)
                         .on_hover_text("Expand All Children")
                         .clicked()
                     {
                         request_fold_all(ui.ctx(), true);
                     }
-                    if ui
-                        .small_button("-")
+                    if super::theme::glyph(ui, super::theme::Glyph::Minus)
                         .on_hover_text("Collapse All Children")
                         .clicked()
                     {
@@ -1051,7 +1049,7 @@ impl CadCraftApp {
             ui.close();
         }
         ui.separator();
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             cmds.push(BrowserCmd::DeleteFeature(k));
             ui.close();
         }
@@ -1576,8 +1574,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::ENABLED);
             ui.label(RichText::new(title).heading());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button("?")
+                if super::theme::glyph(ui, super::theme::Glyph::Help)
                     .on_hover_text("Help: the specification of this command (F1)")
                     .clicked()
                 {
@@ -1753,7 +1750,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             if ui
                 .add_enabled(
                     ready,
-                    egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)),
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
                 )
                 .on_hover_text("Create the feature (Enter, Ctrl+Enter)")
                 .clicked()
@@ -2013,7 +2010,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     .weak(),
             );
             ui.horizontal(|ui| {
-                if ui.button("OK").on_hover_text("Enter, Ctrl+Enter").clicked()
+                if ui
+                    .add(super::theme::ok_button("OK"))
+                    .on_hover_text("Enter, Ctrl+Enter")
+                    .clicked()
                     || super::keys::panel_ok_key(ui, true)
                 {
                     self.commit_edit_pattern();
@@ -2169,8 +2169,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                     self.hud.vals[k] = Some(v);
                                 }
                                 if self.hud.vals[k].is_some()
-                                    && ui
-                                        .small_button("x")
+                                    && super::theme::glyph(ui, super::theme::Glyph::Close)
                                         .on_hover_text("Follow the cursor again")
                                         .clicked()
                                 {
@@ -2283,7 +2282,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                     }
                                     if k == 1
                                         && d.dir[1].is_some()
-                                        && ui.small_button("x").on_hover_text("No direction 2").clicked()
+                                        && super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("No direction 2").clicked()
                                     {
                                         new_dir = Some((1, None));
                                     }
@@ -2438,7 +2437,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             if ui
                 .add_enabled(
                     ready,
-                    egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
+                    super::theme::ok_button("OK").min_size(egui::vec2(70.0, 22.0)),
                 )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
@@ -2725,7 +2724,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             }
         }
         ui.add_space(4.0);
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -2870,8 +2869,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                 }
                             }
                             if k > 0
-                                && ui
-                                    .small_button("x")
+                                && super::theme::glyph(ui, super::theme::Glyph::Close)
                                     .on_hover_text("Remove the set")
                                     .clicked()
                             {
@@ -2952,7 +2950,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                     .speed(0.1)
                                     .suffix(" mm"),
                             );
-                            if j != 0 && j + 1 != n && ui.small_button("x").clicked() {
+                            if j != 0
+                                && j + 1 != n
+                                && super::theme::glyph(ui, super::theme::Glyph::Close).clicked()
+                            {
                                 remove = Some(j);
                             }
                         });
@@ -3127,7 +3128,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)
@@ -3327,7 +3331,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Ctrl+Enter or Enter")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)
@@ -3698,7 +3705,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Ctrl+Enter; Enter when every input is there")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)
@@ -4014,7 +4024,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)
@@ -4134,7 +4147,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -4197,7 +4210,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -4273,7 +4286,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -4404,7 +4417,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 }
             }
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -4604,8 +4617,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         ui.label(text).on_hover_text(&r.source);
                         use super::project::RefAction;
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .small_button("x")
+                            if super::theme::glyph(ui, super::theme::Glyph::Close)
                                 .on_hover_text(
                                     "Delete the projected geometry and the constraints that use it",
                                 )
@@ -4683,7 +4695,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         }
 
         ui.separator();
-        if ui.button("Delete Sketch").clicked() {
+        if ui
+            .add(super::theme::danger_button("Delete Sketch"))
+            .clicked()
+        {
             self.delete_sketch(i);
         }
     }
@@ -4720,7 +4735,11 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     self.tools.selected.len(),
                     self.tools.selected_constraints.len()
                 ));
-                if ui.button("Delete").on_hover_text("Delete key").clicked() {
+                if ui
+                    .add(super::theme::danger_button("Delete"))
+                    .on_hover_text("Delete key")
+                    .clicked()
+                {
                     self.delete_selection();
                 }
             });
@@ -4740,8 +4759,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             .collect();
         for (id, c, driven, measured) in rows {
             ui.horizontal_wrapped(|ui| {
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Delete constraint")
                     .clicked()
                 {
@@ -5970,7 +5988,7 @@ fn revolve_options(
                 ui.label(format!("{}", def.open.len())).on_hover_text(
                     "Click curves of the sketch that close no area to revolve them as a surface (a second click removes one)",
                 );
-                if !def.open.is_empty() && ui.small_button("x").on_hover_text("Clear").clicked() {
+                if !def.open.is_empty() && super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("Clear").clicked() {
                     def.open.clear();
                 }
             });
@@ -6019,7 +6037,11 @@ fn extrude_options(
             {
                 *pick = Some(slot);
             }
-            if current.is_some() && ui.small_button("x").on_hover_text("Clear").clicked() {
+            if current.is_some()
+                && super::theme::glyph(ui, super::theme::Glyph::Close)
+                    .on_hover_text("Clear")
+                    .clicked()
+            {
                 clear = true;
             }
         });
@@ -6228,7 +6250,7 @@ impl CadCraftApp {
                     ui.label(RichText::new(e).color(WARNING));
                 }
                 ui.horizontal(|ui| {
-                    apply |= ui.button("OK").clicked();
+                    apply |= ui.add(super::theme::ok_button("OK")).clicked();
                     close |= ui.button("Cancel").clicked();
                     clear |= ui
                         .button("Remove")
@@ -6379,7 +6401,7 @@ impl CadCraftApp {
                 ui.horizontal(|ui| {
                     ui.label("Search");
                     ui.add(egui::TextEdit::singleline(&mut search_text).desired_width(160.0).hint_text("name, equation, comment"));
-                    if !search_text.is_empty() && ui.small_button("x").clicked() {
+                    if !search_text.is_empty() && super::theme::glyph(ui, super::theme::Glyph::Close).clicked() {
                         search_text.clear();
                     }
                     ui.separator();
@@ -6609,7 +6631,7 @@ impl CadCraftApp {
                                             if let Some(t) = typed {
                                                 edits.push(Edit::UnitSpec(i, t));
                                             }
-                                            ui.menu_button("...", |ui| {
+                                            ui.menu_button("…", |ui| {
                                                 for (kind, list) in crate::part::units::CATEGORIES {
                                                     ui.menu_button(*kind, |ui| {
                                                         for u in *list {
@@ -6720,7 +6742,7 @@ impl CadCraftApp {
                                     }
                                 }
                                 if matches!(r.owner, ParamOwner::User(_)) {
-                                    if ui.small_button("x").on_hover_text("Delete (only if unused)").clicked() {
+                                    if super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("Delete (only if unused)").clicked() {
                                         edits.push(Edit::Delete(r.name.clone()));
                                     }
                                 } else {
@@ -6790,7 +6812,7 @@ impl CadCraftApp {
                     ui.label("Values separated by ';' (each a value or an equation):");
                     ui.add(egui::TextEdit::singleline(&mut text).desired_width(320.0));
                     ui.horizontal(|ui| {
-                        if ui.button("OK").clicked() {
+                        if ui.add(super::theme::ok_button("OK")).clicked() {
                             let list: Vec<String> = text
                                 .split(';')
                                 .map(|v| v.trim().to_owned())
