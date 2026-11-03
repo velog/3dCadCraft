@@ -1,6 +1,6 @@
 //! Dimension parameters: the name (`d0`), equation and tolerance of each
 //! dimension (Inventor: every dimension is a model parameter), and how its
-//! text is shown (Value / Name / Expression / Tolerance).
+//! text is shown (Value / Name / Expression / Tolerance / Precise Value).
 
 use serde::{Deserialize, Serialize};
 
@@ -165,7 +165,7 @@ pub struct DimParam {
 }
 
 /// How dimension texts are shown (Inventor's status-bar choice).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DimDisplay {
     /// The value (`fx:` before values from equations).
     #[default]
@@ -176,15 +176,18 @@ pub enum DimDisplay {
     Expression,
     /// The value with its tolerance.
     Tolerance,
+    /// The value without rounding to the display precision.
+    PreciseValue,
 }
 
 impl DimDisplay {
     /// All modes.
-    pub const ALL: [DimDisplay; 4] = [
+    pub const ALL: [DimDisplay; 5] = [
         DimDisplay::Value,
         DimDisplay::Name,
         DimDisplay::Expression,
         DimDisplay::Tolerance,
+        DimDisplay::PreciseValue,
     ];
 
     /// Display name.
@@ -194,6 +197,7 @@ impl DimDisplay {
             DimDisplay::Name => "Name",
             DimDisplay::Expression => "Expression",
             DimDisplay::Tolerance => "Tolerance",
+            DimDisplay::PreciseValue => "Precise Value",
         }
     }
 }
@@ -276,7 +280,12 @@ impl Sketch {
         } else {
             self.dimension_nominal(id).unwrap_or_default()
         };
-        let p = self.dim_param(id);
+        let mut p = self.dim_param(id);
+        // A driven dimension shows what it measures: an equation it had
+        // while it was driving is not in force.
+        if driven {
+            p.expr = None;
+        }
         let prefix = match c {
             Constraint::Diameter { .. } | Constraint::DiameterToAxis { .. } => "Ø",
             Constraint::Radius { .. } => "R",
@@ -307,6 +316,11 @@ impl Sketch {
                 p.tol
                     .format(value, |v| if angle { v.to_degrees() } else { v }, digits)
             ),
+            DimDisplay::PreciseValue => {
+                let full = format!("{:.8}", deg(value));
+                let full = full.trim_end_matches('0').trim_end_matches('.');
+                format!("{prefix}{full}{unit}")
+            }
             _ => plain,
         };
         if driven { format!("({text})") } else { text }
@@ -350,5 +364,15 @@ mod tests {
         s.set_dimension_tolerance(d, lim).unwrap();
         assert!((s.constraint(d).unwrap().value().unwrap() - 30.025).abs() < 1e-12);
         assert_eq!(s.dimension_text(d, DimDisplay::Tolerance), "30.10/29.95");
+        s.set_dimension_tolerance(d, Tolerance::default()).unwrap();
+        s.set_dimension_nominal(d, 30.123456).unwrap();
+        assert_eq!(s.dimension_text(d, DimDisplay::Value), "30.12");
+        assert_eq!(s.dimension_text(d, DimDisplay::PreciseValue), "30.123456");
+        // A driven dimension's old equation is not shown.
+        s.dim_param_mut(d).unwrap().expr = Some("d1 * 2".into());
+        assert_eq!(s.dimension_text(d, DimDisplay::Value), "fx:30.12");
+        s.set_driven(d, true).unwrap();
+        assert!(!s.dimension_text(d, DimDisplay::Value).contains("fx"));
+        assert!(!s.dimension_text(d, DimDisplay::Expression).contains("d1"));
     }
 }

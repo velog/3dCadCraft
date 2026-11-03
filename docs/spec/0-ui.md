@@ -81,7 +81,7 @@ The look of everything around the view has one source. New panels take colours f
 | Dimension label | value with 2 decimals; `Ø` diameter, `R` radius, `°` angle; driven is **in parentheses** | ✅ |
 | Degree-of-freedom glyphs | cross of arrows (free point), double arrow (sliding along a direction), arc arrow (rotation), radial (free radius) | ✅ |
 | Glyph next to the cursor while drawing | what will be created: "coincident", "on curve", "midpoint", H, V, "90°", "//" | ✅ |
-| Dimension label in Name / Expression / Tolerance mode | shown as name, expression, tolerance or exact value (Value / Name / Expression / Tolerance / Precise Value) | ⬜ |
+| Dimension label in Name / Expression / Tolerance mode | shown as name, expression, tolerance or exact value (Value / Name / Expression / Tolerance / Precise Value) | ✅ |
 
 ### 2.5 Previews
 

@@ -147,6 +147,7 @@ By default they are **as in Inventor**. Your own keys: **Tools → Customize →
 finds every command by its alias too):
 
 - 3D Model: CO Coil, RI Rib, CMB Combine, SPL Split, UCS UCS, BX Box, CY Cylinder, SPE Sphere, TOR Torus.
+- Sketch, Format: CPT Center Point converts the selected points (Shift + click, or a box takes points on no curve too).
 - Sketch: TC Tangent Circle, AC Center Point Arc, RC / RCT Two / Three Point Center Rectangle, SL / SLO / SLC
   Center to Center / Overall / Center Point Slot, SLA / SLR Three Point / Center Point Arc Slot, SPV Control
   Vertex Spline, CHA Chamfer, CO Copy, RO Rotate, SPS Split, SC Scale, STR Stretch, PTH Pattern along Path,

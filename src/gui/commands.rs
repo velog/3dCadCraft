@@ -1260,7 +1260,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::CenterPoint)
         .at(&[S_FORMAT])
         .env(SKETCH)
-        .tip("New points are Center Points (a cross; Hole takes them as centres)")
+        .tip("Selected points become Center Points (a cross; Hole takes them as centres); with none selected, new points are")
         .spec("2.3-hole.md"),
     c("demo.rectangle", Demo::Rectangle.label(), "Пример: напълно определен правоъгълник", Icon::Demo)
         .alias(&["QDR"])

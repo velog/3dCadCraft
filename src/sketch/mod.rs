@@ -952,6 +952,59 @@ impl Sketch {
         self.solve_with(&SolverOptions::default())
     }
 
+    /// Solves after a size changed (Inventor): what is dimensioned from the
+    /// moved geometry goes with it and stays on its side. The solver alone
+    /// moves everything as little as it can, which turns a point held only by
+    /// a distance about the corner it is measured from, onto the other side
+    /// of it. So aligned distances first keep their direction; when that
+    /// conflicts with the other constraints (a triangle of three lengths) only
+    /// those of points on no curve do, then none. Nothing to solve (a saved
+    /// sketch, a finished drag) changes nothing; use [`Sketch::solve`] where
+    /// the cursor decides, as in a drag.
+    pub fn solve_keeping_sides(&mut self) -> Result<SolveReport, SketchError> {
+        let all: Vec<(PointId, PointId, Vector2)> = self
+            .constraints
+            .iter()
+            .filter(|(id, _)| !self.driven.contains_key(*id))
+            .filter_map(|(_, c)| {
+                let Constraint::Distance { a, b, value } = *c else {
+                    return None;
+                };
+                let (p, q) = (self.points.get(a)?, self.points.get(b)?);
+                if p.fixed && q.fixed {
+                    return None;
+                }
+                let dir = (q.position - p.position).try_normalize(1e-9)?;
+                Some((a, b, dir * value))
+            })
+            .collect();
+        if !all.is_empty() && solver::has_open_equation(self) {
+            let on_no_curve = |p: PointId| !self.entities.values().any(|e| e.points().contains(&p));
+            let lone: Vec<_> = all
+                .iter()
+                .copied()
+                .filter(|&(a, b, _)| on_no_curve(a) || on_no_curve(b))
+                .collect();
+            let sets = if lone.len() == all.len() {
+                vec![all]
+            } else {
+                vec![all, lone]
+            };
+            for hold in sets.into_iter().filter(|h| !h.is_empty()) {
+                let mut trial = self.clone();
+                let options = SolverOptions {
+                    hold,
+                    ..SolverOptions::default()
+                };
+                if matches!(trial.solve_with(&options), Ok(r) if r.status == SolveStatus::Solved) {
+                    *self = trial;
+                    break;
+                }
+            }
+        }
+        self.solve()
+    }
+
     /// Solves the sketch with explicit options (see [`Sketch::solve`]).
     pub fn solve_with(&mut self, options: &SolverOptions) -> Result<SolveReport, SketchError> {
         solver::solve(self, options)

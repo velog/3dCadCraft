@@ -2711,6 +2711,22 @@ impl CadCraftApp {
             .collect()
     }
 
+    /// Points of sketch `i` on no curve (a Center Point of a hole, a sketch
+    /// point) inside a selection box.
+    fn box_points(&self, i: usize, rect: egui::Rect, a: egui::Pos2, b: egui::Pos2) -> Vec<PointId> {
+        let sk = &self.part().sketches[i].sketch;
+        let r = egui::Rect::from_two_pos(a, b);
+        sk.points()
+            .filter(|(id, _)| !sk.entities().any(|(_, e)| e.points().contains(id)))
+            .filter(|(_, p)| {
+                self.camera
+                    .project(&sk.plane.point_at(p.position.x, p.position.y), rect)
+                    .is_some_and(|q| r.contains(q))
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     /// The visible edges of the body as polylines (cached per body).
     /// A cheap signature of the body: changes when it is rebuilt.
     pub(super) fn body_key(&self) -> String {
@@ -3844,15 +3860,16 @@ impl CadCraftApp {
     /// Re-solves the sketch in edit mode and stores its report.
     fn solve(&mut self) {
         // Parameters first: new dimensions get names, equations their values.
+        let editing = self.editing;
         let part = self.part_mut();
         part.sync_parameters();
-        part.evaluate_parameters();
-        self.report = self.editing.map(|i| {
-            self.part_mut().sketches[i]
-                .sketch
-                .solve()
-                .map_err(|e| e.to_string())
-        });
+        self.report = match editing {
+            Some(i) => part.solve_sketch(i).map(|r| r.map_err(|e| e.to_string())),
+            None => {
+                part.evaluate_parameters();
+                None
+            }
+        };
         // Per-geometry freedom: colours fully constrained curves and feeds
         // the Show All Degrees of Freedom glyphs.
         self.dof = self
@@ -4350,6 +4367,12 @@ impl CadCraftApp {
             }
             Action::ProjectCutEdges => self.project_cut_edges(),
             Action::ProjectFlatPattern => self.project_flat_pattern(),
+            Action::CenterPoint
+                if self.editing.is_some() && !self.tools.selected_points.is_empty() =>
+            {
+                let points = self.tools.selected_points.clone();
+                self.convert_center_points(&points);
+            }
             Action::CenterPoint => {
                 self.tools.center_point = !self.tools.center_point;
                 if self.tools.center_point {
@@ -4534,6 +4557,29 @@ impl CadCraftApp {
         }
     }
 
+    /// Format → Center Point on existing points, one Undo step: all become
+    /// Center Points, or normal points when all of them already are.
+    fn convert_center_points(&mut self, points: &[PointId]) {
+        let Some(i) = self.editing else { return };
+        let centers = self.part().sketches[i].sketch.center_points();
+        let style = if points.iter().all(|q| centers.contains(q)) {
+            crate::sketch::PointStyle::Normal
+        } else {
+            crate::sketch::PointStyle::Center
+        };
+        self.checkpoint("Center Point");
+        let sketch = &mut self.part_mut().sketches[i].sketch;
+        let before = sketch.clone();
+        if let Err(e) = points
+            .iter()
+            .try_for_each(|&q| sketch.set_point_style(q, style))
+        {
+            *sketch = before;
+            self.history.cancel();
+            self.file_status = Some(Err(format!("Center Point: {e}")));
+        }
+    }
+
     /// Opens the Edit Dimension box for a dimension (double-click on its
     /// value, or Edit from its context menu).
     fn open_dimension_edit(&mut self, c: ConstraintId) {
@@ -4548,9 +4594,14 @@ impl CadCraftApp {
             return;
         }
         let is_angle = matches!(con, crate::sketch::Constraint::Angle { .. });
+        // The equation as typed, or the nominal value (not the model value
+        // of an evaluated size).
+        let text = sk.dim_param(c).expr.unwrap_or_else(|| {
+            sketch_tools::format_value(sk.dimension_nominal(c).unwrap_or(value), is_angle)
+        });
         self.tools.dim_edit = Some(sketch_tools::DimEdit {
             constraint: c,
-            text: sketch_tools::format_value(value, is_angle),
+            text,
             is_angle,
             focused: false,
         });
@@ -4644,27 +4695,29 @@ impl CadCraftApp {
             SketchCtx::OwnPoint(p) => {
                 // Format → Center Point on an existing point (Inventor converts
                 // selected points with the Center Point button).
-                let center = self.part().sketches[i].sketch.center_points().contains(&p);
-                let label = if center {
-                    "Convert to Normal Point"
+                // A point of the selection stands for all of it (rule 17).
+                let points = if self.tools.selected_points.contains(&p) {
+                    self.tools.selected_points.clone()
                 } else {
-                    "Convert to Center Point"
+                    vec![p]
+                };
+                let centers = self.part().sketches[i].sketch.center_points();
+                let many = if points.len() > 1 {
+                    format!(" ({})", points.len())
+                } else {
+                    String::new()
+                };
+                let label = if points.iter().all(|q| centers.contains(q)) {
+                    format!("Convert to Normal Point{many}")
+                } else {
+                    format!("Convert to Center Point{many}")
                 };
                 if ui
                     .button(label)
                     .on_hover_text("Center Points are hole centres (a cross)")
                     .clicked()
                 {
-                    let style = if center {
-                        crate::sketch::PointStyle::Normal
-                    } else {
-                        crate::sketch::PointStyle::Center
-                    };
-                    self.checkpoint("Center Point");
-                    if let Err(e) = self.part_mut().sketches[i].sketch.set_point_style(p, style) {
-                        self.history.cancel();
-                        self.file_status = Some(Err(format!("Center Point: {e}")));
-                    }
+                    self.convert_center_points(&points);
                     ui.close();
                 }
             }
@@ -6414,6 +6467,17 @@ impl CadCraftApp {
                     self.sketch_context_menu(ui, ctx);
                     ui.separator();
                 }
+                if self.editing.is_some() {
+                    ui.menu_button("Dimension Display", |ui| {
+                        for m in crate::sketch::DimDisplay::ALL {
+                            if ui.radio(self.dim_display == m, m.label()).clicked() {
+                                self.dim_display = m;
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.separator();
+                }
                 if self.editing.is_none() && !self.sel.is_empty() {
                     self.selection_tools_menu(ui);
                     self.selection_menu(ui);
@@ -6962,6 +7026,20 @@ impl CadCraftApp {
         {
             let (add, toggle) = ui.input(|k| (k.modifiers.shift, k.modifiers.command));
             let hit = self.box_hits(i, rect, a, b);
+            let points = self.box_points(i, rect, a, b);
+            if !add && !toggle {
+                self.tools.selected_points.clear();
+            }
+            let sel = &mut self.tools.selected_points;
+            for p in points {
+                match sel.iter().position(|&x| x == p) {
+                    Some(k) if toggle => {
+                        sel.remove(k);
+                    }
+                    Some(_) => {}
+                    None => sel.push(p),
+                }
+            }
             let sel = &mut self.tools.selected;
             if !add && !toggle {
                 sel.clear();
@@ -8165,7 +8243,7 @@ impl CadCraftApp {
                 .sketch
                 .set_dimension_tolerance(edit.constraint, tol)
                 .is_ok()
-                && matches!(ps.sketch.solve(), Ok(r) if r.status == SolveStatus::Solved);
+                && matches!(ps.sketch.solve_keeping_sides(), Ok(r) if r.status == SolveStatus::Solved);
             if !ok {
                 ps.sketch = before;
                 self.history.cancel();
@@ -8194,8 +8272,8 @@ impl CadCraftApp {
         let r = self.part_mut().set_parameter_expr(&name, text);
         let solved = r.is_ok()
             && matches!(
-                self.part_mut().sketches[i].sketch.solve(),
-                Ok(rep) if rep.status == SolveStatus::Solved
+                self.part_mut().solve_sketch(i),
+                Some(Ok(rep)) if rep.status == SolveStatus::Solved
             );
         if solved {
             self.tools.dim_edit = None;

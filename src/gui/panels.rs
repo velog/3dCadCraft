@@ -4829,7 +4829,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             || !self.tools.selected_points.is_empty()
         {
             ui.separator();
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let points = match self.tools.selected_points.len() {
                     0 => String::new(),
                     n => format!("{n} point(s), "),
@@ -4855,8 +4855,13 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         let mut removals = Vec::new();
         let mut hovered_row = None;
         let mut toggled = None;
+        let mut edit_dim = None;
         let selected = self.tools.selected_constraints.clone();
         let sketch = &self.part().sketches[i].sketch;
+        let equations: std::collections::HashMap<_, _> = sketch
+            .constraints()
+            .filter_map(|(id, _)| sketch.dim_param(id).expr.map(|e| (id, e)))
+            .collect();
         let rows: Vec<_> = sketch
             .constraints()
             .map(|(id, c)| (id, c.clone(), sketch.is_driven(id), sketch.measure(id)))
@@ -4889,6 +4894,15 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         format!("({v:.3} mm)")
                     };
                     ui.label(RichText::new(text).italics());
+                } else if let Some(e) = equations.get(&id) {
+                    // An equation: edited as text, never replaced by a number.
+                    if ui
+                        .button(format!("fx: {e}"))
+                        .on_hover_text("Edit Dimension")
+                        .clicked()
+                    {
+                        edit_dim = Some(id);
+                    }
                 } else if is_angle {
                     let mut deg = value.to_degrees().abs();
                     if ui
@@ -4931,6 +4945,9 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             });
         }
         self.list_hover = hovered_row;
+        if let Some(id) = edit_dim {
+            self.open_dimension_edit(id);
+        }
         if let Some(id) = toggled {
             let sel = &mut self.tools.selected_constraints;
             if let Some(k) = sel.iter().position(|&x| x == id) {
@@ -5026,7 +5043,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         })
                         .response
                         .on_hover_text(
-                            "Dimension display: value, parameter name, equation or tolerance",
+                            "Dimension display: value, parameter name, equation, tolerance or precise value",
                         );
                 }
                 ui.separator();
@@ -6683,6 +6700,8 @@ impl CadCraftApp {
                             for r in &rows {
                                 let this = if matches!(r.owner, ParamOwner::User(_)) {
                                     "User Parameters"
+                                } else if matches!(r.owner, ParamOwner::Reference { .. }) {
+                                    "Reference Parameters"
                                 } else {
                                     "Model Parameters"
                                 };
@@ -6795,7 +6814,12 @@ impl CadCraftApp {
                                     }
                                 }
                                 let err = errors.get(&r.name);
-                                let (eq, eq_resp) = if matches!(r.owner, ParamOwner::Physical(_)) {
+                                let (eq, eq_resp) = if matches!(r.owner, ParamOwner::Reference { .. }) {
+                                    let l = ui
+                                        .label(RichText::new("(driven)").weak())
+                                        .on_hover_text("A driven dimension: it measures the sketch. Equations can use it; make it driving to set it");
+                                    (None, l)
+                                } else if matches!(r.owner, ParamOwner::Physical(_)) {
                                     let l = ui
                                         .label(RichText::new("(measured)").weak())
                                         .on_hover_text("Measured on the body after each rebuild; use it in user parameters, not in sizes");
@@ -7055,7 +7079,8 @@ impl CadCraftApp {
                 }
                 Edit::Comment(owner, c) => {
                     match owner {
-                        ParamOwner::Dimension { sketch, constraint } => {
+                        ParamOwner::Dimension { sketch, constraint }
+                        | ParamOwner::Reference { sketch, constraint } => {
                             if let Some(p) = part.sketches[sketch].sketch.dim_param_mut(constraint)
                             {
                                 p.comment = c;

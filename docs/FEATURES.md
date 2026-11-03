@@ -414,7 +414,7 @@ The analysis uses the **null space of the Jacobian**. In addition, **fully defin
 
 ## 1.4 Dimensions (General Dimension) — ✅ · M
 
-**Specification:** [spec/1.4-dimensions.md](spec/1.4-dimensions.md).
+**Specification:** [spec/1.4-dimensions.md](spec/1.4-dimensions.md). Driven dimensions are reference parameters equations can read; a changed size carries what is dimensioned from it along, on its side.
 
 **What gets created depends on the selection and on the placement point** (as in Inventor):
 

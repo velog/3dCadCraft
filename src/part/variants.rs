@@ -237,7 +237,12 @@ impl PartDocument {
     fn parameter_equations(&self) -> BTreeMap<String, String> {
         self.parameter_table()
             .into_iter()
-            .filter(|r| !matches!(r.owner, ParamOwner::Physical(_)))
+            .filter(|r| {
+                !matches!(
+                    r.owner,
+                    ParamOwner::Physical(_) | ParamOwner::Reference { .. }
+                )
+            })
             .map(|r| {
                 let text = r.equation();
                 (r.name, text)
@@ -569,7 +574,12 @@ impl PartDocument {
         let parameters = self
             .parameter_table()
             .into_iter()
-            .filter(|r| !matches!(r.owner, ParamOwner::Physical(_)))
+            .filter(|r| {
+                !matches!(
+                    r.owner,
+                    ParamOwner::Physical(_) | ParamOwner::Reference { .. }
+                )
+            })
             .map(|r| {
                 let now = r.equation();
                 Row {

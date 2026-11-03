@@ -1545,6 +1545,40 @@ fn speed_budgets() {
         }),
     ));
 
+    // A size changes with 60 points dimensioned from the moved corner: they
+    // go with it (the first solve keeps their directions).
+    let (mut sides, width) = {
+        use cadcraft3d::sketch::{Constraint, Point2};
+        let mut sk = cadcraft3d::sketch::Sketch::default();
+        let r = sk
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 50.0))
+            .unwrap();
+        let (a, b) = (r.points[0], r.points[1]);
+        sk.set_fixed(a, true).unwrap();
+        let width = sk
+            .add_constraint(Constraint::HorizontalDistance { a, b, value: 100.0 })
+            .unwrap();
+        let corner = sk.point(b).unwrap().position;
+        for k in 0..60 {
+            let t = f64::from(k) * 0.1;
+            let p = sk.add_point(Point2::new(50.0 + t, 10.0 + t));
+            let value = (sk.point(p).unwrap().position - corner).norm();
+            sk.add_constraint(Constraint::Distance { a: p, b, value })
+                .unwrap();
+        }
+        sk.solve().unwrap();
+        (sk, width)
+    };
+    sides.set_dimension(width, 60.0).unwrap();
+    rows.push((
+        "sketch: a size changed, 60 points dimensioned from the moved corner keep their side",
+        50.0,
+        median_ms(3, || {
+            let mut sk = sides.clone();
+            sk.solve_keeping_sides().unwrap();
+        }),
+    ));
+
     // Shell of the rounded box (8 fillets and the chamfer chain before
     // it), the chamfered top removed: walls follow the rounds.
     rows.push((

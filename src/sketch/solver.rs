@@ -58,6 +58,10 @@ pub struct SolverOptions {
     /// The sketch counts as solved when every residual is below this
     /// (mm for positional constraints, ≈ radians for angular ones).
     pub tolerance: Real,
+    /// Point pairs held at a vector (`b - a`) for this solve; see
+    /// [`Sketch::solve_keeping_sides`].
+    #[serde(skip)]
+    pub hold: Vec<(PointId, PointId, Vector2)>,
 }
 
 impl Default for SolverOptions {
@@ -65,6 +69,7 @@ impl Default for SolverOptions {
         Self {
             max_iterations: 200,
             tolerance: 1e-10,
+            hold: Vec::new(),
         }
     }
 }
@@ -139,6 +144,8 @@ enum Equation {
     Constraint(ConstraintId),
     /// An arc's end lies on the circle through its start.
     Arc(EntityId),
+    /// `SolverOptions::hold[k]`: two points at a fixed vector.
+    Hold(usize),
 }
 
 /// Sparse Jacobian: per row, the non-zero (column, value) entries.
@@ -169,10 +176,15 @@ struct System<'a> {
     params: Vec<Param>,
     index: HashMap<Param, usize>,
     equations: Vec<Equation>,
+    hold: &'a [(PointId, PointId, Vector2)],
 }
 
 impl<'a> System<'a> {
     fn new(sketch: &'a Sketch) -> Self {
+        Self::holding(sketch, &[])
+    }
+
+    fn holding(sketch: &'a Sketch, hold: &'a [(PointId, PointId, Vector2)]) -> Self {
         let mut params = Vec::new();
         for (id, p) in &sketch.points {
             if !p.fixed {
@@ -208,11 +220,13 @@ impl<'a> System<'a> {
                 equations.push(Equation::Arc(id));
             }
         }
+        equations.extend((0..hold.len()).map(Equation::Hold));
         Self {
             sketch,
             params,
             index,
             equations,
+            hold,
         }
     }
 
@@ -239,6 +253,12 @@ impl<'a> System<'a> {
             Equation::Arc(id) => {
                 if let Some(e) = self.sketch.entities.get(id) {
                     arc_residual(&ev, e, out);
+                }
+            }
+            Equation::Hold(k) => {
+                if let Some(&(a, b, v)) = self.hold.get(k) {
+                    let d = ev.point(b) - ev.point(a) - v;
+                    out.extend([d.x, d.y]);
                 }
             }
         }
@@ -595,12 +615,27 @@ fn rank(j: &DMatrix<Real>) -> usize {
 }
 
 /// Solves `sketch` in place (see the module docs for the algorithm).
+/// Does some equation not hold on the stored geometry (a dimension just
+/// changed, a projected point moved)?
+pub(crate) fn has_open_equation(sketch: &Sketch) -> bool {
+    if sketch
+        .constraints
+        .values()
+        .any(|c| c.validate(sketch).is_err())
+    {
+        return false;
+    }
+    let system = System::new(sketch);
+    let x = system.initial_values();
+    system.residuals(&x).iter().any(|r| r.abs() > 1e-9)
+}
+
 pub(crate) fn solve(sketch: &mut Sketch, opts: &SolverOptions) -> Result<SolveReport, SketchError> {
     for c in sketch.constraints.values() {
         c.validate(sketch)?;
     }
 
-    let system = System::new(sketch);
+    let system = System::holding(sketch, &opts.hold);
     let n = system.params.len();
     let mut x = system.initial_values();
     let mut r = system.residuals(&x);

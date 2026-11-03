@@ -251,6 +251,8 @@ pub struct AppOptions {
     pub show_labels: bool,
     /// Cosmetic threads drawn as a texture on their faces.
     pub thread_texture: bool,
+    /// Dimension Display of sketches (Value, Name, Expression...).
+    pub dim_display: crate::sketch::DimDisplay,
     /// A command's value and its editor next to the cursor.
     pub cursor_value: bool,
     /// Ctrl + right click in a sketch: the constraints in a ring (off: a column).
@@ -365,6 +367,7 @@ impl Default for AppOptions {
             inference: InferenceSettings::default(),
             show_labels: true,
             thread_texture: true,
+            dim_display: Default::default(),
             cursor_value: true,
             constraint_ring: false,
             default_projection: Default::default(),
@@ -1004,6 +1007,7 @@ impl CadCraftApp {
             inference: self.tools.inference,
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
+            dim_display: self.dim_display,
             ui_theme: super::theme::current(),
             canvas_scheme: self.colors.active.clone(),
             canvas_gradient: self.colors.gradient,
@@ -1061,6 +1065,7 @@ impl CadCraftApp {
         self.view_defaults_taken = true;
         self.default_projection = o.default_projection;
         self.default_visual_style = o.default_visual_style;
+        self.dim_display = o.dim_display;
         if self.thread_texture != o.thread_texture {
             self.thread_texture = o.thread_texture;
             self.scene_dirty = true;

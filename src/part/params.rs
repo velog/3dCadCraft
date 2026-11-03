@@ -156,6 +156,9 @@ impl UserParam {
     }
 }
 
+/// What solving a sketch gave.
+pub type SketchSolve = Result<crate::sketch::SolveReport, crate::sketch::SketchError>;
+
 /// Name and equation of one numeric field of a feature.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct FeatureParam {
@@ -185,6 +188,14 @@ pub enum ParamOwner {
     Physical(usize),
     /// A dimension of a sketch.
     Dimension {
+        /// Sketch index.
+        sketch: usize,
+        /// The dimension.
+        constraint: ConstraintId,
+    },
+    /// A driven dimension (Inventor's reference parameter): it measures the
+    /// geometry, equations may read it, nothing can set it.
+    Reference {
         /// Sketch index.
         sketch: usize,
         /// The dimension.
@@ -853,6 +864,36 @@ impl PartDocument {
                 });
             }
         }
+        // Driven dimensions: what they measure now (read only).
+        for (i, ps) in self.sketches.iter().enumerate() {
+            for (id, c) in ps.sketch.constraints() {
+                if !c.is_dimension() || !ps.sketch.is_driven(id) {
+                    continue;
+                }
+                let p = ps.sketch.dim_param(id);
+                let unit = if matches!(c, crate::sketch::Constraint::Angle { .. }) {
+                    Unit::Deg
+                } else {
+                    Unit::Mm
+                };
+                let value = ps.sketch.measure(id).unwrap_or_default();
+                rows.push(ParamRow {
+                    name: p.name.clone(),
+                    owner: ParamOwner::Reference {
+                        sketch: i,
+                        constraint: id,
+                    },
+                    consumed_by: ps.name.clone(),
+                    unit,
+                    expr: None,
+                    value: if unit.is_angle() { value.abs() } else { value },
+                    tol: None,
+                    comment: p.comment.clone(),
+                    spec: None,
+                    text: None,
+                });
+            }
+        }
         for (i, u) in self.user_params.iter().enumerate() {
             rows.push(ParamRow {
                 name: u.name.clone(),
@@ -901,6 +942,79 @@ impl PartDocument {
         out
     }
 
+    /// The values equations read but never set: the physical properties and
+    /// what the driven dimensions measure (exact, not a rounded text).
+    fn fixed_values(&self, rows: &[ParamRow]) -> std::collections::HashMap<String, expr::Value> {
+        let mut out = self.physical_fixed();
+        for r in rows {
+            if matches!(r.owner, ParamOwner::Reference { .. }) {
+                out.insert(r.name.clone(), r.as_value());
+            }
+        }
+        out
+    }
+
+    /// What every driven dimension measures now.
+    pub(super) fn reference_values(&self) -> Vec<Real> {
+        self.parameter_table()
+            .iter()
+            .filter(|r| matches!(r.owner, ParamOwner::Reference { .. }))
+            .map(|r| r.value)
+            .collect()
+    }
+
+    /// Whether some equation or condition reads a driven dimension: then
+    /// solving changes what the equations give.
+    pub(super) fn uses_references(&self) -> bool {
+        let rows = self.parameter_table();
+        let reads = |e: &str| {
+            expr::names_in(e).iter().any(|n| {
+                rows.iter()
+                    .any(|r| r.name == *n && matches!(r.owner, ParamOwner::Reference { .. }))
+            })
+        };
+        rows.iter().filter_map(|r| r.expr.as_deref()).any(reads)
+            || self.user_params.iter().any(|u| reads(&u.expr))
+            || self.suppress_if.values().any(|e| reads(e))
+    }
+
+    /// Solves sketch `i` (all of them with `None`) with the equations as they
+    /// are, again while a driven dimension an equation reads still changes.
+    /// Returns the last report, and whether the values settled.
+    fn solve_with_references(&mut self, i: Option<usize>) -> (Option<SketchSolve>, bool) {
+        const ROUNDS: usize = 8;
+        let follow = self.uses_references();
+        let mut last = None;
+        let mut seen = self.reference_values();
+        for round in 0..ROUNDS {
+            self.evaluate_parameters();
+            for (k, ps) in self.sketches.iter_mut().enumerate() {
+                if i.is_none_or(|i| i == k) {
+                    last = Some(ps.sketch.solve_keeping_sides());
+                }
+            }
+            if !follow {
+                return (last, true);
+            }
+            let now = self.reference_values();
+            let same =
+                now.len() == seen.len() && now.iter().zip(&seen).all(|(a, b)| (a - b).abs() < 1e-9);
+            // The first round may have started from equations of old values.
+            if same && round > 0 {
+                return (last, true);
+            }
+            seen = now;
+        }
+        (last, false)
+    }
+
+    /// Solves sketch `i` after a change: equations first, then the geometry;
+    /// equations reading a driven dimension follow what it measures after
+    /// the solve (Inventor's reference parameters).
+    pub fn solve_sketch(&mut self, i: usize) -> Option<SketchSolve> {
+        self.solve_with_references(Some(i)).0
+    }
+
     /// Whether some equation uses a physical property.
     pub fn uses_physical(&self) -> bool {
         self.user_params
@@ -941,7 +1055,7 @@ impl PartDocument {
         self.apply_pattern_counts();
         let rows = self.parameter_table();
         let list = self.equations(&rows);
-        let fixed = self.physical_fixed();
+        let fixed = self.fixed_values(&rows);
         let (values, mut errors) = expr::eval_all_with(&list, &fixed);
         // A size cannot follow the part's mass / volume / area: it would
         // change what it follows (and the part would build differently
@@ -1093,7 +1207,12 @@ impl PartDocument {
     fn equations(&self, rows: &[ParamRow]) -> Vec<(String, String, UnitDef)> {
         let mut list: Vec<(String, String, UnitDef)> = rows
             .iter()
-            .filter(|r| !matches!(r.owner, ParamOwner::Physical(_)))
+            .filter(|r| {
+                !matches!(
+                    r.owner,
+                    ParamOwner::Physical(_) | ParamOwner::Reference { .. }
+                )
+            })
             .map(|r| (r.name.clone(), r.equation(), r.def()))
             .collect();
         for u in &self.user_params {
@@ -1119,7 +1238,7 @@ impl PartDocument {
         }
         let rows = self.parameter_table();
         let list = self.equations(&rows);
-        let (values, _) = expr::eval_all_with(&list, &self.physical_fixed());
+        let (values, _) = expr::eval_all_with(&list, &self.fixed_values(&rows));
         let lookup = |n: &str| values.get(n).cloned();
         let count = |e: &Option<String>| -> Option<usize> {
             let (v, _) = expr::eval(e.as_deref()?, Unit::Ul, &lookup).ok()?;
@@ -1180,6 +1299,11 @@ impl PartDocument {
                 "{name} is a physical property of the part (read only)"
             )));
         }
+        if matches!(row.owner, ParamOwner::Reference { .. }) {
+            return Err(PartError::Feature(format!(
+                "{name} is a driven dimension: it measures the geometry (make it driving to set it)"
+            )));
+        }
         let table = self.parameter_table();
         let (value, _) = expr::eval(text, row.def(), &|n| {
             table.iter().find(|r| r.name == n).map(ParamRow::as_value)
@@ -1206,12 +1330,20 @@ impl PartDocument {
                 self.user_params[i].expr = text.to_owned();
                 self.user_params[i].value = value;
             }
-            ParamOwner::Physical(_) => {}
+            ParamOwner::Physical(_) | ParamOwner::Reference { .. } => {}
         }
         self.evaluate_parameters();
         if let Some(e) = self.param_errors.get(name).cloned() {
             *self = before;
             return Err(PartError::Feature(format!("{name}: {e}")));
+        }
+        // An equation reading a driven dimension that follows this very size
+        // would creep on at every solve.
+        if self.uses_references() && !self.clone().solve_with_references(None).1 {
+            *self = before;
+            return Err(PartError::Feature(format!(
+                "{name}: it reads a driven dimension that depends on it"
+            )));
         }
         Ok(())
     }
@@ -1237,7 +1369,8 @@ impl PartDocument {
             .cloned()
             .ok_or_else(|| PartError::Feature(format!("no parameter '{old}'")))?;
         match row.owner {
-            ParamOwner::Dimension { sketch, constraint } => {
+            ParamOwner::Dimension { sketch, constraint }
+            | ParamOwner::Reference { sketch, constraint } => {
                 if let Some(p) = self.sketches[sketch].sketch.dim_param_mut(constraint) {
                     p.name = new.to_owned();
                 }
@@ -1485,7 +1618,12 @@ impl PartDocument {
                 )));
             };
             let comment = f.get(4).cloned().unwrap_or_default();
-            if is_physical(name) {
+            if is_physical(name)
+                || matches!(
+                    self.parameter(name).map(|r| r.owner),
+                    Some(ParamOwner::Reference { .. })
+                )
+            {
                 continue;
             }
             let row = self.parameter(name);

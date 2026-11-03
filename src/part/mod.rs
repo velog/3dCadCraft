@@ -1121,6 +1121,7 @@ impl PartDocument {
         // Parameters first: equations set dimensions and feature values.
         self.sync_parameters();
         self.evaluate_parameters();
+        let mut read = self.reference_values();
         self.exact_failure = None;
         self.exact = exact::enabled() && self.build_features(true)?;
         if !self.exact && self.exact_only {
@@ -1142,6 +1143,21 @@ impl PartDocument {
                 && h.contains("needs the exact geometry kernel")
             {
                 *h = format!("the geometry kernel failed: {msg}");
+            }
+        }
+        // Equations reading driven dimensions: projected geometry may have
+        // moved them during the build.
+        if self.uses_references() {
+            for _ in 0..4 {
+                let now = self.reference_values();
+                if now.len() == read.len()
+                    && now.iter().zip(&read).all(|(a, b)| (a - b).abs() < 1e-9)
+                {
+                    break;
+                }
+                read = now;
+                self.evaluate_parameters();
+                self.build_features(self.exact)?;
             }
         }
         // Equations on the physical properties: measured on the new body,
@@ -3101,7 +3117,7 @@ fn update_sketch(body: &BRep, works: &placement::WorkGeom, sketches: &mut [PartS
                     missing.join(", ")
                 ));
             }
-            let _ = ps.sketch.solve();
+            let _ = ps.sketch.solve_keeping_sides();
         }
         Err(e) => ps.health = Some(e.to_string()),
     }

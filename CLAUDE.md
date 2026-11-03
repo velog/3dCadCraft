@@ -510,6 +510,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   It needs `Angle { supplement: true }` (line `b` reversed).
 - **Tests on free geometry:** the min-norm solver moves *every* free point, so
   assert relative positions/angles, not absolute ones.
+- **After a size changes, solve with `Sketch::solve_keeping_sides`** (`PartDocument::solve_sketch` when equations may read driven dimensions): the min-norm solver alone turned a point held by an aligned distance about the moved corner, onto its other side. Drags keep the plain `solve` (the cursor decides). `SolverOptions::hold` is only for that first solve.
+- **Driven dimensions are `ParamOwner::Reference`** in `parameter_table` (read only, their value in `fixed_values`, never in `equations`): a new filter on `ParamOwner::Physical` that means "cannot be set" must name it too.
 - **Signs of "offset":** a line's signed distance and an arc's radius change have
   opposite signs for the same side of a chain; `EqualOffset` compares magnitudes.
 - **Status-bar `right_to_left` layouts reverse widget order** — read coordinates off a
