@@ -420,6 +420,13 @@ impl Sketch {
     /// The closed regions formed by the sketch's normal curves (see the
     /// module docs). Deterministic for a given sketch.
     pub fn regions(&self) -> Vec<Region> {
+        let mut out = self.curve_regions();
+        out.extend(self.text_regions());
+        out
+    }
+
+    /// The regions of the curves (texts are closed on their own).
+    fn curve_regions(&self) -> Vec<Region> {
         let mut pieces = self.profile_pieces();
         let scale = pieces
             .iter()

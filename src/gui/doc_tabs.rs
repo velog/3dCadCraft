@@ -35,6 +35,7 @@ impl CadCraftApp {
 
     /// Ends what is open in the active document (before it is left).
     pub(super) fn leave_document(&mut self) {
+        self.text_draft = None;
         self.finish_sketch();
         self.cancel_hole();
         self.cancel_extrude();

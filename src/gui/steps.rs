@@ -612,6 +612,8 @@ mod tests {
     ];
     /// Those without: one pick and they are done, or not a command with inputs.
     const NO_STEPS: &[&str] = &[
+        // One place clicked, then a panel of values: nothing to step through.
+        "Text",
         "Drawing View",
         "Pick Plane",
         "Section View",

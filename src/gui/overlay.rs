@@ -161,6 +161,24 @@ pub fn draw_sketch(
         }
     }
 
+    // Texts: their outlines, in the colour of the sketch (hot with their line).
+    for t in sketch.texts() {
+        let Some((o, d)) = sketch.text_frame(t) else {
+            continue;
+        };
+        let color = if hot_entities.contains(&t.line) {
+            HIGHLIGHT
+        } else {
+            style.color
+        };
+        for line in t.polylines_at(o, d) {
+            let pts: Option<Vec<Pos2>> = line.into_iter().map(to_screen).collect();
+            if let Some(pts) = pts {
+                painter.add(Shape::line(pts, Stroke::new(1.5, color)));
+            }
+        }
+    }
+
     for (id, _) in sketch.entities() {
         let pts: Option<Vec<Pos2>> = polyline(sketch, id).into_iter().map(to_screen).collect();
         let Some(pts) = pts else { continue };

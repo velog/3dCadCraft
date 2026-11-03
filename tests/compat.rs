@@ -2860,6 +2860,59 @@ fn freeform_r59_reads() {
     assert!(zmax > 2.0 && zmax < 10.0, "{zmax}");
 }
 
+/// A font of one glyph with straight and curved sides, a hole, for revision 63.
+struct R63Font;
+
+impl cadcraft3d::sketch::text::GlyphSource for R63Font {
+    fn glyph(&self, _: char) -> Option<(f64, cadcraft3d::sketch::text::Glyph)> {
+        use cadcraft3d::sketch::text::TextSeg::{Cubic, Line};
+        let outer = vec![
+            Line([[0.0, 0.0], [0.8, 0.0]]),
+            Cubic([[0.8, 0.0], [1.0, 0.3], [1.0, 0.7], [0.8, 1.0]]),
+            Line([[0.8, 1.0], [0.0, 1.0]]),
+            Line([[0.0, 1.0], [0.0, 0.0]]),
+        ];
+        let hole = vec![
+            Line([[0.2, 0.2], [0.2, 0.8]]),
+            Line([[0.2, 0.8], [0.6, 0.8]]),
+            Line([[0.6, 0.8], [0.6, 0.2]]),
+            Line([[0.6, 0.2], [0.2, 0.2]]),
+        ];
+        Some((1.1, vec![outer, hole]))
+    }
+}
+
+/// Revision 63: a text extruded from a plate's top; the outlines are in the file, no font needed.
+fn text_r63() -> PartDocument {
+    use cadcraft3d::part::{ExtrudeFeature, ProfileRef, SketchOptions, SketchPlacement};
+    use cadcraft3d::sketch::text::TextSpec;
+    let mut part = PartDocument::with_box("Box1", [100.0, 60.0, 20.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let i = part
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+        .unwrap();
+    let plane = part.sketches[i].sketch.plane.clone();
+    let at = plane.project(&nalgebra::Point3::new(10.0, 40.0, 20.0));
+    part.sketches[i]
+        .sketch
+        .add_text(at, 0.0, TextSpec::new("AA", "Fixture Font", 10.0), &R63Font)
+        .unwrap();
+    let r: Vec<ProfileRef> = part.sketches[i]
+        .sketch
+        .regions()
+        .iter()
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    let mut ex = ExtrudeFeature::new(r, 2.0);
+    ex.operation = cadcraft3d::part::Operation::Join;
+    part.add_extrude(i, ex).unwrap();
+    part
+}
+
 /// Revision 62: a plate with a pad embossed from its top and a pocket engraved into it.
 fn emboss_r62() -> PartDocument {
     use cadcraft3d::part::emboss::{EmbossKind, EmbossOp};
@@ -3599,6 +3652,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r63/text_r63.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("TextR63");
+            project.add_document("Part1", DocumentData::Part(text_r63()));
             project.save(&f).unwrap();
         }
         let f = root().join("r62/emboss_r62.3dcadcraft");

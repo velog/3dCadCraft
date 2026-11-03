@@ -338,7 +338,7 @@ Every tool follows **Inventor's click sequence**. What a click means depends on 
 | Ellipse | ⬜ | centre, axis, second axis ([spec](spec/1.2b-ellipse.md)) | |
 | **Fillet** (Create → Fillet) | ✅ | radius in Properties; two lines (the clicked sides stay) or a click on a corner | Tangent ×2; the first fillet in the command gets an R dimension, the following ones — Equal to it |
 | **Chamfer** (Create → Fillet → Chamfer) | ✅ | equal distances / two distances / distance and angle; two lines or a corner | virtual corner (construction) + dimensions to it |
-| Text | ⬜ | | |
+| Text | 🟡 | [spec](spec/1.11-sketch-text.md): any installed font, letters as profiles; Geometry Text, Underline, live values to do | |
 
 **Format (Sketch → Format):**
 - **Construction:** dashed; does not form a profile.

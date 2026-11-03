@@ -140,6 +140,8 @@ pub enum Tool {
     /// Spline through its points (Inventor: Spline Interpolation).
     SplineInterp,
     Point,
+    /// Text: a click opens its panel (`gui/sketch_text.rs`).
+    Text,
     Fillet,
     Chamfer,
     Constrain(ConstraintTool),
@@ -186,6 +188,7 @@ impl Tool {
             Tool::SplineCv => "Control Vertex Spline",
             Tool::SplineInterp => "Interpolation Spline",
             Tool::Point => "Point",
+            Tool::Text => "Text",
             Tool::Fillet => "Fillet",
             Tool::Chamfer => "Chamfer",
             Tool::Constrain(c) => c.label(),
@@ -210,7 +213,7 @@ impl Tool {
     /// Clicks needed before the geometry is created (`None` = open-ended).
     fn clicks(self) -> Option<usize> {
         Some(match self {
-            Tool::Point => 1,
+            Tool::Point | Tool::Text => 1,
             Tool::Line
             | Tool::CircleCenter
             | Tool::ArcTangent
@@ -501,6 +504,8 @@ pub struct SketchTools {
     pub skip_pick: bool,
     /// The open dialog of a pattern command.
     pub pattern_dialog: Option<super::pattern_dialog::PatternDialog>,
+    /// The Text tool's click, for the app to open its panel.
+    pub text_click: Option<Point2>,
     /// Scale factor of the Scale tool.
     pub scale_factor: Real,
     /// Edit Pattern in progress: the pattern and its definition before
@@ -557,6 +562,7 @@ impl Default for SketchTools {
             path_spacing: 10.0,
             skip_pick: false,
             pattern_dialog: None,
+            text_click: None,
             scale_factor: 2.0,
             edit_pattern: None,
         }
@@ -796,6 +802,7 @@ impl SketchTools {
                 "Interpolation Spline: click the points it passes through; Enter or double-click finishes, the first point closes it"
             }
             Tool::Point => "Point: click to place",
+            Tool::Text => "Text: click where its top left goes",
             Tool::Constrain(c) => c.prompt(n),
             Tool::Dimension if n == 0 => "Dimension: select a line, circle, arc or point",
             Tool::Dimension => "Dimension: select more geometry, or click empty space to place",
@@ -995,6 +1002,10 @@ impl SketchTools {
         }
         match self.tool {
             Tool::Select => Ok(None),
+            Tool::Text => {
+                self.text_click = Some(pick.pos);
+                Ok(None)
+            }
             Tool::Fillet | Tool::Chamfer => self.corner_click(ps, pick),
             Tool::Trim | Tool::Extend | Tool::Split => {
                 let Snap::OnEntity(e) = pick.snap else {
