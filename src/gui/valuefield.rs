@@ -118,7 +118,7 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
             .id(te_id)
             .desired_width(100.0);
         if bad {
-            te = te.text_color(Color32::from_rgb(230, 70, 60));
+            te = te.text_color(super::theme::tokens().error);
         }
         let mut r = ui.add(te);
         // The field last typed in (a click on a dimension in the view then

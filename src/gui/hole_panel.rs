@@ -1042,7 +1042,7 @@ impl CadCraftApp {
             .on_hover_text("The hole note a drawing writes (the symbols as text here)");
         // Invalid values in red (Inventor), e.g. a thread longer than the hole.
         if let Err(e) = spec.validate() {
-            ui.label(RichText::new(format!("Hole: {e}")).color(Color32::from_rgb(200, 30, 30)));
+            ui.label(RichText::new(format!("Hole: {e}")).color(super::theme::tokens().error));
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);

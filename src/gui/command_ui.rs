@@ -89,7 +89,7 @@ pub(super) fn selector_row(
             ev.clear = Some(s.key);
         }
         if s.required && s.is_empty() {
-            ui.label(RichText::new("*").color(Color32::from_rgb(210, 60, 50)))
+            ui.label(RichText::new("*").color(super::theme::tokens().error))
                 .on_hover_text("Required");
         }
     });
@@ -578,7 +578,7 @@ pub(super) fn name_crumb(ui: &mut egui::Ui, crumb: &mut NameCrumb, shown: &str) 
             let r = ui
                 .selectable_label(
                     crumb.selected,
-                    RichText::new(name.as_str()).color(Color32::from_rgb(40, 110, 200)),
+                    RichText::new(name.as_str()).color(super::theme::tokens().link),
                 )
                 .on_hover_text("Click to select, click again to rename");
             if r.clicked() {

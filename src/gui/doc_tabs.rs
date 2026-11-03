@@ -5,7 +5,7 @@
 //! switch. Leaving a document finishes its sketch edit and cancels its
 //! open command, so no draft ever points into another document.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use super::files::Pending;
 use super::{CadCraftApp, Selection};
@@ -213,7 +213,7 @@ impl CadCraftApp {
                 if active {
                     rt = rt.strong();
                 } else {
-                    rt = rt.color(Color32::GRAY);
+                    rt = rt.color(super::theme::tokens().text_weak);
                 }
                 let r = ui.selectable_label(active, rt);
                 if r.clicked() {

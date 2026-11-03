@@ -219,6 +219,8 @@ impl UiSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppOptions {
+    /// Colors › UI Theme.
+    pub ui_theme: super::theme::UiTheme,
     pub mouse: MousePreset,
     pub invert_wheel: bool,
     /// Default Orbit Type (Free: relative to the screen).
@@ -328,6 +330,7 @@ pub enum ThumbnailSource {
 impl Default for AppOptions {
     fn default() -> Self {
         Self {
+            ui_theme: super::theme::UiTheme::Dark,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
             orbit_type: super::camera::OrbitType::Free,
@@ -958,6 +961,7 @@ impl CadCraftApp {
             inference: self.tools.inference,
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
+            ui_theme: super::theme::current(),
             cursor_value: self.cursor_value_enabled,
             constraint_ring: self.constraint_ring,
             default_projection: self.default_projection,
@@ -1010,6 +1014,7 @@ impl CadCraftApp {
             self.scene_dirty = true;
         }
         self.internal_names = o.internal_names;
+        super::theme::set_current(o.ui_theme);
         if self.keymap != o.keymap {
             self.keymap = o.keymap;
             self.keymap_tips_dirty = true;

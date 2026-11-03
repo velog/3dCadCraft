@@ -19,22 +19,25 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Colours for an enabled command on the dark theme.
-    pub const ENABLED: Palette = Palette {
-        ink: Color32::from_rgb(205, 210, 218),
-        accent: Color32::from_rgb(80, 160, 255),
-        hot: Color32::from_rgb(255, 160, 50),
-        warn: Color32::from_rgb(235, 80, 70),
-        ok: Color32::from_rgb(90, 200, 110),
-    };
-    /// Colours for a disabled (or planned) command.
-    pub const DISABLED: Palette = Palette {
-        ink: Color32::from_rgb(95, 98, 104),
-        accent: Color32::from_rgb(70, 90, 115),
-        hot: Color32::from_rgb(110, 95, 75),
-        warn: Color32::from_rgb(110, 80, 78),
-        ok: Color32::from_rgb(80, 105, 85),
-    };
+    fn of(c: super::theme::IconColors) -> Palette {
+        Palette {
+            ink: c.ink,
+            accent: c.accent,
+            hot: c.hot,
+            warn: c.warn,
+            ok: c.ok,
+        }
+    }
+
+    /// Colours for an enabled command in the current UI Theme.
+    pub fn enabled() -> Palette {
+        Self::of(super::theme::tokens().icon)
+    }
+
+    /// Colours for a disabled (or planned) command in the current UI Theme.
+    pub fn disabled() -> Palette {
+        Self::of(super::theme::tokens().icon_disabled)
+    }
 }
 
 /// All command icons.
@@ -703,9 +706,9 @@ pub fn menu_item(
             egui::vec2(15.0, 15.0),
         );
         let pal = if on {
-            Palette::ENABLED
+            Palette::enabled()
         } else {
-            Palette::DISABLED
+            Palette::disabled()
         };
         paint(ui.painter(), at, icon, &pal);
     }
@@ -726,7 +729,7 @@ pub fn sub_menu<R>(
             egui::pos2(r.response.rect.left() + 11.0, r.response.rect.center().y),
             egui::vec2(15.0, 15.0),
         );
-        paint(ui.painter(), at, icon, &Palette::ENABLED);
+        paint(ui.painter(), at, icon, &Palette::enabled());
     }
     r.inner
 }
@@ -734,7 +737,7 @@ pub fn sub_menu<R>(
 /// The icon of a library category (`Fasteners/Bolts/Hex Head`), by its last
 /// level: each kind drawn side on, as it looks on a catalogue page.
 pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
-    let k = Palette::ENABLED;
+    let k = Palette::enabled();
     let (ink, acc) = (k.ink, k.accent);
     let p = Pen {
         p: painter,

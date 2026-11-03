@@ -5,7 +5,7 @@
 //! Separate All; `document::storage`). Every change is one Undo step of
 //! the file; files written on disk stay.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use super::CadCraftApp;
 use std::path::{Path, PathBuf};
@@ -747,7 +747,7 @@ impl CadCraftApp {
                 if taken {
                     ui.label(
                         RichText::new("This name already exists in this file")
-                            .color(Color32::from_rgb(230, 170, 60)),
+                            .color(super::theme::tokens().warning),
                     );
                 }
                 ui.horizontal(|ui| {

@@ -429,7 +429,7 @@ impl CadCraftApp {
             ui.painter(),
             rect.shrink(2.0),
             Icon::Home,
-            &Palette::ENABLED,
+            &Palette::enabled(),
         );
         if r.on_hover_text("Home").clicked() && !on {
             self.show_home();
@@ -660,7 +660,7 @@ impl CadCraftApp {
         }
         if let Some(m) = &self.home.message {
             ui.add_space(8.0);
-            ui.label(RichText::new(m).color(Color32::from_rgb(230, 170, 60)));
+            ui.label(RichText::new(m).color(super::theme::tokens().warning));
         }
     }
 
@@ -881,9 +881,9 @@ impl CadCraftApp {
                             let ir =
                                 egui::Rect::from_center_size(rect.center(), egui::vec2(48.0, 48.0));
                             let pal = if r.exists {
-                                Palette::ENABLED
+                                Palette::enabled()
                             } else {
-                                Palette::DISABLED
+                                Palette::disabled()
                             };
                             super::icons::paint(ui.painter(), ir, r.icon(), &pal);
                         }

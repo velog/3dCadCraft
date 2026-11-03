@@ -1290,7 +1290,7 @@ impl CadCraftApp {
                             );
                         });
                         if let Some(n) = &d.note {
-                            ui.colored_label(egui::Color32::from_rgb(220, 120, 40), n);
+                            ui.colored_label(super::theme::tokens().warning, n);
                         }
                     });
                 let list_h = ui.available_height().max(120.0);
@@ -1778,7 +1778,7 @@ fn icon_row(
             rect.min + egui::vec2(4.0, (h - 16.0) / 2.0),
             egui::vec2(16.0, 16.0),
         );
-        super::icons::paint(painter, ir, i, &super::icons::Palette::ENABLED);
+        super::icons::paint(painter, ir, i, &super::icons::Palette::enabled());
     }
     let color = if on {
         vis.selection.stroke.color
@@ -1929,7 +1929,7 @@ fn file_list(
                     rect.min + egui::vec2(4.0, (row_h - 16.0) / 2.0),
                     egui::vec2(16.0, 16.0),
                 );
-                super::icons::paint(painter, ir, i, &Palette::ENABLED);
+                super::icons::paint(painter, ir, i, &Palette::enabled());
             }
             let (label, folder) = if d.recent {
                 let p = Path::new(&e.name);

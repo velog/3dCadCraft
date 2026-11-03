@@ -4230,12 +4230,12 @@ impl CadCraftApp {
     /// meaning of colours).
     fn sketch_color(&self) -> Color32 {
         match &self.report {
-            Some(Ok(r)) if r.status == SolveStatus::Failed => Color32::from_rgb(220, 30, 30),
-            Some(Ok(r)) if r.redundant > 0 => Color32::from_rgb(230, 130, 0),
-            Some(Ok(r)) if r.dof == 0 => Color32::from_rgb(20, 150, 50),
-            Some(Ok(_)) => Color32::from_rgb(30, 90, 220),
-            Some(Err(_)) => Color32::from_rgb(220, 30, 30),
-            None => Color32::from_gray(120),
+            Some(Ok(r)) if r.status == SolveStatus::Failed => theme::tokens().error,
+            Some(Ok(r)) if r.redundant > 0 => theme::tokens().warning,
+            Some(Ok(r)) if r.dof == 0 => theme::tokens().ok,
+            Some(Ok(_)) => theme::tokens().link,
+            Some(Err(_)) => theme::tokens().error,
+            None => theme::tokens().text_weak,
         }
     }
 
@@ -4805,7 +4805,7 @@ impl CadCraftApp {
                     ui.label(RichText::new("Pattern").weak());
                     let sick = ps.sketch.pattern_health(pid);
                     if let Some(h) = &sick {
-                        ui.colored_label(Color32::from_rgb(230, 140, 0), format!("Warning: {h}"));
+                        ui.colored_label(theme::tokens().warning, format!("Warning: {h}"));
                     }
                     let kind = ps.sketch.pattern_current_kind(pid);
                     let suppressed = inst.is_some_and(|k| {
@@ -8308,6 +8308,7 @@ impl eframe::App for CadCraftApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let frame_start = std::time::Instant::now();
+        theme::sync(&ctx);
         self.body_key_frame.replace((true, None));
         // Expression fields everywhere evaluate against the part's parameters.
         valuefield::set_frame_table(&ctx, self.part().parameter_table());

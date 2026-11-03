@@ -1730,9 +1730,9 @@ pub(super) fn icon_button_in(
         painter.rect_filled(rect, 3.0, v.widgets.hovered.weak_bg_fill);
     }
     let palette = if enabled && !grey {
-        Palette::ENABLED
+        Palette::enabled()
     } else {
-        Palette::DISABLED
+        Palette::disabled()
     };
     match size {
         Size::Large => {

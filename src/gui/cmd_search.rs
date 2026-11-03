@@ -6,7 +6,7 @@
 //! `commands::search` (aliases, names in English / Inventor / Bulgarian,
 //! tooltips, `*` / `?`, recent commands first).
 
-use eframe::egui::{self, Color32, Key, RichText};
+use eframe::egui::{self, Key, RichText};
 
 use super::CadCraftApp;
 use super::commands::{self, Env};
@@ -162,9 +162,9 @@ impl CadCraftApp {
                                     egui::Sense::hover(),
                                 );
                                 let pal = if can {
-                                    Palette::ENABLED
+                                    Palette::enabled()
                                 } else {
-                                    Palette::DISABLED
+                                    Palette::disabled()
                                 };
                                 icons::paint(ui.painter(), rect, h.cmd.icon, &pal);
                                 let mut t = RichText::new(name);
@@ -172,7 +172,7 @@ impl CadCraftApp {
                                     t = t.strong();
                                 }
                                 if !can {
-                                    t = t.color(Color32::GRAY);
+                                    t = t.color(super::theme::tokens().text_weak);
                                 }
                                 // The name reads from the left edge, in a
                                 // column of its own.

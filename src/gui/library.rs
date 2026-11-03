@@ -138,7 +138,7 @@ impl CadCraftApp {
             .show(ctx, |ui| {
                 egui::Panel::bottom("library_buttons").show(ui, |ui| {
                     if let Some(e) = &lib.error {
-                        ui.colored_label(Color32::from_rgb(235, 80, 70), e);
+                        ui.colored_label(super::theme::tokens().error, e);
                     }
                 ui.horizontal(|ui| {
                     ui.label("Detail");

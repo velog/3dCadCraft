@@ -3580,7 +3580,7 @@ impl CadCraftApp {
                         ui.end_row();
                     });
                 if let Err(e) = r.validate() {
-                    ui.colored_label(Color32::from_rgb(235, 80, 70), e);
+                    ui.colored_label(super::theme::tokens().error, e);
                 }
                 ui.horizontal(|ui| {
                     edit_file = ui
@@ -3595,7 +3595,7 @@ impl CadCraftApp {
                         .clicked();
                 });
                 for p in &problems {
-                    ui.colored_label(Color32::from_rgb(235, 160, 60), p);
+                    ui.colored_label(super::theme::tokens().warning, p);
                 }
                 if let Some(n) = &self.sm.rules_note {
                     ui.weak(n);

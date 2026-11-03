@@ -422,7 +422,7 @@ pub fn draw(
             k.c(Color32::from_rgba_unmultiplied(110, 165, 240, 90)),
         );
     }
-    let base = icons::Palette::ENABLED;
+    let base = icons::Palette::enabled();
     let pal = icons::Palette {
         ink: k.c(base.ink),
         accent: k.c(if hit == Some(CubeHit::Home) {

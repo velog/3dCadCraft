@@ -105,10 +105,10 @@ impl CadCraftApp {
                 }
                 match &st.message {
                     Some(Ok(t)) => {
-                        ui.colored_label(Color32::from_rgb(120, 200, 120), t);
+                        ui.colored_label(super::theme::tokens().ok, t);
                     }
                     Some(Err(t)) => {
-                        ui.colored_label(Color32::from_rgb(235, 80, 70), t);
+                        ui.colored_label(super::theme::tokens().error, t);
                     }
                     None => {}
                 }

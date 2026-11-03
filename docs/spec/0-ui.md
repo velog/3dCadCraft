@@ -15,10 +15,10 @@ Status: ✅ done · 🟡 partial · ⬜ to do.
 
 ## 2. Visual language
 
-### 2.1a Interface theme (`gui/theme.rs`)
+### 2.1a Interface theme (`gui/theme/`)
 
 The look of everything around the view has one source. New panels take colours from the style or from
-`theme`'s constants and never define their own greys.
+`theme::tokens()` and never define their own greys.
 
 | Item | Requirement | Status |
 |---|---|---|
@@ -42,7 +42,7 @@ The look of everything around the view has one source. New panels take colours f
 | ViewCube | top right; a click on a face gives a standard view; Home | ✅ |
 | Anti-aliasing | MSAA 4× where the hardware allows it | ✅ |
 | High DPI | the interface follows the system scale | ✅ (egui) |
-| Selectable theme (light/dark) and a custom colour scheme | like Inventor's In-canvas Color Scheme | ⬜ |
+| Selectable theme (light/dark) and a custom colour scheme | like Inventor's In-canvas Color Scheme; see [0.18](0.18-themes-colours.md) | 🟡 UI Theme; schemes to do |
 | **Menu icons** | the right-click menus show an icon before each entry that has one (Next, Back, OK, Apply, Cancel, Flip, Repeat, the selection tools, the commands by their own icon); the text stays in one column (`icons::menu_item`, `icons::sub_menu`) | 🟡 |
 | **Command icons** | our own vector icons (`gui/icons.rs`), two-coloured (outline + accent, points in orange, removed parts in red); faded for unavailable commands | ✅ |
 | **Ribbon** | as in Inventor: large buttons (icon above text), columns of three small buttons (icon + text), icon-only columns for the constraints (the name is in the tooltip); drop-down buttons show the icon of the current variant; toggles (Construction, Relax, DOF) stay pressed while on; all panels of a tab fit in 1400 px | ✅ |

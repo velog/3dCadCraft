@@ -170,7 +170,7 @@ impl CadCraftApp {
                     }
                 });
                 if let Some(e) = &w.error {
-                    ui.colored_label(Color32::from_rgb(235, 80, 70), format!("Properties: {e}"));
+                    ui.colored_label(super::theme::tokens().error, format!("Properties: {e}"));
                 }
             });
         if edited != props {

@@ -15,7 +15,7 @@
 //! (`docs/spec/3.1a-subassemblies.md` S4): read-only, greyed eyes; a click
 //! selects a part inside it, a double-click opens its document.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use super::CadCraftApp;
 use super::icons::Icon;
@@ -956,7 +956,7 @@ impl CadCraftApp {
             if suppressed {
                 text = text.weak();
             } else if sick.is_some() {
-                text = text.color(Color32::from_rgb(235, 80, 70));
+                text = text.color(super::theme::tokens().error);
             }
             let r = ui.selectable_label(self.cons.selected == Some(id), text);
             let r = match &sick {
@@ -1011,9 +1011,9 @@ fn fold<'a>(
 fn visibility_button(ui: &mut egui::Ui, visible: bool) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
     let palette = if visible {
-        super::icons::Palette::ENABLED
+        super::icons::Palette::enabled()
     } else {
-        super::icons::Palette::DISABLED
+        super::icons::Palette::disabled()
     };
     super::icons::paint(ui.painter(), r, Icon::AnalysisVisibility, &palette);
     if !visible {

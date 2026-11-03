@@ -5,7 +5,7 @@
 //! this file; a linked part file is read only), the Reference override per
 //! occurrence, and Export to CSV.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use super::CadCraftApp;
 use crate::assembly::bom::{self, BomRow, BomView, ComponentInfo};
@@ -253,7 +253,7 @@ impl CadCraftApp {
                             }
                         };
                         if r.missing {
-                            ui.colored_label(Color32::from_rgb(235, 80, 70), &r.part_number);
+                            ui.colored_label(super::theme::tokens().error, &r.part_number);
                         } else if local {
                             cell(ui, "part_number", &r.part_number);
                         } else {

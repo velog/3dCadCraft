@@ -12,27 +12,11 @@ use eframe::egui::{
 };
 use std::sync::Arc;
 
-/// Panels, ribbon, browser, status bar.
-pub const PANEL: Color32 = Color32::from_rgb(0x22, 0x24, 0x29);
-/// Floating windows and menus: one step above the panels.
-pub const RAISED: Color32 = Color32::from_rgb(0x2a, 0x2d, 0x33);
-/// Inside of text fields.
-pub const FIELD: Color32 = Color32::from_rgb(0x16, 0x18, 0x1b);
-/// A button at rest.
-pub const CONTROL: Color32 = Color32::from_rgb(0x36, 0x3a, 0x41);
-/// A button under the cursor.
-pub const CONTROL_HOVER: Color32 = Color32::from_rgb(0x43, 0x48, 0x51);
-/// A pressed button.
-pub const CONTROL_ACTIVE: Color32 = Color32::from_rgb(0x4f, 0x55, 0x60);
-/// Thin separators and outlines.
-pub const LINE: Color32 = Color32::from_rgb(0x3a, 0x3e, 0x46);
-pub const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe8, 0xec);
-/// Labels: quieter than values, still clearly readable.
-pub const TEXT_WEAK: Color32 = Color32::from_rgb(0xac, 0xb1, 0xbb);
-/// The one accent: the current choice and the main action of a panel.
-pub const ACCENT: Color32 = Color32::from_rgb(0x2f, 0x74, 0xc8);
-/// Text of actions that delete something.
-pub const DANGER: Color32 = Color32::from_rgb(0xf0, 0x8a, 0x80);
+mod colors_tab;
+mod tokens;
+
+pub use colors_tab::colors_tab;
+pub use tokens::{IconColors, Tokens, UiTheme, current, set_current, tokens};
 
 /// Family of text drawn on a drawing sheet: the PDF embeds this same font and
 /// Format Text measures with it, so it does not follow the interface's font.
@@ -53,7 +37,7 @@ fn fonts() -> FontDefinitions {
     f.font_data.insert(
         UI_FONT.to_owned(),
         Arc::new(FontData::from_static(include_bytes!(
-            "../../data/fonts/Inter-Regular.ttf"
+            "../../../data/fonts/Inter-Regular.ttf"
         ))),
     );
     let fallback = f
@@ -72,14 +56,29 @@ fn fonts() -> FontDefinitions {
     f
 }
 
-/// Sets the fonts and the dark style; called once at start-up.
+/// Sets the fonts and both themes' styles; called once at start-up.
 pub fn apply(ctx: &egui::Context) {
     ctx.set_fonts(fonts());
-    ctx.set_theme(egui::ThemePreference::Dark);
-    ctx.style_mut_of(Theme::Dark, style);
+    for (theme, ui_theme) in [(Theme::Dark, UiTheme::Dark), (Theme::Light, UiTheme::Light)] {
+        ctx.style_mut_of(theme, |s| {
+            style(s, &ui_theme.tokens(), theme == Theme::Dark)
+        });
+    }
+    sync(ctx);
 }
 
-fn style(s: &mut egui::Style) {
+/// Makes egui follow the chosen UI Theme; cheap enough for every frame.
+pub fn sync(ctx: &egui::Context) {
+    let wanted = match current() {
+        UiTheme::Dark => Theme::Dark,
+        UiTheme::Light => Theme::Light,
+    };
+    if ctx.theme() != wanted {
+        ctx.set_theme(wanted);
+    }
+}
+
+fn style(s: &mut egui::Style, k: &Tokens, dark: bool) {
     use FontFamily::{Monospace, Proportional};
     s.text_styles = [
         (TextStyle::Small, FontId::new(10.5, Proportional)),
@@ -92,58 +91,61 @@ fn style(s: &mut egui::Style) {
     s.spacing.button_padding = Vec2::new(6.0, 2.0);
     s.spacing.menu_margin = Margin::same(5);
     let v = &mut s.visuals;
-    v.dark_mode = true;
-    v.panel_fill = PANEL;
-    v.window_fill = RAISED;
-    v.faint_bg_color = RAISED;
-    v.extreme_bg_color = FIELD;
-    v.code_bg_color = FIELD;
-    v.window_stroke = Stroke::new(1.0, LINE);
+    v.dark_mode = dark;
+    v.panel_fill = k.panel;
+    v.window_fill = k.raised;
+    v.faint_bg_color = k.raised;
+    v.extreme_bg_color = k.field;
+    v.code_bg_color = k.field;
+    v.window_stroke = Stroke::new(1.0, k.line);
     v.window_corner_radius = CornerRadius::same(8);
     v.menu_corner_radius = CornerRadius::same(6);
     let shadow = Shadow {
         offset: [0, 6],
         blur: 18,
         spread: 0,
-        color: Color32::from_black_alpha(110),
+        color: Color32::from_black_alpha(k.shadow_alpha),
     };
     v.window_shadow = shadow;
     v.popup_shadow = shadow;
-    v.weak_text_color = Some(TEXT_WEAK);
-    v.hyperlink_color = Color32::from_rgb(0x6c, 0xb0, 0xf5);
-    v.selection.bg_fill = ACCENT;
-    v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+    v.weak_text_color = Some(k.text_weak);
+    v.hyperlink_color = k.link;
+    v.warn_fg_color = k.warning;
+    v.error_fg_color = k.error;
+    v.selection.bg_fill = k.accent;
+    v.selection.stroke = Stroke::new(1.0, k.on_accent);
     let radius = CornerRadius::same(4);
     let w = &mut v.widgets;
-    w.noninteractive.bg_fill = PANEL;
-    w.noninteractive.weak_bg_fill = PANEL;
-    w.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
-    w.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
+    w.noninteractive.bg_fill = k.panel;
+    w.noninteractive.weak_bg_fill = k.panel;
+    w.noninteractive.bg_stroke = Stroke::new(1.0, k.line);
+    w.noninteractive.fg_stroke = Stroke::new(1.0, k.text);
     w.noninteractive.corner_radius = radius;
-    for (k, fill, fg) in [
-        (&mut w.inactive, CONTROL, TEXT),
-        (&mut w.hovered, CONTROL_HOVER, Color32::WHITE),
-        (&mut w.active, CONTROL_ACTIVE, Color32::WHITE),
-        (&mut w.open, CONTROL_HOVER, TEXT),
+    for (state, fill, fg) in [
+        (&mut w.inactive, k.control, k.text),
+        (&mut w.hovered, k.control_hover, k.text_strong),
+        (&mut w.active, k.control_active, k.text_strong),
+        (&mut w.open, k.control_hover, k.text),
     ] {
-        k.bg_fill = fill;
-        k.weak_bg_fill = fill;
-        k.bg_stroke = Stroke::NONE;
-        k.fg_stroke = Stroke::new(1.0, fg);
-        k.corner_radius = radius;
+        state.bg_fill = fill;
+        state.weak_bg_fill = fill;
+        state.bg_stroke = Stroke::NONE;
+        state.fg_stroke = Stroke::new(1.0, fg);
+        state.corner_radius = radius;
         // No growing under the cursor: the neighbours stay quiet.
-        k.expansion = 0.0;
+        state.expansion = 0.0;
     }
 }
 
 /// The main action of a panel or dialog (OK).
 pub fn ok_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_owned()).color(Color32::WHITE)).fill(ACCENT)
+    let k = tokens();
+    egui::Button::new(RichText::new(text.to_owned()).color(k.on_accent)).fill(k.accent)
 }
 
 /// An action that deletes something.
 pub fn danger_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_owned()).color(DANGER))
+    egui::Button::new(RichText::new(text.to_owned()).color(tokens().danger))
 }
 
 /// The symbols of small buttons, drawn so that they do not depend on a font.
@@ -258,12 +260,12 @@ pub fn tool_button(ui: &mut Ui, icon: super::icons::Icon, enabled: bool, name: &
                 .rect_filled(rect, v.corner_radius, v.weak_bg_fill);
         }
         let palette = if enabled {
-            &Palette::ENABLED
+            Palette::enabled()
         } else {
-            &Palette::DISABLED
+            Palette::disabled()
         };
         let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(18.0));
-        paint(ui.painter(), icon_rect, icon, palette);
+        paint(ui.painter(), icon_rect, icon, &palette);
     }
     r
 }
@@ -285,6 +287,32 @@ mod tests {
         0.2126 * f(c.r()) + 0.7152 * f(c.g()) + 0.0722 * f(c.b())
     }
 
+    /// Literal colours left in the frame's files (spec 0.18 §6, step 2):
+    /// the numbers only go down.
+    const FRAME_LITERALS: &[(&str, usize)] = &[
+        ("panels.rs", 4),
+        ("home.rs", 1),
+        ("files.rs", 1),
+        ("ribbon.rs", 0),
+        ("layout.rs", 0),
+        ("command_ui.rs", 5),
+        ("valuefield.rs", 2),
+        ("doc_tabs.rs", 0),
+        ("breadcrumb.rs", 0),
+        ("presets.rs", 0),
+        ("file_explorer.rs", 1),
+        ("keymap.rs", 0),
+    ];
+
+    fn count_literals(text: &str) -> usize {
+        text.match_indices("Color32::")
+            .filter(|(i, _)| {
+                let rest = &text[i + "Color32::".len()..];
+                rest.starts_with("from_") || rest.starts_with(|c: char| c.is_ascii_uppercase())
+            })
+            .count()
+    }
+
     fn contrast(a: Color32, b: Color32) -> f32 {
         let (x, y) = (luminance(a), luminance(b));
         (x.max(y) + 0.05) / (x.min(y) + 0.05)
@@ -292,18 +320,101 @@ mod tests {
 
     #[test]
     fn text_stays_readable_on_its_backgrounds() {
-        for (fg, bg, min) in [
-            (TEXT, PANEL, 7.0),
-            (TEXT_WEAK, PANEL, 7.0),
-            (TEXT_WEAK, RAISED, 4.5),
-            (TEXT, FIELD, 7.0),
-            (TEXT, CONTROL, 4.5),
-            (Color32::WHITE, ACCENT, 4.5),
-            (DANGER, CONTROL, 4.5),
-        ] {
-            let c = contrast(fg, bg);
-            assert!(c >= min, "{fg:?} on {bg:?}: {c:.2} < {min}");
+        for theme in UiTheme::ALL {
+            let k = theme.tokens();
+            for (name, fg, bg, min) in [
+                ("text on panel", k.text, k.panel, 7.0),
+                ("label on panel", k.text_weak, k.panel, 7.0),
+                ("label on window", k.text_weak, k.raised, 4.5),
+                ("text in field", k.text, k.field, 7.0),
+                ("text on button", k.text, k.control, 4.5),
+                (
+                    "text on hovered button",
+                    k.text_strong,
+                    k.control_hover,
+                    4.5,
+                ),
+                (
+                    "text on pressed button",
+                    k.text_strong,
+                    k.control_active,
+                    4.5,
+                ),
+                ("OK", k.on_accent, k.accent, 4.5),
+                ("Delete", k.danger, k.control, 4.5),
+                ("link", k.link, k.panel, 4.5),
+                ("good state", k.ok, k.panel, 4.5),
+                ("warning", k.warning, k.panel, 4.5),
+                ("error", k.error, k.panel, 4.5),
+                ("warning box", k.warn_box_text, k.warn_box_fill, 4.5),
+                ("icon ink", k.icon.ink, k.panel, 3.0),
+                ("icon accent", k.icon.accent, k.panel, 3.0),
+            ] {
+                let c = contrast(fg, bg);
+                assert!(c >= min, "{theme:?} {name}: {c:.2} < {min}");
+            }
         }
+    }
+
+    #[test]
+    fn a_disabled_icon_is_quieter_than_an_enabled_one() {
+        for theme in UiTheme::ALL {
+            let k = theme.tokens();
+            assert!(
+                contrast(k.icon_disabled.ink, k.panel) < contrast(k.icon.ink, k.panel),
+                "{theme:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn both_themes_get_their_own_style() {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        ctx.style_mut_of(Theme::Dark, |s| {
+            assert_eq!(s.visuals.panel_fill, Tokens::dark().panel);
+            assert!(s.visuals.dark_mode);
+        });
+        ctx.style_mut_of(Theme::Light, |s| {
+            assert_eq!(s.visuals.panel_fill, Tokens::light().panel);
+            assert!(!s.visuals.dark_mode);
+        });
+    }
+
+    #[test]
+    fn the_theme_is_saved_by_name_and_old_settings_mean_dark() {
+        let text = serde_json::to_string(&UiTheme::Light).unwrap_or_default();
+        assert_eq!(text, "\"Light\"");
+        assert_eq!(UiTheme::default(), UiTheme::Dark);
+        let old: super::super::layout::AppOptions = serde_json::from_str("{}").unwrap_or_default();
+        assert_eq!(old.ui_theme, UiTheme::Dark);
+    }
+
+    /// Frame files may only lose literal colours: new ones take a token.
+    #[test]
+    fn frame_files_do_not_gain_literal_colours() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gui");
+        for (file, allowed) in FRAME_LITERALS {
+            let text = std::fs::read_to_string(dir.join(file)).unwrap_or_default();
+            let n = count_literals(&text);
+            assert!(
+                n <= *allowed,
+                "{file}: {n} literal colours, {allowed} allowed: use theme::tokens() (spec 0.18)"
+            );
+        }
+    }
+
+    #[test]
+    fn literal_colours_are_counted() {
+        assert_eq!(
+            count_literals("Color32::from_rgb(1, 2, 3); Color32::WHITE; x"),
+            2
+        );
+        assert_eq!(count_literals("Color32::from_gray(1) Color32 color"), 1);
+        assert_eq!(
+            count_literals("egui::Color32::from_rgba_unmultiplied(1, 2, 3, 4)"),
+            1
+        );
     }
 
     #[test]
@@ -317,7 +428,8 @@ mod tests {
 
     #[test]
     fn the_interface_font_has_latin_and_cyrillic() {
-        let face = ttf_parser::Face::parse(include_bytes!("../../data/fonts/Inter-Regular.ttf"), 0);
+        let face =
+            ttf_parser::Face::parse(include_bytes!("../../../data/fonts/Inter-Regular.ttf"), 0);
         let Ok(face) = face else {
             panic!("the interface font does not parse");
         };

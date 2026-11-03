@@ -532,7 +532,7 @@ impl CadCraftApp {
                         ui.label("Nothing selected.");
                     }
                     Some(Err(e)) => {
-                        ui.colored_label(Color32::from_rgb(200, 120, 0), format!("Measure: {e}"));
+                        ui.colored_label(super::theme::tokens().warning, format!("Measure: {e}"));
                     }
                     Some(Ok(_)) if self.measure.loop_mode => {}
                     Some(Ok(m)) => {

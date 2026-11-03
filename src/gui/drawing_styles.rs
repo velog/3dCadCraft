@@ -141,7 +141,7 @@ impl CadCraftApp {
                     ui.weak("Changes apply at once (Undo takes them back).");
                 });
                 if let Some(e) = &ed.error {
-                    ui.colored_label(Color32::from_rgb(220, 70, 60), e);
+                    ui.colored_label(super::theme::tokens().error, e);
                 }
                 if let (Some(k), Some(r)) = (ed.kind, ed.rename.as_mut()) {
                     let mut commit = false;
