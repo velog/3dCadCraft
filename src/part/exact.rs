@@ -52,6 +52,73 @@ pub(super) fn extrude(
     extrude_from(e, body, works, sketch, 0.0, 0.0)
 }
 
+/// A Cut of a whole section whose tool stays next to the body's own walls all along (the section
+/// from Project Cut Edges, holes and all) as two tools. The kernel's Boolean found no result for
+/// one tool on some parts (owner's Test2): where the tool's cap crosses a hole, its edge ran a
+/// hair from the hole's wall. The first takes the depth down to just above the first material
+/// inside a hole, without the holes: it only ever meets air there. The second starts in the air
+/// it left and goes on, with the holes that hold material somewhere (`inside`: a point is in
+/// material). `Ok(None)`: not this case (no hole holds material near the start). `grow` as in
+/// [`extrude_from`].
+pub(super) fn section_cut_tools(
+    e: &ExtrudeFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    sketch: &Sketch,
+    grow: Real,
+    inside: &dyn Fn(&Point3) -> bool,
+) -> Result<Option<[Vec<ExactSolid>; 2]>, Fail> {
+    const LEVELS: usize = 40;
+    let plane = &sketch.plane;
+    let (mut first, mut second) = (Vec::new(), Vec::new());
+    for piece in e.pieces(body, works, sketch).map_err(User)? {
+        let [from, .., to] = piece.span.levels.as_slice() else {
+            return Ok(None);
+        };
+        let (a, b) = (from.offset, to.offset);
+        if piece.span.levels.iter().any(|l| l.inset.abs() > 1e-12)
+            || piece.span.clip.is_some()
+            || piece.bounds.is_some()
+        {
+            return Ok(None);
+        }
+        let grown = |l: &[crate::kernel::ProfileSegment]| {
+            crate::kernel::offset_loop(l, grow).map_err(|x| Kernel(x.to_string()))
+        };
+        // The first level (from the start) where each hole holds material, on its own outline.
+        let mut holes = Vec::new();
+        let mut clear = LEVELS;
+        for h in &piece.holes {
+            let h = grown(h)?;
+            let hit = (0..LEVELS).find(|k| {
+                let at = a + (b - a) * (*k as Real + 0.5) / LEVELS as Real;
+                h.iter().any(|s| {
+                    [0.0, 0.5].iter().any(|t| {
+                        let q = s.geometry.point(*t);
+                        inside(&(plane.point_at(q.x, q.y) + plane.normal.into_inner() * at))
+                    })
+                })
+            });
+            if let Some(k) = hit {
+                clear = clear.min(k);
+                holes.push(h);
+            }
+        }
+        if clear < 2 || holes.is_empty() {
+            return Ok(None);
+        }
+        // Half way to that level; the second tool starts half way back into the air.
+        let depth = (b - a) * clear as Real / LEVELS as Real;
+        let (cut, start) = (a + depth * 0.5, a + depth * 0.25);
+        let outer = grown(&piece.outer)?;
+        let whole = exact::profile(&outer, &[]).map_err(Kernel)?;
+        let rest = exact::profile(&outer, &holes).map_err(Kernel)?;
+        first.push(exact::extrude(plane, &whole, a, cut, 0.0, &piece.prefix).map_err(Kernel)?);
+        second.push(exact::extrude(plane, &rest, start, b, 0.0, &piece.prefix).map_err(Kernel)?);
+    }
+    Ok((!first.is_empty()).then_some([first, second]))
+}
+
 /// [`extrude`] whose tools start `overlap` behind the start level (away
 /// from the extrusion): a Join whose tool only touches the body on a face
 /// (a lip on a rim, its wall flush with the body's wall) gives the kernel's

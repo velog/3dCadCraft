@@ -1693,11 +1693,25 @@ impl PartDocument {
                                         {
                                             let size = body.bounding_box().map_or(100.0, |(lo, hi)| (hi - lo).amax());
                                             let grow = (size * 5e-4).clamp(0.01, 0.1);
-                                            match exact::extrude_from(e, &body, &works, &ps.sketch, 0.0, grow) {
+                                            let plain = |msg: String| match exact::extrude_from(e, &body, &works, &ps.sketch, 0.0, grow) {
                                                 Ok(Some(again)) => exact::combine(solids.clone(), again, op, chosen, false)
                                                     .map(Some)
                                                     .map_err(|_| exact::Fail::Kernel(msg)),
                                                 _ => Err(exact::Fail::Kernel(msg)),
+                                            };
+                                            let now = solids.clone();
+                                            let inside = |p: &Point3| now.iter().any(|s| crate::kernel::exact::contains(s, *p));
+                                            match exact::section_cut_tools(e, &body, &works, &ps.sketch, grow, &inside) {
+                                                Ok(Some([first, second])) => {
+                                                    let two = exact::combine(solids.clone(), first, op, chosen, false).and_then(|cut| {
+                                                        exact::combine(cut, second, op, chosen, false)
+                                                    });
+                                                    match two {
+                                                        Ok(done) => Ok(Some(done)),
+                                                        Err(_) => plain(msg),
+                                                    }
+                                                }
+                                                _ => plain(msg),
                                             }
                                         }
                                         r => r.map(Some),

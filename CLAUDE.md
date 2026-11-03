@@ -1263,6 +1263,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   A Cut whose every curve is projected or fixed (a section from Project Cut Edges, holes included) has the
   body's own walls as its walls: when the kernel finds no result it is retried with the profile grown by
   size·5e-4 into the air (`extrude_from`'s `grow`; 0.01 mm on a 100 mm plate still failed — owner's Test2).
+  With holes that hold material somewhere (columns under blind holes) that grown tool still found no result on
+  the kernel at d4eeedb: `exact::section_cut_tools` cuts in two, a slab without holes down to just above the first
+  material in a hole, then the rest starting in the air it left, so no cap crosses a hole a hair from its wall.
 - **Body operations return the surface bodies themselves**: `build_features` puts the sheets back after every
   step *except* a `BodyOp` (Delete Face changes or makes one); a new `BodyOp` must append the untouched sheets
   (`thicken` does). Delete Face (`part/exact.rs::delete_face`, `kernel/exact/delete_face.rs`): Heal only over
