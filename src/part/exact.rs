@@ -1042,15 +1042,26 @@ fn apart(tools: &[ExactSolid], places: &[(usize, nalgebra::Matrix4<Real>)]) -> b
 struct EdgePoints<'a> {
     body: &'a BRep,
     solids: Vec<crate::kernel::SolidId>,
+    /// The kernel's body of each B-rep solid.
+    owner: Vec<Option<usize>>,
     taken: Vec<(usize, crate::kernel::EdgeId)>,
     circles: Vec<(usize, Point3, Real)>,
 }
 
 impl<'a> EdgePoints<'a> {
-    fn new(body: &'a BRep) -> Self {
+    fn new(body: &'a BRep, cur: &[ExactSolid]) -> Self {
         Self {
             body,
             solids: body.solids().map(|(id, _)| id).collect(),
+            // A Cut through a body leaves one kernel body of several pieces, and each piece is a
+            // solid of the B-rep: the piece's index is not the body's (it panicked past the end).
+            owner: if body.solids().count() == cur.len() {
+                (0..cur.len()).map(Some).collect()
+            } else {
+                body.solids()
+                    .map(|(_, b)| cur.iter().position(|s| s.name == b.name))
+                    .collect()
+            },
             taken: Vec::new(),
             circles: Vec::new(),
         }
@@ -1106,7 +1117,14 @@ impl<'a> EdgePoints<'a> {
                     }
                     self.circles.push((i, c, rad));
                 }
-                out.push((i, p));
+                // The kernel's body of this B-rep solid.
+                let owner = self
+                    .owner
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .ok_or("the edge's body is not there any more")?;
+                out.push((owner, p));
             }
         }
         Ok(out)
@@ -1137,7 +1155,7 @@ pub(super) fn blend(
         return wedge_blend(bl, body, cur).map_err(User);
     }
     let mut points: Vec<Vec<Point3>> = vec![Vec::new(); cur.len()];
-    let mut picker = EdgePoints::new(body);
+    let mut picker = EdgePoints::new(body, cur);
     for (i, p) in picker.points(&bl.edges).map_err(User)? {
         points[i].push(p);
     }
@@ -2530,7 +2548,7 @@ fn special_fillet(
     };
     let cannot = |e: String| User(format!("this shape cannot be built ({e})"));
     let mut out = cur.to_vec();
-    let mut picker = EdgePoints::new(body);
+    let mut picker = EdgePoints::new(body, cur);
     // Constant sets: one point and one radius per edge, per solid.
     let constant = |out: &mut Vec<ExactSolid>,
                     picker: &mut EdgePoints,

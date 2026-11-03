@@ -423,3 +423,60 @@ fn a_cut_of_a_whole_section_from_projected_cut_edges_stays_exact() {
         "removed {removed}"
     );
 }
+
+/// A Cut that leaves one body in two pieces: the pieces are two solids of the B-rep and one kernel
+/// body. A chamfer of an edge of the second piece's body once indexed past the kernel's list.
+#[test]
+fn a_chamfer_on_a_body_cut_in_two() {
+    let pr = cadcraft3d::document::Project::load(std::path::Path::new(
+        "tests/data/cut_edges_section_cut.3dcadcraft",
+    ))
+    .unwrap();
+    let mut p = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            cadcraft3d::document::DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    p.regenerate().unwrap();
+    let j = p.sketches.iter().position(|s| s.id == "Sketch6").unwrap();
+    let regions = p.sketches[j].sketch.regions();
+    let profiles = cadcraft3d::part::extrude::default_profiles(&p.sketches[j], &regions);
+    let mut f = ExtrudeFeature::new(profiles, 10.0);
+    f.operation = Operation::Cut;
+    p.add_extrude(j, f).unwrap();
+    assert_eq!(p.body.solids().count(), 2);
+    let edge: Vec<_> = p
+        .body
+        .edges()
+        .filter_map(|(e, _)| cadcraft3d::part::blend::edge_ref(&p.body, e))
+        .filter(|r| {
+            (r.hint[0] - 50.0).abs() < 1.0
+                && r.hint[1].abs() < 1e-6
+                && (r.hint[2] - 17.0).abs() < 1e-6
+        })
+        .collect();
+    assert_eq!(edge.len(), 1);
+    let v0 = p
+        .exact_bodies
+        .0
+        .iter()
+        .filter_map(|s| s.volume_at(1e-3))
+        .sum::<Real>();
+    p.add_blend(cadcraft3d::part::blend::BlendFeature::chamfer(edge, 1.0))
+        .unwrap();
+    assert!(
+        p.exact && p.feature_health.is_empty(),
+        "{:?}",
+        p.feature_health
+    );
+    let v1 = p
+        .exact_bodies
+        .0
+        .iter()
+        .filter_map(|s| s.volume_at(1e-3))
+        .sum::<Real>();
+    assert!(v1 < v0 && v0 - v1 < 200.0, "{v0} -> {v1}");
+}
