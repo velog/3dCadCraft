@@ -2227,6 +2227,12 @@ impl SketchTools {
     }
 
     /// Rubber-band geometry for the current step with the live cursor.
+    /// Does the cursor show its snap glyph? Not for tools that take a curve: a
+    /// point "on curve" means nothing to Trim.
+    pub fn shows_snap(&self) -> bool {
+        !matches!(self.tool, Tool::Trim | Tool::Extend | Tool::Split)
+    }
+
     pub fn preview(&self, ps: &PartSketch, cursor: &Pick) -> Vec<PreviewLine> {
         let mut out = Vec::new();
         // A pattern dialog: the result, as soon as its inputs are chosen.
@@ -2267,7 +2273,21 @@ impl SketchTools {
             Tool::Select | Tool::Constrain(_) | Tool::Dimension | Tool::CircleTangent => {
                 return out;
             }
-            Tool::Trim | Tool::Extend | Tool::Split => {
+            // The piece that goes, solid: the whole curve said nothing about where
+            // the cut falls.
+            Tool::Trim => {
+                if let Snap::OnEntity(e) = cursor.snap
+                    && let Ok(pts) = ps.sketch.trim_piece(e, cursor.pos)
+                {
+                    out.push(PreviewLine {
+                        pts,
+                        dashed: false,
+                        warn: true,
+                    });
+                }
+                return out;
+            }
+            Tool::Extend | Tool::Split => {
                 if let Snap::OnEntity(e) = cursor.snap {
                     out.push(PreviewLine {
                         pts: super::overlay::polyline(&ps.sketch, e),

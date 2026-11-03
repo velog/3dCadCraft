@@ -566,7 +566,9 @@ impl CadCraftApp {
         if let Some(p) = &pick {
             let lines = s.tools.preview(&s.ps, p);
             overlay::draw_preview(painter, &proj, rect, &s.ps.sketch, &lines);
-            overlay::draw_snap(painter, &proj, rect, &s.ps.sketch, p);
+            if s.tools.shows_snap() {
+                overlay::draw_snap(painter, &proj, rect, &s.ps.sketch, p);
+            }
         }
 
         // The toolbar (the sketch tab of the view sketch).

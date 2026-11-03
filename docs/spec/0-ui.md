@@ -95,6 +95,13 @@ The look of everything around the view has one source. New panels take colours f
 | Future 3D body | orange edges, live while the settings change | ✅ |
 | Impossible result | the preview disappears and the reason appears in the dialog | ✅ |
 
+### 2.5a What a command takes (selection feedback)
+
+| Item | Requirement | Status |
+|---|---|---|
+| Trim | under the cursor only the piece that would go is marked, solid and in the "not solved" colour of the scheme; the rest of the curve stays as it is; no snap glyph | 🟡 waiting for the owner's check |
+| Extend, Split | the curve under the cursor is marked; no snap glyph | 🟡 waiting for the owner's check |
+
 ### 2.6 Properties panel (modelled on Inventor)
 
 | Requirement | Status |

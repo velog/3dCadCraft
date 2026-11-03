@@ -1210,10 +1210,11 @@ pub fn draw_preview(
     lines: &[super::sketch_tools::PreviewLine],
 ) {
     for l in lines {
+        let k = super::theme::canvas();
         let color = if l.warn {
-            Color32::from_rgb(220, 40, 40)
+            k.sketch_failed
         } else {
-            Color32::from_rgb(40, 110, 230)
+            k.sketch_open
         };
         let pts: Option<Vec<Pos2>> = l
             .pts
@@ -1224,7 +1225,9 @@ pub fn draw_preview(
         if l.dashed {
             painter.extend(Shape::dashed_line(&pts, Stroke::new(1.0, color), 5.0, 4.0));
         } else {
-            painter.add(Shape::line(pts, Stroke::new(1.5, color)));
+            // What a command removes stands out from the curve under it.
+            let width = if l.warn { 3.5 } else { 1.5 };
+            painter.add(Shape::line(pts, Stroke::new(width, color)));
         }
     }
 }

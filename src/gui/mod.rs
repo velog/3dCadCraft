@@ -7532,7 +7532,8 @@ impl CadCraftApp {
                         .selected
                         .iter()
                         .copied()
-                        .chain(hovered_entity)
+                        // Trim marks only the piece that goes (its preview).
+                        .chain(hovered_entity.filter(|_| self.tools.tool != Tool::Trim))
                         .chain(pattern)
                         .collect()
                 } else {
@@ -7924,7 +7925,9 @@ impl CadCraftApp {
                     }],
                 );
             }
-            overlay::draw_snap(&painter, &self.camera, rect, &ps.sketch, &pick);
+            if self.tools.shows_snap() {
+                overlay::draw_snap(&painter, &self.camera, rect, &ps.sketch, &pick);
+            }
         }
         self.sm_flat_lines(&painter, rect);
         // Sheet metal Flange: sheet edges under the cursor, clicks add them.

@@ -316,6 +316,59 @@ impl Sketch {
         Ok(piece)
     }
 
+    /// The piece [`Sketch::trim`] would remove at `at`, as points along it, for its
+    /// preview. Nothing changes.
+    pub fn trim_piece(&self, e: EntityId, at: Point2) -> Result<Vec<Point2>, SketchError> {
+        let g = Geom::of(self, e)?;
+        let t0 = g.param(at);
+        let mut hits = self.hits(e, true)?;
+        // Points every ~7.5 degrees: enough for a preview line.
+        let along = |from: Real, span: Real| -> Vec<Point2> {
+            let n = ((span.abs() / (TAU / 48.0)).ceil() as usize).max(1);
+            (0..=n)
+                .map(|k| g.point(from + span * k as Real / n as Real))
+                .collect()
+        };
+        match g {
+            Geom::Circle { .. } => {
+                hits.dedup_by(|x, y| (x.p - y.p).norm() < 1e-9);
+                if hits.len() < 2 {
+                    return Ok(along(0.0, TAU));
+                }
+                // The nearest crossing on either side of `at`.
+                let (mut ahead, mut behind) = (TAU, TAU);
+                for h in &hits {
+                    ahead = ahead.min(norm_angle(h.t - t0));
+                    behind = behind.min(norm_angle(t0 - h.t));
+                }
+                Ok(along(t0 - behind, ahead + behind))
+            }
+            Geom::Seg(..) | Geom::Arc { .. } => {
+                let end_t = match g {
+                    Geom::Arc { sweep, .. } => sweep,
+                    _ => 1.0,
+                };
+                let inner = |h: &&Hit| h.t > EPS && h.t < end_t - EPS;
+                let lo = hits
+                    .iter()
+                    .filter(inner)
+                    .filter(|h| h.t < t0)
+                    .map(|h| h.t)
+                    .fold(0.0, Real::max);
+                let hi = hits
+                    .iter()
+                    .filter(inner)
+                    .filter(|h| h.t > t0)
+                    .map(|h| h.t)
+                    .fold(end_t, Real::min);
+                match g {
+                    Geom::Seg(..) => Ok(vec![g.point(lo), g.point(hi)]),
+                    _ => Ok(along(lo, hi - lo)),
+                }
+            }
+        }
+    }
+
     /// **Trim** the part of curve `e` around `at`.
     pub fn trim(&mut self, e: EntityId, at: Point2) -> Result<(), SketchError> {
         let g = Geom::of(self, e)?;
@@ -1286,6 +1339,86 @@ mod tests {
         s.add_line(p(10.0, -5.0), p(10.0, 5.0));
         s.add_line(p(20.0, -5.0), p(20.0, 5.0));
         (s, h)
+    }
+
+    /// Length along a polyline.
+    fn run_length(pts: &[Point2]) -> Real {
+        pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum()
+    }
+
+    /// A horizontal line from x = 0 to 10 crossed by verticals at x = 3 and x = 7.
+    fn crossed_line() -> (Sketch, EntityId) {
+        let mut s = Sketch::default();
+        let e = s.add_line(p(0.0, 0.0), p(10.0, 0.0));
+        for x in [3.0, 7.0] {
+            s.add_line(p(x, -1.0), p(x, 1.0));
+        }
+        (s, e)
+    }
+
+    #[test]
+    fn trim_piece_of_a_line_runs_between_its_crossings() {
+        let (s, e) = crossed_line();
+        for (at, from, to) in [(5.0, 3.0, 7.0), (1.0, 0.0, 3.0), (9.0, 7.0, 10.0)] {
+            let piece = s.trim_piece(e, p(at, 0.0)).unwrap();
+            assert_relative_eq!(piece[0].x, from, epsilon = 1e-9);
+            assert_relative_eq!(piece[piece.len() - 1].x, to, epsilon = 1e-9);
+        }
+    }
+
+    #[test]
+    fn trim_piece_changes_nothing_and_matches_what_trim_removes() {
+        let (mut s, e) = crossed_line();
+        let lines = s.entities().count();
+        let piece = s.trim_piece(e, p(9.0, 0.0)).unwrap();
+        assert_eq!(s.entities().count(), lines);
+        let (_, end) = s.line_geometry(e).unwrap();
+        assert_relative_eq!(end.x, 10.0, epsilon = 1e-9);
+        s.trim(e, p(9.0, 0.0)).unwrap();
+        let (start, end) = s.line_geometry(e).unwrap();
+        assert_relative_eq!(
+            10.0 - run_length(&piece),
+            (end - start).norm(),
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn trim_piece_of_a_free_curve_is_all_of_it() {
+        let mut s = Sketch::default();
+        let e = s.add_line(p(0.0, 0.0), p(4.0, 0.0));
+        assert_relative_eq!(
+            run_length(&s.trim_piece(e, p(1.0, 0.0)).unwrap()),
+            4.0,
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn trim_piece_of_a_circle_is_the_arc_under_the_cursor() {
+        let mut s = Sketch::default();
+        let c = s.add_circle(p(0.0, 0.0), 5.0).unwrap();
+        // Alone: all of it goes (sampled, so a little under the true length).
+        let whole = s.trim_piece(c, p(5.0, 0.0)).unwrap();
+        assert_relative_eq!(run_length(&whole), TAU * 5.0, epsilon = 0.2);
+        // A chord through the centre: the half under the cursor.
+        s.add_line(p(0.0, -9.0), p(0.0, 9.0));
+        let half = s.trim_piece(c, p(5.0, 0.0)).unwrap();
+        assert_relative_eq!(run_length(&half), TAU * 2.5, epsilon = 0.1);
+        assert!(half.iter().all(|q| q.x > -1e-9), "{half:?}");
+    }
+
+    #[test]
+    fn trim_piece_of_an_arc_stays_on_the_arc() {
+        let mut s = Sketch::default();
+        let c = s.add_circle(p(0.0, 0.0), 10.0).unwrap();
+        s.add_line(p(-20.0, 0.0), p(20.0, 0.0));
+        s.trim(c, p(0.0, 10.0)).unwrap(); // a half circle below
+        // A vertical through its middle.
+        s.add_line(p(0.0, -20.0), p(0.0, 20.0));
+        let piece = s.trim_piece(c, p(5.0, -8.66)).unwrap();
+        assert_relative_eq!(run_length(&piece), TAU * 10.0 / 4.0, epsilon = 0.1);
+        assert!(piece.iter().all(|q| q.x > -1e-9 && q.y < 1e-9), "{piece:?}");
     }
 
     #[test]
