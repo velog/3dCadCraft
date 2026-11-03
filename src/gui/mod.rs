@@ -7477,7 +7477,7 @@ impl CadCraftApp {
                 None
             };
             if let Some(Ok(edges)) = preview {
-                let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(230, 120, 20));
+                let stroke = egui::Stroke::new(2.0, theme::canvas().command_preview);
                 for e in edges {
                     let pts: Vec<_> = e
                         .iter()

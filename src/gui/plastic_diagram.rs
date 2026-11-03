@@ -724,7 +724,10 @@ pub(super) fn show(d: &mut PartDialog, ui: &mut egui::Ui) {
     let w = ui.available_width().max(200.0);
     let (rect, _) = ui.allocate_exact_size(vec2(w, 230.0), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 3.0, Color32::from_rgb(28, 31, 37));
+    let k = super::theme::tokens();
+    // What the command makes: the colour of its preview in the view.
+    let made = super::theme::canvas().command_preview;
+    painter.rect_filled(rect, 3.0, k.field);
     // To scale: the whole section in the room the dimensions leave.
     let all = pic.old.iter().chain(&pic.new).flatten().copied().chain(
         pic.dims
@@ -756,37 +759,31 @@ pub(super) fn show(d: &mut PartDialog, ui: &mut egui::Ui) {
     };
     let screen = |v: &[P]| v.iter().map(|q| at(*q)).collect::<Vec<Pos2>>();
     for s in &pic.old {
-        fill(
-            &painter,
-            &screen(s),
-            Color32::from_rgb(82, 88, 98),
-            Color32::from_rgb(140, 146, 156),
-        );
+        fill(&painter, &screen(s), k.control, k.text_weak);
     }
     for s in &pic.new {
         fill(
             &painter,
             &screen(s),
-            Color32::from_rgb(214, 124, 44),
-            Color32::from_rgb(250, 180, 100),
+            super::theme::with_alpha(made, 170),
+            made,
         );
     }
     for (a, b) in &pic.dashed {
         painter.add(egui::Shape::dashed_line(
             &[at(*a), at(*b)],
-            Stroke::new(1.0, Color32::from_gray(170)),
+            Stroke::new(1.0, k.text_weak),
             5.0,
             4.0,
         ));
     }
     for q in &pic.marks {
-        painter.circle_filled(at(*q), 4.0, Color32::from_rgb(80, 150, 250));
+        painter.circle_filled(at(*q), 4.0, d.sel_color("path"));
     }
     let small = egui::FontId::proportional(11.0);
     let mut words: Vec<Rect> = Vec::new();
     for (q, text) in &pic.notes {
-        let galley =
-            painter.layout_no_wrap((*text).to_owned(), small.clone(), Color32::from_gray(225));
+        let galley = painter.layout_no_wrap((*text).to_owned(), small.clone(), k.text);
         let place = Rect::from_center_size(
             at(*q) + vec2(0.0, 3.0 + galley.size().y / 2.0),
             galley.size(),
@@ -796,7 +793,7 @@ pub(super) fn show(d: &mut PartDialog, ui: &mut egui::Ui) {
             continue;
         }
         words.push(place);
-        painter.galley(place.min, galley, Color32::from_gray(225));
+        painter.galley(place.min, galley, k.text);
     }
     if let Some(h) = pic.hint {
         painter.text(
@@ -804,10 +801,10 @@ pub(super) fn show(d: &mut PartDialog, ui: &mut egui::Ui) {
             egui::Align2::CENTER_TOP,
             h,
             small.clone(),
-            Color32::from_rgb(240, 190, 90),
+            k.warning,
         );
     }
-    let ink = Color32::from_rgb(150, 210, 255);
+    let ink = k.link;
     let line = Stroke::new(1.0, ink);
     let mut clicked = None;
     let mut labels: Vec<Rect> = Vec::new();
@@ -879,9 +876,9 @@ pub(super) fn show(d: &mut PartDialog, ui: &mut egui::Ui) {
             chip,
             2.0,
             if r.hovered() {
-                Color32::from_rgb(60, 92, 140)
+                k.control_hover
             } else {
-                Color32::from_rgb(32, 44, 62)
+                k.raised
             },
         );
         painter.galley(chip.min + vec2(3.0, 1.0), galley, ink);

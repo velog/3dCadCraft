@@ -251,7 +251,7 @@ impl CadCraftApp {
                     .map(|at| self.outline_curves(&id, *at))
             })
             .unwrap_or_default();
-        let green = egui::Color32::from_rgb(60, 190, 90);
+        let green = super::theme::hover_edge();
         for def in super::part_planned::selector_defs(d.kind) {
             let (key, kinds) = (def.0, def.3);
             if d.sel_hidden(key) {
