@@ -87,6 +87,51 @@ const TOOL: &[PickKind] = &[
 ];
 
 const DIRECTIONS: &[&str] = &["Direction 1", "Direction 2", "Symmetric"];
+const SKETCH_CURVES: &[PickKind] = &[PickKind::SketchCurve];
+const RULES: &[&str] = &[
+    "All Edges",
+    "Against Part",
+    "Free Edges",
+    "Against Features",
+    "Incident Edges",
+];
+const RULE_ROW_1: &[Row] = &[
+    Radio("Source", &["Features", "Faces"], 0),
+    Sel("src1", "Selection", "Select the features or faces of this rule", FEATURES),
+    Combo("Rule", RULES, 1),
+    Sel("scope1", "Scope", "Select the features of the scope (Against Features)", FEATURES),
+    Sel("axis1", "Axis", "Select the axis (Incident Edges)", DIRECTION),
+    Check("Flip Axis", false),
+    Num("Tolerance", 1.0, "°"),
+    Num("Radius", 1.0, " mm"),
+    Check("All Rounds", true),
+    Check("All Fillets", true),
+];
+const RULE_ROW_2: &[Row] = &[
+    Radio("Source", &["Features", "Faces"], 0),
+    Sel("src2", "Selection", "Select the features or faces of this rule", FEATURES),
+    Combo("Rule", RULES, 1),
+    Sel("scope2", "Scope", "Select the features of the scope (Against Features)", FEATURES),
+    Sel("axis2", "Axis", "Select the axis (Incident Edges)", DIRECTION),
+    Check("Flip Axis", false),
+    Num("Tolerance", 1.0, "°"),
+    Num("Radius", 1.0, " mm"),
+    Check("All Rounds", true),
+    Check("All Fillets", true),
+];
+const RULE_ROW_3: &[Row] = &[
+    Radio("Source", &["Features", "Faces"], 0),
+    Sel("src3", "Selection", "Select the features or faces of this rule", FEATURES),
+    Combo("Rule", RULES, 1),
+    Sel("scope3", "Scope", "Select the features of the scope (Against Features)", FEATURES),
+    Sel("axis3", "Axis", "Select the axis (Incident Edges)", DIRECTION),
+    Check("Flip Axis", false),
+    Num("Tolerance", 1.0, "°"),
+    Num("Radius", 1.0, " mm"),
+    Check("All Rounds", true),
+    Check("All Fillets", true),
+];
+
 
 /// A part command with an interface and no logic yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -817,54 +862,48 @@ impl PartPlanned {
                         Sel(
                             "boundary",
                             "Profile",
-                            "Select the closed boundary profile",
+                            "Click inside the closed boundary profile",
                             PROFILE,
                         ),
+                        Sel("solid", "Solid", "Select the target body", BODIES),
+                        Check("Flip", false),
                         Num("Thickness", 1.0, " mm"),
-                        Num("Height", 1.0, " mm"),
-                        Num("Outside Height", 0.5, " mm"),
-                        Num("Outside Width", 1.0, " mm"),
-                        Num("Taper", 0.0, "°"),
+                        Num("Height", 2.0, " mm"),
+                        Num("Outside Height", 0.0, " mm"),
                     ],
                 ),
                 Page(
                     "Island",
                     &[
-                        Sel("island", "Profile", "Select the island profiles", PROFILE),
-                        Num("Thickness", 1.0, " mm"),
-                        Num("Top Offset", 0.0, " mm"),
+                        Sel("island", "Profile", "Click inside the island profiles", PROFILE),
+                        Num("Thickness", 0.0, " mm"),
                     ],
                 ),
                 Page(
                     "Rib",
                     &[
-                        Sel("ribs", "Profiles", "Select the rib curves", CURVES),
+                        Sel("ribs", "Profiles", "Select the ribs' centre lines", SKETCH_CURVES),
                         Num("Thickness", 1.0, " mm"),
-                        Num("Height", 1.0, " mm"),
+                        Num("Height", 2.0, " mm"),
                         Num("Top Offset", 0.0, " mm"),
-                        Num("Taper", 0.0, "°"),
                     ],
                 ),
                 Page(
                     "Spar",
                     &[
-                        Sel("spars", "Profiles", "Select the spar curves", CURVES),
+                        Sel("spars", "Profiles", "Select the spars' centre lines", SKETCH_CURVES),
                         Num("Thickness", 1.0, " mm"),
-                        Num("Height", 1.0, " mm"),
+                        Num("Top Offset", 0.0, " mm"),
                         Num("Bottom Offset", 0.0, " mm"),
                     ],
                 ),
                 Page(
                     "Draft",
                     &[
-                        Sel(
-                            "pull",
-                            "Pull Direction",
-                            "Select the pull direction",
-                            DIRECTION,
-                        ),
                         Num("Draft Angle", 0.0, "°"),
-                        Note("Flow Area: computed with the logic"),
+                        Check("Parting Element", false),
+                        Head("Flow Area"),
+                        Button("Compute Flow Area"),
                     ],
                 ),
             ],
@@ -873,25 +912,59 @@ impl PartPlanned {
                     "Shape",
                     &[
                         Radio("Placement", &["From Sketch", "On Point"], 0),
+                        Radio("Type", &["Head", "Thread"], 1),
                         Sel("centers", "Centers", "Select the boss centres", POINTS),
-                        Radio("Type", &["Head", "Thread"], 0),
-                        Num("Outer Diameter", 8.0, " mm"),
-                        Num("Hole Diameter", 3.0, " mm"),
-                        Num("Offset", 1.0, " mm"),
-                        Num("Fillet", 0.5, " mm"),
-                        Num("Draft Angle", 0.0, "°"),
+                        Sel("direction", "Direction", "Select the boss direction (On Point)", DIRECTION),
+                        Sel("solid", "Solid", "Select the target body", BODIES),
+                        Check("Flip", false),
+                        Num("Offset", 0.0, " mm"),
+                        Num("Fillet", 0.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Head",
+                    &[
+                        Radio("Seat", &["Counterbore", "Countersink"], 0),
+                        Num("Wall Thickness", 1.5, " mm"),
+                        Num("Shank Height", 1.5, " mm"),
+                        Num("Clamp Height", 0.5, " mm"),
+                        Num("Shank Diameter", 3.0, " mm"),
+                        Num("Clamp Diameter", 7.0, " mm"),
+                        Num("Head Diameter", 8.0, " mm"),
+                        Num("Countersink Angle", 90.0, "°"),
+                        Num("Outer Draft Angle", 0.0, "°"),
+                        Num("Inner Draft Angle", 0.0, "°"),
+                        Num("Shaft Draft Angle", 0.0, "°"),
+                        Num("Clamp Draft Angle", 0.0, "°"),
+                    ],
+                ),
+                Page(
+                    "Thread",
+                    &[
+                        Check("Hole", true),
+                        Radio("Hole Type", &["Depth", "Full Depth", "Through"], 1),
+                        Num("Thread Diameter", 6.0, " mm"),
+                        Num("Thread Hole Diameter", 2.5, " mm"),
+                        Num("Thread Hole Depth", 5.0, " mm"),
+                        Num("Outer Draft Angle", 0.0, "°"),
+                        Num("Inner Draft Angle", 0.0, "°"),
                     ],
                 ),
                 Page(
                     "Ribs",
                     &[
                         Check("Stiffening Ribs", false),
-                        Num("Count", 4.0, ""),
+                        Num("Number of Ribs", 4.0, ""),
+                        Num("Rib Thickness", 1.0, " mm"),
+                        Num("Rib Draft", 0.0, "°"),
+                        Num("Shoulder Length", 3.0, " mm"),
+                        Num("Top Offset", 1.0, " mm"),
+                        Num("Shoulder Radius", 0.0, " mm"),
+                        Num("Flare Angle", 0.0, "°"),
+                        Num("Rib Radius", 0.0, " mm"),
+                        Num("Blend Radius", 0.0, " mm"),
                         Num("Start Angle", 0.0, "°"),
-                        Num("Thickness", 1.0, " mm"),
-                        Num("Height", 5.0, " mm"),
-                        Num("Chamfer", 0.0, " mm"),
-                        Num("Fillet", 0.0, " mm"),
+                        Num("Space Angle", 360.0, "°"),
                     ],
                 ),
             ],
@@ -899,17 +972,27 @@ impl PartPlanned {
                 Page(
                     "Shape",
                     &[
-                        Sel("profile", "Profile", "Select the rest's profile", PROFILE),
-                        Sel("direction", "Direction", "Select the direction", DIRECTION),
+                        Sel("profile", "Profile", "Click inside the rest's closed profile", PROFILE),
+                        Sel("solid", "Solid", "Select the target body", BODIES),
+                        Check("Flip", false),
                         Num("Thickness", 1.0, " mm"),
-                        Radio("Extents", &["Distance", "To"], 0),
-                        Num("Height", 2.0, " mm"),
-                        Num("Clearance", 0.0, " mm"),
+                        Radio("Thickness Side", &["Inside", "Outside", "Both Sides"], 0),
+                        Radio("Platform", &["Through All", "Distance", "To Surface"], 0),
+                        Num("Distance", 2.0, " mm"),
+                        Sel("to", "Surface", "Select the surface the platform runs to", PLANE),
+                        Num("Offset", 0.0, " mm"),
                     ],
                 ),
                 Page(
                     "More",
-                    &[Num("Landing Taper", 0.0, "°"), Num("Draft Angle", 0.0, "°")],
+                    &[
+                        Radio("Landing", &["Distance", "To Surface"], 0),
+                        Num("Landing Distance", 0.0, " mm"),
+                        Sel("land", "Surface", "Select the surface of the landing", PLANE),
+                        Num("Landing Offset", 0.0, " mm"),
+                        Num("Landing Taper", 0.0, "°"),
+                        Num("Clearance Taper", 0.0, "°"),
+                    ],
                 ),
             ],
             SnapFit => &[
@@ -923,65 +1006,60 @@ impl PartPlanned {
                         ),
                         Radio("Placement", &["From Sketch", "On Point"], 0),
                         Sel("centers", "Centers", "Select the snap fit points", POINTS),
-                        Sel(
-                            "direction",
-                            "Direction",
-                            "Select the hook direction",
-                            DIRECTION,
-                        ),
+                        Sel("direction", "Direction", "Select the beam direction (On Point)", DIRECTION),
+                        Sel("solid", "Solid", "Select the target body", BODIES),
+                        Check("Flip", false),
+                        Radio("Hook Direction", &["0°", "90°", "180°", "270°"], 0),
+                        Radio("Extents", &["Extend to next", "Stop at the point"], 0),
                     ],
                 ),
                 Page(
                     "Beam",
                     &[
-                        Num("Length", 10.0, " mm"),
-                        Num("Thickness at root", 1.5, " mm"),
-                        Num("Thickness at tip", 1.0, " mm"),
-                        Num("Width", 4.0, " mm"),
+                        Num("Thickness at Wall", 1.5, " mm"),
+                        Num("Thickness at Hook", 1.0, " mm"),
+                        Num("Beam Length", 10.0, " mm"),
+                        Num("Width at Wall", 4.0, " mm"),
+                        Num("Width at Hook", 4.0, " mm"),
                     ],
                 ),
                 Page(
                     "Hook",
                     &[
-                        Num("Hook Length", 2.0, " mm"),
-                        Num("Hook Height", 1.0, " mm"),
-                        Num("Insertion Angle", 30.0, "°"),
+                        Num("Tip Length", 0.5, " mm"),
+                        Num("Undercut Depth", 1.0, " mm"),
+                        Num("Hook Length", 4.0, " mm"),
                         Num("Retention Angle", 90.0, "°"),
+                        Num("Insertion Angle", 30.0, "°"),
+                    ],
+                ),
+                Page(
+                    "Clip",
+                    &[
+                        Num("Clip Length", 10.0, " mm"),
+                        Num("Clip Width", 8.0, " mm"),
+                        Num("Thickness at Wall", 1.5, " mm"),
+                        Num("Thickness at Top", 1.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Catch",
+                    &[
+                        Num("Side Width", 1.5, " mm"),
+                        Num("Top Width", 1.5, " mm"),
+                        Num("Opening Length", 4.0, " mm"),
                     ],
                 ),
             ],
             RuleFillet => &[
+                Page("Rule 1", RULE_ROW_1),
+                Page("Rule 2", RULE_ROW_2),
+                Page("Rule 3", RULE_ROW_3),
                 Page(
-                    "Rule Fillet",
+                    "More",
                     &[
-                        Radio("Source", &["Feature", "Face"], 0),
-                        Sel("source", "Source", "Select the feature or face", FEATURES),
-                        Combo(
-                            "Rule",
-                            &[
-                                "All Edges",
-                                "Against Feature",
-                                "Free Edges",
-                                "Incident Edges",
-                            ],
-                            0,
-                        ),
-                        Num("Radius", 1.0, " mm"),
-                        Radio("Scope", &["Include", "Exclude"], 0),
-                        Sel(
-                            "scope",
-                            "Scope Faces",
-                            "Select the faces of the scope",
-                            FACES,
-                        ),
-                    ],
-                ),
-                Page(
-                    "Advanced",
-                    &[
-                        Check("All Rounds", false),
-                        Check("All Fillets", false),
-                        Check("Incident Edges", false),
+                        Sel("exclude", "Exclude Faces", "Select faces whose edges stay as they are", FACES),
+                        Check("Remove Merged Faces", false),
                     ],
                 ),
             ],
@@ -996,24 +1074,27 @@ impl PartPlanned {
                             "Select the edges along the joint",
                             EDGES,
                         ),
-                        Sel("guide", "Guide Face", "Select the guide face", FACES),
+                        Radio("Orientation", &["Guide Face", "Pull Direction"], 1),
+                        Sel("guide", "Guide Face", "Select the wall next to the path", FACES),
                         Sel(
                             "pull",
                             "Pull Direction",
                             "Select the pull direction",
                             DIRECTION,
                         ),
+                        Sel("solid", "Solid", "Select the target body", BODIES),
                         Radio("Path Extents", &["Full", "Between Points"], 0),
                     ],
                 ),
                 Page(
-                    "Lip",
+                    "Lip / Groove",
                     &[
-                        Num("a (width)", 1.0, " mm"),
-                        Num("b (height)", 1.0, " mm"),
-                        Num("c (offset)", 0.0, " mm"),
-                        Num("Inner Draft", 0.0, "°"),
-                        Num("Outer Draft", 0.0, "°"),
+                        Num("Outside Angle", 0.0, "°"),
+                        Num("Inside Angle", 0.0, "°"),
+                        Num("Height", 1.0, " mm"),
+                        Num("Shoulder Width", 0.0, " mm"),
+                        Num("Width", 0.75, " mm"),
+                        Num("Clearance", 0.0, " mm"),
                     ],
                 ),
             ],
@@ -1391,6 +1472,12 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::PlaceImported
             ) | Planned::Part(
                 PartPlanned::Emboss
+                    | PartPlanned::Grill
+                    | PartPlanned::Boss
+                    | PartPlanned::Rest
+                    | PartPlanned::SnapFit
+                    | PartPlanned::RuleFillet
+                    | PartPlanned::Lip
                     | PartPlanned::Stitch
                     | PartPlanned::Patch
                     | PartPlanned::TrimSurface
@@ -1433,6 +1520,12 @@ impl Planned {
             ) => Some(
                 "Comes later: the cylinder stands on its plane, along its normal (spec 5.5 §3.1)",
             ),
+            (Planned::Part(PartPlanned::Grill), "Parting Element", None) => {
+                Some("Comes later (spec 5.8 Grill: Draft)")
+            }
+            (Planned::Part(PartPlanned::Lip), "Path Extents", Some("Between Points")) => {
+                Some("Comes later (spec 5.8 Lip: Path Extents)")
+            }
             (Planned::Part(PartPlanned::Patch), "Condition", Some("Smooth (G2)")) => Some(
                 "Comes later: Contact (G0) and Tangent (G1) are built (spec 5.4 Boundary Patch)",
             ),
@@ -1662,6 +1755,7 @@ const LIVE_BUTTONS: &[&str] = &[
     "Browse...",
     "Refresh Categories",
     "+ Add Set",
+    "Compute Flow Area",
 ];
 
 /// Buttons that switch an option on and off (kept like a check box).
@@ -1709,7 +1803,11 @@ pub(super) type PickedItem = (SelItem, Option<[f64; 3]>);
 
 /// Selectors that take one input: a new pick replaces the old one.
 // (Trim's Remove takes several areas, as Inventor's does.)
-const SINGLE_KEYS: &[&str] = &["tool", "vector", "to", "new"];
+const SINGLE_KEYS: &[&str] = &["tool", "vector", "to", "new", "land"];
+
+/// Selectors where one item picked in another place is a new pick (Trim's areas, a sketch's
+/// regions, curves and points).
+const POINT_KEYS: &[&str] = &["remove", "boundary", "island", "ribs", "spars", "profile", "centers"];
 
 /// Selectors that keep taking component edges / faces: a pick never moves
 /// on to the next selector.
@@ -1874,7 +1972,7 @@ impl PartDialog {
         items.truncate(n);
         let same = items.iter().position(|(x, p)| {
             *x == item
-                && (key != "remove"
+                && (!POINT_KEYS.contains(&key)
                     || match (p, at) {
                         (Some(a), Some(b)) => {
                             (crate::kernel::Point3::from(*a) - crate::kernel::Point3::from(b))
@@ -2315,8 +2413,10 @@ impl PartDialog {
                 plabel(ui, label);
                 // Emboss: From Plane has a taper and no depth, the face types the other way round.
                 let plane = self.index(at.0, "Type") == 2;
-                let off = self.kind == Planned::Part(PartPlanned::Emboss)
-                    && ((label == "Depth" && plane) || (label == "Taper" && !plane));
+                let off = (self.kind == Planned::Part(PartPlanned::Emboss)
+                    && ((label == "Depth" && plane) || (label == "Taper" && !plane)))
+                    || matches!(self.kind, Planned::Part(k)
+                        if super::plastic::row_off(self, k, at.0, label));
                 let v = self.nums.entry(at).or_insert(def);
                 ui.add_enabled_ui(!off, |ui| {
                     ui.add(ExprValue::new(v).suffix(unit).cursor(label));
@@ -2520,6 +2620,20 @@ impl CadCraftApp {
     pub(super) fn part_planned_item_at(&self, p: egui::Pos2, rect: egui::Rect) -> Option<SelItem> {
         let d = self.part_planned.as_ref()?;
         let kinds = d.flow().current().map(|s| s.accepts)?;
+        let plastic_sketch = matches!(
+            d.kind,
+            Planned::Part(
+                PartPlanned::Grill | PartPlanned::Boss | PartPlanned::Rest | PartPlanned::SnapFit
+            )
+        ) && kinds.iter().any(|k| {
+            matches!(
+                k,
+                PickKind::Region | PickKind::SketchCurve | PickKind::SketchPoint
+            )
+        });
+        if plastic_sketch && let Some(i) = self.plastic_sketch_at(p, rect, kinds) {
+            return Some(SelItem::Sketch(i));
+        }
         let item = if kinds.contains(&PickKind::Body) && !kinds.contains(&PickKind::Face) {
             // A selector of whole bodies (Copy Object's Body mode): the body of the face under
             // the cursor (the pick filter leaves faces out, so they are not asked through it).

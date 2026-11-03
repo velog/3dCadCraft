@@ -415,7 +415,14 @@ fn cut_profile(op: &BossOp, enter: Real, exit: Real) -> Result<Option<CutProfile
     }))
 }
 
-/// One boss: the joined tools and the cut tool.
+/// What one boss adds: its post, its ribs and what is cut out.
+struct Tools {
+    post: ExactSolid,
+    ribs: Vec<ExactSolid>,
+    cut: Option<ExactSolid>,
+}
+
+/// One boss's tools.
 fn one(
     op: &BossOp,
     rays: &Rays,
@@ -423,7 +430,7 @@ fn one(
     d: Vector3,
     x: Vector3,
     prefix: &str,
-) -> Result<(Vec<ExactSolid>, Option<ExactSolid>), Fail> {
+) -> Result<Tools, Fail> {
     let user = |m: &str| Fail::User(m.to_owned());
     let y = d.cross(&x);
     let r0 = op.outer_radius();
@@ -446,17 +453,16 @@ fn one(
     let z1 = deep + embed(exit - enter);
     let r1 = r0 + z1 * tan_o;
     let seam = 0.31;
-    let mut join = vec![
-        exact::revolved_tool(
-            o,
-            d,
-            seam,
-            &[[0.0, 0.0], [r0, 0.0], [r1, z1], [0.0, z1]],
-            &["Start", "Outer", "Foot", "Axis"],
-            prefix,
-        )
-        .map_err(Fail::Kernel)?,
-    ];
+    let post = exact::revolved_tool(
+        o,
+        d,
+        seam,
+        &[[0.0, 0.0], [r0, 0.0], [r1, z1], [0.0, z1]],
+        &["Start", "Outer", "Foot", "Axis"],
+        prefix,
+    )
+    .map_err(Fail::Kernel)?;
+    let mut ribs = Vec::new();
     // Ribs: from inside the boss to its reach, widening to the wall; the hole is cut afterwards.
     if let Some(r) = &op.ribs {
         let step = r.space / r.count as Real;
@@ -485,7 +491,7 @@ fn one(
                     PrismSeg::Line(p(ri, h), p(ri, -h)),
                 ]
             };
-            join.push(
+            ribs.push(
                 exact::prism_between(
                     &[(rect(z0), rect(z1))],
                     &plane,
@@ -496,14 +502,14 @@ fn one(
             );
         }
     }
-    let hole = match cut_profile(op, enter, exit)? {
+    let cut = match cut_profile(op, enter, exit)? {
         Some((pts, names)) => Some(
             exact::revolved_tool(o, d, seam, &pts, &names, &format!("{prefix}:Cut"))
                 .map_err(Fail::Kernel)?,
         ),
         None => None,
     };
-    Ok((join, hole))
+    Ok(Tools { post, ribs, cut })
 }
 
 /// Builds Boss (`cur`: the solids before it; surface bodies stay outside).
@@ -521,67 +527,68 @@ pub(in crate::part) fn boss(
         .map_err(Fail::User)?;
     let rays = Rays::of(body, &op.solids);
     let d = op.direction(&rays, &pts, n).map_err(Fail::User)?;
-    let (mut joined, mut cut) = (Vec::new(), Vec::new());
+    let (mut posts, mut ribs, mut cut) = (Vec::new(), Vec::new(), Vec::new());
     for (k, p) in pts.iter().enumerate() {
         let start = *p - d * op.offset;
-        let (j, c) = one(op, &rays, start, d, x, &format!("{id}:{}", k + 1))?;
-        joined.extend(j);
-        cut.extend(c);
+        let t = one(op, &rays, start, d, x, &format!("{id}:{}", k + 1))?;
+        posts.push(t.post);
+        ribs.push(t.ribs);
+        cut.extend(t.cut);
     }
-    let mut out = combine(cur.to_vec(), joined, Operation::Join, &op.solids, false)?;
+    let own = format!("{id}:");
+    let mut out = combine(cur.to_vec(), posts, Operation::Join, &op.solids, false)?;
+    // The kernel cannot carry a round through the corners where ribs meet the post and the body,
+    // so the post's foot is rounded while it stands alone and the ribs come after it.
+    if op.fillet > 0.0 {
+        out = common::fillet_where(out, id, |_, _, a, b| {
+            let (x, y) = (a.starts_with(&own), b.starts_with(&own));
+            (x != y).then_some(op.fillet)
+        })?;
+    }
+    let ribs: Vec<ExactSolid> = ribs.into_iter().flatten().collect();
+    if !ribs.is_empty() {
+        out = combine(out, ribs, Operation::Join, &op.solids, false)?;
+    }
     if !cut.is_empty() {
         out = combine(out, cut, Operation::Cut, &op.solids, false)?;
     }
-    fillets(op, id, out)
+    rib_fillets(op, id, out)
 }
 
-/// Rounds: at the body, along the ribs, at the boss, on the shoulder.
-fn fillets(op: &BossOp, id: &str, out: Vec<ExactSolid>) -> Result<Vec<ExactSolid>, Fail> {
-    let ribs = op.ribs.clone().unwrap_or_default();
-    if op.fillet == 0.0
-        && (op.ribs.is_none()
-            || (ribs.rib_radius == 0.0 && ribs.blend_radius == 0.0 && ribs.shoulder_radius == 0.0))
-    {
+/// The ribs' rounds. Each set goes on alone: a set the kernel refuses says which it was.
+fn rib_fillets(op: &BossOp, id: &str, mut out: Vec<ExactSolid>) -> Result<Vec<ExactSolid>, Fail> {
+    let Some(r) = &op.ribs else {
         return Ok(out);
-    }
+    };
     let own = format!("{id}:");
-    let positive = |r: Real| (r > 0.0).then_some(r);
-    common::fillet_where(out, id, |_, _, a, b| {
-        let (mine_a, mine_b) = (a.starts_with(&own), b.starts_with(&own));
-        if mine_a != mine_b {
-            // Boss or rib against the body.
-            let m = if mine_a { a } else { b };
-            return if m.contains(":Rib") {
-                positive(ribs.rib_radius).or(positive(op.fillet))
-            } else {
-                positive(op.fillet)
-            };
+    let rib = |s: &str| s.starts_with(&own) && s.contains(":Rib");
+    let side = |s: &str| rib(s) && s.contains(":Side:");
+    let shoulder = |a: &str, b: &str| {
+        let (top, outer) = (|s: &str| rib(s) && s.ends_with(":Start"), |s: &str| {
+            rib(s) && s.ends_with(":Side:1")
+        });
+        (top(a) && outer(b)) || (top(b) && outer(a))
+    };
+    let blend = |a: &str, b: &str| {
+        let on_post = |s: &str| s.starts_with(&own) && !s.contains(":Rib");
+        (side(a) && on_post(b)) || (side(b) && on_post(a))
+    };
+    let foot = |a: &str, b: &str| (rib(a) && !b.starts_with(&own)) || (rib(b) && !a.starts_with(&own));
+    let sets: [(Real, &str, &dyn Fn(&str, &str) -> bool); 3] = [
+        (r.shoulder_radius, "Shoulder Radius", &shoulder),
+        (r.blend_radius, "Blend Radius", &blend),
+        (r.rib_radius, "Rib Radius", &foot),
+    ];
+    for (radius, name, takes) in sets {
+        if radius <= 0.0 {
+            continue;
         }
-        if !mine_a {
-            return None;
-        }
-        let rib = |s: &str| s.contains(":Rib");
-        let side = |s: &str| s.contains(":Side:");
-        match (rib(a), rib(b)) {
-            (true, false) | (false, true) => {
-                let (r, o) = if rib(a) { (a, b) } else { (b, a) };
-                if side(r) && o.ends_with(":Outer") {
-                    positive(ribs.blend_radius)
-                } else {
-                    None
-                }
-            }
-            (true, true) => {
-                // The shoulder: the top against the rib's outer side (segment 1).
-                let top = |s: &str| s.ends_with(":Start");
-                let outer = |s: &str| s.ends_with(":Side:1");
-                if (top(a) && outer(b)) || (top(b) && outer(a)) {
-                    positive(ribs.shoulder_radius)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    })
+        out = common::fillet_where(out, id, |_, _, a, b| takes(a, b).then_some(radius)).map_err(
+            |e| match e {
+                Fail::User(m) => Fail::User(format!("{name}: {m}")),
+                other => other,
+            },
+        )?;
+    }
+    Ok(out)
 }

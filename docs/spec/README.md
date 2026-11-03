@@ -115,6 +115,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [2.15-materials.md](2.15-materials.md) | Materials, appearances, overrides, libraries, Styles Editor |
 | [2.16-browser.md](2.16-browser.md) | Model browser: order, nested sketches, bodies, End of Part, reordering, Suppress, Delete, Rename |
 | [1.11-sketch-text.md](1.11-sketch-text.md) | Sketch text: fonts, size, stretch, stored outlines, letters as profiles |
+| [5.8-plastic-parts.md](5.8-plastic-parts.md) | Plastic part features: Grill, Boss, Rest, Snap Fit, Rule Fillet, Lip |
 | [2.17-emboss.md](2.17-emboss.md) | Emboss / Engrave: from a face, from the plane with taper, wrapped onto a cylinder |
 | [7.7-export.md](7.7-export.md) | Export: STL, STEP, GLB |
 | [7.7a-import.md](7.7a-import.md) | Import: STEP (AnyCAD Convert / Reference Model) |

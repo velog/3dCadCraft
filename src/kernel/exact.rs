@@ -3937,9 +3937,15 @@ fn sense_by_geometry(
     let (a, b) = (pts[i.saturating_sub(1)], pts[i.max(1)]);
     let d = b - a;
     let mid = nalgebra::center(&a, &b);
+    // A triangle lying on the segment itself says the side for sure; the nearest centre can be
+    // across a narrow slot in the face (the foot of a rib).
+    let tol = 1e-7 * (1.0 + mid.coords.norm());
+    let on = |t: &[u32; 3], x: &Point3| t.iter().any(|&k| (m.positions[k as usize] - x).norm() < tol);
+    let touching = m.triangles.iter().any(|t| on(t, &a) && on(t, &b));
     let (_, c, n) = m
         .triangles
         .iter()
+        .filter(|t| !touching || (on(t, &a) && on(t, &b)))
         .map(|t| {
             let [p, q, r] = t.map(|k| m.positions[k as usize]);
             let c = Point3::from((p.coords + q.coords + r.coords) / 3.0);

@@ -951,6 +951,90 @@ fn speed_budgets() {
         ));
     }
 
+    // Plastic parts: a grill with ribs, four thread bosses, a rule fillet (no cache hits).
+    {
+        use cadcraft3d::part::plastic::boss::BossOp;
+        use cadcraft3d::part::plastic::grill::{GrillCurves, GrillOp};
+        use cadcraft3d::part::work::WorkPlaneDef;
+        use cadcraft3d::part::{
+            BodyOp, BodyOpFeature, OriginPlane, PlaneRef, SketchOptions, SketchPlacement, WorkDef,
+            WorkFeature,
+        };
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let sketch_at = |p: &mut PartDocument, z: f64| {
+            let wp = p
+                .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                    base: PlaneRef::Origin(OriginPlane::XY),
+                    distance: z,
+                })))
+                .unwrap();
+            p.create_sketch(
+                SketchPlacement {
+                    plane: PlaneRef::Work(wp),
+                    ..Default::default()
+                },
+                &opts,
+            )
+            .unwrap()
+        };
+        let mut grill = PartDocument::with_box("Box1", [200.0, 100.0, 3.0]).unwrap();
+        let i = sketch_at(&mut grill, -5.0);
+        let sk = &mut grill.sketches[i].sketch;
+        sk.add_rectangle_two_point(
+            nalgebra::Point2::new(20.0, 20.0),
+            nalgebra::Point2::new(180.0, 80.0),
+        )
+        .unwrap();
+        let ribs: Vec<_> = (1..16)
+            .map(|k| {
+                let x = 20.0 + 10.0 * k as f64;
+                sk.add_line(nalgebra::Point2::new(x, 10.0), nalgebra::Point2::new(x, 90.0))
+            })
+            .collect();
+        let id = grill.sketches[i].id.clone();
+        let mut op = GrillOp::new(id.clone());
+        op.ribs = Some(GrillCurves {
+            sketch: id,
+            curves: ribs,
+            thickness: 1.5,
+            height: 2.0,
+            top_offset: 0.0,
+            bottom_offset: 0.0,
+        });
+        grill.add_body_op(BodyOpFeature::new(BodyOp::Grill(op))).unwrap();
+        rows.push((
+            "Grill: 15 ribs on a plate, regenerate",
+            1000.0,
+            median_ms(3, || {
+                let mut c = grill.clone();
+                c.build_cache = Default::default();
+                c.regenerate().unwrap();
+            }),
+        ));
+        let mut boss = PartDocument::with_box("Box1", [200.0, 100.0, 3.0]).unwrap();
+        let i = sketch_at(&mut boss, 20.0);
+        for (x, y) in [(30.0, 25.0), (170.0, 25.0), (30.0, 75.0), (170.0, 75.0)] {
+            boss.sketches[i]
+                .sketch
+                .add_center_point(nalgebra::Point2::new(x, y));
+        }
+        let op = BossOp::new(boss.sketches[i].id.clone());
+        boss.add_body_op(BodyOpFeature::new(BodyOp::Boss(op))).unwrap();
+        rows.push((
+            "Boss: 4 thread bosses on a plate, regenerate",
+            300.0,
+            median_ms(3, || {
+                let mut c = boss.clone();
+                c.build_cache = Default::default();
+                c.regenerate().unwrap();
+            }),
+        ));
+    }
+
     // Emboss: 12 pads on a plate, one feature (a timed clone: no cache hits).
     {
         use cadcraft3d::part::emboss::EmbossOp;

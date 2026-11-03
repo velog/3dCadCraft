@@ -2913,6 +2913,73 @@ fn text_r63() -> PartDocument {
     part
 }
 
+/// Revision 64: a wall with a thread boss, a snap fit hook, a rest and a grill, then a rule fillet.
+fn plastic_r64() -> PartDocument {
+    use cadcraft3d::part::plastic::boss::BossOp;
+    use cadcraft3d::part::plastic::grill::GrillOp;
+    use cadcraft3d::part::plastic::rest::RestOp;
+    use cadcraft3d::part::plastic::rule_fillet::{FilletRule, RuleFilletOp, RuleRow};
+    use cadcraft3d::part::plastic::snap_fit::SnapFitOp;
+    use cadcraft3d::part::work::WorkPlaneDef;
+    use cadcraft3d::part::{
+        BodyOp, BodyOpFeature, OriginPlane, PlaneRef, SketchOptions, SketchPlacement, WorkDef,
+        WorkFeature,
+    };
+    use nalgebra::Point2;
+    let mut part = PartDocument::with_box("Box1", [100.0, 60.0, 3.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let mut sketch_at = |part: &mut PartDocument, z: f64| {
+        let wp = part
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: z,
+            })))
+            .unwrap();
+        part.create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            },
+            &opts,
+        )
+        .unwrap()
+    };
+    let i = sketch_at(&mut part, 20.0);
+    part.sketches[i].sketch.add_center_point(Point2::new(80.0, 15.0));
+    let op = BossOp::new(part.sketches[i].id.clone());
+    let boss = part.add_body_op(BodyOpFeature::new(BodyOp::Boss(op))).unwrap();
+    let i = sketch_at(&mut part, 3.0);
+    part.sketches[i].sketch.add_center_point(Point2::new(80.0, 45.0));
+    let mut op = SnapFitOp::new(part.sketches[i].id.clone());
+    op.extend = false;
+    part.add_body_op(BodyOpFeature::new(BodyOp::SnapFit(op))).unwrap();
+    let i = sketch_at(&mut part, 8.0);
+    part.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(40.0, 20.0), Point2::new(60.0, 40.0))
+        .unwrap();
+    let op = RestOp::new(part.sketches[i].id.clone(), 1.0);
+    part.add_body_op(BodyOpFeature::new(BodyOp::Rest(op))).unwrap();
+    let i = sketch_at(&mut part, -5.0);
+    part.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(5.0, 10.0), Point2::new(30.0, 50.0))
+        .unwrap();
+    let op = GrillOp::new(part.sketches[i].id.clone());
+    part.add_body_op(BodyOpFeature::new(BodyOp::Grill(op))).unwrap();
+    part.add_body_op(BodyOpFeature::new(BodyOp::RuleFillet(RuleFilletOp {
+        rows: vec![RuleRow::features(vec![boss], FilletRule::AgainstPart, 0.5)],
+        exclude_faces: Vec::new(),
+        remove_merged: false,
+    })))
+    .unwrap();
+    part
+}
+
 /// Revision 62: a plate with a pad embossed from its top and a pocket engraved into it.
 fn emboss_r62() -> PartDocument {
     use cadcraft3d::part::emboss::{EmbossKind, EmbossOp};
@@ -3656,6 +3723,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r64/plastic_r64.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("PlasticR64");
+            project.add_document("Part1", DocumentData::Part(plastic_r64()));
             project.save(&f).unwrap();
         }
         let f = root().join("r63/text_r63.3dcadcraft");

@@ -110,6 +110,7 @@ mod panels;
 mod param_link;
 mod part_family;
 mod part_planned;
+mod plastic;
 mod pattern_dialog;
 mod pattern_feature;
 mod place;

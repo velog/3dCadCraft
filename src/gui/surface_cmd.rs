@@ -31,6 +31,12 @@ impl CadCraftApp {
         let (o, d) = self.camera.ray(p, rect)?;
         let d = d.try_normalize(1e-12)?;
         match item {
+            SelItem::Sketch(i) => {
+                let pl = &self.part().sketches.get(*i)?.sketch.plane;
+                let n = pl.normal.into_inner();
+                let den = d.dot(&n);
+                (den.abs() > 1e-9).then(|| o + d * ((pl.origin - o).dot(&n) / den))
+            }
             SelItem::Edge(e) => {
                 let pts = self
                     .part()
@@ -266,6 +272,17 @@ impl CadCraftApp {
         let t = 0;
         if kind == PartPlanned::Import {
             return self.import_op_from(d, old);
+        }
+        if matches!(
+            kind,
+            PartPlanned::Grill
+                | PartPlanned::Boss
+                | PartPlanned::Rest
+                | PartPlanned::SnapFit
+                | PartPlanned::RuleFillet
+                | PartPlanned::Lip
+        ) {
+            return self.plastic_op_from(kind, d, old);
         }
         Ok(match kind {
             PartPlanned::Stitch => {
@@ -761,6 +778,9 @@ impl CadCraftApp {
 
     /// A live button of a surface command's panel: the line it shows.
     pub(super) fn surface_button(&self, d: &PartDialog, button: &str) -> Option<String> {
+        if button == "Compute Flow Area" {
+            return Some(self.grill_flow_line(d));
+        }
         if button != "Find Remaining Free Edges" {
             return None;
         }
@@ -850,6 +870,15 @@ impl CadCraftApp {
             BodyOp::Sculpt(_) => PartPlanned::Sculpt,
             BodyOp::CopyObject(_) => PartPlanned::CopyObject,
             BodyOp::Emboss(_) => PartPlanned::Emboss,
+            BodyOp::Grill(_)
+            | BodyOp::Boss(_)
+            | BodyOp::Rest(_)
+            | BodyOp::SnapFit(_)
+            | BodyOp::RuleFillet(_)
+            | BodyOp::Lip(_) => match super::plastic::command_of(&b.op) {
+                Some(k) => k,
+                None => return,
+            },
             BodyOp::Import(_) => PartPlanned::Import,
             // A Freeform edits by its cage (Edit Form); its sizes from that panel's button.
             BodyOp::Freeform(_) => {
@@ -892,6 +921,12 @@ impl CadCraftApp {
                 d.set_index(0, "Condition", usize::from(o.tangent.is_some()));
             }
             BodyOp::Trim(o) => d.set_check(0, "Invert Selection", o.invert),
+            BodyOp::Grill(_)
+            | BodyOp::Boss(_)
+            | BodyOp::Rest(_)
+            | BodyOp::SnapFit(_)
+            | BodyOp::RuleFillet(_)
+            | BodyOp::Lip(_) => super::plastic::fill_dialog(d, &b.op),
             BodyOp::Emboss(o) => {
                 use crate::part::emboss::{EmbossKind, EmbossSide};
                 d.set_index(

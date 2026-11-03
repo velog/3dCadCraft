@@ -1173,9 +1173,10 @@ Excel or any spreadsheet — Sheet Metal Defaults › Rule picks one (filtered b
 
 **3DCadCraft approach.** **Configurations** (see 3.9 Model States) and tables are one common mechanism. One document with a parameter table gives all variants, and a Link to "bolt, row M8×30" is an ordinary `DocRef` + a choice of configuration.
 
-## 5.8 Plastic parts — ⬜ · L
+## 5.8 Plastic parts — 🟡 2026-11-03 · L
 
-**Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
+**Specification:** [spec/5.8-plastic-parts.md](spec/5.8-plastic-parts.md) (what is missing per option: Lip on non-flat rims and Path
+Extents, Grill's Parting Element, rounds of a rib where the kernel refuses them).
 
 - **Grill:** a ventilation grille;
 - **Boss:** a screw boss;

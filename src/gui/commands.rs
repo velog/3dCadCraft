@@ -711,21 +711,33 @@ pub static COMMANDS: &[Command] = &[
         .at(&[M_SURFACE]),
     pp("part.grill", "Grill", "Вентилационна решетка", Icon::Grill, Pp::Grill)
         .alias(&["GRL"])
+        .spec("5.8-plastic-parts.md")
+        .tip("A vent in a thin wall: boundary, islands, ribs and spars")
         .at(&[M_PLASTIC]),
     pp("part.boss", "Boss", "Бобина за винт (Boss)", Icon::Boss, Pp::Boss)
         .alias(&["BOS"])
+        .spec("5.8-plastic-parts.md")
+        .tip("A screw boss to the next face: head or thread side, with ribs")
         .at(&[M_PLASTIC]),
     pp("part.rest", "Rest", "Опора (Rest)", Icon::Rest, Pp::Rest)
         .alias(&["RST"])
+        .spec("5.8-plastic-parts.md")
+        .tip("A flat landing on a slanted or curved wall")
         .at(&[M_PLASTIC]),
     pp("part.snap_fit", "Snap Fit", "Щракаща връзка", Icon::SnapFit, Pp::SnapFit)
         .alias(&["SNF"])
+        .spec("5.8-plastic-parts.md")
+        .tip("A cantilever snap fit hook or loop on each point")
         .at(&[M_PLASTIC]),
     pp("part.rule_fillet", "Rule Fillet", "Закръгление по правило", Icon::RuleFillet, Pp::RuleFillet)
         .alias(&["RUF"])
+        .spec("5.8-plastic-parts.md")
+        .tip("Fillets by rules that find their edges again when the model changes")
         .at(&[M_PLASTIC]),
     pp("part.lip", "Lip", "Зъб / канал (Lip)", Icon::Lip, Pp::Lip)
         .alias(&["LIP"])
+        .spec("5.8-plastic-parts.md")
+        .tip("A lip or groove along the rim of a housing")
         .at(&[M_PLASTIC]),
     pp("part.ff_box", "Box", "Свободна форма: кутия", Icon::FfBox, Pp::FreeformBox)
         .inv("Freeform Box")

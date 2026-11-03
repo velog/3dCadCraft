@@ -806,3 +806,106 @@ fn lip_clearance_shoulder_and_draft() {
     let v = volume(&p) - RING_V;
     assert!(v > area(1.0) && v < area(2.0), "draft: {v}");
 }
+
+/// What the kernel takes today: a round on the foot or the shoulder with ribs; a refused rib round
+/// names itself and leaves the part as it was.
+#[test]
+fn boss_rib_rounds() {
+    let plain = {
+        let mut p = wall();
+        let id = center_at(&mut p, 20.0);
+        let mut op = BossOp::new(id);
+        op.ribs = Some(BossRibs {
+            shoulder: 3.0,
+            top_offset: 8.0,
+            ..BossRibs::default()
+        });
+        add(&mut p, BodyOp::Boss(op));
+        volume(&p)
+    };
+    for (name, r0, sr) in [("foot", 0.5, 0.0), ("shoulder", 0.0, 0.5)] {
+        let mut p = wall();
+        let id = center_at(&mut p, 20.0);
+        let mut op = BossOp::new(id);
+        op.fillet = r0;
+        op.ribs = Some(BossRibs {
+            shoulder: 3.0,
+            top_offset: 8.0,
+            shoulder_radius: sr,
+            ..BossRibs::default()
+        });
+        add(&mut p, BodyOp::Boss(op));
+        let v = volume(&p);
+        if r0 > 0.0 {
+            assert!(v > plain, "{name}: a concave round adds material: {v} vs {plain}");
+        } else {
+            assert!(v < plain, "{name}: a convex round takes material: {v} vs {plain}");
+        }
+    }
+    let mut p = wall();
+    let id = center_at(&mut p, 20.0);
+    let mut op = BossOp::new(id);
+    op.ribs = Some(BossRibs {
+        shoulder: 3.0,
+        top_offset: 8.0,
+        blend_radius: 0.3,
+        ..BossRibs::default()
+    });
+    let n = p.features.len();
+    if let Err(e) = p.add_body_op(BodyOpFeature::new(BodyOp::Boss(op))) {
+        assert!(e.to_string().contains("Blend Radius"), "{e}");
+        assert_eq!(p.features.len(), n);
+        close(volume(&p), V0, 1e-6, "unchanged");
+    }
+}
+
+/// A box with a pocket from the top: floor 2 thick, walls 2 thick, 120 x 80 x 30.
+fn tray() -> PartDocument {
+    let mut p = PartDocument::with_box("Box1", [120.0, 80.0, 30.0]).unwrap_or_else(|e| panic!("{e}"));
+    let j = plane_at(&mut p, 2.0);
+    let sk = &mut p.sketches[j].sketch;
+    sk.add_rectangle_two_point(p2(2.0, 2.0), p2(118.0, 78.0)).unwrap_or_else(|e| panic!("{e}"));
+    let r: Vec<ProfileRef> = sk.regions().iter().map(|r| ProfileRef::of(r, r.interior_point())).collect();
+    let mut cut = ExtrudeFeature::new(r, 40.0);
+    cut.operation = cadcraft3d::part::Operation::Cut;
+    p.add_extrude(j, cut).unwrap_or_else(|e| panic!("{e}"));
+    p
+}
+
+/// Bosses with ribs on a tray's floor. Two in a row 20 apart along X hit a kernel mesh defect (the
+/// wall's triangles overlap round the ribs' feet): refused, or built; never a damaged part.
+#[test]
+fn bosses_with_ribs_in_a_tray() {
+    for (a, b, must) in [
+        ((75.0, 20.0), (105.0, 20.0), true),
+        ((85.0, 20.0), (105.0, 33.0), true),
+        ((40.0, 40.0), (80.0, 40.0), true),
+        ((85.0, 20.0), (105.0, 20.0), false),
+    ] {
+        let mut p = tray();
+        let before = volume(&p);
+        let i = plane_at(&mut p, 25.0);
+        p.sketches[i].sketch.add_center_point(p2(a.0, a.1));
+        p.sketches[i].sketch.add_center_point(p2(b.0, b.1));
+        let id = p.sketches[i].id.clone();
+        let mut op = BossOp::new(id);
+        op.ribs = Some(BossRibs {
+            shoulder: 3.0,
+            top_offset: 8.0,
+            ..BossRibs::default()
+        });
+        let n = p.features.len();
+        match p.add_body_op(BodyOpFeature::new(BodyOp::Boss(op))) {
+            Ok(_) => {
+                let rib = strip_outside(3.0, 1.0, 6.0) * 15.0;
+                let post = PI * (9.0 - 1.5625) * 23.0;
+                close(volume(&p), before + 2.0 * (post + 4.0 * rib), 0.5, "two bosses");
+            }
+            Err(e) => {
+                assert!(!must, "{a:?} {b:?}: {e}");
+                assert_eq!(p.features.len(), n);
+                close(volume(&p), before, 1e-6, "unchanged");
+            }
+        }
+    }
+}
