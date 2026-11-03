@@ -30,7 +30,7 @@ default = ["gui"]
 # egui UI + wgpu renderer. eframe re-exports its own wgpu (`eframe::wgpu`), so we
 # deliberately don't depend on `wgpu` directly: that guarantees a single wgpu
 # version in the dependency graph.
-gui = ["dep:eframe", "dep:chrono", "dep:ttf-parser"]
+gui = ["dep:eframe", "dep:chrono"]
 
 [dependencies]
 # --- Math & kernel ---------------------------------------------------------
@@ -59,6 +59,9 @@ krilla = { version = "0.8.2", default-features = false, features = ["simple-text
 # Globally unique, copy-safe identities for projects and documents.
 uuid = { version = "1", features = ["v4", "serde"] }
 
+# Glyph outlines of sketch text, advance widths of the drawing font (MIT OR Apache-2.0).
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+
 # --- Errors & diagnostics --------------------------------------------------
 thiserror = "2.0"
 log = "0.4"
@@ -73,8 +76,6 @@ eframe = { version = "0.36", optional = true, default-features = false, features
 ] }
 # Local times in the file dialog (already in the tree through truck-stepio).
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
-# Advance widths of the drawing font (Format Text runs line up as drawn).
-ttf-parser = { version = "0.25", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 approx = "0.5"

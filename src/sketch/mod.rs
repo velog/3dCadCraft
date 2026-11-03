@@ -43,6 +43,8 @@ mod shapes;
 mod solver;
 mod spline;
 
+pub mod fonts;
+pub mod text;
 pub use constraint::Constraint;
 
 /// Wraps an angle into (−π, π] (for display code).
@@ -209,6 +211,9 @@ pub enum SketchError {
     /// A [`PointId`] that is not (or no longer) in the sketch.
     #[error("unknown point")]
     UnknownPoint,
+    /// A text that cannot be laid out (its reason).
+    #[error("{0}")]
+    InvalidText(String),
     /// An [`EntityId`] that is not (or no longer) in the sketch.
     #[error("unknown entity")]
     UnknownEntity,
@@ -258,6 +263,9 @@ pub struct Sketch {
     /// the radius follows their source, see `part::link`).
     #[serde(default, skip_serializing_if = "SecondaryMap::is_empty")]
     fixed_radius: SecondaryMap<EntityId, bool>,
+    /// Texts (their outlines are stored: `text.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    texts: Vec<text::SketchText>,
 }
 
 impl Default for Sketch {
@@ -282,6 +290,7 @@ impl Sketch {
             patterns: SlotMap::with_key(),
             interp: SecondaryMap::new(),
             fixed_radius: SecondaryMap::new(),
+            texts: Vec::new(),
         }
     }
 
@@ -880,6 +889,7 @@ impl Sketch {
         self.styles.remove(id);
         self.interp.remove(id);
         self.fixed_radius.remove(id);
+        self.texts.retain(|t| t.line != id);
         let doomed: Vec<ConstraintId> = self
             .constraints
             .iter()

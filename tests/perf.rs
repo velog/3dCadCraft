@@ -974,6 +974,49 @@ fn speed_budgets() {
         ));
     }
 
+    // A word extruded from a plate (Arial where it is installed: CI has only the fixture's font).
+    if cadcraft3d::sketch::fonts::installed("Arial") {
+        use cadcraft3d::part::{
+            ExtrudeFeature, Operation, ProfileRef, SketchOptions, SketchPlacement,
+        };
+        use cadcraft3d::sketch::fonts::LoadedFont;
+        use cadcraft3d::sketch::text::TextSpec;
+        let font = LoadedFont::find("Arial", false, false).unwrap();
+        let mut p = PartDocument::with_box("Box1", [100.0, 60.0, 20.0]).unwrap();
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = p
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap();
+        let plane = p.sketches[i].sketch.plane.clone();
+        let at = plane.project(&Point3::new(8.0, 45.0, 20.0));
+        p.sketches[i]
+            .sketch
+            .add_text(at, 0.0, TextSpec::new("Text Ab1", "Arial", 12.0), &font)
+            .unwrap();
+        let r: Vec<ProfileRef> = p.sketches[i]
+            .sketch
+            .regions()
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut ex = ExtrudeFeature::new(r, 2.0);
+        ex.operation = Operation::Join;
+        p.add_extrude(i, ex).unwrap();
+        rows.push((
+            "text: a word of 7 letters joined to a plate, regenerate",
+            6000.0,
+            median_ms(3, || {
+                let mut c = p.clone();
+                c.build_cache = Default::default();
+                c.regenerate().unwrap();
+            }),
+        ));
+    }
+
     // Emboss on a curved face and wrapped round it.
     {
         use cadcraft3d::part::emboss::{EmbossKind, EmbossOp};

@@ -1362,6 +1362,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             self.thread_dialog(ui);
             return;
         }
+        if self.editing.is_some() && self.text_draft.is_some() {
+            self.text_panel(ui);
+            return;
+        }
         if self.editing.is_some() && self.tools.pattern_dialog.is_some() {
             self.pattern_dialog_panel(ui);
             return;

@@ -123,6 +123,7 @@ mod sheet_metal;
 mod shell;
 mod show_dims;
 mod sketch_marking;
+mod sketch_text;
 mod sketch_tools;
 mod sm_planned;
 mod smart_drop;
@@ -767,6 +768,10 @@ struct CadCraftApp {
 
     /// Sketch tools of the sketch in edit mode.
     tools: SketchTools,
+    /// The Text command's panel.
+    text_draft: Option<sketch_text::TextDraft>,
+    /// The last text's options (the next one starts with them).
+    last_text: Option<crate::sketch::text::TextSpec>,
     /// Line tool: dragging from a curve end (point, start position in
     /// sketch coordinates, initial drag direction once known).
     arc_drag: Option<(PointId, Point2, Option<Vector2>)>,
@@ -1122,6 +1127,8 @@ impl CadCraftApp {
             fit_sig: None,
             show_options: false,
             tools: SketchTools::default(),
+            text_draft: None,
+            last_text: None,
             arc_drag: None,
             dragging_entity: None,
             dragging_dim: None,
@@ -6391,6 +6398,12 @@ impl CadCraftApp {
                     self.set_view(StandardView::Home);
                     ui.close();
                 }
+                if let Some(line) = self.menu_at.and_then(|(p, r)| self.text_under(p, r))
+                    && ui.button("Edit Text").clicked()
+                {
+                    self.text_edit(line);
+                    ui.close();
+                }
                 if self.editing.is_some() {
                     if self.tools.tool != Tool::Select {
                         if self.step_flow().is_none()
@@ -7508,6 +7521,17 @@ impl CadCraftApp {
                 }
             }
             overlay::draw_sketch(&painter, &self.camera, rect, ps, &style);
+        }
+        self.text_take_click();
+        self.text_preview(&painter, rect);
+        // A double click on a text edits it (spec 1.11).
+        if self.tools.tool == Tool::Select
+            && self.text_draft.is_none()
+            && response.double_clicked_by(PointerButton::Primary)
+            && let Some(p) = response.interact_pointer_pos()
+            && let Some(line) = self.text_under(p, rect)
+        {
+            self.text_edit(line);
         }
         self.draw_primitive_preview(&painter, rect, ui.input(|i| i.pointer.hover_pos()));
         // Revolve: the chosen axis, extended past the profile.

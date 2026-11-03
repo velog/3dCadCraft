@@ -174,7 +174,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 61: library fasteners' stepped bodies without a Boolean (`BodyOp::Axial`)
 ///   (2026-11-02).
 /// - 62: Emboss / Engrave (`BodyOp::Emboss`) (2026-11-03).
-pub const FORMAT_REVISION: u32 = 62;
+/// - 63: sketch text (`Sketch::texts`, stored outlines) (2026-11-03).
+pub const FORMAT_REVISION: u32 = 63;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

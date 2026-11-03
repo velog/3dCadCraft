@@ -359,6 +359,8 @@ selected before and fits the first selector fills it (rule 17). When the window 
 ribbon panels (Surface, Plastic Part, Freeform, Primitives, Convert, Format…) collapse first into one
 button each that drops the panel down, then the others from the right (Inventor's behaviour).
 
+Sketch **Text** (**T**): click its place, then the panel (font, size, stretch, rotation); double-click a text or use Edit Text in the view's menu; its letters are profiles for Extrude, Emboss and the others.
+
 Aliases: Emboss **RLF**, Derive **DER**, Import **IMP**, Decal **DCL**, Mark **MK**, Unwrap **UNW**,
 Thicken/Offset **TO**, Delete Face **DF**, Direct **DE**, Copy Object **CPO**, Move Bodies **MB**, Bend Part **BP**,
 Sketch Driven Pattern **SDP**, Stitch **STI**, Sculpt **SCU**, Patch **PAT**, Trim **TRS**, Extend **XS**, Ruled

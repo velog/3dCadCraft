@@ -1047,11 +1047,11 @@ pub static COMMANDS: &[Command] = &[
         .at(&[S_CREATE])
         .tip("Bevel the corner of two lines")
         .spec("1.2-sketch-geometry.md"),
-    c("sketch.text", "Text", "Текст", Icon::Text)
+    t("sketch.text", Tool::Text, "Text", "Текст", Icon::Text)
         .alias(&["T"])
         .at(&[S_CREATE])
-        .env(SKETCH)
-        .todo("1.2"),
+        .tip("Text in any installed font; its letters are profiles for Extrude, Emboss and the others")
+        .spec("1.11-sketch-text.md"),
     t("sketch.select", Tool::Select, "Select", "Избор", Icon::Select)
         .key("Esc")
         .bound()
@@ -3209,9 +3209,9 @@ mod tests {
         assert!(hole.is_some_and(|x| !x.valid && x.tier == Tier::Exact));
         assert!(h[0].valid, "valid commands first");
         // Unimplemented: flagged and last.
-        let t = search("text", Sketch, &[]);
-        let text = t.iter().find(|x| x.cmd.id == "sketch.text");
-        assert!(text.is_some_and(|x| !x.ready && !x.runnable()));
+        let t = search("ellipse", Sketch, &[]);
+        let ellipse = t.iter().find(|x| x.cmd.id == "sketch.ellipse");
+        assert!(ellipse.is_some_and(|x| !x.ready && !x.runnable()));
         assert!(t.last().is_some_and(|x| !x.ready));
         // Empty: the recent commands in order.
         let r = search(

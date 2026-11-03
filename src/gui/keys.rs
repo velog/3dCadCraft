@@ -133,7 +133,8 @@ impl CadCraftApp {
             && (self.tools.pattern_dialog.is_some()
                 || self.tools.has_dialog()
                 || self.tools.edit_pattern.is_some());
-        let open: [(bool, &'static str); 29] = [
+        let open: [(bool, &'static str); 30] = [
+            (self.text_draft.is_some(), "Text"),
             (self.drw_open(), "Drawing View"),
             (matches!(self.mode, super::Mode::PickPlane(_)), "Pick Plane"),
             (self.sm.draft.is_some(), "Sheet Metal"),
