@@ -3046,6 +3046,7 @@ fn axial_r61() -> PartDocument {
                     z0: 0.0,
                     z1: k,
                     role: "Flat".to_owned(),
+                    sides: 6,
                     start_cone: None,
                     end_cone: Some(AxialCone {
                         radius: 0.475 * s,

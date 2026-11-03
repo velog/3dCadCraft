@@ -1,8 +1,8 @@
-# Ball valve, simplified envelope. Mm. Typed nominal values, not compared with a source yet.
+# Two-piece ball valve as an envelope, mm: length and height from a Honeywell forged brass data sheet; the body diameter D is typed.
 size,D,L,H
-DN15,34,75,60
-DN20,42,80,70
-DN25,50,90,75
-DN32,60,110,90
-DN40,70,120,95
-DN50,85,140,110
+DN15,34,49.5,44.2
+DN20,42,57.5,47.7
+DN25,50,67.5,53.4
+DN32,60,78,60.4
+DN40,70,85.5,70.3
+DN50,85,102,79.9

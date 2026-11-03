@@ -36,8 +36,8 @@ pub struct AxialOp {
     pub rolling: Vec<RollingElement>,
 }
 
-/// A ball, or a roller along Z.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// A ball, or a roller along Z: a cylinder, a cone or a barrel, maybe leaning.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RollingElement {
     /// A ball's centre, or the middle of a roller's lower end.
     pub at: [f64; 3],
@@ -46,6 +46,15 @@ pub struct RollingElement {
     /// A roller's length; 0: a ball.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub length: f64,
+    /// A cone's radius at its far end; 0: as `radius`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub end_radius: f64,
+    /// How much a barrel's middle stands out over `radius`, which is then the radius of both ends.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub crown: f64,
+    /// Radians the roller's far end leans away from Z, outwards from the axis (negative: towards it).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub lean: f64,
 }
 
 fn is_zero(v: &f64) -> bool {
@@ -148,24 +157,29 @@ impl AxialOp {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Ring {
     Round(f64),
-    Hex(f64),
+    Flats(f64, f64),
 }
 
 impl Ring {
     fn crosses(&self, o: &Ring) -> bool {
-        let across_corners = |s: f64| s / 3f64.sqrt();
         match (*self, *o) {
-            (Ring::Round(r), Ring::Hex(s)) | (Ring::Hex(s), Ring::Round(r)) => {
-                r >= s / 2.0 && r <= across_corners(s)
+            (Ring::Round(r), Ring::Flats(s, c)) | (Ring::Flats(s, c), Ring::Round(r)) => {
+                r >= s / 2.0 && r <= c
             }
             (Ring::Round(a), Ring::Round(b)) => (a - b).abs() < 1e-9,
-            (Ring::Hex(a), Ring::Hex(b)) => {
+            (Ring::Flats(a, ca), Ring::Flats(b, cb)) => {
                 // Nested only when one's corners stay inside the other's flats.
-                let (small, big) = if a < b { (a, b) } else { (b, a) };
-                across_corners(small) >= big / 2.0
+                let (corners, flats) = if a < b { (ca, b) } else { (cb, a) };
+                corners >= flats / 2.0
             }
         }
     }
+}
+
+/// A polygon's ring: across flats, and the radius of its corners.
+fn flats(across: f64, sides: u32) -> Ring {
+    let half = std::f64::consts::PI / f64::from(sides.max(3));
+    Ring::Flats(across, across / 2.0 / half.cos())
 }
 
 impl AxialRun {
@@ -177,13 +191,14 @@ impl AxialRun {
             AxialShape::Hexagon {
                 across,
                 z0,
+                sides,
                 start_cone,
                 ..
             } => Some((
                 *z0,
                 start_cone
                     .as_ref()
-                    .map_or(Ring::Hex(*across), |c| Ring::Round(c.radius)),
+                    .map_or(flats(*across, *sides), |c| Ring::Round(c.radius)),
             )),
         }
     }
@@ -197,13 +212,14 @@ impl AxialRun {
             AxialShape::Hexagon {
                 across,
                 z1,
+                sides,
                 end_cone,
                 ..
             } => Some((
                 *z1,
                 end_cone
                     .as_ref()
-                    .map_or(Ring::Hex(*across), |c| Ring::Round(c.radius)),
+                    .map_or(flats(*across, *sides), |c| Ring::Round(c.radius)),
             )),
         }
     }
@@ -240,6 +256,7 @@ impl AxialRun {
                 z0,
                 z1,
                 role: role.to_owned(),
+                sides: 6,
                 start_cone: None,
                 end_cone: None,
             },

@@ -231,6 +231,90 @@ pub struct Sample {
     pub size: String,
     /// Its shape.
     pub kind: Kind,
+    /// What its Full level adds to that shape.
+    pub finish: Option<Finish>,
+}
+
+/// A detail only the Full level has, on top of the shape `Kind` gives: the numbers the BOM and a fit depend on
+/// do not change, and it costs a Boolean where it needs one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Finish {
+    /// A straight slot across a screw's head.
+    ScrewSlot {
+        /// Across the slot.
+        width: Real,
+        /// Into the head.
+        depth: Real,
+    },
+    /// A square neck under a head.
+    SquareNeck {
+        /// Across its flats.
+        across: Real,
+        /// Below the head.
+        depth: Real,
+    },
+    /// Six slots in the end of a castle nut.
+    Castle {
+        /// Across a slot.
+        width: Real,
+        /// Into the nut.
+        depth: Real,
+    },
+    /// Four slots in the rim of a round nut.
+    RimSlots {
+        /// Across a slot.
+        width: Real,
+        /// In from the rim.
+        depth: Real,
+    },
+    /// Teeth round a washer.
+    Teeth,
+    /// A top face falling this much per unit along +X (taper washers, taper keys).
+    Slope(Real),
+    /// A spherical top face of this radius.
+    Seat(Real),
+    /// A split along the pin and a round head of this diameter.
+    Cotter {
+        /// The head's diameter.
+        head: Real,
+    },
+    /// Threads at both ends with a plain middle: their lengths from z = 0 and from the far end.
+    TwoThreads(Real, Real),
+}
+
+/// The Full level's detail of a row of `template`.
+fn finish_of(template: &str, get: &dyn Fn(&str) -> Option<Real>) -> Option<Finish> {
+    let n = get("n");
+    match template {
+        "cheese_screw" => Some(Finish::ScrewSlot {
+            width: n.or(get("d").map(|d| d * 0.25))?,
+            depth: get("k")? * 0.5,
+        }),
+        "pan_screw" => Some(Finish::ScrewSlot {
+            width: get("d")? * 0.25,
+            depth: get("k")? * 0.5,
+        }),
+        "carriage_bolt" => Some(Finish::SquareNeck {
+            across: get("d")? * 1.08,
+            depth: get("d")? * 0.6,
+        }),
+        "slotted_nut" => Some(Finish::Castle {
+            width: n?,
+            depth: get("m")? * 0.38,
+        }),
+        "round_nut" => Some(Finish::RimSlots {
+            width: n?,
+            depth: n? * 0.9,
+        }),
+        "tooth_washer" => Some(Finish::Teeth),
+        // DIN 434's flange slope, DIN 6886's 1 : 100.
+        "taper_washer" => Some(Finish::Slope(0.08)),
+        "taper_key" => Some(Finish::Slope(0.01)),
+        "ball_washer" => Some(Finish::Seat(get("r")?)),
+        "cotter_pin" => Some(Finish::Cotter { head: get("c")? }),
+        "stud" => Some(Finish::TwoThreads(get("b1")?, get("b2")?)),
+        _ => None,
+    }
 }
 
 const FAMILIES: &str = include_str!("../../data/components/families.csv");
@@ -1191,6 +1275,7 @@ pub fn all() -> Vec<Sample> {
                     standard: (*standard).to_owned(),
                     size: size.to_owned(),
                     kind: Kind::Shape(fam, size, SHAPE_LENGTH),
+                    finish: None,
                 });
             }
             continue;
@@ -1222,6 +1307,7 @@ pub fn all() -> Vec<Sample> {
                     standard: (*standard).to_owned(),
                     size,
                     kind,
+                    finish: finish_of(&template, &get),
                 });
             }
         }
@@ -1277,7 +1363,7 @@ impl Sample {
         matches!(
             self.kind,
             Kind::HexBolt(..) | Kind::PartThreadBolt(..) | Kind::HexNut(..) | Kind::Bearing(..)
-        )
+        ) || self.finish.is_some()
     }
 
     /// A simpler shape than Standard exists.
@@ -1419,6 +1505,7 @@ impl Sample {
     pub fn part_at(&self, detail: Detail) -> Result<PartDocument, PartError> {
         let mut part = match (self.level_of(detail), self.kind) {
             (Detail::Simple, kind) => simple_part(kind),
+            (Detail::Full, kind) if self.finish.is_some() => finished_part(kind, self.finish),
             (Detail::Full, Kind::HexBolt(d, l, s, k)) => full_hex_bolt(d, l, s, k, None),
             (Detail::Full, Kind::PartThreadBolt(d, l, s, k)) => {
                 full_hex_bolt(d, l, s, k, Some(part_thread(d, l)))
@@ -1460,6 +1547,243 @@ impl Sample {
 /// The thread length of a partly threaded bolt.
 fn part_thread(d: Real, l: Real) -> Real {
     2.0 * d + if l > 125.0 { 12.0 } else { 6.0 }
+}
+
+/// A pan head of a short cylinder, a cone and a flat middle: a slot took the kernel 4-5 s through a dome,
+/// with or without a flat middle.
+fn pan_head(d: Real, l: Real, dk: Real, k: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, false)?;
+    let (r, rk) = (spec.major / 2.0, dk / 2.0);
+    let mut part = ring(&[
+        (0.0, -l),
+        (r, -l),
+        (r, 0.0),
+        (rk, 0.0),
+        (rk, k * 0.45),
+        (rk * 0.7, k),
+        (0.0, k),
+    ])?;
+    add_thread(&mut part, spec, r, Point3::new(r, 0.0, -l / 2.0))?;
+    Ok(part)
+}
+
+/// The usual shape with the Full level's detail.
+fn finished_part(kind: Kind, finish: Option<Finish>) -> Result<PartDocument, PartError> {
+    use std::f64::consts::TAU;
+    let o = Point2::new(0.0, 0.0);
+    let polar = |r: Real, a: Real| Point2::new(r * a.cos(), r * a.sin());
+    let sloped = |loops: Vec<Loop>, h: Real, rise: Real, slope: Real| {
+        let mut part = blank();
+        part.add_body_op(BodyOpFeature::new(BodyOp::Prism(PrismOp {
+            loops,
+            start: [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            end: [[0.0, 0.0, h + rise], [slope, 0.0, 1.0]],
+        })))?;
+        Ok::<_, PartError>(part)
+    };
+    match (finish, kind) {
+        (
+            Some(Finish::ScrewSlot { width, depth }),
+            Kind::RoundHeadScrew(_, _, dk, k) | Kind::FlatHeadScrew(_, _, dk, k),
+        ) => {
+            let mut part = match kind {
+                Kind::RoundHeadScrew(d, l, dk, k) => pan_head(d, l, dk, k)?,
+                _ => standard_part(kind)?,
+            };
+            let w = width / 2.0;
+            extrude(
+                &mut part,
+                vec![rectangle(-dk, dk, -w, w)],
+                o,
+                k + 1.0,
+                depth + 1.0,
+                true,
+                Operation::Cut,
+            )?;
+            Ok(part)
+        }
+        (Some(Finish::SquareNeck { across, depth }), Kind::RoundHeadScrew(d, l, dk, k)) => {
+            // One stepped body: a Join of the neck took the kernel up to 16 s on a long bolt.
+            let spec = thread_spec(d, false)?;
+            let r = spec.major / 2.0;
+            let rk = dk / 2.0;
+            let rs = (rk * rk + k * k) / (2.0 * k);
+            let mut neck = AxialRun::hexagon(across, -depth, 0.0, "Neck", Some("Seat"));
+            if let AxialShape::Hexagon { sides, .. } = &mut neck.shape {
+                *sides = 4;
+            }
+            let mut part = axial_part(
+                vec![
+                    chain([r, -l], vec![line_to(r, -depth, "Shank")], Some("NeckEnd")),
+                    neck,
+                    chain([rk, 0.0], vec![arc_to(0.0, k, [0.0, k - rs], "Head")], None),
+                ],
+                Some("End"),
+                false,
+            )?;
+            add_thread(&mut part, spec, r, Point3::new(r, 0.0, -(depth + l) / 2.0))?;
+            Ok(part)
+        }
+        (Some(Finish::Castle { width, depth }), Kind::HexNut(_, s, m)) => {
+            let mut part = standard_part(kind)?;
+            // Three bars across the flats as one star, its inner corners over the bore.
+            let (w, reach) = (width / 2.0, s);
+            let mut corners = Vec::with_capacity(18);
+            for k in 0..6 {
+                let a = TAU * (Real::from(k) + 0.5) / 6.0;
+                let (ux, uy) = (a.cos(), a.sin());
+                corners.push((Point2::new(reach * ux + w * uy, reach * uy - w * ux), 0.0));
+                corners.push((Point2::new(reach * ux - w * uy, reach * uy + w * ux), 0.0));
+                corners.push((polar(2.0 * w, a + TAU / 12.0), 0.0));
+            }
+            extrude(
+                &mut part,
+                vec![Loop::Corners(corners)],
+                o,
+                m + 1.0,
+                depth + 1.0,
+                true,
+                Operation::Cut,
+            )?;
+            Ok(part)
+        }
+        (Some(Finish::RimSlots { width, depth }), Kind::Washer(d, dk, m)) => {
+            // The rim between four slots; no Boolean.
+            let r = dk / 2.0;
+            let half = (width / 2.0 / r).asin();
+            let floor = r - depth;
+            let mut path = Vec::with_capacity(16);
+            for k in 0..4 {
+                let a = TAU * Real::from(k) / 4.0;
+                let (ux, uy) = (a.cos(), a.sin());
+                let across = |r: Real, side: Real| {
+                    Point2::new(
+                        r * ux - side * width / 2.0 * uy,
+                        r * uy + side * width / 2.0 * ux,
+                    )
+                };
+                path.push((across(floor, -1.0), None));
+                path.push((across(floor, 1.0), None));
+                path.push((polar(r, a + half), Some((o, true))));
+                path.push((polar(r, a + TAU / 4.0 - half), None));
+            }
+            prism_with_bore(Loop::Path(path), d, m)
+        }
+        (Some(Finish::Teeth), Kind::Washer(d1, d2, s)) => {
+            let count = (6.0 + d1 * 0.5).round() as u32;
+            let (root, tip) = (d1 / 2.0 + (d2 - d1) * 0.25, d2 / 2.0);
+            let step = TAU / Real::from(count);
+            let mut corners = Vec::with_capacity(count as usize * 4);
+            for k in 0..count {
+                let a = step * Real::from(k);
+                corners.push((polar(root, a), 0.0));
+                corners.push((polar(tip, a + step * 0.12), 0.0));
+                corners.push((polar(tip, a + step * 0.42), 0.0));
+                corners.push((polar(root, a + step * 0.54), 0.0));
+            }
+            prism_with_bore(Loop::Corners(corners), d1, s)
+        }
+        (Some(Finish::Slope(slope)), Kind::SquareWasher(d, a, b, h)) => sloped(
+            vec![
+                rectangle(-a / 2.0, a / 2.0, -b / 2.0, b / 2.0),
+                Loop::Circle(o, d / 2.0, true),
+            ],
+            h,
+            0.0,
+            slope,
+        ),
+        (Some(Finish::Slope(slope)), Kind::Key(b, h, l)) => {
+            // The height given is at the thick end, -X.
+            let (x, r) = ((l - b) / 2.0, b / 2.0);
+            sloped(
+                vec![Loop::Path(vec![
+                    (Point2::new(-x, -r), None),
+                    (Point2::new(x, -r), Some((Point2::new(x, 0.0), true))),
+                    (Point2::new(x, r), None),
+                    (Point2::new(-x, r), Some((Point2::new(-x, 0.0), true))),
+                ])],
+                h,
+                -slope * l / 2.0,
+                slope,
+            )
+        }
+        (Some(Finish::Seat(radius)), Kind::Washer(d1, d2, h)) => {
+            // The height is at the bore; the sphere falls towards the rim.
+            let (ri, ro) = (d1 / 2.0, d2 / 2.0);
+            let centre = h - (radius * radius - ri * ri).sqrt();
+            let rim = centre + (radius * radius - ro * ro).max(0.0).sqrt();
+            if rim <= 0.0 {
+                return standard_part(kind);
+            }
+            let mut part = blank();
+            revolve_loop(
+                &mut part,
+                Loop::Path(vec![
+                    (Point2::new(ri, 0.0), None),
+                    (Point2::new(ro, 0.0), None),
+                    (Point2::new(ro, rim), Some((Point2::new(0.0, centre), true))),
+                    (Point2::new(ri, h), None),
+                ]),
+                Operation::NewSolid,
+            )?;
+            Ok(part)
+        }
+        (Some(Finish::Cotter { head }), Kind::Pin(d, l)) => {
+            let mut part = standard_part(kind)?;
+            extrude(
+                &mut part,
+                vec![Loop::Circle(o, head.max(d * 1.1) / 2.0, false)],
+                o,
+                l,
+                d * 0.6,
+                false,
+                Operation::Join,
+            )?;
+            let w = d * 0.1;
+            extrude(
+                &mut part,
+                vec![rectangle(-d, d, -w, w)],
+                o,
+                -1.0,
+                l * 0.92 + 1.0,
+                false,
+                Operation::Cut,
+            )?;
+            Ok(part)
+        }
+        (Some(Finish::TwoThreads(b1, b2)), Kind::Rod(d, l)) if b1 + b2 < l => {
+            let spec = thread_spec(d, false)?;
+            let d = spec.major;
+            let (r, c) = (d / 2.0, d / 10.0);
+            let mut part = ring(&[
+                (0.0, 0.0),
+                (r - c, 0.0),
+                (r, c),
+                (r, l - c),
+                (r - c, l),
+                (0.0, l),
+            ])?;
+            for (near, depth) in [(0.0, b1), (l, b2)] {
+                let (fid, _) = part
+                    .body
+                    .faces()
+                    .find(|(_, f)| {
+                        matches!(part.body.surface(f.surface), Some(Surface::Cylinder(c))
+                            if (c.radius - r).abs() < 1e-6)
+                    })
+                    .ok_or_else(|| bad("the threaded cylinder was not found"))?;
+                let face =
+                    crate::part::shell::face_ref(&part.body, fid, Some(Point3::new(r, 0.0, near)))
+                        .ok_or_else(|| bad("the threaded face has no name"))?;
+                let mut spec = spec.clone();
+                spec.full_depth = false;
+                spec.depth = depth;
+                part.add_thread(ThreadFeature::new(face, spec))?;
+            }
+            Ok(part)
+        }
+        _ => standard_part(kind),
+    }
 }
 
 /// The usual shape of each kind.
@@ -1679,6 +2003,7 @@ fn full_bearing(
                 at: [mid * a.cos(), mid * a.sin(), z],
                 radius,
                 length,
+                ..RollingElement::default()
             });
         }
     };
@@ -1698,7 +2023,9 @@ fn full_bearing(
                 row(z, rb, 0.0, k == 1);
             }
         }
-        BearingStyle::Roller | BearingStyle::Needle | BearingStyle::Tapered => {
+        BearingStyle::Tapered => tapered_rows(&mut part, &mut rolling, r0, r1, b)?,
+        BearingStyle::TwoBarrels => barrel_rows(&mut part, &mut rolling, r0, r1, b)?,
+        BearingStyle::Roller | BearingStyle::Needle => {
             let wall = if style == BearingStyle::Needle {
                 t * 0.18
             } else {
@@ -1708,14 +2035,6 @@ fn full_bearing(
             race(&mut part, r1 - wall, r1, 0.0, b, &[], mid, 0.0)?;
             let rr = (t / 2.0 - wall) * 0.98;
             row(b * 0.12, rr, b * 0.76, false);
-        }
-        BearingStyle::TwoBarrels => {
-            let wall = t * 0.22;
-            race(&mut part, r0, r0 + wall, 0.0, b, &[], mid, 0.0)?;
-            race(&mut part, r1 - wall, r1, 0.0, b, &[], mid, 0.0)?;
-            let rr = (t / 2.0 - wall) * 0.98;
-            row(b * 0.06, rr, b * 0.41, false);
-            row(b * 0.53, rr, b * 0.41, true);
         }
         BearingStyle::Thrust => {
             let washer = b * 0.3;
@@ -1729,6 +2048,184 @@ fn full_bearing(
         ..AxialOp::default()
     })))?;
     Ok(part)
+}
+
+/// A bearing ring of height `b`: `outside` going up from `start`, then `bore` coming down from `top`.
+fn ring_of(
+    part: &mut PartDocument,
+    start: [Real; 2],
+    outside: Vec<AxialSeg>,
+    top: [Real; 2],
+    bore: Vec<AxialSeg>,
+) -> Result<(), PartError> {
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs: vec![
+            chain(start, outside, Some("Top")),
+            chain(top, bore, Some("Bottom")),
+        ],
+        closed: true,
+        ..AxialOp::default()
+    })))?;
+    Ok(())
+}
+
+/// A tapered roller bearing's rings and its cones: both raceways and every roller's sides are cones
+/// with one apex on the bearing's axis, below it, so the rollers roll without sliding. The
+/// mean contact is at most 15 degrees, less where the rings would run out of wall.
+fn tapered_rows(
+    part: &mut PartDocument,
+    rolling: &mut Vec<RollingElement>,
+    r0: Real,
+    r1: Real,
+    b: Real,
+) -> Result<(), PartError> {
+    use std::f64::consts::TAU;
+    let wall = (r1 - r0) * 0.3;
+    let (a, c) = (r0 + wall, r1 - wall);
+    let h = ((a + c) / 2.0 / 15f64.to_radians().tan()).max(c * b / (1.5 * wall));
+    let apex = b / 2.0 - h;
+    let (si, so) = (a / h, c / h);
+    ring_of(
+        part,
+        [si * (0.0 - apex), 0.0],
+        vec![line_to(si * (b - apex), b, "Race")],
+        [r0, b],
+        vec![line_to(r0, 0.0, "Bore")],
+    )?;
+    ring_of(
+        part,
+        [r1, 0.0],
+        vec![line_to(r1, b, "Outside")],
+        [so * (b - apex), b],
+        vec![line_to(so * (0.0 - apex), 0.0, "Race")],
+    )?;
+    let (ai, ao) = (si.atan(), so.atan());
+    let (lean, half) = ((ao + ai) / 2.0, (ao - ai) / 2.0);
+    let along = |z: Real| (z - apex) / lean.cos();
+    let (l0, l1) = (along(b * 0.16), along(b * 0.84));
+    // A hair inside the raceways, so that the bodies stay apart.
+    let radius = |l: Real| l * half.tan() * 0.97;
+    let (big, reach) = (radius(l1), l1 * lean.sin());
+    let count = ((TAU * reach / (2.0 * big * 1.08)).floor() as u32).max(3);
+    for k in 0..count {
+        let turn = TAU * Real::from(k) / Real::from(count);
+        let round = l0 * lean.sin();
+        rolling.push(RollingElement {
+            at: [
+                round * turn.cos(),
+                round * turn.sin(),
+                apex + l0 * lean.cos(),
+            ],
+            radius: radius(l0),
+            end_radius: big,
+            length: l1 - l0,
+            crown: 0.0,
+            lean,
+        });
+    }
+    Ok(())
+}
+
+/// A spherical roller bearing's rings and its two rows of barrels: the outer raceway is one sphere about
+/// the bearing's middle, each barrel's side has that sphere's radius and lies against it, leaning
+/// so that the rows clear each other; the inner ring has a cone under each row.
+fn barrel_rows(
+    part: &mut PartDocument,
+    rolling: &mut Vec<RollingElement>,
+    r0: Real,
+    r1: Real,
+    b: Real,
+) -> Result<(), PartError> {
+    use std::f64::consts::TAU;
+    let t = r1 - r0;
+    let wall = t * 0.22;
+    let sphere = r1 - wall;
+    let half = b / 2.0;
+    let rho = (t - 2.0 * wall) / 2.0;
+    let gap = b * 0.015;
+    // The longest barrel that fits: the contact angle at which the rows just clear each other, its far
+    // end then still inside the bearing.
+    let clear = |length: Real| -> Option<(Real, Real)> {
+        let end = (sphere * sphere - length * length / 4.0).sqrt() - (sphere - rho);
+        if end <= 0.0 {
+            return None;
+        }
+        let near = |a: Real| (sphere - rho - end) * a.sin() - length / 2.0 * a.cos() - gap;
+        let (mut lo, mut hi) = (0.0_f64, 45f64.to_radians());
+        for _ in 0..40 {
+            let m = (lo + hi) / 2.0;
+            if near(m) < 0.0 {
+                lo = m;
+            } else {
+                hi = m;
+            }
+        }
+        let top = half + (sphere - rho + end) * hi.sin() + length / 2.0 * hi.cos();
+        (top <= b * 0.985).then_some((hi, end))
+    };
+    let mut fit = None;
+    let mut length = b * 0.46;
+    while length > b * 0.1 {
+        if let Some((a, end)) = clear(length) {
+            fit = Some((a, end, length));
+            break;
+        }
+        length *= 0.95;
+    }
+    let Some((a, end, length)) = fit else {
+        return Err(bad("the rows of barrels do not fit this bearing"));
+    };
+    let crown = rho - end;
+    let (sa, ca) = (a.sin(), a.cos());
+    // The barrel's middle on its axis, in (radius, height above the middle).
+    let (cr, cz) = ((sphere - rho) * ca, (sphere - rho) * sa);
+    // The inner ring's cone, tangent to the barrels a hair below them.
+    let touch = rho * 1.03;
+    let (qr, qz) = (cr - touch * ca, cz - touch * sa);
+    let cone = |z: Real| qr - (z - qz) * sa / ca;
+    let edge = cone(half).max(r0 + t * 0.06);
+    ring_of(
+        part,
+        [edge, 0.0],
+        vec![
+            line_to(cone(0.0), half, "RaceLower"),
+            line_to(edge, b, "RaceUpper"),
+        ],
+        [r0, b],
+        vec![line_to(r0, 0.0, "Bore")],
+    )?;
+    let at_end = (sphere * sphere * 1.006 - half * half).sqrt();
+    ring_of(
+        part,
+        [r1, 0.0],
+        vec![line_to(r1, b, "Outside")],
+        [at_end, b],
+        vec![AxialSeg {
+            to: [at_end, 0.0],
+            arc: Some(([0.0, half], false)),
+            role: "Race".to_owned(),
+        }],
+    )?;
+    let reach = cr;
+    let count = ((TAU * reach / (2.0 * rho * 1.1)).floor() as u32).max(3);
+    for (row, side) in [(0.0, 1.0), (0.5, -1.0)] {
+        for k in 0..count {
+            let turn = TAU * (Real::from(k) + row) / Real::from(count);
+            // Going up the upper row's axis the radius falls; the lower row is its mirror image,
+            // measured from its own lower end.
+            let round = cr + side * length / 2.0 * sa;
+            let z = half + side * cz - length / 2.0 * ca;
+            rolling.push(RollingElement {
+                at: [round * turn.cos(), round * turn.sin(), z],
+                radius: end,
+                end_radius: end,
+                crown,
+                length,
+                lean: -side * a,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// A bearing ring from `z0` to `z1`, built directly, a groove for balls of radius `rb` at each height:
@@ -2009,6 +2506,7 @@ fn hex_bolt_shape(
                     z0: 0.0,
                     z1: k,
                     role: "Flat".to_owned(),
+                    sides: 6,
                     start_cone: None,
                     end_cone: chamfer,
                 },
@@ -2076,6 +2574,7 @@ fn hex_nut_shape(
                     z0: 0.0,
                     z1: m,
                     role: "Flat".to_owned(),
+                    sides: 6,
                     start_cone: seat,
                     end_cone: top,
                 },

@@ -678,3 +678,123 @@ fn a_full_bearing_has_its_balls_and_its_picture_its_section() {
     // The corner stays clear.
     assert_eq!(pic[3], 0);
 }
+
+/// Every row with a detail of its own at the Full level builds, stays one member and adds or removes only a
+/// little (the BOM's numbers do not change); the slowest is reported.
+#[test]
+fn full_details_build_at_every_size() {
+    use std::time::Instant;
+    let mut slowest = (0u128, String::new());
+    let mut seen = 0;
+    for s in all() {
+        if s.finish.is_none() {
+            continue;
+        }
+        let at = Instant::now();
+        let full = s
+            .part_at(Detail::Full)
+            .unwrap_or_else(|e| panic!("{} {}: {e}", s.family, s.size));
+        let ms = at.elapsed().as_millis();
+        if ms > slowest.0 {
+            slowest = (ms, format!("{} {}", s.family, s.size));
+        }
+        assert!(
+            full.feature_health.is_empty(),
+            "{} {}: {:?}",
+            s.family,
+            s.size,
+            full.feature_health
+        );
+        let plain = s.part_at(Detail::Standard).unwrap();
+        let (v, w) = (volume(&full), volume(&plain));
+        assert!(
+            // A short cotter pin's head weighs as much as its legs.
+            v > 0.4 * w && v < 2.5 * w,
+            "{} {}: {v} against {w}",
+            s.family,
+            s.size
+        );
+        // A stud differs only in where its threads are; a slope about the middle keeps the volume.
+        let top = |p: &PartDocument| p.body.bounding_box().map_or(0.0, |b| b.1.z);
+        assert!(
+            matches!(s.kind, Kind::Rod(..))
+                || (v - w).abs() > 1e-4 * w
+                || (top(&full) - top(&plain)).abs() > 1e-3,
+            "{} {}: the detail changed nothing",
+            s.family,
+            s.size
+        );
+        seen += 1;
+    }
+    assert!(seen > 100, "only {seen} rows have a detail");
+    eprintln!("slowest detail: {} ms, {}", slowest.0, slowest.1);
+}
+
+/// Tapered and spherical roller bearings carry true cones and barrels at the Full level: as many bodies as
+/// rollers + 2 rings at every size, none reaching outside the rings or through the bore.
+#[test]
+fn shaped_rollers_stay_between_their_rings() {
+    for s in all() {
+        let Some(style) = s.bearing_style() else {
+            continue;
+        };
+        use cadcraft3d::components::icon::BearingStyle as B;
+        if !matches!(style, B::Tapered | B::TwoBarrels) {
+            continue;
+        }
+        let Kind::Bearing(d, od, b) = s.kind else {
+            continue;
+        };
+        let p = s
+            .part_at(Detail::Full)
+            .unwrap_or_else(|e| panic!("{} {}: {e}", s.family, s.size));
+        assert!(
+            p.feature_health.is_empty(),
+            "{} {}: {:?}",
+            s.family,
+            s.size,
+            p.feature_health
+        );
+        let bodies = p.body.solids().count();
+        assert!(bodies > 8, "{} {}: {bodies} bodies", s.family, s.size);
+        let (lo, hi) = p.body.bounding_box().unwrap();
+        assert!(
+            (hi.x - od / 2.0).abs() < 0.02 * od && lo.z > -0.03 * b && hi.z < 1.03 * b,
+            "{} {}: {lo:?} {hi:?}",
+            s.family,
+            s.size
+        );
+        let v = volume(&p);
+        let whole = std::f64::consts::PI / 4.0 * (od * od - d * d) * b;
+        assert!(
+            v > 0.3 * whole && v < whole,
+            "{} {}: {v} of {whole}",
+            s.family,
+            s.size
+        );
+    }
+}
+
+/// A member file made from older numbers is written again when asked for, with the same ids; a current one is left alone.
+#[test]
+fn a_stale_member_file_is_written_again() {
+    let dir = std::env::temp_dir().join(format!("cc-stale-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let c = Catalog::load(&dir);
+    let f = c
+        .families
+        .iter()
+        .position(|f| f.name == "ISO 4017")
+        .unwrap();
+    let path = c.member_file(f, 0).unwrap();
+    let first = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let id = Project::load(&path).unwrap().id;
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert_eq!(c.member_file(f, 0).unwrap(), path);
+    assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), first);
+    std::fs::write(path.with_extension("stamp"), "older").unwrap();
+    assert_eq!(c.member_file(f, 0).unwrap(), path);
+    assert!(std::fs::metadata(&path).unwrap().modified().unwrap() > first);
+    assert_eq!(Project::load(&path).unwrap().id, id);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -10,11 +10,15 @@ use crate::document::iprops::IProperties;
 use crate::document::{DocumentData, Project};
 use crate::part::PartDocument;
 
+/// Raised when a builder's shapes change without their table's numbers changing: the members written
+/// before are written again.
+const BUILDERS: u32 = 1;
+
 /// Where a member comes from.
 #[derive(Clone, Debug)]
 pub enum Source {
     /// A built-in sample.
-    Sample(samples::Sample),
+    Sample(Box<samples::Sample>),
     /// A row of a published family's table.
     Row(usize),
 }
@@ -86,7 +90,7 @@ impl Catalog {
             let standard = s.standard.clone();
             let entry = Entry {
                 size: s.size.clone(),
-                source: Source::Sample(s),
+                source: Source::Sample(Box::new(s)),
             };
             match c
                 .families
@@ -455,7 +459,11 @@ impl Catalog {
             (Source::Sample(s), _) => {
                 let level = s.level_of(detail);
                 let path = self.root.join("Samples").join(s.relative_path_at(level));
-                if !path.exists() {
+                // A corrected table or a better shape reaches the file; its ids stay, so links still resolve.
+                let stamp = path.with_extension("stamp");
+                let made_from = format!("{BUILDERS}|{:?}|{:?}", s.kind, s.finish);
+                let current = std::fs::read_to_string(&stamp).is_ok_and(|had| had == made_from);
+                if !path.exists() || !current {
                     let part = s.part_at(level).map_err(|e| e.to_string())?;
                     // Standard keeps the identity files already have.
                     let identity = match level {
@@ -463,6 +471,7 @@ impl Catalog {
                         d => format!("{}|{}", d.label(), s.designation()),
                     };
                     write_part(&path, &identity, part, s.properties())?;
+                    std::fs::write(&stamp, made_from).map_err(|e| e.to_string())?;
                 }
                 Ok(path)
             }

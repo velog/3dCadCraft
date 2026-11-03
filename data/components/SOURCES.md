@@ -26,6 +26,18 @@ typed, which a source contradicts, is simply corrected.
 | [Prepol ISO 3601 size list](https://www.prepol.com/documents/o-ring-sizes-iso3601) | ISO 3601 O-rings: inside diameters per section; which letter is which section (A 1.8, B 2.65, C 3.55, D 5.3, E 7) follows the codes' ranges and the standard's sections |
 | [wermac.org fittings](https://www.wermac.org/fittings/submenu_fittings.html), [pipes](https://www.wermac.org/pipes/dim_pipes.html) | ASME B16.9 elbows, tees, reducers, caps; STD walls of ASME B36.10 |
 | [projectmaterials](https://blog.projectmaterials.com/flanges/flange-dimensions/en-1092-blind-flange-sizes), [HT Pipe](https://www.htpipe.com/tools/size-chart/en-1092-1-blind-flange-dimensions.html) | EN 1092-1 PN 16 blind flanges |
+| [Engineers Edge](https://www.engineersedge.com/gears/shaft_diameter_vs_key_sizes_14411.htm) | ANSI B17.1 square keys against shaft diameter (its summary of the standard) |
+| [M Seals list](https://www.messe.de/apollo/hannover_messe_2019/obs/Binary/A893232/893232_01852480.pdf) | DIN 3760: the sizes it marks as DIN 3760 or SMS 2290 |
+| [Acorn: Permaglide PAP](https://www.acorn-ind.co.uk/permaglide/bearings/plain-bearings/bushings) with the SKF PCM equivalents on its pages | ISO 3547 bushes: bores and widths; outside diameters from the PCM names (`PCM 151720`). A maker's range to the standard, not the standard's table |
+| [Hiwin HGR table](https://www.ignera.lt/image/catalog/product/hiwin-HGR-rail.pdf), [Sorotec HGH data sheet](https://www.upload.sorotec.de/doku/manuals/Datasheet_HGH-HGW_en_soro.pdf) | profile rails, carriages |
+| [wermac.org threaded couplings](https://www.wermac.org/fittings/dim_thd_couplings.html) | ASME B16.11 class 3000, NPS 1/2 to 4 |
+| [Tsubaki catalogue](https://dcngli4g50fhp.cloudfront.net/userfiles/ad/tsubaki/documents/tsubaki_p11h_catalog.pdf) | B series sprockets: tooth width, stock bores of the plate type, pitch circles |
+| [Taper bore pulley catalogue](https://cdn.shopify.com/s/files/1/0299/5978/2535/files/cat-Taper_Bore_Pulleys.pdf) | V-belt grooves and rims (ISO 4183, DIN 2211) |
+| [HPC Europe range](https://shop.hpceurope.com/pdf/gbPDFauto/CDGamme.pdf) | DIN 2095 compression springs |
+| [Ameco](https://eshop.ameco.cz/) DIN 3017-1 listings | hose clamp ranges and band |
+| [Honeywell data sheet](https://www.honeywellbuildings.in/uploads/security/product/doc/1675830203Forged_Brass_Ball_Valve_Datasheet18-01-2023_2.pdf) | ball valve length and height |
+| [PEM product pages](https://www.pemnet.com/products/product-finder/) | clinch nuts M3 to M5 |
+| [Essentra listings](https://www.essentracomponents.com/) | standoffs: `M4 (s 8)`, `M5 (s 10)` |
 
 Corrected, a typed value against a source:
 
@@ -34,6 +46,7 @@ Corrected, a typed value against a source:
 - ISO 8752 size 6 wall; DIN 660 sizes 3, 6 head; DIN 7349 sizes 10, 16, 20; DIN 705 sizes 6, 40, 50; bearing HK1210 outside diameter (16).
 - ASME B18.3: socket depths of the cap screws, heads of the flat countersunk screws, head of the No.10 button screw. ASME B18.21.1: outside diameters.
 - Lengths the standards do not list are gone from ISO 4026 to 4029, ISO 2338, DIN 7, 913 and 916 (an M12 x 4 set screw, with an 8 mm socket).
+- ANSI B17.1: which shaft takes which key (every typed range was wrong). ASME B16.11 couplings: every length. Carriages: every height (the typed value left out the rail's part). V-belt pulleys: rim widths, SPA and SPB grooves, the wider groove above 80, 118 and 190 mm. Sprockets: tooth widths and every bore. Ball valves: lengths and heights. Hose clamps: a 9 mm band and 0.6 mm throughout, by range.
 - `ISO 3601` was renamed `Metric O-Ring`: its round sizes are common trade sizes, not that series (sections 1.78, 2.62, 3.53, 5.33, 6.99).
 
 Both values kept:
@@ -69,9 +82,11 @@ DIN 315, 444, 478 and ISO 7379 give limits: the tables hold the largest value of
 
 Compared only in part: HK2516 and HK3016 (the name gives bore and width, not the outside diameter), DIN 179 (sizes 6 and 12), SAE (1/4, 1/2) and USS (1/2) washers; ISO 2339, DIN 975 and 976, UNC rods: diameters and pitches, not lengths. ASME B18.2.2 lists no No.10 nut.
 
-**Not compared (2026-11-03, searched again):** the standards' tables for ISO 3547, DIN 3760, DIN 5419 and ANSI B17.1 are sold, not published, and the free pages found show single rows or none; no readable table for ring magnets either. Metric O-Ring stays beside ISO 3601 as common trade sizes.
+Makers' ranges standing in for a standard's table, which is sold: DIN 3760 (M Seals), ISO 3547 (Permaglide / SKF). A compression spring's rows are those of 5.5 active coils, since more coils exceed a new part's time budget (spec 6.3 §6.6).
 
-Not compared: Metric O-Ring, ISO 3547, DIN 3760, DIN 5419, Ring Magnet, ANSI B17.1: no readable public table was found. Typed for trying out their shapes and placement, not compared with anything yet (added 2026-11-03): Threaded Coupling 3000, Clinch Nut, Clinch Stud, Hex Standoff, Cage Nut, Ball Valve, Sprocket B Series, V-Belt Pulley, Compression Spring, Extension Spring, Profile Rail, Profile Carriage, Hose Clamp, Tube Cap, Bridge Handle, Levelling Foot, Butt Hinge. Each table's first line says so.
+Compared in part, each table's first line says which rows: DIN 5419 (five single sizes from product pages, six typed), Ring Magnet (five sizes from makers' pages, five typed, no standard), Threaded Coupling 3000 (not NPS 1/4, 3/8), Clinch Nut (not M6, M8), Hex Standoff (no standard, makers differ), Ball Valve (the body diameter is typed), V-Belt Pulley (the plain bore is typed; the catalogue's pulleys take taper bushes).
+
+**Not compared:** Metric O-Ring (common trade sizes beside ISO 3601), and, typed for trying out their shapes and placement: Clinch Stud, Cage Nut (only its 9.5 mm square hole was confirmed), Extension Spring, Tube Cap, Bridge Handle, Levelling Foot, Butt Hinge. None of these has one standard; a maker's table is what they need.
 
 Bearing boundary dimensions follow ISO 15, so makers agree on them.
 

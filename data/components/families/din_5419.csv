@@ -1,4 +1,4 @@
-# DIN 5419: Felt sealing ring. Nominal values in mm, typed for this library; not yet compared with a source.
+# Felt rings, mm. The first six rows are typed and not compared; the rows after them are single DIN 5419 sizes from product pages (Cutmetall, KONE): the standard's table is sold.
 size,d,D,b
 20 x 30 x 4,20,30,4
 25 x 37 x 5,25,37,5
@@ -6,3 +6,8 @@ size,d,D,b
 35 x 47 x 5,35,47,5
 40 x 52 x 5,40,52,5
 50 x 66 x 6,50,66,6
+47 x 57 x 4.5,47,57,4.5
+110 x 134 x 10,110,134,10
+135 x 163 x 11,135,163,11
+140 x 172 x 12,140,172,12
+170 x 202 x 12,170,202,12

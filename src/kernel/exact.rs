@@ -188,6 +188,14 @@ pub fn prism_between(
     })
 }
 
+fn six() -> u32 {
+    6
+}
+
+fn is_six(n: &u32) -> bool {
+    *n == 6
+}
+
 /// A cone cutting an end of a [`AxialShape::Hexagon`] run: the circle it leaves on the end
 /// plane and the height lost per unit of radius.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -233,6 +241,9 @@ pub enum AxialShape {
         z1: Real,
         /// Its flats' role: faces `<role>:1` … `<role>:6`.
         role: String,
+        /// How many flats; 4 stands square to X and Y. 6 by default.
+        #[serde(default = "six", skip_serializing_if = "is_six")]
+        sides: u32,
         /// Cone cutting the `z0` end.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         start_cone: Option<AxialCone>,
@@ -326,17 +337,22 @@ pub fn axial_stack(
                 z0,
                 z1,
                 role,
+                sides,
                 start_cone,
                 end_cone,
             } => {
-                let rc = across / 3f64.sqrt();
-                let corners = (0..6)
+                let n = Real::from(*sides);
+                let step = std::f64::consts::TAU / n;
+                let rc = across / 2.0 / (step / 2.0).cos();
+                // A hexagon has corners on +X; a square stands with its flats square to X.
+                let turn = if *sides == 4 { step / 2.0 } else { 0.0 };
+                let corners = (0..*sides)
                     .map(|k| {
-                        let a = k as Real * std::f64::consts::FRAC_PI_3;
+                        let a = turn + Real::from(k) * step;
                         sg::Vec2::new(rc * a.cos(), rc * a.sin())
                     })
                     .collect();
-                let numbers = (1..=6)
+                let numbers = (1..=*sides)
                     .map(|k| number(&format!("{role}:{k}"), &mut names))
                     .collect();
                 let cone = |c: &Option<AxialCone>, names: &mut Vec<String>| {
@@ -451,6 +467,63 @@ pub fn rolling_element(
         profiles: Vec::new(),
         sheet: false,
     })
+}
+
+/// A cone or barrel along Z from the origin, to be placed by [`rolling_placed`]: every roller of a row is
+/// one copy of it. `end` is the far end's radius; `crown` what the middle stands out over the ends.
+pub fn rolling_shape(
+    radius: Real,
+    end: Real,
+    crown: Real,
+    length: Real,
+) -> Result<ExactSolid, String> {
+    use crate::part::axial::{AxialRun, AxialSeg, AxialShape};
+    let arc = (crown > 0.0).then(|| {
+        // The circle through both ends and the middle, its centre on the middle's height.
+        let half = length / 2.0;
+        let r = (half * half + crown * crown) / (2.0 * crown);
+        ([radius + crown - r, half], true)
+    });
+    let run = AxialRun {
+        shape: AxialShape::Turned {
+            from: [radius, 0.0],
+            segs: vec![AxialSeg {
+                to: [end, length],
+                arc,
+                role: "Surface".to_owned(),
+            }],
+        },
+        after: Some("Surface".to_owned()),
+    };
+    axial_stack(&[run], Some("Surface"), false, &[], "Roller")
+}
+
+/// `shape` with its lower end at `at`, leaning `lean` radians outwards from the Z axis through the
+/// origin: a body of its own named `name`, every face `<name>:Surface`.
+pub fn rolling_placed(
+    shape: &ExactSolid,
+    at: [Real; 3],
+    lean: Real,
+    name: &str,
+) -> Result<ExactSolid, String> {
+    let round = (at[0] * at[0] + at[1] * at[1]).sqrt();
+    let (cx, sx) = if round > 0.0 {
+        (at[0] / round, at[1] / round)
+    } else {
+        (1.0, 0.0)
+    };
+    let (cl, sl) = (lean.cos(), lean.sin());
+    // Columns: the axis's normal in the section, the tangent, the roller's axis.
+    #[rustfmt::skip]
+    let m = nalgebra::Matrix4::new(
+        cl * cx, -sx, sl * cx, at[0],
+        cl * sx,  cx, sl * sx, at[1],
+        -sl,     0.0, cl,      at[2],
+        0.0,     0.0, 0.0,     1.0,
+    );
+    let mut placed = transformed(shape, &m, name, Some(name))?;
+    placed.face_names = vec![Some(format!("{name}:Surface")); placed.body.face_count()];
+    Ok(placed)
 }
 
 /// A bend of pipe, face by face (`sk::pipe_bend`): the end on the XY plane, leaving along +Z and

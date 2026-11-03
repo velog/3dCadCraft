@@ -56,17 +56,17 @@ bearing_222,Shaft Parts/Bearings,Spherical Roller,Series 222,Spherical roller be
 bearing_hk,Shaft Parts/Bearings,Needle Roller,Series HK,Drawn cup needle roller bearing,families/bearing_hk.csv,7,NTN; INA listings (HK0810; HK1010; HK1210; HK1512; HK2012),ISO
 bearing_302,Shaft Parts/Bearings,Tapered Roller,Series 302,Tapered roller bearing,families/bearing_302.csv,6,"NSK listings (30204, 30205, 30208)",ISO
 bearing_511,Shaft Parts/Bearings,Thrust Ball,Series 511,Thrust ball bearing,families/bearing_511.csv,9,"NSK; SKF listings (51104, 51106)",ISO
-iso_3547,Shaft Parts/Bearings,Plain Bush,ISO 3547,Wrapped plain bush,families/iso_3547.csv,6,,ISO
+iso_3547,Shaft Parts/Bearings,Plain Bush,ISO 3547,Wrapped plain bush,families/iso_3547.csv,27,"Permaglide PAP listing, SKF PCM equivalents (a maker's range)",ISO
 din_6888,Shaft Parts/Keys,Woodruff,DIN 6888,Woodruff key,families/din_6888.csv,10,fasten.it,DIN
 din_471_light,Shaft Parts/Retaining Rings,External,DIN 471 small,"Retaining ring for shafts, small",families/din_471_light.csv,7,fasten.it,DIN
-din_3760,Shaft Parts/Sealing,Radial Shaft Seal,DIN 3760,Radial shaft seal,families/din_3760.csv,10,,DIN
-din_5419,Shaft Parts/Sealing,Felt Ring,DIN 5419,Felt sealing ring,families/din_5419.csv,6,,DIN
+din_3760,Shaft Parts/Sealing,Radial Shaft Seal,DIN 3760,Radial shaft seal,families/din_3760.csv,96,M Seals list (sizes marked DIN 3760 or SMS 2290),DIN
+din_5419,Shaft Parts/Sealing,Felt Ring,DIN 5419,Felt sealing ring,families/din_5419.csv,11,five single sizes from product pages; the other six not compared,DIN
 din_705,Shaft Parts/Collars,Set Collar,DIN 705 A,Adjusting ring,families/din_705.csv,11,fasten.it,DIN
 din_988,Shaft Parts/Shims,Shim,DIN 988,Shim ring,families/din_988.csv,15,fasten.it (support rings kept beside shims),DIN
 din_7349,Shaft Parts/Thrust Washers,Thrust Washer,DIN 7349,Heavy washer for pins and bolts,families/din_7349.csv,6,fasten.it,DIN
 lm_uu,Machine Elements/Linear Motion,Ball Bushing,LM Series,Linear ball bushing,families/lm_uu.csv,8,supplier listings (Samick; 3DJake),Other
 din_179,Other Parts,Drill Bushings,DIN 179,Drill bush without collar,families/din_179.csv,7,Fabory listings (6; 12 only),DIN
-magnet_disc,Other Parts,Magnets,Ring Magnet,Ring magnet,families/magnet_disc.csv,6,,Other
+magnet_disc,Other Parts,Magnets,Ring Magnet,Ring magnet,families/magnet_disc.csv,10,five sizes from makers' pages; the other five typed,Other
 asme_b18_2_1,Fasteners/Bolts,Hex Head,ASME B18.2.1,"Hex cap screw, UNC",families/asme_b18_2_1.csv,8,fasten.it,ANSI
 asme_b18_3,Fasteners/Bolts,Socket Head,ASME B18.3,"Socket head cap screw, UNC",families/asme_b18_3.csv,8,fasten.it,ANSI
 asme_b18_3_flat,Fasteners/Bolts,Countersunk,ASME B18.3 Flat,"Flat countersunk socket screw, UNC",families/asme_b18_3_flat.csv,6,fasten.it,ANSI
@@ -79,7 +79,7 @@ asme_b18_22_1_sae,Fasteners/Washers,Plain,ASME B18.22.1 SAE,"Plain washer, SAE p
 asme_b18_22_1_uss,Fasteners/Washers,Large,ASME B18.22.1 USS,"Plain washer, USS pattern",families/asme_b18_22_1_uss.csv,7,supplier charts (1/2 only),ANSI
 asme_b18_21_1,Fasteners/Washers,Spring,ASME B18.21.1,Helical spring lock washer,families/asme_b18_21_1.csv,8,fasten.it (1/2 not: the page repeats 5/8),ANSI
 asme_b18_8_2,Fasteners/Pins,Cylindrical,ASME B18.8.2,Hardened dowel pin,families/asme_b18_8_2.csv,6,nominal fractions,ANSI
-ansi_b17_1,Shaft Parts/Keys,Parallel,ANSI B17.1,Square parallel key,families/ansi_b17_1.csv,6,,ANSI
+ansi_b17_1,Shaft Parts/Keys,Parallel,ANSI B17.1,Square parallel key,families/ansi_b17_1.csv,13,Engineers Edge (sizes against shaft); lengths are trade lengths,ANSI
 bearing_r,Shaft Parts/Bearings,Deep Groove Ball,Series R,"Deep groove ball bearing, inch",families/bearing_r.csv,9,BDS; USA Roller Chain (both widths kept),ANSI
 ,Structural Shapes,Square and Rectangular Tubes,Square hollow section (EN 10219),Square hollow section (EN 10219),../profiles/profiles.csv,9,see profiles.csv,EN
 ,Structural Shapes,Square and Rectangular Tubes,Rectangular hollow section (EN 10219),Rectangular hollow section (EN 10219),../profiles/profiles.csv,6,see profiles.csv,EN
@@ -143,20 +143,20 @@ din_32501,Fasteners/Studs,Weld,DIN 32501,"Threaded weld stud",families/din_32501
 din_71412,Other Parts,Grease Fittings,DIN 71412 A,"Conical grease nipple",families/din_71412.csv,5,fasten.it,DIN
 din_910,Other Parts,Plugs,DIN 910,"Hexagon head plug with a collar",families/din_910.csv,33,fasten.it (both across flats kept),DIN
 din_319,Other Parts,Knobs,DIN 319,"Ball knob",families/din_319.csv,7,fasten.it,DIN
-pipe_coupling_3000,Pipe Parts/Fittings,Threaded Coupling,Threaded Coupling 3000,"Threaded pipe coupling, class 3000 pattern",families/pipe_coupling_3000.csv,8,,Other
-clinch_nut,Sheet Metal Hardware,Clinch Nuts,Clinch Nut,"Self-clinching nut",families/clinch_nut.csv,5,,Other
+pipe_coupling_3000,Pipe Parts/Fittings,Threaded Coupling,Threaded Coupling 3000,"Threaded pipe coupling, class 3000 pattern",families/pipe_coupling_3000.csv,11,wermac.org (NPS 1/2 to 4),Other
+clinch_nut,Sheet Metal Hardware,Clinch Nuts,Clinch Nut,Self-clinching nut,families/clinch_nut.csv,5,PEM product pages (M3 to M5),Other
 clinch_stud,Sheet Metal Hardware,Clinch Studs,Clinch Stud,"Self-clinching stud",families/clinch_stud.csv,4,,Other
-standoff_hex,Sheet Metal Hardware,Standoffs,Hex Standoff,"Hexagon standoff",families/standoff_hex.csv,4,,Other
+standoff_hex,Sheet Metal Hardware,Standoffs,Hex Standoff,Hexagon standoff,families/standoff_hex.csv,6,Essentra listings in part; makers differ,Other
 cage_nut,Sheet Metal Hardware,Cage Nuts,Cage Nut,"Cage nut",families/cage_nut.csv,3,,Other
-valve_ball,Pipe Parts/Valves,Ball Valve,Ball Valve,"Ball valve envelope",families/valve_ball.csv,6,,Other
+valve_ball,Pipe Parts/Valves,Ball Valve,Ball Valve,Ball valve envelope,families/valve_ball.csv,6,"Honeywell data sheet (length, height)",Other
 spur_gear_iso,Machine Elements/Gears and Chains,Spur Gear,Spur Gear ISO 53,"Involute spur gear",families/spur_gear_iso.csv,28,computed from module and teeth,ISO
-sprocket_b,Machine Elements/Gears and Chains,Chain Sprocket,Sprocket B Series,"Plate sprocket",families/sprocket_b.csv,15,,Other
-pulley_v,Machine Elements/Gears and Chains,Pulley,V-Belt Pulley,"V-belt pulley, one groove",families/pulley_v.csv,12,,Other
-spring_compression,Machine Elements/Springs,Compression,Compression Spring,"Compression spring",families/spring_compression.csv,5,,Other
+sprocket_b,Machine Elements/Gears and Chains,Chain Sprocket,Sprocket B Series,Plate sprocket,families/sprocket_b.csv,15,Tsubaki catalogue,Other
+pulley_v,Machine Elements/Gears and Chains,Pulley,V-Belt Pulley,"V-belt pulley, one groove",families/pulley_v.csv,12,taper bore pulley catalogue (groove and rim; the bore is typed),Other
+spring_compression,Machine Elements/Springs,Compression,Compression Spring,Compression spring,families/spring_compression.csv,16,HPC Europe range (rows of 5.5 active coils),Other
 spring_extension,Machine Elements/Springs,Extension,Extension Spring,"Extension spring without hooks",families/spring_extension.csv,4,,Other
-rail_linear,Machine Elements/Linear Motion,Rail,Profile Rail,"Profile rail envelope",families/rail_linear.csv,4,,Other
-carriage_linear,Machine Elements/Linear Motion,Carriage,Profile Carriage,"Profile rail carriage envelope",families/carriage_linear.csv,4,,Other
-hose_clamp,Other Parts,Clamps,Hose Clamp,"Hose clamp as a band",families/hose_clamp.csv,7,,Other
+rail_linear,Machine Elements/Linear Motion,Rail,Profile Rail,Profile rail envelope,families/rail_linear.csv,8,Hiwin HGR table,Other
+carriage_linear,Machine Elements/Linear Motion,Carriage,Profile Carriage,Profile rail carriage envelope,families/carriage_linear.csv,4,Sorotec HGH data sheet,Other
+hose_clamp,Other Parts,Clamps,Hose Clamp,Hose clamp as a band,families/hose_clamp.csv,10,Ameco DIN 3017-1 listings,Other
 tube_cap,Other Parts,Caps,Tube Cap,"Tube end cap",families/tube_cap.csv,6,,Other
 bridge_handle,Other Parts,Handles,Bridge Handle,"Bridge handle",families/bridge_handle.csv,4,,Other
 level_foot,Other Parts,Feet,Levelling Foot,"Levelling foot",families/level_foot.csv,5,,Other

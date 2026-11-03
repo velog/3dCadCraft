@@ -1,6 +1,6 @@
-# Profile rail carriage, envelope. Mm. Typed nominal values, not compared with a source yet.
+# Profile rail carriage, mm: width, height and length of HGH..CA from a Sorotec data sheet (Hiwin HG), the outline only.
 size,a,b,c
-15,34,24,61
-20,44,30,77
-25,48,36,86
-30,60,42,97
+15,34,28,60.5
+20,44,30,76.7
+25,48,40,84
+30,60,45,98.4

@@ -1,7 +1,7 @@
-# Self-clinching nut for sheet. Mm. Typed nominal values, not compared with a source yet.
+# Self-clinching nut, mm: head and height of M3, M4, M5 from PEM CLS / CLSS product pages; M6 and M8 are typed, not compared.
 size,d,D,m
-M3,3,6.3,1.5
-M4,4,7.9,2
-M5,5,8.7,2
+M3,3,6.35,1.5
+M4,4,7.87,2
+M5,5,8.64,2
 M6,6,11,4
 M8,8,12.6,5.5

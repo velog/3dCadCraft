@@ -1,10 +1,13 @@
-# Threaded pipe coupling, class 3000 pattern. Mm. Typed nominal values, not compared with a source yet.
+# Threaded full coupling, class 3000, mm: length and outside diameter from wermac.org (ASME B16.11, NPS 1/2 to 4). NPS 1/4 and 3/8 are not on that page: typed, not compared.
 size,d,D,L
 NPS 1/4,13.7,19,27
 NPS 3/8,17.1,22,27
-NPS 1/2,21.3,28.6,38
-NPS 3/4,26.7,35,41
-NPS 1,33.4,44.5,48
-NPS 1-1/4,42.2,57,54
-NPS 1-1/2,48.3,63.5,56
-NPS 2,60.3,76,64
+NPS 1/2,21.3,28,48
+NPS 3/4,26.7,35,51
+NPS 1,33.4,44,60
+NPS 1-1/4,42.2,57,67
+NPS 1-1/2,48.3,64,79
+NPS 2,60.3,76,86
+NPS 2-1/2,73,92,92
+NPS 3,88.9,108,108
+NPS 4,114.3,140,121

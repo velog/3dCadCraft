@@ -67,6 +67,7 @@ fn main() -> Result<(), String> {
         standard: "Other".into(),
         size: "20 x 80".into(),
         kind: Kind::Pin(20.0, 80.0),
+        finish: None,
     }
     .part_at(Detail::Standard)
     .map_err(|e| e.to_string())?;

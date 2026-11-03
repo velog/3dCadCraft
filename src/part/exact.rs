@@ -1372,15 +1372,36 @@ pub(super) fn body_op(
             };
             let mut out: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
             out.extend(made);
+            // A row's cones and barrels are copies of one shape.
+            let mut shapes: Vec<(super::axial::RollingElement, ExactSolid)> = Vec::new();
             for (k, e) in o.rolling.iter().enumerate() {
+                let name = format!("{}#{}", f.id, k + 1);
+                if e.end_radius <= 0.0 && e.crown <= 0.0 && e.lean == 0.0 {
+                    out.push(
+                        exact::rolling_element(e.at, e.radius, e.length, &name).map_err(Kernel)?,
+                    );
+                    continue;
+                }
+                let same = |s: &super::axial::RollingElement| {
+                    (s.radius, s.end_radius, s.crown, s.length)
+                        == (e.radius, e.end_radius, e.crown, e.length)
+                };
+                let at = match shapes.iter().position(|(s, _)| same(s)) {
+                    Some(at) => at,
+                    None => {
+                        let end = if e.end_radius > 0.0 {
+                            e.end_radius
+                        } else {
+                            e.radius
+                        };
+                        let shape = exact::rolling_shape(e.radius, end, e.crown, e.length)
+                            .map_err(Kernel)?;
+                        shapes.push((*e, shape));
+                        shapes.len() - 1
+                    }
+                };
                 out.push(
-                    exact::rolling_element(
-                        e.at,
-                        e.radius,
-                        e.length,
-                        &format!("{}#{}", f.id, k + 1),
-                    )
-                    .map_err(Kernel)?,
+                    exact::rolling_placed(&shapes[at].1, e.at, e.lean, &name).map_err(Kernel)?,
                 );
             }
             Ok(out)
