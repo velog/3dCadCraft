@@ -91,6 +91,15 @@ impl Fit {
             | Kind::PipeTee(d, ..)
             | Kind::PipeReducer(d, ..)
             | Kind::PipeCap(d, ..) => Fit::Butt { diameter: d },
+            Kind::Grease(d, l1, ..) | Kind::Plug(d, _, _, l1, ..) => into(d, l1),
+            Kind::BallKnob(_, _, d, _) => Fit::Over { bore: d },
+            Kind::Cup(od, _, t) => Fit::Over { bore: od - 2.0 * t },
+            Kind::Valve(d, ..) => Fit::Butt { diameter: d },
+            Kind::Gear(_, _, _, d)
+            | Kind::Sprocket(_, _, _, _, d)
+            | Kind::Pulley(_, _, _, _, _, d) => Fit::Over { bore: d },
+            Kind::Spring(od, d, ..) => Fit::Over { bore: od - 2.0 * d },
+            Kind::Block(..) | Kind::Handle(..) | Kind::Hinge(..) => Fit::Manual,
             Kind::Flange(f) => match f.neck {
                 Some(n) => Fit::Butt { diameter: n.pipe },
                 None if f.bore > 0.0 => Fit::Over { bore: f.bore },

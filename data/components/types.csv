@@ -20,7 +20,7 @@ Fasteners/Set Screws,Cup Point,set_screw,ready,size d P s t lengths,"hexagon soc
 Fasteners/Set Screws,Dog Point,set_screw,ready,size d P s t lengths,"hexagon socket, dog point"
 Fasteners/Studs,Double End,stud,ready,size d P b1 b2 lengths,threaded at both ends
 Fasteners/Studs,Threaded Rod,threaded_rod,ready,size d P lengths,threaded over its whole length
-Fasteners/Studs,Weld,weld_stud,planned,size d P lengths,welded by its end
+Fasteners/Studs,Weld,weld_stud,ready,size d lengths,welded by its end
 Fasteners/Nuts,Hex,hex_nut,ready,size d P s m,hexagon nut
 Fasteners/Nuts,Hex Thin,hex_nut,ready,size d P s m,low hexagon nut
 Fasteners/Nuts,Hex Flanged,hex_flange_nut,ready,size d P s m dc,hexagon nut with a flange
@@ -81,34 +81,34 @@ Structural Shapes,Round Tubes,section,ready,see profiles,"circular hollow, pipe"
 Structural Shapes,Square and Rectangular Tubes,section,ready,see profiles,hollow sections
 Structural Shapes,Round Bars,section,ready,see profiles,solid
 Structural Shapes,"Square, Flat and Hexagon Bars",section,ready,see profiles,solid
-Sheet Metal Hardware,Clinch Nuts,clinch_nut,planned,size d P D m,pressed into a sheet
-Sheet Metal Hardware,Clinch Studs,clinch_stud,planned,size d P D lengths,pressed into a sheet
-Sheet Metal Hardware,Standoffs,standoff,planned,size d P D lengths,spacers
-Sheet Metal Hardware,Cage Nuts,cage_nut,planned,size d P a m,clipped into a square hole
+Sheet Metal Hardware,Clinch Nuts,clinch_nut,ready,size d D m,pressed into a sheet
+Sheet Metal Hardware,Clinch Studs,clinch_stud,ready,size d D k lengths,pressed into a sheet
+Sheet Metal Hardware,Standoffs,standoff,ready,size d D lengths,spacers
+Sheet Metal Hardware,Cage Nuts,cage_nut,ready,size d a m,clipped into a square hole
 Pipe Parts/Fittings,Elbow,pipe_elbow,ready,size D t R angle,butt-weld
 Pipe Parts/Fittings,Tee,pipe_tee,ready,size D t C,butt-weld
 Pipe Parts/Fittings,Reducer,pipe_reducer,ready,size D1 D2 t1 t2 L,butt-weld
 Pipe Parts/Fittings,Cap,pipe_cap,ready,size D t E,butt-weld
-Pipe Parts/Fittings,Threaded Coupling,pipe_coupling,planned,size D L,threaded
+Pipe Parts/Fittings,Threaded Coupling,pipe_coupling,ready,size d D L,threaded
 Pipe Parts/Flanges,Weld Neck,flange_neck,ready,size D A S N H H3 k n d2 b f d3,with a hub and bolt holes
 Pipe Parts/Flanges,Slip-On,flange_slip,ready,size D d1 k n d2 b,with bolt holes
 Pipe Parts/Flanges,Blind,flange_blind,ready,size D k n d2 b f d3,closes a pipe
-Pipe Parts/Valves,Ball Valve,valve,planned,size D L H,simplified envelope
-Machine Elements/Gears and Chains,Spur Gear,spur_gear,planned,size m z b d,from module and teeth
-Machine Elements/Gears and Chains,Chain Sprocket,sprocket,planned,size pitch z b d,roller chain
-Machine Elements/Gears and Chains,Pulley,pulley,planned,size section dp b d,V-belt
-Machine Elements/Springs,Compression,compression_spring,planned,size De d L0 n,coil
-Machine Elements/Springs,Extension,extension_spring,planned,size De d L0 n,coil with hooks
-Machine Elements/Linear Motion,Rail,linear_rail,planned,size a b lengths,envelope
-Machine Elements/Linear Motion,Carriage,linear_carriage,planned,size a b c,envelope
+Pipe Parts/Valves,Ball Valve,valve,ready,size D L H,simplified envelope
+Machine Elements/Gears and Chains,Spur Gear,spur_gear,ready,size m z b d,from module and teeth
+Machine Elements/Gears and Chains,Chain Sprocket,sprocket,ready,size p roller z b d,roller chain
+Machine Elements/Gears and Chains,Pulley,pulley,ready,size dp rise w depth b d,V-belt
+Machine Elements/Springs,Compression,compression_spring,ready,size De d L0 n,coil
+Machine Elements/Springs,Extension,extension_spring,ready,size De d L0 n,coil with hooks
+Machine Elements/Linear Motion,Rail,linear_rail,ready,size a b lengths,envelope
+Machine Elements/Linear Motion,Carriage,linear_carriage,ready,size a b c,envelope
 Machine Elements/Linear Motion,Ball Bushing,bush,ready,size d D lengths,for round shafts
-Other Parts,Grease Fittings,grease_fitting,planned,size d P L s,lubrication
-Other Parts,Plugs,plug,planned,size d P L s,threaded closures
+Other Parts,Grease Fittings,grease_fitting,ready,size d L1 L SW,lubrication
+Other Parts,Plugs,plug,ready,size d c dk i l s,threaded closures
 Other Parts,Drill Bushings,bush,ready,size d D lengths,jig
-Other Parts,Clamps,clamp,planned,size d b s,pipe and hose clips
-Other Parts,Caps,cap,planned,size D h,tube end caps
-Other Parts,Handles,handle,planned,size d L H,hand grips
-Other Parts,Knobs,knob,planned,size d P D H,turned by hand
-Other Parts,Feet,foot,planned,size d P D H,levelling
-Other Parts,Hinges,hinge,planned,size a b s,envelope
+Other Parts,Clamps,clamp,ready,size d b s,pipe and hose clips
+Other Parts,Caps,cap,ready,size D h t,tube end caps
+Other Parts,Handles,handle,ready,size d L H,hand grips
+Other Parts,Knobs,knob,ready,size D d1 d H h1,turned by hand
+Other Parts,Feet,foot,ready,size d D k lengths,levelling
+Other Parts,Hinges,hinge,ready,size a b s,envelope
 Other Parts,Magnets,washer,ready,size d1 d2 h,disc and ring

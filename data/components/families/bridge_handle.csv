@@ -1,0 +1,6 @@
+# Bridge handle, its flat outline. Mm. Typed nominal values, not compared with a source yet.
+size,d,L,H
+L 100,10,100,30
+L 120,10,120,32
+L 160,12,160,36
+L 200,12,200,40

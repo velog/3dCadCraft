@@ -1,0 +1,7 @@
+# Levelling foot: a plate and a threaded stem. Mm. Typed nominal values, not compared with a source yet.
+size,d,D,k,lengths
+M6,6,25,6,25;40;60
+M8,8,32,7,30;50;80
+M10,10,40,8,40;60;100
+M12,12,50,10,50;80;120
+M16,16,63,12,60;100;150

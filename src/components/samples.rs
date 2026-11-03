@@ -14,7 +14,7 @@ use crate::kernel::{Point3, Real, Surface};
 use crate::part::axial::{
     AxialBend, AxialCone, AxialHole, AxialOp, AxialRun, AxialSeg, AxialShape, AxialTee,
 };
-use crate::part::frame::{Library, Loop, draw_loop, hidden};
+use crate::part::frame::{Library, Loop, PrismOp, draw_loop, hidden};
 use crate::part::hole::{ThreadFeature, ThreadSpec};
 use crate::part::standards::{ANSI_UNIFIED, ISO_METRIC, Standards};
 use crate::part::work::{WorkDef, WorkPlaneDef};
@@ -102,6 +102,31 @@ pub enum Kind {
     /// Shoulder screw: thread diameter, shoulder length, shoulder diameter, thread
     /// length, head diameter, head height, socket across flats, socket depth.
     Shoulder(Real, Real, Real, Real, Real, Real, Real, Real),
+    /// Grease nipple: thread diameter, thread length, whole length, across flats.
+    Grease(Real, Real, Real, Real),
+    /// Plug with a collar: thread diameter, collar height, collar diameter, thread
+    /// length, whole length, across flats.
+    Plug(Real, Real, Real, Real, Real, Real),
+    /// Ball knob with a blind thread: ball, neck, thread, depth.
+    BallKnob(Real, Real, Real, Real),
+    /// A cup, its open end on the XY plane: outside, height, wall.
+    Cup(Real, Real, Real),
+    /// Valve envelope: body diameter and length along Z, the stem to `H` along +X.
+    Valve(Real, Real, Real),
+    /// Spur gear: module, teeth, width, bore.
+    Gear(Real, u32, Real, Real),
+    /// Plate sprocket: pitch, roller, teeth, width, bore.
+    Sprocket(Real, Real, u32, Real, Real),
+    /// Pulley: pitch diameter, rim above it, groove's width and depth, width, bore.
+    Pulley(Real, Real, Real, Real, Real, Real),
+    /// Spring of round wire about Z: outside diameter, wire, free length, turns.
+    Spring(Real, Real, Real, Real),
+    /// A plain block along Z: width (X), height (Y), length.
+    Block(Real, Real, Real),
+    /// Bridge handle's outline along Z: bar, length, height.
+    Handle(Real, Real, Real),
+    /// Butt hinge's envelope, open: length, width, leaf.
+    Hinge(Real, Real, Real),
     /// Pipe flange, its contact face or weld end on the XY plane.
     Flange(Flange),
     /// Butt-weld elbow: outside diameter, wall, bend radius, angle in degrees.
@@ -214,6 +239,94 @@ const SHAPE_LENGTH: Real = 1000.0;
 
 /// The family tables built into the program, by their id in `families.csv`.
 const TABLES: &[(&str, &str)] = &[
+    (
+        "din_32501",
+        include_str!("../../data/components/families/din_32501.csv"),
+    ),
+    (
+        "din_71412",
+        include_str!("../../data/components/families/din_71412.csv"),
+    ),
+    (
+        "din_910",
+        include_str!("../../data/components/families/din_910.csv"),
+    ),
+    (
+        "din_319",
+        include_str!("../../data/components/families/din_319.csv"),
+    ),
+    (
+        "pipe_coupling_3000",
+        include_str!("../../data/components/families/pipe_coupling_3000.csv"),
+    ),
+    (
+        "clinch_nut",
+        include_str!("../../data/components/families/clinch_nut.csv"),
+    ),
+    (
+        "clinch_stud",
+        include_str!("../../data/components/families/clinch_stud.csv"),
+    ),
+    (
+        "standoff_hex",
+        include_str!("../../data/components/families/standoff_hex.csv"),
+    ),
+    (
+        "cage_nut",
+        include_str!("../../data/components/families/cage_nut.csv"),
+    ),
+    (
+        "valve_ball",
+        include_str!("../../data/components/families/valve_ball.csv"),
+    ),
+    (
+        "spur_gear_iso",
+        include_str!("../../data/components/families/spur_gear_iso.csv"),
+    ),
+    (
+        "sprocket_b",
+        include_str!("../../data/components/families/sprocket_b.csv"),
+    ),
+    (
+        "pulley_v",
+        include_str!("../../data/components/families/pulley_v.csv"),
+    ),
+    (
+        "spring_compression",
+        include_str!("../../data/components/families/spring_compression.csv"),
+    ),
+    (
+        "spring_extension",
+        include_str!("../../data/components/families/spring_extension.csv"),
+    ),
+    (
+        "rail_linear",
+        include_str!("../../data/components/families/rail_linear.csv"),
+    ),
+    (
+        "carriage_linear",
+        include_str!("../../data/components/families/carriage_linear.csv"),
+    ),
+    (
+        "hose_clamp",
+        include_str!("../../data/components/families/hose_clamp.csv"),
+    ),
+    (
+        "tube_cap",
+        include_str!("../../data/components/families/tube_cap.csv"),
+    ),
+    (
+        "bridge_handle",
+        include_str!("../../data/components/families/bridge_handle.csv"),
+    ),
+    (
+        "level_foot",
+        include_str!("../../data/components/families/level_foot.csv"),
+    ),
+    (
+        "butt_hinge",
+        include_str!("../../data/components/families/butt_hinge.csv"),
+    ),
     (
         "din_315",
         include_str!("../../data/components/families/din_315.csv"),
@@ -904,6 +1017,74 @@ fn row_members(
             ))
         }),
         "blind_rivet" => per_length(&|l| Some(Kind::Rivet(get("d")?, l, get("dk")?, get("k")?))),
+        "weld_stud" => per_length(&|l| Some(Kind::Rod(get("d")?, l))),
+        "grease_fitting" => one((|| {
+            Some(Kind::Grease(get("d")?, get("L1")?, get("L")?, get("SW")?))
+        })()),
+        "plug" => one((|| {
+            Some(Kind::Plug(
+                get("d")?,
+                get("c")?,
+                get("dk")?,
+                get("i")?,
+                get("l")?,
+                get("s")?,
+            ))
+        })()),
+        "knob" => one((|| {
+            Some(Kind::BallKnob(get("D")?, get("d1")?, get("d")?, get("h1")?))
+        })()),
+        "pipe_coupling" => one((|| Some(Kind::Washer(get("d")?, get("D")?, get("L")?)))()),
+        "clinch_nut" => one((|| {
+            let dc = get("D")?;
+            Some(Kind::FlangeNut(get("d")?, dc * 0.8, get("m")?, dc))
+        })()),
+        "clinch_stud" => {
+            per_length(&|l| Some(Kind::FlatHeadScrew(get("d")?, l, get("D")?, get("k")?)))
+        }
+        "standoff" => per_length(&|l| Some(Kind::HexNut(get("d")?, get("D")?, l))),
+        "cage_nut" => one((|| Some(Kind::SquareNut(get("d")?, get("a")?, get("m")?)))()),
+        "valve" => one((|| Some(Kind::Valve(get("D")?, get("L")?, get("H")?)))()),
+        "spur_gear" => one((|| {
+            Some(Kind::Gear(
+                get("m")?,
+                get("z")? as u32,
+                get("b")?,
+                get("d")?,
+            ))
+        })()),
+        "sprocket" => one((|| {
+            Some(Kind::Sprocket(
+                get("p")?,
+                get("roller")?,
+                get("z")? as u32,
+                get("b")?,
+                get("d")?,
+            ))
+        })()),
+        "pulley" => one((|| {
+            Some(Kind::Pulley(
+                get("dp")?,
+                get("rise")?,
+                get("w")?,
+                get("depth")?,
+                get("b")?,
+                get("d")?,
+            ))
+        })()),
+        "compression_spring" | "extension_spring" => one((|| {
+            Some(Kind::Spring(get("De")?, get("d")?, get("L0")?, get("n")?))
+        })()),
+        "linear_rail" => per_length(&|l| Some(Kind::Block(get("a")?, get("b")?, l))),
+        "linear_carriage" => one((|| Some(Kind::Block(get("a")?, get("b")?, get("c")?)))()),
+        "clamp" => one((|| {
+            let (d, t) = (get("d")?, get("s")?);
+            Some(Kind::Washer(d, d + 2.0 * t, get("b")?))
+        })()),
+        "cap" => one((|| Some(Kind::Cup(get("D")?, get("h")?, get("t")?)))()),
+        "handle" => one((|| Some(Kind::Handle(get("d")?, get("L")?, get("H")?)))()),
+        "foot" => per_length(&|l| Some(Kind::FlatHeadScrew(get("d")?, l, get("D")?, get("k")?))),
+        "hinge" => one((|| Some(Kind::Hinge(get("a")?, get("b")?, get("s")?)))()),
         "pipe_elbow" => one((|| {
             Some(Kind::PipeElbow(
                 get("D")?,
@@ -1108,6 +1289,14 @@ impl Sample {
                 | Kind::TaperPin(..)
                 | Kind::Woodruff(..)
                 | Kind::ORing(..)
+                | Kind::Grease(..)
+                | Kind::Plug(..)
+                | Kind::BallKnob(..)
+                | Kind::Cup(..)
+                | Kind::Valve(..)
+                | Kind::Block(..)
+                | Kind::Handle(..)
+                | Kind::Hinge(..)
                 | Kind::PipeElbow(..)
                 | Kind::PipeTee(..)
                 | Kind::PipeReducer(..)
@@ -1168,6 +1357,18 @@ impl Sample {
             Kind::THead(..) => "Tee-head bolt",
             Kind::SquareHead(..) => "Square head bolt",
             Kind::Shoulder(..) => "Shoulder screw",
+            Kind::Grease(..) => "Grease nipple",
+            Kind::Plug(..) => "Plug",
+            Kind::BallKnob(..) => "Ball knob",
+            Kind::Cup(..) => "End cap",
+            Kind::Valve(..) => "Valve",
+            Kind::Gear(..) => "Spur gear",
+            Kind::Sprocket(..) => "Sprocket",
+            Kind::Pulley(..) => "V-belt pulley",
+            Kind::Spring(..) => "Spring",
+            Kind::Block(..) => "Linear guide",
+            Kind::Handle(..) => "Handle",
+            Kind::Hinge(..) => "Hinge",
             Kind::Flange(..) => "Pipe flange",
             Kind::PipeElbow(..) => "Pipe elbow",
             Kind::PipeTee(..) => "Pipe tee",
@@ -1282,6 +1483,22 @@ fn standard_part(kind: Kind) -> Result<PartDocument, PartError> {
             Kind::THead(d, l, n, m, k) => t_head(d, l, n, m, k),
             Kind::SquareHead(d, l, s, k, c, dc) => square_head(d, l, s, k, c, dc),
             Kind::Shoulder(d, l, ds, b, dk, k, s, t) => shoulder(d, l, ds, b, dk, k, s, t),
+            Kind::Grease(d, l1, l, sw) => grease(d, l1, l, sw),
+            Kind::Plug(d, c, dk, i, l, sw) => plug(d, c, dk, i, l, sw),
+            Kind::BallKnob(ball, neck, d, depth) => ball_knob(ball, neck, d, depth),
+            Kind::Cup(od, h, t) => cup(od, h, t),
+            Kind::Valve(od, l, h) => valve(od, l, h),
+            Kind::Gear(m, z, b, d) => prism_with_bore(gear_outline(m, z), d, b),
+            Kind::Sprocket(p, roller, z, b, d) => {
+                prism_with_bore(sprocket_outline(p, roller, z), d, b)
+            }
+            Kind::Pulley(dp, rise, w, depth, b, d) => pulley(dp, rise, w, depth, b, d),
+            Kind::Spring(od, d, l, n) => spring(od, d, l, n),
+            Kind::Block(a, b, l) => {
+                prism_with_bore(rectangle(-a / 2.0, a / 2.0, -b / 2.0, b / 2.0), 0.0, l)
+            }
+            Kind::Handle(d, l, h) => handle(d, l, h),
+            Kind::Hinge(a, b, s) => hinge(a, b, s),
             Kind::Flange(f) => flange(f, true),
             Kind::PipeElbow(d, t, r, angle) => pipe_elbow(d, t, r, angle),
             Kind::PipeTee(d, t, c) => pipe_tee(d, t, c),
@@ -1357,6 +1574,12 @@ fn simple_part(kind: Kind) -> Result<PartDocument, PartError> {
         }
         Kind::Bearing(d, od, b) => tube(d, od, b),
         Kind::Flange(f) => flange(f, false),
+        Kind::Gear(m, z, b, d) => tube(d, m * (Real::from(z) + 2.0), b),
+        Kind::Sprocket(p, _, z, b, d) => {
+            tube(d, p / (std::f64::consts::PI / Real::from(z)).sin(), b)
+        }
+        Kind::Pulley(dp, rise, _, _, b, d) => tube(d, dp + 2.0 * rise, b),
+        Kind::Spring(od, d, l, _) => tube(od - 2.0 * d, od, l),
         Kind::WingNut(d, dk, _, _, _, m) => tube(d, dk, m),
         Kind::EyeBolt(d, l, _, d2, _) => head(d, l, d2 / 2.0, d2),
         Kind::THead(d, l, _, m, k) => head(d, l, m / 2.0, k),
@@ -2007,6 +2230,287 @@ fn shoulder(
     )?;
     add_thread(&mut part, spec, r, Point3::new(r, 0.0, end + 2.0 * c))?;
     Ok(part)
+}
+
+/// The loops along Z from the XY plane by `length`, one kernel call, with a bore unless 0.
+fn prism_with_bore(outline: Loop, bore: Real, length: Real) -> Result<PartDocument, PartError> {
+    let mut loops = vec![outline];
+    if bore > 0.0 {
+        loops.push(Loop::Circle(Point2::new(0.0, 0.0), bore / 2.0, true));
+    }
+    let mut part = blank();
+    part.add_body_op(BodyOpFeature::new(BodyOp::Prism(PrismOp {
+        loops,
+        start: [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        end: [[0.0, 0.0, length], [0.0, 0.0, 1.0]],
+    })))?;
+    Ok(part)
+}
+
+/// An involute tooth outline (20 degrees, addendum m, dedendum 1.25 m), counter-clockwise:
+/// each flank through a few points of its involute, straight across root and tip.
+fn gear_outline(m: Real, z: u32) -> Loop {
+    use std::f64::consts::{FRAC_PI_2, TAU};
+    let n = Real::from(z);
+    let rp = m * n / 2.0;
+    let rb = rp * 20f64.to_radians().cos();
+    let (ra, rf) = (rp + m, (rp - 1.25 * m).max(0.1));
+    let inv = |r: Real| {
+        let c = (rb / r).clamp(-1.0, 1.0).acos();
+        c.tan() - c
+    };
+    // Half a tooth's angle at the pitch circle, then at each radius along the involute.
+    let half = FRAC_PI_2 / n + inv(rp);
+    let start = rf.max(rb);
+    let mut radii: Vec<Real> = (0..=3)
+        .map(|k| start + (ra - start) * Real::from(k) / 3.0)
+        .collect();
+    if rf < rb {
+        radii.insert(0, rf);
+    }
+    let mut pts = Vec::with_capacity(z as usize * 2 * radii.len());
+    for k in 0..z {
+        let centre = TAU * Real::from(k) / n;
+        let at = |r: Real, a: Real| (Point2::new(r * a.cos(), r * a.sin()), None);
+        for &r in &radii {
+            pts.push(at(r, centre - half + inv(r.max(rb))));
+        }
+        for &r in radii.iter().rev() {
+            pts.push(at(r, centre + half - inv(r.max(rb))));
+        }
+    }
+    Loop::Path(pts)
+}
+
+/// A sprocket's outline, counter-clockwise: a roller's seat at each pitch, straight across the tip.
+fn sprocket_outline(p: Real, roller: Real, z: u32) -> Loop {
+    use std::f64::consts::{PI, TAU};
+    let n = Real::from(z);
+    let rp = p / 2.0 / (PI / n).sin();
+    let seat = roller / 2.0 * 1.01;
+    let spread = 110f64.to_radians();
+    let mut pts = Vec::with_capacity(z as usize * 2);
+    for k in 0..z {
+        let a = TAU * Real::from(k) / n;
+        let c = Point2::new(rp * a.cos(), rp * a.sin());
+        let on = |t: Real| Point2::new(c.x + seat * (a + t).cos(), c.y + seat * (a + t).sin());
+        pts.push((on(-spread), Some((c, false))));
+        pts.push((on(spread), None));
+    }
+    Loop::Path(pts)
+}
+
+/// The rim and its groove, a stepped body with a bore.
+fn pulley(
+    dp: Real,
+    rise: Real,
+    w: Real,
+    depth: Real,
+    b: Real,
+    d: Real,
+) -> Result<PartDocument, PartError> {
+    let (r, rb) = ((dp + 2.0 * rise) / 2.0, d / 2.0);
+    let (mid, top, floor) = (b / 2.0, w / 2.0, r - depth);
+    if floor <= rb {
+        return Err(bad("the groove reaches the bore"));
+    }
+    axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r, 0.0, ""),
+                    (r, mid - top, "RimLow"),
+                    (floor, mid - top * 0.4, "GrooveLow"),
+                    (floor, mid + top * 0.4, "GrooveFloor"),
+                    (r, mid + top, "GrooveHigh"),
+                    (r, b, "RimHigh"),
+                ],
+                Some("Top"),
+            ),
+            AxialRun::turned(&[(rb, b, ""), (rb, 0.0, "Bore")], Some("Bottom")),
+        ],
+        None,
+        true,
+    )
+}
+
+/// A coil of round wire about Z, one kernel call (`part::coil`).
+fn spring(od: Real, d: Real, l: Real, turns: Real) -> Result<PartDocument, PartError> {
+    use crate::part::coil::{CoilAxis, CoilFeature};
+    use crate::part::work::LineRef;
+    let mut part = blank();
+    let i = part.create_sketch(
+        SketchPlacement::on_origin_plane(OriginPlane::XZ),
+        &options(),
+    )?;
+    let sk = &mut part.sketches[i].sketch;
+    let c = sk.plane.project(&Point3::new((od - d) / 2.0, 0.0, d / 2.0));
+    sk.add_circle(c, d / 2.0).map_err(|e| bad(&e.to_string()))?;
+    let regions = sk.regions();
+    let r = regions
+        .first()
+        .ok_or_else(|| bad("the wire has no section"))?;
+    let mut f = CoilFeature::new(
+        vec![ProfileRef::of(r, c)],
+        CoilAxis::Line(LineRef::Origin(2)),
+    );
+    f.pitch = (l - d) / turns;
+    f.revolutions = turns;
+    part.add_coil(i, f)?;
+    Ok(part)
+}
+
+/// A bridge handle's outline: two feet and the bar, its thickness along Z.
+fn handle(d: Real, l: Real, h: Real) -> Result<PartDocument, PartError> {
+    let (x, f) = (l / 2.0, d * 1.5);
+    let outline = Loop::Path(
+        [
+            (-x, 0.0),
+            (-x + f, 0.0),
+            (-x + f, h - d),
+            (x - f, h - d),
+            (x - f, 0.0),
+            (x, 0.0),
+            (x, h),
+            (-x, h),
+        ]
+        .iter()
+        .map(|&(a, b)| (Point2::new(a, b), None))
+        .collect(),
+    );
+    prism_with_bore(outline, 0.0, d)
+}
+
+/// A butt hinge open flat: both leaves and the knuckle in one outline, along Z.
+fn hinge(a: Real, b: Real, s: Real) -> Result<PartDocument, PartError> {
+    let (x, r) = (b / 2.0, s * 1.5);
+    let c = Point2::new(0.0, s / 2.0);
+    let start = (r * r - (s / 2.0) * (s / 2.0)).sqrt();
+    let outline = Loop::Path(vec![
+        (Point2::new(-x, 0.0), None),
+        (Point2::new(x, 0.0), None),
+        (Point2::new(x, s), None),
+        (Point2::new(start, s), Some((c, true))),
+        (Point2::new(-start, s), None),
+        (Point2::new(-x, s), None),
+    ]);
+    prism_with_bore(outline, 0.0, a)
+}
+
+/// The body along Z, the stem joined across it along +X.
+fn valve(od: Real, l: Real, h: Real) -> Result<PartDocument, PartError> {
+    let r = od / 2.0;
+    let mut part = ring(&[(0.0, 0.0), (r, 0.0), (r, l), (0.0, l)])?;
+    let i = part.create_sketch(
+        SketchPlacement::on_origin_plane(OriginPlane::YZ),
+        &options(),
+    )?;
+    let sk = &mut part.sketches[i].sketch;
+    let c = sk.plane.project(&Point3::new(0.0, 0.0, l / 2.0));
+    sk.add_circle(c, r / 3.0).map_err(|e| bad(&e.to_string()))?;
+    let flip = sk.plane.normal.x < 0.0;
+    let regions = sk.regions();
+    let region = regions
+        .first()
+        .ok_or_else(|| bad("the stem has no section"))?;
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(region, c)], h);
+    e.operation = Operation::Join;
+    if flip {
+        e.direction = ExtentDirection::Flipped;
+    }
+    part.add_extrude(i, e)?;
+    Ok(part)
+}
+
+/// Thread below the seat, a hexagon above it to a turned nipple. The thread is plain:
+/// these fine pitches are not in the thread table.
+fn grease(d: Real, l1: Real, l: Real, sw: Real) -> Result<PartDocument, PartError> {
+    let (r, c) = (d / 2.0, d / 10.0);
+    let top = l - l1;
+    let hex = top * 0.35;
+    let neck = sw * 0.3;
+    let head = sw * 0.42;
+    axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r - c, -l1, ""),
+                    (r, -l1 + c, "EndChamfer"),
+                    (r, 0.0, "Shank"),
+                ],
+                Some("Seat"),
+            ),
+            AxialRun::hexagon(sw, 0.0, hex, "Flat", Some("HexTop")),
+            AxialRun::turned(
+                &[
+                    (neck, hex, ""),
+                    (neck, top * 0.65, "Neck"),
+                    (head, top * 0.75, "Shoulder"),
+                    (head * 0.6, top, "Cone"),
+                ],
+                Some("Top"),
+            ),
+        ],
+        Some("End"),
+        false,
+    )
+}
+
+/// Plain thread below the seat, a collar, a hexagon head (fine pitches: not in the thread table).
+fn plug(d: Real, c: Real, dk: Real, i: Real, l: Real, sw: Real) -> Result<PartDocument, PartError> {
+    let (r, e) = (d / 2.0, d / 10.0);
+    axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r - e, -i, ""),
+                    (r, -i + e, "EndChamfer"),
+                    (r, 0.0, "Shank"),
+                    (dk / 2.0, 0.0, "Seat"),
+                    (dk / 2.0, c, "Collar"),
+                ],
+                Some("CollarTop"),
+            ),
+            AxialRun::hexagon(sw, c, l - i, "Flat", Some("Top")),
+        ],
+        Some("End"),
+        false,
+    )
+}
+
+/// A ball on its neck with a blind thread from the seat.
+fn ball_knob(ball: Real, neck: Real, d: Real, depth: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, true)?;
+    let (rs, rn, rb) = (ball / 2.0, neck / 2.0, spec.minor / 2.0);
+    let centre = (rs * rs - rn * rn).sqrt();
+    let dome = vec![AxialSeg {
+        to: [rn, 0.0],
+        arc: Some(([0.0, centre], false)),
+        role: "Ball".to_owned(),
+    }];
+    let mut part = axial_part(
+        vec![
+            chain([0.0, centre + rs], dome, Some("Seat")),
+            AxialRun::turned(&[(rb, 0.0, ""), (rb, depth, "Bore")], Some("Floor")),
+        ],
+        None,
+        false,
+    )?;
+    add_thread(&mut part, spec, rb, Point3::new(rb, 0.0, depth / 2.0))?;
+    Ok(part)
+}
+
+/// A cup built directly.
+fn cup(od: Real, h: Real, t: Real) -> Result<PartDocument, PartError> {
+    let r = od / 2.0;
+    axial_part(
+        vec![
+            AxialRun::turned(&[(r - t, h - t, ""), (r - t, 0.0, "Inside")], Some("Rim")),
+            AxialRun::turned(&[(r, 0.0, ""), (r, h, "Outside")], Some("Top")),
+        ],
+        Some("Floor"),
+        false,
+    )
 }
 
 /// A bend of pipe, built directly.

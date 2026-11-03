@@ -50,6 +50,7 @@ Both values kept:
 | EN 1092-1 Type 05 | `DN150` b 22 and `DN150 (b 16)`, `DN200` and `DN200 (b 18 n 8)`, and most sizes likewise | projectmaterials against HT Pipe. DN 10 only in HT Pipe, DN 450 only in projectmaterials |
 | DIN 444 B | `M27` d1 24 and `M27 (d1 25)`, likewise M30, M36, M39 | the page prints both holes |
 | DIN 478 | `M16` s 16 and `M16 (s 17)`, `M20` s 21 and `M20 (s 22)` | the page gives a range |
+| DIN 910 | a row per size where the page's 2020 and 2012 tables differ in `s` (`M14x1.5 (s 13)`) | the page lists both editions |
 | DIN 988 | shim thickness and the `s` of the page | the page lists one thickness per size, the shims come in several |
 
 Other findings:
@@ -67,7 +68,7 @@ DIN 315, 444, 478 and ISO 7379 give limits: the tables hold the largest value of
 
 Compared only in part: HK2516 and HK3016 (the name gives bore and width, not the outside diameter), DIN 179 (sizes 6 and 12), SAE (1/4, 1/2) and USS (1/2) washers; ISO 2339, DIN 975 and 976, UNC rods: diameters and pitches, not lengths. ASME B18.2.2 lists no No.10 nut.
 
-**Not compared:** Metric O-Ring, ISO 3547, DIN 3760, DIN 5419, Ring Magnet, ANSI B17.1: no readable public table was found.
+**Not compared:** Metric O-Ring, ISO 3547, DIN 3760, DIN 5419, Ring Magnet, ANSI B17.1: no readable public table was found. Typed for trying out their shapes and placement, not compared with anything yet (added 2026-11-03): Threaded Coupling 3000, Clinch Nut, Clinch Stud, Hex Standoff, Cage Nut, Ball Valve, Sprocket B Series, V-Belt Pulley, Compression Spring, Extension Spring, Profile Rail, Profile Carriage, Hose Clamp, Tube Cap, Bridge Handle, Levelling Foot, Butt Hinge. Each table's first line says so.
 
 Bearing boundary dimensions follow ISO 15, so makers agree on them.
 

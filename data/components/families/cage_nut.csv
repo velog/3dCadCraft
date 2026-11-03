@@ -1,0 +1,5 @@
+# Cage nut for a square rack hole. Mm. Typed nominal values, not compared with a source yet.
+size,d,a,m
+M5,5,9.5,4
+M6,6,9.5,5
+M8,8,12,6

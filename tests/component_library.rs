@@ -206,12 +206,7 @@ fn the_tables_reach_the_catalog() {
         "the frame sections too"
     );
     assert!(family("ISO 10642").is_some());
-    assert!(
-        c.families
-            .iter()
-            .all(|f| !f.category.starts_with("Pipe Parts/Valves")),
-        "no builder yet"
-    );
+    assert!(family("Ball Valve").is_some(), "every type has a builder");
     let total: usize = c.families.iter().map(|f| f.members.len()).sum();
     println!("{} families, {total} members", c.families.len());
     assert!(total > 500, "{total}");

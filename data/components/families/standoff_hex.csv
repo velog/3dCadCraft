@@ -1,0 +1,6 @@
+# Hexagon standoff, threaded through. Mm. Typed nominal values, not compared with a source yet.
+size,d,D,lengths
+M3,3,5.5,6;8;10;12;16;20;25;30
+M4,4,7,8;10;12;16;20;25;30
+M5,5,8,10;12;16;20;25;30;40
+M6,6,10,12;16;20;25;30;40

@@ -139,3 +139,25 @@ din_261,Fasteners/Bolts,T-Bolt,DIN 261,"Tee-head bolt",families/din_261.csv,8,fa
 din_478,Fasteners/Bolts,Square Head,DIN 478,"Square head bolt with a collar",families/din_478.csv,10,fasten.it (both across flats kept),DIN
 iso_7379,Fasteners/Bolts,Shoulder,ISO 7379,"Hexagon socket shoulder screw",families/iso_7379.csv,7,fasten.it,ISO
 din_7337,Fasteners/Rivets,Blind,DIN 7337 A,"Blind rivet, standard head",families/din_7337.csv,8,fasten.it (lengths not compared),DIN
+din_32501,Fasteners/Studs,Weld,DIN 32501,"Threaded weld stud",families/din_32501.csv,5,fasten.it (sizes; lengths not compared),DIN
+din_71412,Other Parts,Grease Fittings,DIN 71412 A,"Conical grease nipple",families/din_71412.csv,5,fasten.it,DIN
+din_910,Other Parts,Plugs,DIN 910,"Hexagon head plug with a collar",families/din_910.csv,33,fasten.it (both across flats kept),DIN
+din_319,Other Parts,Knobs,DIN 319,"Ball knob",families/din_319.csv,7,fasten.it,DIN
+pipe_coupling_3000,Pipe Parts/Fittings,Threaded Coupling,Threaded Coupling 3000,"Threaded pipe coupling, class 3000 pattern",families/pipe_coupling_3000.csv,8,,Other
+clinch_nut,Sheet Metal Hardware,Clinch Nuts,Clinch Nut,"Self-clinching nut",families/clinch_nut.csv,5,,Other
+clinch_stud,Sheet Metal Hardware,Clinch Studs,Clinch Stud,"Self-clinching stud",families/clinch_stud.csv,4,,Other
+standoff_hex,Sheet Metal Hardware,Standoffs,Hex Standoff,"Hexagon standoff",families/standoff_hex.csv,4,,Other
+cage_nut,Sheet Metal Hardware,Cage Nuts,Cage Nut,"Cage nut",families/cage_nut.csv,3,,Other
+valve_ball,Pipe Parts/Valves,Ball Valve,Ball Valve,"Ball valve envelope",families/valve_ball.csv,6,,Other
+spur_gear_iso,Machine Elements/Gears and Chains,Spur Gear,Spur Gear ISO 53,"Involute spur gear",families/spur_gear_iso.csv,28,computed from module and teeth,ISO
+sprocket_b,Machine Elements/Gears and Chains,Chain Sprocket,Sprocket B Series,"Plate sprocket",families/sprocket_b.csv,15,,Other
+pulley_v,Machine Elements/Gears and Chains,Pulley,V-Belt Pulley,"V-belt pulley, one groove",families/pulley_v.csv,12,,Other
+spring_compression,Machine Elements/Springs,Compression,Compression Spring,"Compression spring",families/spring_compression.csv,5,,Other
+spring_extension,Machine Elements/Springs,Extension,Extension Spring,"Extension spring without hooks",families/spring_extension.csv,4,,Other
+rail_linear,Machine Elements/Linear Motion,Rail,Profile Rail,"Profile rail envelope",families/rail_linear.csv,4,,Other
+carriage_linear,Machine Elements/Linear Motion,Carriage,Profile Carriage,"Profile rail carriage envelope",families/carriage_linear.csv,4,,Other
+hose_clamp,Other Parts,Clamps,Hose Clamp,"Hose clamp as a band",families/hose_clamp.csv,7,,Other
+tube_cap,Other Parts,Caps,Tube Cap,"Tube end cap",families/tube_cap.csv,6,,Other
+bridge_handle,Other Parts,Handles,Bridge Handle,"Bridge handle",families/bridge_handle.csv,4,,Other
+level_foot,Other Parts,Feet,Levelling Foot,"Levelling foot",families/level_foot.csv,5,,Other
+butt_hinge,Other Parts,Hinges,Butt Hinge,"Butt hinge envelope",families/butt_hinge.csv,5,,Other

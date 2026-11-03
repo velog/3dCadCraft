@@ -1,0 +1,8 @@
+# Ball valve, simplified envelope. Mm. Typed nominal values, not compared with a source yet.
+size,D,L,H
+DN15,34,75,60
+DN20,42,80,70
+DN25,50,90,75
+DN32,60,110,90
+DN40,70,120,95
+DN50,85,140,110
