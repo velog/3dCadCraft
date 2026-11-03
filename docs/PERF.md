@@ -91,7 +91,7 @@ Target times for interactive work:
 | Make Components: a 36-hole plate master made a placed component (`assembly::make::make_components`) | 300 ms | 69.8 ms release (2026-10-31, under load) |
 | Make Components update: the component follows the master that grew (`assembly::make::update_derived`) | 400 ms | 60.8 ms release (2026-10-31, under load) |
 | Representations: the per-frame sync with 2000 occurrences (`assembly::reps::Representations::sync`) | 4 ms | 2.04 ms test profile (2026-11-03, quiet) |
-| A solve with the free motions of 200 components (`assembly::solve`) | 200 ms | to be measured |
+| A solve with the free motions of 200 components (`assembly::solve`) | 200 ms | 1.35 ms |
 | Assembly features: a cabinet side cut by 32 shelf-pin tools, one occurrence's shown body (`assembly::features::cut`; tools apart joined by `join_apart` — 32 Booleans took 531 ms) | 300 ms | 226.6 ms release (2026-10-31, under load); 96 ms in the test profile on the kernel at d4eeedb (2026-11-03, the tools' boxes on every core; 335 ms before) |
 | Variants of a part: the sync with 200 parameters, four times a second (`PartDocument::variants_sync`) | 20 ms | 0.22 ms test profile (2026-11-03, quiet) |
 | Assembly features: a cabinet side cut by 32 shelf-pin tools, one occurrence's shown body (`assembly::features::cut`; tools apart joined by `join_apart` — 32 Booleans took 531 ms) | 300 ms | 226.6 ms release (2026-10-31, under load) |
