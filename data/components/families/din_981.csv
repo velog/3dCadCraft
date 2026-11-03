@@ -1,0 +1,12 @@
+# DIN 981: Slotted round nut for bearings. Nominal values in mm, typed for this library; compared with fasten.it.
+size,d,P,dk,m,n
+KM M10,10,0.75,18,4,4
+KM M12,12,1,22,4,4
+KM M15,15,1,25,5,4
+KM M17,17,1,28,5,4
+KM M20,20,1,32,6,4
+KM M25,25,1.5,38,7,4
+KM M30,30,1.5,45,7,4
+KM M35,35,1.5,52,8,4
+KM M40,40,1.5,58,9,4
+KM M50,50,1.5,70,11,4

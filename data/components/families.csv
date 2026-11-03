@@ -104,3 +104,23 @@ bearing_r,Shaft Parts/Bearings,Deep Groove Ball,Series R,"Deep groove ball beari
 ,Structural Shapes,Round Tubes,Pipe Schedule 40 (ASME B36.10),Pipe Schedule 40 (ASME B36.10),../profiles/profiles.csv,11,see profiles.csv,ANSI
 ,Structural Shapes,Angles,Equal angle (AISC),Equal angle (AISC),../profiles/profiles.csv,6,see profiles.csv,ANSI
 ,Structural Shapes,Square and Rectangular Tubes,Square HSS (ASTM A500),Square HSS (ASTM A500),../profiles/profiles.csv,5,see profiles.csv,ANSI
+din_85,Fasteners/Bolts,Pan Head,DIN 85,Slotted pan head screw,families/din_85.csv,6,fasten.it,DIN
+din_84,Fasteners/Bolts,Cheese Head,DIN 84,Slotted cheese head screw,families/din_84.csv,6,fasten.it,DIN
+din_603,Fasteners/Bolts,Carriage,DIN 603,Mushroom head square neck bolt,families/din_603.csv,7,fasten.it,DIN
+din_937,Fasteners/Nuts,Slotted,DIN 937,Hexagon thin slotted nut,families/din_937.csv,8,fasten.it,DIN
+din_929,Fasteners/Nuts,Weld,DIN 929,Hexagon weld nut,families/din_929.csv,6,fasten.it,DIN
+din_981,Shaft Parts/Lock Nuts,Slotted Bearing Nut,DIN 981,Slotted round nut for bearings,families/din_981.csv,10,fasten.it,DIN
+din_6797,Fasteners/Washers,Toothed,DIN 6797 A,"Serrated lock washer, outer teeth",families/din_6797.csv,9,fasten.it,DIN
+din_2093,Fasteners/Washers,Conical,DIN 2093 A,"Disc spring, series A",families/din_2093.csv,10,fasten.it,DIN
+din_1473,Fasteners/Pins,Grooved,DIN 1473,"Grooved pin, full length",families/din_1473.csv,7,fasten.it,DIN
+din_1444,Fasteners/Pins,Clevis,DIN 1444,Clevis pin with head,families/din_1444.csv,8,fasten.it,DIN
+din_94,Fasteners/Pins,Cotter,DIN 94,Split cotter pin,families/din_94.csv,4,fasten.it (diameters),DIN
+din_661,Fasteners/Rivets,Countersunk,DIN 661,Countersunk rivet,families/din_661.csv,5,fasten.it,DIN
+din_6886,Shaft Parts/Keys,Taper,DIN 6886,"Taper key, form A",families/din_6886.csv,8,"fasten.it (b, h)",DIN
+din_557,Fasteners/Nuts,Square,DIN 557,Square nut,families/din_557.csv,8,fasten.it (both across flats kept),DIN
+din_508,Fasteners/Nuts,T-Slot,DIN 508,T-slot nut,families/din_508.csv,9,fasten.it,DIN
+din_434,Fasteners/Washers,Taper,DIN 434,Square taper washer for U sections,families/din_434.csv,8,fasten.it (both holes kept),DIN
+din_6319,Fasteners/Washers,Spherical,DIN 6319 C,Spherical washer,families/din_6319.csv,7,fasten.it,DIN
+din_6799,Shaft Parts/Retaining Rings,E-Clip,DIN 6799,E-clip for shafts,families/din_6799.csv,12,fasten.it,DIN
+din_5406,Shaft Parts/Lock Nuts,Tab Washer,DIN 5406,Tab washer for slotted round nuts,families/din_5406.csv,10,fasten.it,DIN
+din_938_stud,Fasteners/Studs,Double End,DIN 938,"Stud, metal end 1 d",families/din_938_stud.csv,6,fasten.it (b2; lengths not compared),DIN

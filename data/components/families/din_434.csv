@@ -1,0 +1,10 @@
+# DIN 434: Square taper washer for U sections. Nominal values in mm, typed for this library; compared with fasten.it (both holes kept).
+size,d1,a,b,h
+M8,9,22,22,3.8
+M10,11,22,22,3.8
+M12,13.5,26,30,4.9
+M16,17.5,32,36,5.9
+M20,22,40,44,7
+M24,26,56,56,8.5
+M12 (d1 14),14,26,30,4.9
+M16 (d1 18),18,32,36,5.9

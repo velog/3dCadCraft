@@ -7,47 +7,47 @@ Fasteners/Bolts,Hex Head Flanged,hex_flange_bolt,ready,size d P s k dc lengths,h
 Fasteners/Bolts,Socket Head,socket_screw,ready,size d P dk k s t lengths,"cylinder head, hexagon socket"
 Fasteners/Bolts,Countersunk,countersunk_screw,ready,size d P dk k s lengths,"90 degree countersunk head, hexagon socket"
 Fasteners/Bolts,Button Head,button_screw,ready,size d P dk k s lengths,"low round head, hexagon socket"
-Fasteners/Bolts,Pan Head,pan_screw,planned,size d P dk k lengths,"round head, cross recess"
-Fasteners/Bolts,Cheese Head,cheese_screw,planned,size d P dk k n lengths,"cylinder head, slot"
+Fasteners/Bolts,Pan Head,pan_screw,ready,size d P dk k lengths,"round head, cross recess"
+Fasteners/Bolts,Cheese Head,cheese_screw,ready,size d P dk k n lengths,"cylinder head, slot"
 Fasteners/Bolts,Square Head,square_bolt,planned,size d P s k lengths,square head
 Fasteners/Bolts,Shoulder,shoulder_screw,planned,size d P ds dk k s lengths,precision shoulder
-Fasteners/Bolts,Carriage,carriage_bolt,planned,size d P dk k lengths,round head with a square neck
+Fasteners/Bolts,Carriage,carriage_bolt,ready,size d P dk k lengths,round head with a square neck
 Fasteners/Bolts,Eye,eye_bolt,planned,size d P D1 D2 h,lifting eye
 Fasteners/Bolts,T-Bolt,t_bolt,planned,size d P s k lengths,hammer head for slots
 Fasteners/Set Screws,Flat Point,set_screw,ready,size d P s t lengths,"hexagon socket, flat point"
 Fasteners/Set Screws,Cone Point,set_screw,ready,size d P s t lengths,"hexagon socket, cone point"
 Fasteners/Set Screws,Cup Point,set_screw,ready,size d P s t lengths,"hexagon socket, cup point"
 Fasteners/Set Screws,Dog Point,set_screw,ready,size d P s t lengths,"hexagon socket, dog point"
-Fasteners/Studs,Double End,stud,planned,size d P b1 b2 lengths,threaded at both ends
+Fasteners/Studs,Double End,stud,ready,size d P b1 b2 lengths,threaded at both ends
 Fasteners/Studs,Threaded Rod,threaded_rod,ready,size d P lengths,threaded over its whole length
 Fasteners/Studs,Weld,weld_stud,planned,size d P lengths,welded by its end
 Fasteners/Nuts,Hex,hex_nut,ready,size d P s m,hexagon nut
 Fasteners/Nuts,Hex Thin,hex_nut,ready,size d P s m,low hexagon nut
 Fasteners/Nuts,Hex Flanged,hex_flange_nut,ready,size d P s m dc,hexagon nut with a flange
 Fasteners/Nuts,Prevailing Torque,lock_nut,ready,size d P s m,with a polymer insert
-Fasteners/Nuts,Slotted,slotted_nut,planned,size d P s m n,castle and slotted nuts
+Fasteners/Nuts,Slotted,slotted_nut,ready,size d P s m n,castle and slotted nuts
 Fasteners/Nuts,Cap,cap_nut,ready,size d P s m,domed
-Fasteners/Nuts,Square,square_nut,planned,size d P s m,square
+Fasteners/Nuts,Square,square_nut,ready,size d P s m,square
 Fasteners/Nuts,Wing,wing_nut,planned,size d P dk e m,turned by hand
 Fasteners/Nuts,Round,round_nut,planned,size d P dk m n,slotted round nuts
-Fasteners/Nuts,T-Slot,t_nut,planned,size d P a e k,for T slots
+Fasteners/Nuts,T-Slot,t_nut,ready,size d P a e k h,for T slots
 Fasteners/Nuts,Coupling,coupling_nut,ready,size d P s m,long hexagon
-Fasteners/Nuts,Weld,weld_nut,planned,size d P s m,welded on a sheet
+Fasteners/Nuts,Weld,weld_nut,ready,size d P s m,welded on a sheet
 Fasteners/Washers,Plain,washer,ready,size d1 d2 h,flat
 Fasteners/Washers,Large,washer,ready,size d1 d2 h,large outer diameter
 Fasteners/Washers,Spring,spring_washer,ready,size d1 d2 s,split spring lock washer
-Fasteners/Washers,Toothed,tooth_washer,planned,size d1 d2 s,tooth lock washer
-Fasteners/Washers,Conical,disc_spring,planned,size d1 d2 t h0,disc spring
-Fasteners/Washers,Taper,taper_washer,planned,size d1 a b h,for sloped flanges
-Fasteners/Washers,Spherical,ball_washer,planned,size d1 d2 h r,ball and socket pair
+Fasteners/Washers,Toothed,tooth_washer,ready,size d1 d2 s,tooth lock washer
+Fasteners/Washers,Conical,disc_spring,ready,size d1 d2 t h0,disc spring
+Fasteners/Washers,Taper,taper_washer,ready,size d1 a b h,for sloped flanges
+Fasteners/Washers,Spherical,ball_washer,ready,size d1 d2 h r,ball and socket pair
 Fasteners/Pins,Cylindrical,pin,ready,size d lengths,plain dowel
 Fasteners/Pins,Taper,taper_pin,ready,size d lengths,taper 1:50
 Fasteners/Pins,Spring,spring_pin,ready,size d s lengths,slotted tubular
-Fasteners/Pins,Grooved,grooved_pin,planned,size d lengths,with rolled grooves
-Fasteners/Pins,Cotter,cotter_pin,planned,size d a c lengths,"split, bent on assembly"
-Fasteners/Pins,Clevis,clevis_pin,planned,size d dk k lengths,with a head and a cross hole
+Fasteners/Pins,Grooved,grooved_pin,ready,size d lengths,with rolled grooves
+Fasteners/Pins,Cotter,cotter_pin,ready,size d a c lengths,"split, bent on assembly"
+Fasteners/Pins,Clevis,clevis_pin,ready,size d dk k lengths,with a head and a cross hole
 Fasteners/Rivets,Round Head,rivet,ready,size d dk k lengths,solid
-Fasteners/Rivets,Countersunk,countersunk_rivet,planned,size d dk k lengths,solid
+Fasteners/Rivets,Countersunk,countersunk_rivet,ready,size d dk k lengths,solid
 Fasteners/Rivets,Blind,blind_rivet,planned,size d dk k lengths,closed from one side
 Shaft Parts/Bearings,Deep Groove Ball,ball_bearing,ready,size d D B,radial
 Shaft Parts/Bearings,Angular Contact Ball,ball_bearing,ready,size d D B,radial and axial
@@ -60,16 +60,16 @@ Shaft Parts/Bearings,Thrust Ball,thrust_bearing,ready,size d D T,axial
 Shaft Parts/Bearings,Plain Bush,bush,ready,size d D lengths,sleeve
 Shaft Parts/Retaining Rings,External,circlip,ready,size d1 d2 s,for shafts
 Shaft Parts/Retaining Rings,Internal,circlip_internal,ready,size d1 d2 s,for bores
-Shaft Parts/Retaining Rings,E-Clip,e_clip,planned,size d1 d2 s,pushed on from the side
+Shaft Parts/Retaining Rings,E-Clip,e_clip,ready,size d1 d2 s,pushed on from the side
 Shaft Parts/Keys,Parallel,key,ready,size b h shaft_from shaft_to lengths,round or square ends
 Shaft Parts/Keys,Woodruff,woodruff_key,ready,size b h D,half moon
-Shaft Parts/Keys,Taper,taper_key,planned,size b h lengths,driven in
+Shaft Parts/Keys,Taper,taper_key,ready,size b h lengths,driven in
 Shaft Parts/Sealing,O-Ring,o_ring,ready,size d1 d2,inner diameter and section
 Shaft Parts/Sealing,Radial Shaft Seal,shaft_seal,ready,size d D b,lip seal
 Shaft Parts/Sealing,Felt Ring,felt_ring,ready,size d D b,simple seal
 Shaft Parts/Collars,Set Collar,collar,ready,size d D b,fixed by a set screw
-Shaft Parts/Lock Nuts,Slotted Bearing Nut,round_nut,planned,size d P dk m n,for bearing seats
-Shaft Parts/Lock Nuts,Tab Washer,tab_washer,planned,size d1 d2 s,locks a bearing nut
+Shaft Parts/Lock Nuts,Slotted Bearing Nut,round_nut,ready,size d P dk m n,for bearing seats
+Shaft Parts/Lock Nuts,Tab Washer,tab_washer,ready,size d1 d2 s,locks a bearing nut
 Shaft Parts/Shims,Shim,washer,ready,size d1 d2 h,thin ring
 Shaft Parts/Thrust Washers,Thrust Washer,washer,ready,size d1 d2 h,axial bearing face
 Structural Shapes,Angles,section,ready,see profiles,equal and unequal
