@@ -255,7 +255,7 @@ fn resolve_uncached(
         LinkSource::SketchAxis { name } => {
             vec![solidcraft_sketch::sketch_axis_geom(name).ok_or_else(|| DocError::Unknown(format!("sketch axis `{name}`")))?]
         }
-        LinkSource::Text { text, at, height, angle, font, style } if style.path.is_none() => {
+        LinkSource::Text { text, at, height, angle, font, style, .. } if style.path.is_none() => {
             solidcraft_sketch::text_geometry_styled(font.as_deref(), text, *at, *height, *angle, style, None)?
         }
         // Its path is a curve of its own sketch: set with the sketch (`Sketch::text_source_geometry`).

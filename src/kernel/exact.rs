@@ -1453,7 +1453,9 @@ pub fn chamfer_circles(
             .filter(|&j| !done[j] && (circles[j].distance - d).abs() <= 1e-9 * d.max(1.0))
             .collect();
         let pts: Vec<sg::Vec3> = group.iter().map(|&j| v3(&circles[j].at)).collect();
-        let body = guarded("chamfer", || sk::chamfer(&cur.body, &pts, d))?;
+        // Rims of holes on faces square to them: by editing the faces, no Boolean.
+        let body = guarded("chamfer", || sk::chamfer_loops(&cur.body, &pts, d))
+            .or_else(|_| guarded("chamfer", || sk::chamfer(&cur.body, &pts, d)))?;
         let mut next = blend_result(&cur, body, prefix, "Bevel");
         let new: Vec<usize> = next
             .face_names
@@ -1468,9 +1470,10 @@ pub fn chamfer_circles(
             .map(|(f, _)| f)
             .collect();
         if !new.is_empty() {
-            let samples = face_samples(&next)?;
+            // A corner of each bevel says whose it is: no mesh of the whole body.
+            let samples = next.body.face_corners();
             for f in new {
-                let Some(p) = samples.get(f).copied().flatten() else {
+                let Some(p) = samples.get(f).copied().flatten().map(p3) else {
                     continue;
                 };
                 let near = group.iter().copied().min_by(|&a, &b| {
@@ -1592,6 +1595,48 @@ pub fn faces_named_many(
     s: &ExactSolid,
     refs: &[(&str, Point3)],
 ) -> Result<Vec<Vec<usize>>, String> {
+    let mut found = faces_named_exactly(s, refs)?;
+    // A name the kernel no longer gives (see `is_renamable`): the face under the reference's point.
+    if found
+        .iter()
+        .zip(refs)
+        .any(|(v, (name, _))| v.is_empty() && is_renamable(name))
+    {
+        let tol = (s.body.size() * 1e-4).max(1e-4);
+        let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
+        for (v, (name, hint)) in found.iter_mut().zip(refs) {
+            if !v.is_empty() || !is_renamable(name) {
+                continue;
+            }
+            let mut best: Option<(Real, usize)> = None;
+            for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+                if let Some([a, b, c]) = mesh.tri(t) {
+                    let q = sheet::closest_on_triangle(hint, &p3(a), &p3(b), &p3(c));
+                    let d = (q - hint).norm();
+                    if best.is_none_or(|(x, _)| d < x) {
+                        best = Some((d, f as usize));
+                    }
+                }
+            }
+            if let Some((d, f)) = best
+                && d <= tol * 10.0
+            {
+                v.push(f);
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Names whose exact form changed with the kernel's history and display mesh, the geometry being
+/// the same: a blend's corner patches (`<id>:Corner:k` became `<id>:Round[..]`) and a sheet's
+/// rims and bends (named by a sample of the display mesh). Old references to them are found by
+/// their point; any other missing name stays a missing reference (the feature's health).
+fn is_renamable(name: &str) -> bool {
+    name.contains(":Corner:") || name.contains(":rim.") || name.contains(":Bend:")
+}
+
+fn faces_named_exactly(s: &ExactSolid, refs: &[(&str, Point3)]) -> Result<Vec<Vec<usize>>, String> {
     let named: Vec<Vec<usize>> = refs
         .iter()
         .map(|(name, _)| {
@@ -1688,7 +1733,10 @@ pub fn faces_in_solids(
     let mut cands: Vec<Vec<(usize, usize)>> = vec![Vec::new(); refs.len()];
     for (i, s) in solids.iter().enumerate() {
         let asks: Vec<usize> = (0..refs.len())
-            .filter(|&k| s.face_names.iter().any(|n| n.as_deref() == Some(refs[k].0)))
+            .filter(|&k| {
+                is_renamable(refs[k].0)
+                    || s.face_names.iter().any(|n| n.as_deref() == Some(refs[k].0))
+            })
             .collect();
         if asks.is_empty() {
             continue;
@@ -3390,7 +3438,11 @@ pub fn split_faces(
                 sk::split_faces_with_map(
                     &s.body,
                     faces,
-                    &sk::SplitTool::Curves { plane: pl, curves },
+                    &sk::SplitTool::Curves {
+                        plane: pl,
+                        curves,
+                        along: None,
+                    },
                 )
             })?
         }
@@ -3618,7 +3670,7 @@ fn surface_of(body: &sk::Body, i: usize, kind: Option<sk::FaceSurface>) -> Optio
     };
     Some(match kind? {
         F::Plane { normal, point } => {
-            let n = w3(normal);
+            let n = w3(normal.vec());
             Surface::Plane(Plane::new(p3(point), n, any_x(&n)).ok()?)
         }
         F::Cylinder {
@@ -3626,7 +3678,7 @@ fn surface_of(body: &sk::Body, i: usize, kind: Option<sk::FaceSurface>) -> Optio
             axis,
             radius,
         } => {
-            let a = w3(axis);
+            let a = w3(axis.vec());
             Surface::Cylinder(Cylinder::new(p3(origin), a, any_x(&a), radius).ok()?)
         }
         F::Cone {
@@ -3637,7 +3689,7 @@ fn surface_of(body: &sk::Body, i: usize, kind: Option<sk::FaceSurface>) -> Optio
             // Our cone is given by a reference circle (radius > 0): take
             // the one a unit along the axis from the apex, on the side
             // where the cone opens.
-            let a = w3(axis).try_normalize(1e-12)?;
+            let a = w3(axis.vec()).try_normalize(1e-12)?;
             let side = if half_angle >= 0.0 { 1.0 } else { -1.0 };
             let r = half_angle.tan().abs();
             Surface::Cone(Cone::new(p3(apex) + a * side, a, any_x(&a), r, half_angle).ok()?)
@@ -3654,7 +3706,7 @@ fn surface_of(body: &sk::Body, i: usize, kind: Option<sk::FaceSurface>) -> Optio
             major,
             minor,
         } => {
-            let a = w3(axis);
+            let a = w3(axis.vec());
             Surface::Torus(Torus {
                 center: p3(center),
                 axis: nalgebra::Unit::new_normalize(a),

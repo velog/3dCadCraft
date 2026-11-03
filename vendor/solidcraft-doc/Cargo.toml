@@ -1,5 +1,5 @@
-# SolidCraft's document crate (https://github.com/bherbruck/solidcraft, commit
-# 4687e3b0734e41d761be0d0a2611e5402f088348, MIT OR Apache-2.0) with our sheet metal additions;
+# SolidCraft's document crate (https://github.com/tangency-labs/solidcraft, commit
+# d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516, MIT OR Apache-2.0) with our sheet metal additions;
 # see vendor/README.md and ATTRIBUTION.md. The workspace inheritance of the original manifest is
 # spelled out here (same versions and features as its workspace).
 [package]
@@ -20,9 +20,9 @@ type_complexity = "allow"
 neg_cmp_op_on_partial_ord = "allow"
 
 [dependencies]
-solidcraft-geom = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
-solidcraft-sketch = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
-solidcraft-kernel = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+solidcraft-sketch = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"

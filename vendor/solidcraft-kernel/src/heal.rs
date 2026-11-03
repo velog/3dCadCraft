@@ -1,9 +1,9 @@
 //! Clean-up after operations: coplanar neighbouring faces become one face, and two straight
-//! edges meeting in line at a vertex nothing else uses become one edge (as Fusion keeps them).
+//! edges meeting in line at a vertex nothing else uses become one edge (they are kept as one).
 
 use std::collections::{BTreeSet, HashMap};
 
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{Ring, Vec3};
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Solid, from_p3};
@@ -51,15 +51,7 @@ fn samples(e: &mt::Edge) -> Vec<Vec3> {
 }
 
 fn loop_area(edges: &[mt::Edge], n: Vec3) -> f64 {
-    let pts: Vec<Vec3> = edges.iter().flat_map(samples).collect();
-    let k = pts.len();
-    let mut s = Vec3::ZERO;
-    for i in 0..k {
-        if let (Some(a), Some(b)) = (pts.get(i), pts.get((i + 1) % k)) {
-            s += a.cross(*b);
-        }
-    }
-    s.dot(n) * 0.5
+    edges.iter().flat_map(samples).collect::<Ring<Vec3>>().area_vector().dot(n)
 }
 
 fn inside(p: Vec3, edges: &[mt::Edge], n: Vec3) -> bool {
@@ -318,12 +310,13 @@ fn merge_collinear(shell: &mt::Shell, trace: &mut Trace) -> Option<mt::Shell> {
                     es.push(e.clone());
                     continue;
                 };
-                // The run's pieces become its joined edge, in this wire's direction.
-                if done.insert(r)
-                    && let Some((line, pos)) = joined.get(r)
-                {
+                // The run's pieces become its joined edge, in this wire's direction: once each
+                // way, as a seam runs along its wire both ways.
+                if let Some((line, pos)) = joined.get(r) {
                     let forward = pos.get(&e.front().id()) < pos.get(&e.back().id());
-                    es.push(if forward { line.clone() } else { line.inverse() });
+                    if done.insert((r, forward)) {
+                        es.push(if forward { line.clone() } else { line.inverse() });
+                    }
                 }
             }
             wires.push(mt::Wire::from(es));
@@ -340,7 +333,174 @@ fn exact_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
     if !matches!(e.curve(), mt::Curve::IntersectionCurve(_)) {
         return None;
     }
-    fit_exact(e, tol)
+    analytic_curve(e, tol).or_else(|| fit_exact(e, tol))
+}
+
+/// What the edge's two surfaces say it is. 3DCadCraft: a plane meeting a plane or a cylinder gives a line, a circle or an ellipse, known
+/// from the surfaces. Evaluating an intersection curve projects onto both surfaces (~0.5 ms a
+/// point on a revolved cylinder), so 17 samples an edge took 260 ms of a cut over a rounded box,
+/// and an ellipse left as an intersection curve cost every later step the same again. Three
+/// samples check the answer against the curve it replaces. `None`: the surfaces do not tell (or
+/// the samples disagree), fit it to samples.
+fn analytic_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
+    use mt::{BoundedCurve, ParametricCurve};
+    let c = e.curve();
+    let mt::Curve::IntersectionCurve(ic) = &c else { return None };
+    let (front, back) = (e.absolute_front(), e.absolute_back());
+    let (a, b) = (from_p3(front.point()), from_p3(back.point()));
+    // A closed edge has no second vertex to end at; fitting decides it as it always did.
+    if front == back || a.dist(b) < tol {
+        return None;
+    }
+    let (f0, f1) = (surface_kind(ic.surface0())?, surface_kind(ic.surface1())?);
+    let (t0, t1) = c.range_tuple();
+    let at = |s: f64| from_p3(c.subs(t0 + (t1 - t0) * s));
+    let checked = |x: mt::Edge, on: &dyn Fn(Vec3) -> f64| -> Option<mt::Edge> { [0.25, 0.5, 0.75].iter().all(|s| on(at(*s)) < tol).then_some(x) };
+    let line = |_: ()| {
+        let on = move |p: Vec3| p.dist_to_segment(a, b);
+        checked(builder::line(front, back), &on)
+    };
+    match (f0, f1) {
+        (Kind::Plane(_), Kind::Plane(_)) => line(()),
+        // A cone meets a plane square to its axis in a circle; any other plane is fitted.
+        (Kind::Plane(n), Kind::Cone(o, k)) | (Kind::Cone(o, k), Kind::Plane(n)) => {
+            if (n.dot(k).abs() - 1.0).abs() >= 1e-9 {
+                return None;
+            }
+            let m = at(0.5);
+            let centre = o + k * (m - o).dot(k);
+            let r = centre.dist(m);
+            let on = move |p: Vec3| ((p - centre).len() - r).abs().max((p - centre).dot(k).abs());
+            checked(builder::circle_arc(front, back, mt::Point3::new(m.x, m.y, m.z)), &on)
+        }
+        (Kind::Plane(n), Kind::Cylinder(o, k, r)) | (Kind::Cylinder(o, k, r), Kind::Plane(n)) => {
+            let along = n.dot(k);
+            // Along the axis: a ruling. Square to it: a circle, as the fit writes one.
+            if along.abs() < 1e-9 {
+                return line(());
+            }
+            let m = at(0.5);
+            if (along.abs() - 1.0).abs() < 1e-9 {
+                let centre = o + k * (m - o).dot(k);
+                let on = move |p: Vec3| ((p - centre).len() - r).abs().max((p - centre).dot(k).abs());
+                return checked(builder::circle_arc(front, back, mt::Point3::new(m.x, m.y, m.z)), &on);
+            }
+            let x = ellipse_arc(e, a, b, m, n, o, k, r)?;
+            let centre = o + k * ((a - o).dot(n) / along);
+            let on = move |p: Vec3| {
+                let w = p - centre;
+                w.dot(n).abs().max(((w - k * w.dot(k)).len() - r).abs())
+            };
+            checked(x, &on)
+        }
+        _ => None,
+    }
+}
+
+/// The analytic surfaces a plane can be written against.
+#[derive(Clone, Copy)]
+enum Kind {
+    /// A plane, its unit normal.
+    Plane(Vec3),
+    /// A cylinder: a point of the axis, its unit direction, the radius.
+    Cylinder(Vec3, Vec3, f64),
+    /// A cone: a point of the axis and its unit direction.
+    Cone(Vec3, Vec3),
+}
+
+/// What a surface is. A surface of revolution is read off its straight generator directly (no
+/// sampling, and `analytic_field` does not take these).
+fn surface_kind(s: &mt::Surface) -> Option<Kind> {
+    use crate::splitface::{Analytic as Field, analytic_field};
+    if let mt::Surface::RevolutedCurve(rc) = s {
+        if *rc.transform() != <mt::Matrix4 as mt::One>::one() {
+            return None;
+        }
+        let o = from_p3(rc.entity().origin());
+        let ax = rc.entity().axis();
+        let k = Vec3::new(ax.x, ax.y, ax.z).normalized()?;
+        let mt::Curve::Line(l) = rc.entity().entity_curve() else { return None };
+        let (a, b) = (from_p3(l.0), from_p3(l.1));
+        let radius = |p: Vec3| {
+            let w = p - o;
+            (w - k * w.dot(k)).len()
+        };
+        let (ra, rb) = (radius(a), radius(b));
+        let (rise, grow) = ((b - a).dot(k), rb - ra);
+        let run = a.dist(b);
+        if run < 1e-12 {
+            return None;
+        }
+        // The generator must lie in a plane through the axis: else it sweeps a hyperboloid.
+        let skew = {
+            let (wa, wb) = (a - o, b - o);
+            k.cross(wa - k * wa.dot(k)).dot(wb - k * wb.dot(k))
+        };
+        if skew.abs() > 1e-9 * run * (ra + rb + 1.0) {
+            return None;
+        }
+        return Some(if grow.abs() < 1e-9 * run {
+            Kind::Cylinder(o, k, ra)
+        } else if rise.abs() < 1e-9 * run {
+            Kind::Plane(k)
+        } else {
+            Kind::Cone(o, k)
+        });
+    }
+    match analytic_field(s)? {
+        Field::Plane { n } => Some(Kind::Plane(n)),
+        Field::Cylinder { o, axis, r, .. } => Some(Kind::Cylinder(o, Vec3::new(axis.x, axis.y, axis.z), r)),
+    }
+}
+
+/// The arc of the ellipse where the plane through `a` with normal `n` meets the cylinder (`o`,
+/// unit `k`, `r`), from `a` to `b` by way of `m`: rational quadratics of at most a quarter turn of
+/// the cylinder, exact.
+#[allow(clippy::too_many_arguments)]
+fn ellipse_arc(e: &mt::Edge, a: Vec3, b: Vec3, m: Vec3, n: Vec3, o: Vec3, k: Vec3, r: f64) -> Option<mt::Edge> {
+    use std::f64::consts::{FRAC_PI_2, TAU};
+    let along = n.dot(k);
+    let centre = o + k * ((a - o).dot(n) / along);
+    // A frame square to the axis, and the ellipse as centre + u cos t + v sin t.
+    let e1 = {
+        let w = a - centre;
+        (w - k * w.dot(k)).normalized()?
+    };
+    let e2 = k.cross(e1).normalized()?;
+    let lift = |d: Vec3| d * r - k * (r * n.dot(d) / along);
+    let (u, v) = (lift(e1), lift(e2));
+    let angle = |p: Vec3| {
+        let w = p - centre;
+        w.dot(e2).atan2(w.dot(e1))
+    };
+    let (ta, tb, tm) = (angle(a), angle(b), angle(m));
+    let mut sweep = (tb - ta).rem_euclid(TAU);
+    // The way through the middle sample.
+    if (tm - ta).rem_euclid(TAU) > sweep {
+        sweep -= TAU;
+    }
+    if sweep.abs() < 1e-9 {
+        return None;
+    }
+    let spans = (sweep.abs() / FRAC_PI_2 - 1e-9).ceil().max(1.0) as usize;
+    let half = sweep / (2.0 * spans as f64);
+    let w = half.cos();
+    let point = |t: f64, scale: f64| centre + (u * t.cos() + v * t.sin()) * scale;
+    let mut control = vec![mt::Vector4::new(a.x, a.y, a.z, 1.0)];
+    let mut knots = vec![0.0, 0.0, 0.0];
+    for i in 0..spans {
+        let start = ta + sweep * i as f64 / spans as f64;
+        let apex = point(start + half, 1.0 / w);
+        control.push(mt::Vector4::new(apex.x * w, apex.y * w, apex.z * w, w));
+        let end = if i + 1 == spans { b } else { point(start + 2.0 * half, 1.0) };
+        control.push(mt::Vector4::new(end.x, end.y, end.z, 1.0));
+        let joint = (i + 1) as f64 / spans as f64;
+        knots.push(joint);
+        knots.push(joint);
+    }
+    knots.push(1.0);
+    let curve = mt::NurbsCurve::new(mt::BSplineCurve::new(mt::KnotVec::from(knots), control));
+    Some(mt::Edge::new(e.absolute_front(), e.absolute_back(), mt::Curve::NurbsCurve(curve)))
 }
 
 /// A line or circular arc through the edge's samples, if they all lie on one.
@@ -416,7 +576,7 @@ fn exact_edges(shell: &mt::Shell, tol: f64, trace: &mut Trace) -> Option<mt::She
 
 /// Faces whose surface is flat but not a plane (a revolved line square to the axis, a swept
 /// line) get a real plane, so they merge with their coplanar neighbours and blend like planes.
-fn planar_surfaces(shell: &mt::Shell, tol: f64) -> Option<mt::Shell> {
+pub(crate) fn planar_surfaces(shell: &mt::Shell, tol: f64) -> Option<mt::Shell> {
     use mt::{BoundedCurve, ParametricCurve, ParametricSurface, ParametricSurface3D, SearchNearestParameter};
     let mut changed = false;
     let mut faces = Vec::new();
@@ -547,9 +707,9 @@ pub(crate) fn heal_traced(solid: Solid, size: f64, keep: &[Vec<Vec3>]) -> (Solid
     healed(solid, size, keep, true, false)
 }
 
-/// [`heal_traced`] that only merges coplanar neighbouring faces, leaving every edge, curve and
-/// surface as it is: for results whose geometry is already exact (a prism boolean's), where
-/// joining edges would change more than the faces split in pieces.
+/// [`heal_traced`] that only merges coplanar neighbouring faces and joins the straight edges
+/// they leave split in line (#1049), leaving every curve and surface as it is: for results
+/// whose geometry is already exact (a prism boolean's).
 pub(crate) fn merge_faces_traced(solid: Solid, size: f64, keep: &[Vec<Vec3>]) -> (Solid, Option<HealMap>) {
     healed(solid, size, keep, true, true)
 }
@@ -632,7 +792,9 @@ fn heal_shells(solid: &Solid, size: f64, keep: &[Vec<Vec3>], traced: bool, faces
             from = groups.iter().map(|g| g.iter().filter_map(|i| from.get(*i)).flatten().copied().collect()).collect();
             changed = true;
         }
-        if !faces_only && let Some(m) = merge_collinear(&cur, &mut trace) {
+        // Straight edges the merged pieces leave split at vertices nothing else uses join
+        // into one, after any boolean (#1049): later features meet one edge, not the pieces.
+        if let Some(m) = merge_collinear(&cur, &mut trace) {
             cur = m;
             changed = true;
         }
@@ -677,7 +839,8 @@ mod tests {
             .map(|k| builder::vertex(mt::Point3::new(k as f64, 0.0, 0.0)))
             .chain([builder::vertex(mt::Point3::new(n as f64, 3.0, 0.0)), builder::vertex(mt::Point3::new(0.0, 3.0, 0.0))])
             .collect();
-        let edges: Vec<mt::Edge> = pts.iter().zip(pts.iter().cycle().skip(1)).map(|(a, b)| builder::line(a, b)).collect();
+        let pts: solidcraft_geom::Ring<mt::Vertex> = pts.into();
+        let edges: Vec<mt::Edge> = pts.edges().map(|(a, b)| builder::line(a, b)).collect();
         let face = builder::try_attach_plane(&[mt::Wire::from(edges)]).expect("a plane");
         builder::tsweep(&face, mt::Vector3::new(0.0, 0.0, 2.0))
     }

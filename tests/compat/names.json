@@ -276,13 +276,9 @@
   ],
   "r15/revolve_work_r15.3dcadcraft": [
     "Revolution1:Side:1v1:0",
-    "Revolution1:Side:1v1:0",
-    "Revolution1:Side:1v1:0",
     "Revolution1:Side:2v1:0",
     "Revolution1:Side:2v1:0",
     "Revolution1:Side:2v1:0",
-    "Revolution1:Side:3v1:0",
-    "Revolution1:Side:3v1:0",
     "Revolution1:Side:3v1:0",
     "Revolution1:Side:4v1:0",
     "Revolution1:Side:4v1:0",
@@ -383,11 +379,11 @@
     "Face1:Fold1.1:bottom",
     "Face1:Fold1.1:rim.bend0",
     "Face1:Fold1.1:rim.bend1",
+    "Face1:Fold1.1:rim.far",
     "Face1:Fold1.1:rim.side0",
     "Face1:Fold1.1:rim.side1",
     "Face1:Fold1.1:top",
     "Face1:Hem1.1:bottom",
-    "Face1:Hem1.1:rim.bend0",
     "Face1:Hem1.1:rim.bend1",
     "Face1:Hem1.1:rim.far",
     "Face1:Hem1.1:rim.side0",
@@ -493,6 +489,7 @@
     "Face1:Bend:3",
     "Face1:Bend:30",
     "Face1:Bend:31",
+    "Face1:Bend:32",
     "Face1:Bend:4",
     "Face1:Bend:5",
     "Face1:Bend:6",
@@ -506,7 +503,6 @@
     "Face1:Flange1.1:top",
     "Face1:Flange1.2:bottom",
     "Face1:Flange1.2:rim.far",
-    "Face1:Flange1.2:rim.side0",
     "Face1:Flange1.2:rim.side0",
     "Face1:Flange1.2:rim.side1",
     "Face1:Flange1.2:top",
@@ -530,10 +526,10 @@
     "Box1:Left",
     "Box1:Right",
     "Box1:Top",
-    "Fillet1:Corner:1",
-    "Fillet1:Corner:2",
-    "Fillet1:Corner:3",
-    "Fillet1:Corner:4",
+    "Fillet1:Round[Box1:Back|Box1:Left]",
+    "Fillet1:Round[Box1:Back|Box1:Right]",
+    "Fillet1:Round[Box1:Front|Box1:Left]",
+    "Fillet1:Round[Box1:Front|Box1:Right]",
     "Shell1:Inner[Box1:Back]",
     "Shell1:Inner[Box1:Bottom]",
     "Shell1:Inner[Box1:Front]",
@@ -718,6 +714,7 @@
     "Face1:Bend:3",
     "Face1:Bend:30",
     "Face1:Bend:31",
+    "Face1:Bend:32",
     "Face1:Bend:4",
     "Face1:Bend:5",
     "Face1:Bend:6",
@@ -731,7 +728,6 @@
     "Face1:Flange1.1:top",
     "Face1:Flange1.2:bottom",
     "Face1:Flange1.2:rim.far",
-    "Face1:Flange1.2:rim.side0",
     "Face1:Flange1.2:rim.side0",
     "Face1:Flange1.2:rim.side1",
     "Face1:Flange1.2:top",
@@ -748,7 +744,7 @@
     "Face1:base:bottom",
     "Face1:base:top"
   ],
-  "r29/drawing_r29.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
+  "r29/drawing_r29.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:32", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
   "r30/sheet_r30.3dcadcraft": [
     "Face1:CornerChamfer1.1:chamfer",
     "Face1:CornerRound1.1:round",
@@ -768,8 +764,8 @@
     "Box1:Right",
     "Thicken1:Offset:Box1:Top"
   ],
-  "r32/drawing_r32.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
-  "r33/drawing_r33.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
+  "r32/drawing_r32.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:32", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
+  "r33/drawing_r33.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:32", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
   "r34/delete_face_r34.3dcadcraft": [
     "Box1:Back",
     "Box1:Bottom",
@@ -791,7 +787,7 @@
     "Extrusion1:Side:4v1:0",
     "Extrusion1:Start"
   ],
-  "r36/drawing_r36.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
+  "r36/drawing_r36.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:32", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
   "r37/surfaces_r37.3dcadcraft": [
     "BoundaryPatch1:Patch",
     "Box1:Back",
@@ -804,8 +800,8 @@
     "ReplaceFace1:Face",
     "RuledSurface1:Side:0"
   ],
-  "r38/drawing_r38.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
-  "r39/drawing_r39.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
+  "r38/drawing_r38.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:32", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
+  "r39/drawing_r39.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:32", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
   "r40/copy_object_r40.3dcadcraft": [
     "Box1:Back",
     "Box1:Bottom",
@@ -1168,7 +1164,7 @@
     "Box1:Right",
     "Box1:Top"
   ],
-  "r60/drawing_r60.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
+  "r60/drawing_r60.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:32", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
   "r59/freeform_r59.3dcadcraft": ["Freeform1:Face"],
   "r61/axial_r61.3dcadcraft": ["Axial1:End", "Axial1:EndChamfer", "Axial1:EndChamfer", "Axial1:EndChamfer", "Axial1:Flat:1", "Axial1:Flat:2", "Axial1:Flat:3", "Axial1:Flat:4", "Axial1:Flat:5", "Axial1:Flat:6", "Axial1:HeadChamfer", "Axial1:HeadChamfer", "Axial1:HeadChamfer", "Axial1:HeadChamfer", "Axial1:HeadChamfer", "Axial1:HeadChamfer", "Axial1:Seat", "Axial1:Shank", "Axial1:Shank", "Axial1:Shank", "Axial1:Top"]
 }

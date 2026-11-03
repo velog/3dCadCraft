@@ -474,6 +474,92 @@ fn blend_routes_with_times() {
         BlendFeature::chamfer(chain, 7.0),
     );
 
+    // General Booleans with a turned body (no blend): a hexagon joined to a shank, and a cut.
+    let revolve = |p: &mut PartDocument, outline: &[(f64, f64)], op: Operation| {
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = p
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+            .unwrap();
+        let v = outline
+            .iter()
+            .map(|&(r, z)| (Point2::new(r, z), None))
+            .collect();
+        draw_loop(&mut p.sketches[i].sketch, Loop::Path(v)).unwrap();
+        let regions = p.sketches[i].sketch.regions();
+        let reg = regions.first().unwrap();
+        let mut f = RevolveFeature::new(
+            vec![ProfileRef::of(reg, reg.interior_point())],
+            AxisRef::Origin(2),
+        );
+        f.operation = op;
+        p.add_revolve(i, f).unwrap();
+    };
+    let across = 13.0 / 3f64.sqrt();
+    let hexagon: Vec<(f64, f64)> = (0..6)
+        .map(|k| {
+            let a = k as f64 * PI / 3.0;
+            (across * a.cos(), across * a.sin())
+        })
+        .collect();
+    let head = prism(&hexagon, 5.3);
+    let shank = [
+        (0.0, 2.65),
+        (4.0, 2.65),
+        (4.0, -29.2),
+        (3.2, -30.0),
+        (0.0, -30.0),
+    ];
+    let mut v: Vec<f64> = (0..5)
+        .map(|_| {
+            let mut p = head.clone();
+            p.build_cache = Default::default();
+            let t = Instant::now();
+            revolve(&mut p, &shank, Operation::Join);
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            assert!(p.exact && p.feature_health.is_empty());
+            ms
+        })
+        .collect();
+    v.sort_by(f64::total_cmp);
+    println!(
+        "{:<52} {:>8.1} ms",
+        "Join: a hexagon and a turned shank", v[2]
+    );
+    let block = plate(40.0, 30.0, 10.0);
+    let tool = [
+        (0.0, -1.0),
+        (6.0, -1.0),
+        (6.0, 4.0),
+        (3.0, 7.0),
+        (3.0, 11.0),
+        (0.0, 11.0),
+    ];
+    let moved: Vec<(f64, f64)> = tool.to_vec();
+    let mut v: Vec<f64> = (0..5)
+        .map(|_| {
+            let mut p = block.clone();
+            p.build_cache = Default::default();
+            let t = Instant::now();
+            revolve(&mut p, &moved, Operation::Cut);
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            assert!(
+                p.exact && p.feature_health.is_empty(),
+                "{:?}",
+                p.feature_health
+            );
+            ms
+        })
+        .collect();
+    v.sort_by(f64::total_cmp);
+    println!(
+        "{:<52} {:>8.1} ms",
+        "Cut: a turned tool with a cone at a plate's corner", v[2]
+    );
+
     // Hole rims through the general path.
     for n in [6usize, 12, 36] {
         let mut p = plate(200.0, 200.0, 10.0);
@@ -494,5 +580,295 @@ fn blend_routes_with_times() {
             &p,
             BlendFeature::chamfer(e, 1.0),
         );
+    }
+}
+
+/// A chamfer wider than the rounds of its loop: the bevel planes run on through the corners and
+/// meet sharp. Against the slices of the kept shape, with the bevels' names kept.
+#[test]
+fn a_chamfer_wider_than_the_rounds_removes_what_it_says() {
+    let (w, l, h, r, d) = (100.0f64, 60.0f64, 30.0f64, 5.0f64, 7.0f64);
+    let mut p = plate(w, l, h);
+    let up = edges_where(&p, |q| q[2] > 1.0 && q[2] < h - 1.0);
+    p.add_blend(BlendFeature::fillet(up, r)).unwrap();
+    let before = volume(&p);
+    let chain = edges_where(&p, |q| on(q[2], h));
+    p.add_blend(BlendFeature::chamfer(chain, d)).unwrap();
+    assert!(
+        p.exact && p.feature_health.is_empty(),
+        "{:?}",
+        p.feature_health
+    );
+    for (id, _) in p.body.solids() {
+        p.body.validate_solid(id).unwrap();
+    }
+    // Rounded rectangle less the frame between it and the inset rectangle, per slice.
+    let in_round = |x: f64, y: f64| {
+        let (ax, ay) = ((x - w / 2.0).abs(), (y - l / 2.0).abs());
+        let (cx, cy) = (w / 2.0 - r, l / 2.0 - r);
+        ax <= cx || ay <= cy || (ax - cx).hypot(ay - cy) <= r
+    };
+    let (slices, grid) = (70, 500);
+    let mut removed = 0.0;
+    for k in 0..slices {
+        let inset = d * (k as f64 + 0.5) / slices as f64;
+        let (dx, dy) = (w / grid as f64, l / grid as f64);
+        let mut area = 0.0;
+        for i in 0..grid {
+            for j in 0..grid {
+                let (x, y) = ((i as f64 + 0.5) * dx, (j as f64 + 0.5) * dy);
+                let inside = x >= inset && x <= w - inset && y >= inset && y <= l - inset;
+                if in_round(x, y) && !inside {
+                    area += dx * dy;
+                }
+            }
+        }
+        removed += area * d / slices as f64;
+    }
+    let measured = before - volume(&p);
+    println!("removed {measured:.1}, slices {removed:.1}");
+    assert!(
+        (measured - removed).abs() < removed * 0.01,
+        "{measured} vs {removed}"
+    );
+    let names: Vec<String> = p
+        .body
+        .faces()
+        .filter_map(|(_, f)| f.name.clone())
+        .filter(|n| n.contains("Bevel"))
+        .collect();
+    assert_eq!(names.len(), 4, "{names:?}");
+    let mut unique = names.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 4, "a bevel per straight edge: {names:?}");
+    assert!(
+        names.iter().all(|n| n.starts_with("Chamfer1:Bevel[")),
+        "{names:?}"
+    );
+    assert!(
+        !p.body
+            .faces()
+            .filter_map(|(_, f)| f.name.as_ref())
+            .any(|n| n.contains("#r")),
+        "a tool's name is left"
+    );
+}
+
+/// A cylinder cut by an inclined plane: its rim is an exact ellipse (`heal.rs`, no longer an
+/// intersection curve). The volume follows the mean height, and the rim takes a chamfer.
+#[test]
+fn an_inclined_cut_is_an_exact_ellipse() {
+    let (r, h) = (5.0f64, 40.0f64);
+    let mut p = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    draw_loop(
+        &mut p.sketches[i].sketch,
+        Loop::Circle(Point2::new(0.0, 0.0), r, false),
+    )
+    .unwrap();
+    let sk = &p.sketches[i].sketch;
+    let flip = sk.plane.normal.z < 0.0;
+    let regions = sk.regions();
+    let reg = regions.first().unwrap();
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(reg, reg.interior_point())], h);
+    if flip {
+        e.direction = ExtentDirection::Flipped;
+    }
+    p.add_extrude(i, e).unwrap();
+    // Everything above z = 20 + x / 2.
+    let j = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    let wedge = [(-30.0, 5.0), (30.0, 35.0), (30.0, 80.0), (-30.0, 80.0)]
+        .iter()
+        .map(|&(x, z)| (Point2::new(x, z), None))
+        .collect();
+    draw_loop(&mut p.sketches[j].sketch, Loop::Path(wedge)).unwrap();
+    let regions = p.sketches[j].sketch.regions();
+    let reg = regions.first().unwrap();
+    let mut cut = ExtrudeFeature::new(vec![ProfileRef::of(reg, reg.interior_point())], 40.0);
+    cut.operation = Operation::Cut;
+    cut.direction = ExtentDirection::Symmetric;
+    p.add_extrude(j, cut).unwrap();
+    assert!(
+        p.exact && p.feature_health.is_empty(),
+        "{:?}",
+        p.feature_health
+    );
+    let expected = PI * r * r * 20.0;
+    let v = volume(&p);
+    assert!((v - expected).abs() < expected * 1e-3, "{v} vs {expected}");
+    for (id, _) in p.body.solids() {
+        p.body.validate_solid(id).unwrap();
+    }
+    // A hint lies on the edge's display polyline: on the plane, within its chord of the cylinder.
+    let rim = edges_where(&p, |q| q[2] > 16.0 && q[2] < 24.0);
+    assert!(!rim.is_empty(), "no rim edge");
+    for e in &rim {
+        let q = e.hint;
+        assert!(
+            (q[2] - (20.0 + q[0] / 2.0)).abs() < 1e-6,
+            "{q:?} off the plane"
+        );
+        assert!(
+            (q[0].hypot(q[1]) - r).abs() < 0.01,
+            "{q:?} off the cylinder"
+        );
+    }
+    // A chamfer on it, as the kernel takes an ellipse.
+    let before = volume(&p);
+    p.add_blend(BlendFeature::chamfer(rim, 0.5)).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    assert!(volume(&p) < before, "the chamfer must take material away");
+}
+
+/// `Body::edges` divides the edges without meshing a face: the same polylines, in the same order
+/// and direction, bit for bit, as those of the mesh.
+#[test]
+fn edges_without_a_mesh_are_those_of_the_mesh() {
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2, Vec3};
+    use solidcraft_kernel::{BoolOp, boolean, extrude, fillet};
+    let disc = |r: f64, z0: f64, z1: f64| {
+        let region = Region2 {
+            outer: Loop2::circle(Vec2::ZERO, r),
+            holes: vec![],
+        };
+        extrude(&Plane::XY, &[region], z0, z1)
+            .unwrap()
+            .pop()
+            .unwrap()
+    };
+    let cup = boolean(&disc(50.0, 0.0, 10.0), &disc(48.0, 2.0, 20.0), BoolOp::Cut)
+        .unwrap()
+        .unwrap();
+    let ring = boolean(&disc(50.0, 0.0, 10.0), &disc(30.0, -1.0, 20.0), BoolOp::Cut)
+        .unwrap()
+        .unwrap();
+    // Round and cut: curved blend faces, intersection curves, edges a face runs backwards.
+    let rounded = fillet(&disc(20.0, 0.0, 10.0), &[Vec3::new(20.0, 0.0, 10.0)], 2.0).unwrap();
+    let cut = boolean(&rounded, &disc(5.0, 5.0, 20.0), BoolOp::Cut)
+        .unwrap()
+        .unwrap();
+    for (name, body) in [
+        ("cup", cup),
+        ("ring", ring),
+        ("rounded", rounded),
+        ("cut round", cut),
+    ] {
+        for tol in [0.1, 0.01] {
+            let (mesh, edges) = (body.tessellate(tol).unwrap(), body.edges(tol).unwrap());
+            assert_eq!(mesh.edges.len(), edges.len(), "{name}");
+            for (m, e) in mesh.edges.iter().zip(&edges) {
+                assert_eq!(m.len(), e.points.len(), "{name}");
+                let bits = |p: &Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+                assert!(
+                    m.iter().zip(&e.points).all(|(a, b)| bits(a) == bits(b)),
+                    "{name} at {tol}"
+                );
+            }
+        }
+    }
+}
+
+/// Blends and joined pieces are not meshed again to orient them: bodies that came in from a STEP
+/// file or were stitched from surfaces must still end up facing out, which a later Cut relies on.
+#[test]
+fn imported_and_stitched_solids_stay_outward_through_blends() {
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2, Vec3};
+    use solidcraft_kernel::{
+        Body, BoolOp, boolean, chamfer, copy_faces, extrude, fillet, step_export, step_import,
+        stitch, union_apart,
+    };
+    let block = |x: f64| {
+        let corners =
+            [(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0)].map(|(a, b)| Vec2::new(a + x, b));
+        let region = Region2 {
+            outer: Loop2::polygon(&corners),
+            holes: vec![],
+        };
+        extrude(&Plane::XY, &[region], 0.0, 20.0)
+            .unwrap()
+            .pop()
+            .unwrap()
+    };
+    let volume = |b: &Body| b.tessellate(0.01).unwrap().measure().volume;
+    let imported = |b: &Body| {
+        let text = step_export(&[b], "test").unwrap();
+        step_import(&text).unwrap().bodies.remove(0).body
+    };
+    let stitched = |x: f64| {
+        let b = block(x);
+        let c = |a: f64, y: f64, z: f64| Vec3::new(a + x, y, z);
+        let faces = [
+            c(20.0, 15.0, 0.0),
+            c(20.0, 15.0, 20.0),
+            c(20.0, 0.0, 10.0),
+            c(20.0, 30.0, 10.0),
+            c(0.0, 15.0, 10.0),
+            c(40.0, 15.0, 10.0),
+        ];
+        let sheets: Vec<Body> = faces
+            .iter()
+            .map(|p| copy_faces(&b, &[*p]).unwrap())
+            .collect();
+        stitch(&sheets.iter().collect::<Vec<_>>(), 1e-3).unwrap()
+    };
+    let round = 24_000.0 - (1.0 - std::f64::consts::FRAC_PI_4) * 25.0 * 30.0;
+    let wedge = 24_000.0 - 0.5 * 25.0 * 30.0;
+    let edge = Vec3::new(40.0, 15.0, 20.0);
+    let drill = || {
+        let region = Region2 {
+            outer: Loop2::circle(Vec2::new(10.0, 15.0), 3.0),
+            holes: vec![],
+        };
+        extrude(&Plane::XY, &[region], -1.0, 21.0)
+            .unwrap()
+            .pop()
+            .unwrap()
+    };
+    let hole = std::f64::consts::PI * 9.0 * 20.0;
+    for (name, body) in [("STEP", imported(&block(0.0))), ("stitched", stitched(0.0))] {
+        assert!(
+            (volume(&body) - 24_000.0).abs() < 1.0,
+            "{name}: {}",
+            volume(&body)
+        );
+        let blends = [
+            ("fillet", fillet(&body, &[edge], 5.0).unwrap(), round),
+            ("chamfer", chamfer(&body, &[edge], 5.0).unwrap(), wedge),
+        ];
+        for (what, blended, expected) in blends {
+            let v = volume(&blended);
+            assert!(
+                (v - expected).abs() < 1.0,
+                "{name} {what}: {v} vs {expected}"
+            );
+            // Inside out, a Cut would add material or find nothing to take. (The mesh's hole is
+            // an inscribed polygon: about 1 mm³ off at this chord.)
+            let cut = boolean(&blended, &drill(), BoolOp::Cut).unwrap().unwrap();
+            let left = volume(&cut);
+            assert!(
+                (left - (expected - hole)).abs() < 3.0,
+                "{name} {what}: {left}"
+            );
+        }
+    }
+    // Pieces of each route joined without a mesh of the whole.
+    for (name, a, b) in [
+        ("STEP", imported(&block(0.0)), imported(&block(100.0))),
+        ("stitched", stitched(0.0), stitched(100.0)),
+    ] {
+        let joined = union_apart(&[a, b]).unwrap().unwrap();
+        assert!((volume(&joined) - 48_000.0).abs() < 1.0, "{name}");
+        let cut = boolean(&joined, &drill(), BoolOp::Cut).unwrap().unwrap();
+        assert!((volume(&cut) - (48_000.0 - hole)).abs() < 3.0, "{name}");
     }
 }

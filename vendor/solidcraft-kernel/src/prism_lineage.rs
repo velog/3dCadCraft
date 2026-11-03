@@ -39,7 +39,8 @@ impl Outline {
     fn of(s: &Section) -> Outline {
         let (segs, tags) = s.segments();
         let bbox = segs.iter().try_fold(None::<(Vec2, Vec2)>, |acc, g| {
-            let (lo, hi) = super::seg_box(g, 0.0)?;
+            let b = super::seg_box(g, 0.0)?;
+            let (lo, hi) = (b.min, b.max);
             Some(Some(match acc {
                 None => (lo, hi),
                 Some((a, b)) => (Vec2::new(a.x.min(lo.x), a.y.min(lo.y)), Vec2::new(b.x.max(hi.x), b.y.max(hi.y))),

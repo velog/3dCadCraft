@@ -74,6 +74,7 @@ fn outline(b: &Body, mesh: &Mesh, f: usize, tol: f64) -> Result<Face> {
     let Some(FaceSurface::Plane { normal: n, .. }) = face_surface(b, f) else {
         return err("not supported yet: curved faces in a converted sheet (only planar faces convert)");
     };
+    let n = n.vec();
     // Its edges, each with the face on its other side.
     let mut edges = Vec::new();
     for (line, faces) in mesh.edges.iter().zip(&mesh.edge_faces) {

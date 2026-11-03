@@ -236,6 +236,11 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
 - `kernel::exact::to_brep` stores the kernel's triangles in `Face::mesh` (display/picking);
   seams (a face meeting itself) are not drawn. Blend faces are named after the replaced
   edge (`Fillet1:Round[A|B]`); `blend::face_matcher` finds old faceted names by feature.
+- **Names that follow the kernel** (`exact::is_renamable`): a blend's corner patches and a sheet's rims and
+  bends are found by the reference's point when their old name is gone; any other missing name stays a
+  missing reference. Do not widen the list: a deleted face must surface as health (rule 8).
+- **A Cut flush with a face after the nudge** left a skin a hair off the face, with the same volume: only the
+  area shows it (oracle 23, 39). `coplanar::tool_past_flush_faces` sweeps the tool past the face first.
 - **Reference tests** (`tests/oracle/`, from SolidCraft): never edit `expected.json` to match
   the program; a case that cannot pass yet goes into `known_failures.txt` with the reason,
   and a known failure that starts passing fails the run. Every crash or geometry fix lands
@@ -706,7 +711,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   kernel face (centre of its largest triangle at size·1e-4 — the kernel picks faces within
   size·1e-3). Inside uses `sk::shell`; Outside/Both/closed use `offset_faces` minus a cavity
   whose faces are pre-named `Shell1:Inner[..]`. The rim keeps the removed face's name.
-  After an Inside shell the outer straight edges are split at the floor level — select
+  After an Inside shell the outer straight edges may be split at the floor level — select
   every piece (blends join them). Rounds ≥ the wall at an open face: the kernel refuses the
   rim; `shell_with_openings` = closed cavity + a prism of the face outline grown by
   0.001·t (a prism side along the round's tangent edge only *touches* it and the cut fails).
@@ -955,6 +960,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   mutations go through `edit_part` (on a copy; Undo only on success). STEP export must not
   call `exact::face_point` per face (it made the export 2.5 s) — only for split names.
 - **Stepped bodies** (`vendor/.../axial.rs`): a run's rings are taken from its shell (`extract_boundaries`) so the planar face between two runs shares their edges and nothing needs intersecting; faces come in either sense from truck's sweeps, so `oriented` turns them alike by shared edges, and the outside is read off the lowest planar face (`Body::new_placed`; the orientation mesh was most of a domed nut's time). A coned hexagon's cone is one sector per corner, its rulings at the corners, so every sector lies in one sheet of the surface's parameters. Measuring what a chamfer removes on a grid over the section loses it in the hexagon's own area: integrate the depth in polar form (`chamfer_removes`).
+- **What a general Boolean costs** (`vendor/.../ops.rs`, `boolean_record.rs`, `heal.rs`): on a cut over a rounded box the intersection was 122 of 853 ms; evaluating an intersection curve projects onto both surfaces (~0.5 ms a point on a revolved cylinder), and the healing, the edge checks and the mesh all did. So curves known from their surfaces are written at once (`analytic_curve`: plane with plane or cylinder), and only intersection curves are sampled. Before optimising a Boolean, time `truck_boolean` against `truck_result` and `check`. A nearest-point search without a hint evaluates a whole grid (NURBS 51², revolved 101²); the grids are kept per thread (`vendor/truck-geometry/src/presearch_grid.rs`), and copying curves and surfaces costs almost nothing (1–8 ms a blend): measure before suspecting them. A wider chamfer is one ring cut (`part/exact.rs::ring_chamfer`, sides named after the old wedges' bevels).
 - **Interference must see whole meshes**: the BSP classifies by the planes of every polygon, so cutting a
   body down to the triangles near the overlap box first left it open and lost 20 % of a holed plate's
   overlap (or all of it). Cut the closed body by the box with `csg::intersect` instead (`tests/interference.rs`).

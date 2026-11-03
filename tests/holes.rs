@@ -1487,3 +1487,41 @@ fn tapped_hole_diameter_setting() {
             .contains("tapped_hole_diameter")
     );
 }
+
+/// 90° countersinks at both ends, edited on the bore rims: the exact volume (a ring of a right
+/// triangle by Pappus, the near one 0.75, the far one 0.5), named faces, a valid exact part.
+#[test]
+fn countersinks_at_both_ends_have_the_exact_volume() {
+    use std::f64::consts::PI;
+    let mut p = PartDocument::with_box("Box1", [100.0, 100.0, 10.0]).unwrap();
+    let pts: Vec<Point3> = (0..6)
+        .map(|i| Point3::new(10.0 + 16.0 * i as Real, 10.0, 10.0))
+        .collect();
+    let (k, ids) = p.create_hole_sketch("Box1:Top", &pts).unwrap();
+    let mut s = HoleSpec::simple(5.5, 10.0);
+    s.termination = Termination::ThroughAll;
+    s.seat = SeatType::Countersink;
+    s.csink_diameter = 7.0;
+    s.far_csink = true;
+    let far = (s.far_diameter() - 5.5) / 2.0;
+    let mut def = HoleFeature::new(s);
+    def.sketch = p.sketches[k].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    p.add_hole(def).unwrap();
+    assert!(p.exact && p.feature_health.is_empty());
+    let ring = |d: Real| 2.0 * PI * (2.75 + d / 3.0) * d * d / 2.0;
+    let want = 100000.0 - 6.0 * (PI * 2.75 * 2.75 * 10.0 + ring(0.75) + ring(far));
+    let got = p.exact_bodies.0[0].measure_full().unwrap().volume;
+    assert!((got - want).abs() < 1e-4 * want, "{got} vs {want}");
+    let names: Vec<_> = p.exact_bodies.0[0].face_names.iter().flatten().collect();
+    for n in 1..=6 {
+        assert!(
+            names.iter().any(|x| x.ends_with(&format!(":CSink:{n}"))),
+            "{names:?}"
+        );
+        assert!(
+            names.iter().any(|x| x.ends_with(&format!(":FarCSink:{n}"))),
+            "{names:?}"
+        );
+    }
+}

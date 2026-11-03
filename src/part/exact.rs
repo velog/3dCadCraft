@@ -1074,6 +1074,15 @@ pub(super) fn blend(
     for (i, p) in picker.points(&bl.edges).map_err(User)? {
         points[i].push(p);
     }
+    // Cone at small rounds asked for where the size passes a round: the kernel's chamfer now
+    // builds such a loop, with sharp corners and no cone, so the option is reported first.
+    if bl.cone_corners {
+        let mut cone_needed = false;
+        let _ = loop_tools(bl, body, cur, &mut cone_needed);
+        if cone_needed {
+            return Err(User(CONE_NOT_YET.into()));
+        }
+    }
     match kernel_blend(bl, cur, &points) {
         // A size larger than an arc of the loop (a chamfer wider than the
         // fillet before it): the kernel's blend cannot shrink the arc away.
@@ -1893,6 +1902,7 @@ pub(super) fn hole(
     let points = body_points(body);
     let mut rays: Option<super::rib::Rays> = None;
     let (mut seats, mut bores) = (Vec::new(), Vec::new());
+    let mut jobs: Vec<ToolJob> = Vec::new();
     // 90° countersinks on a face square to the hole: the kernel's chamfer of
     // the bore's rim after the bores (36 holes 5 s instead of ~40 s with cone
     // tools, ROADMAP K4). Their cone tools are kept for Pattern / Mirror and
@@ -2029,52 +2039,28 @@ pub(super) fn hole(
         }
         let last = parts.len().saturating_sub(1);
         for (j, prof) in parts.iter().enumerate() {
-            let pts: Vec<[Real; 2]> = prof.iter().map(|x| x.0).collect();
-            let names: Vec<String> = prof.iter().map(|x| format!("{}:{n}", x.1)).collect();
-            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
             let seam = 0.2 + 0.613 * k as Real + 0.29 * j as Real;
-            // Countersinks (start and far side) as tapered discs: a cone of
-            // revolution sent the Boolean down a slow path (~1 s a hole).
-            let cone = prof.len() == 4
-                && prof[0].0[0] == 0.0
-                && prof[3].0[0] == 0.0
-                && matches!(prof[1].1, "CSink" | "FarCSink");
-            let tool = if cone {
-                // Start: wide end at the top (point 1), narrow inside the bore
-                // (point 2). Far side: wide below the far face (point 2).
-                let n: Vec<&str> = names.iter().map(String::as_str).collect();
-                let (wide, narrow, caps) = if prof[1].1 == "CSink" {
-                    (prof[1].0, prof[2].0, [n[0], n[1], n[2]])
-                } else {
-                    (prof[2].0, prof[1].0, [n[2], n[1], n[0]])
-                };
-                exact::cone_tool(
-                    *o,
-                    up,
-                    seam,
-                    (wide[0], wide[1]),
-                    (narrow[0], narrow[1]),
-                    caps,
-                    &h.id,
-                )
-                .or_else(|_| exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id))
-                .map_err(Kernel)?
-            } else {
-                exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id).map_err(Kernel)?
-            };
+            let cone = hole_cone(prof);
             let rim = match prof[1].1 {
                 "CSink" if cone => start_rim.take(),
                 "FarCSink" if cone => far_rim.take(),
                 _ => None,
             };
-            if j == last {
-                bores.push(tool);
-            } else if let Some(rim) = rim {
-                deferred.push(tool);
-                rims.push(rim);
-            } else {
-                seats.push(tool);
-            }
+            jobs.push(ToolJob {
+                origin: *o,
+                up,
+                seam,
+                prof: prof.clone(),
+                n,
+                class: if j == last {
+                    ToolClass::Bore
+                } else if let Some(rim) = rim {
+                    rims.push(rim);
+                    ToolClass::Deferred
+                } else {
+                    ToolClass::Seat
+                },
+            });
         }
         out.holes.push(HoleInstance {
             feature: h.id.clone(),
@@ -2152,6 +2138,14 @@ pub(super) fn hole(
             }
         }
     }
+    // The tools of revolution, in parallel (2 ms each, three a hole with countersinks at both ends).
+    for (job, tool) in jobs.iter().zip(hole_tools(&jobs, &h.id).map_err(Kernel)?) {
+        match job.class {
+            ToolClass::Bore => bores.push(tool),
+            ToolClass::Deferred => deferred.push(tool),
+            ToolClass::Seat => seats.push(tool),
+        }
+    }
     // Seats first, then the bores through their floors; each stage is one
     // Boolean (`combine` joins tools apart from each other). Both stages are
     // kept as tool sets, in that order, so Pattern / Mirror can copy holes.
@@ -2183,6 +2177,92 @@ pub(super) fn hole(
             Ok((next, out, sets))
         }
     }
+}
+
+/// Which stage of [`hole`] a tool of revolution belongs to.
+#[derive(Clone, Copy)]
+enum ToolClass {
+    Bore,
+    Seat,
+    /// A countersink cut only if its rim cannot be chamfered.
+    Deferred,
+}
+
+/// One tool of revolution of [`hole`].
+struct ToolJob {
+    origin: Point3,
+    up: crate::kernel::Vector3,
+    seam: Real,
+    prof: Vec<([Real; 2], &'static str)>,
+    n: usize,
+    class: ToolClass,
+}
+
+/// A countersink's profile (start or far side): a tapered disc on the axis.
+fn hole_cone(prof: &[([Real; 2], &str)]) -> bool {
+    prof.len() == 4
+        && prof[0].0[0] == 0.0
+        && prof[3].0[0] == 0.0
+        && matches!(prof[1].1, "CSink" | "FarCSink")
+}
+
+fn hole_tool(job: &ToolJob, id: &str) -> Result<ExactSolid, String> {
+    let (o, up, seam, prof) = (job.origin, job.up, job.seam, &job.prof);
+    let pts: Vec<[Real; 2]> = prof.iter().map(|x| x.0).collect();
+    let names: Vec<String> = prof.iter().map(|x| format!("{}:{}", x.1, job.n)).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    // Countersinks as tapered discs: a cone of revolution sent the Boolean down a slow path
+    // (~1 s a hole).
+    if hole_cone(prof) {
+        // Start: wide end at the top (point 1), narrow inside the bore (point 2). Far side: wide
+        // below the far face (point 2).
+        let (wide, narrow, caps) = if prof[1].1 == "CSink" {
+            (prof[1].0, prof[2].0, [refs[0], refs[1], refs[2]])
+        } else {
+            (prof[2].0, prof[1].0, [refs[2], refs[1], refs[0]])
+        };
+        exact::cone_tool(
+            o,
+            up,
+            seam,
+            (wide[0], wide[1]),
+            (narrow[0], narrow[1]),
+            caps,
+            id,
+        )
+        .or_else(|_| exact::revolved_tool(o, up, seam, &pts, &refs, id))
+    } else {
+        exact::revolved_tool(o, up, seam, &pts, &refs, id)
+    }
+}
+
+/// [`hole_tool`] of every job, in order, on as many threads as help.
+fn hole_tools(jobs: &[ToolJob], id: &str) -> Result<Vec<ExactSolid>, String> {
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(8);
+    if jobs.len() < 4 || threads < 2 {
+        return jobs.iter().map(|j| hole_tool(j, id)).collect();
+    }
+    let chunk = jobs.len().div_ceil(threads);
+    let parts: Vec<Result<Vec<ExactSolid>, String>> = std::thread::scope(|s| {
+        let handles: Vec<_> = jobs
+            .chunks(chunk)
+            .map(|c| s.spawn(move || c.iter().map(|j| hole_tool(j, id)).collect()))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err("a hole tool panicked".to_owned()))
+            })
+            .collect()
+    });
+    let mut out = Vec::with_capacity(jobs.len());
+    for p in parts {
+        out.extend(p?);
+    }
+    Ok(out)
 }
 
 /// The chamfers of [`hole`]'s rims, each on the solid whose box holds its
@@ -2689,6 +2769,9 @@ fn kernel_blend(
     Ok(out)
 }
 
+const CONE_NOT_YET: &str =
+    "Cone at small rounds is not supported yet for a blend larger than the round";
+
 /// Fillet / Chamfer of the whole outer loop of a planar face ("cap") whose
 /// walls are perpendicular to it, the loop convex, built from cutting tools:
 /// a wedge along every straight edge, extended past its ends, and a
@@ -2700,10 +2783,7 @@ fn loop_blend(bl: &BlendFeature, body: &BRep, cur: &[ExactSolid]) -> Result<Vec<
     let mut cone_needed = false;
     loop_tools(bl, body, cur, &mut cone_needed).map_err(|e| {
         if cone_needed {
-            User(
-                "Cone at small rounds is not supported yet for a blend larger than the round"
-                    .into(),
-            )
+            User(CONE_NOT_YET.into())
         } else {
             Kernel(e)
         }
@@ -2798,6 +2878,8 @@ fn loop_tools(
         .position(|(_, x)| x.shells.iter().any(|sh| sh.faces.contains(&cap)))
         .ok_or("the cap has no solid")?;
     let mut tools = Vec::new();
+    let mut ring_lines: Vec<RingLine> = Vec::new();
+    let mut any_arc_tool = false;
     for (k, &e) in loop_edges.iter().enumerate() {
         let x = body.edge(e).ok_or("edge missing")?;
         let (a, b) = (
@@ -2836,6 +2918,11 @@ fn loop_tools(
                 {
                     return Err("the loop is not convex".into());
                 }
+                ring_lines.push(RingLine {
+                    a,
+                    inward,
+                    face: face_name.clone(),
+                });
                 let n = inward.cross(&down);
                 let start = if n.dot(&t) > 0.0 { a } else { b };
                 let plane = Plane::new(start - n * ext, n, inward).map_err(|e| e.to_string())?;
@@ -2882,6 +2969,7 @@ fn loop_tools(
                 } else {
                     -1.0
                 };
+                any_arc_tool = true;
                 tools.push((
                     false,
                     exact::revolve(
@@ -2899,6 +2987,22 @@ fn loop_tools(
         }
     }
     let mut out = cur.to_vec();
+    // Only straight bevels (a chamfer wider than every round): one tool for all of them. A cut
+    // per edge took four Booleans, each dearer than the last, 823 ms on a rounded box.
+    if matches!(bl.kind, BlendKind::Chamfer { .. })
+        && !any_arc_tool
+        && let Ok(made) = ring_chamfer(
+            &out[solid],
+            &ring_lines,
+            down,
+            setback,
+            wall_setback,
+            &bl.id,
+        )
+    {
+        out[solid] = made;
+        return Ok(out);
+    }
     let mut s = out[solid].clone();
     // Arcs first: their cones touch the bevel planes along a line, which
     // the Booleans resolve on the original walls but not on a cut plane.
@@ -2918,6 +3022,113 @@ fn loop_tools(
     }
     out[solid] = s;
     Ok(out)
+}
+
+/// A straight edge of a blended loop, for [`ring_chamfer`].
+struct RingLine {
+    /// A point of the edge, on the cap.
+    a: Point3,
+    /// In the cap, into the loop.
+    inward: crate::kernel::Vector3,
+    /// The name its bevel takes.
+    face: String,
+}
+
+/// The chamfer of a convex loop of straight edges (the rounds between them narrower than the
+/// chamfer run through) as one cut: a ring round the loop whose inner walls are the bevel
+/// planes, run on past the cap and past the walls, its outer walls just clear of the part.
+/// `Err`: not such a loop, the caller cuts edge by edge.
+fn ring_chamfer(
+    solid: &ExactSolid,
+    lines: &[RingLine],
+    down: crate::kernel::Vector3,
+    setback: Real,
+    wall_setback: Real,
+    id: &str,
+) -> Result<ExactSolid, String> {
+    use crate::kernel::Plane;
+    use exact::PrismSeg;
+    use nalgebra::{Point2, Vector2};
+    let first = lines.first().ok_or("no straight edges")?;
+    if lines.len() < 3 {
+        return Err("too few edges for a closed polygon".into());
+    }
+    let e = 0.1 * (setback + wall_setback) + 0.01;
+    // One 2D frame on both planes, counter-clockwise about `down`.
+    let frame = Plane::new(first.a, down, first.inward).map_err(|x| x.to_string())?;
+    let flat = |p: Point3| {
+        let q = frame.project(&p);
+        Point2::new(q.x, q.y)
+    };
+    // Each line in the frame: a point, the way it runs (the inside on its left), the inward
+    // normal, its bevel's name; in order round the loop (convex: by the angle it runs at).
+    let mut around: Vec<_> = lines
+        .iter()
+        .map(|l| {
+            let u = flat(first.a + l.inward) - flat(first.a);
+            (flat(l.a), Vector2::new(u.y, -u.x), u, l.face.as_str())
+        })
+        .collect();
+    around.sort_by(|p, q| p.1.y.atan2(p.1.x).total_cmp(&q.1.y.atan2(q.1.x)));
+    let n = around.len();
+    // The polygon of every line moved in by `inset`; corner i joins lines i - 1 and i.
+    let polygon = |inset: Real| -> Result<Vec<Point2<Real>>, String> {
+        (0..n)
+            .map(|i| {
+                let (p0, t0, u0, _) = around[(i + n - 1) % n];
+                let (p1, t1, u1, _) = around[i];
+                let (a, b) = (p0 + u0 * inset, p1 + u1 * inset);
+                let den = t0.x * t1.y - t0.y * t1.x;
+                if den.abs() < 1e-9 {
+                    return Err("two neighbouring edges are parallel".to_owned());
+                }
+                let w = b - a;
+                Ok(a + t0 * ((w.x * t1.y - w.y * t1.x) / den))
+            })
+            .collect()
+    };
+    // The bevel's inset at a depth below the cap, on its line through both setbacks.
+    let inset_at = |q: Real| setback * (1.0 - q / wall_setback);
+    let (q0, q1) = (-e, wall_setback + e);
+    let (top, bottom) = (polygon(inset_at(q0))?, polygon(inset_at(q1))?);
+    // Above the cap the polygon must still be the same polygon: every edge running its own way.
+    for (i, item) in around.iter().enumerate() {
+        if (top[(i + 1) % n] - top[i]).dot(&item.1) <= 1e-9 {
+            return Err("the chamfer closes the loop".into());
+        }
+    }
+    // Outside: the lines moved out past the widest the bevel gets.
+    let outer = polygon(-(setback * e / wall_setback + e))?;
+    let ccw = |v: &[Point2<Real>]| -> Vec<PrismSeg> {
+        (0..n)
+            .map(|i| PrismSeg::Line(v[i], v[(i + 1) % n]))
+            .collect()
+    };
+    // Clockwise: side k runs line n - k - 1 backwards.
+    let cw = |v: &[Point2<Real>]| -> Vec<PrismSeg> {
+        (0..n)
+            .map(|k| PrismSeg::Line(v[(n - k) % n], v[n - k - 1]))
+            .collect()
+    };
+    let loops = vec![(ccw(&outer), ccw(&outer)), (cw(&top), cw(&bottom))];
+    let start = Plane::new(first.a + down * q0, down, first.inward).map_err(|x| x.to_string())?;
+    let end = Plane::new(first.a + down * q1, down, first.inward).map_err(|x| x.to_string())?;
+    let prefix = format!("{id}#r");
+    let tool = exact::prism_between(&loops, &start, &end, &prefix)?;
+    let mut made = exact::boolean(solid, &tool, ExactOp::Cut)?.ok_or("nothing is left")?;
+    let head = format!("{prefix}:Side:");
+    for name in made.face_names.iter_mut().flatten() {
+        // The sides after the outer loop's n are the bevels.
+        if let Some(k) = name
+            .strip_prefix(&head)
+            .and_then(|k| k.parse::<usize>().ok())
+            .and_then(|k| k.checked_sub(n))
+            && let Some(line) = around.get(n.wrapping_sub(k + 1))
+        {
+            *name = format!("{id}:{}", line.3);
+        }
+    }
+    Ok(made)
 }
 
 /// A straight-sided section cut to `x <= xmax` (Sutherland-Hodgman); the
@@ -4078,7 +4289,7 @@ pub(super) fn sheet_op(
             let mut rips = c.rips.clone();
             rips.push(rip);
             match ksm::recognize(&c.solid, &c.prefix, &rv, c.face, &rips).map_err(User)? {
-                ksm::Recognized::Sheet(solid, model) => Ok(replace(k, solid, model, body)),
+                ksm::Recognized::Sheet(solid, model) => Ok(replace(k, *solid, model, body)),
                 ksm::Recognized::Closed { model, loops } => {
                     let closed = ClosedSheet {
                         rips,
@@ -4557,7 +4768,7 @@ pub(super) fn sheet_convert(
             ksm::Recognized::Sheet(solid, model) => {
                 let faces = solid.face_names.len();
                 let mut next = solids.to_vec();
-                next[k] = solid;
+                next[k] = *solid;
                 Ok((next, SheetState::new(model, faces)))
             }
             // Converted as it is; a Rip opens it (Inventor's flat pattern fails until then).

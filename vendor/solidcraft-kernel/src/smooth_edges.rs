@@ -250,6 +250,27 @@ mod tests {
         crate::extrude(&Plane::XY, &[Region2 { outer: circle(10., count), holes: vec![circle(9., count).reversed()] }], 0., 3.).unwrap().remove(0)
     }
 
+    /// A square sheet with a round hole a closed curve cut (its loop one closed edge) is
+    /// classified without a check refusing the closed edge (a panic the guard would catch).
+    #[test]
+    fn a_hole_of_one_closed_edge_is_classified() {
+        let sheet = crate::patch_region(
+            &Plane::XY,
+            &Region2 {
+                outer: Loop2::polygon(&[Vec2::new(-10., -10.), Vec2::new(10., -10.), Vec2::new(10., 10.), Vec2::new(-10., 10.)]),
+                holes: vec![],
+            },
+        )
+        .unwrap();
+        let ring: Vec<Seg2> = circle(4., 8).segs;
+        let tool = crate::SplitTool::Curves { plane: Plane::XY, curves: vec![ring], along: None };
+        let holed = crate::trim(&sheet, &tool, Vec3::new(9., 9., 0.)).unwrap();
+        assert!(holed.solid.edge_iter().any(|e| e.front().id() == e.back().id()), "a closed edge");
+        let mesh = holed.tessellate(0.02).unwrap();
+        let (smooth, sharp) = classify(&holed, &mesh, WORK);
+        assert_eq!((smooth.len(), sharp.len()), (mesh.edges.len(), mesh.edges.len()));
+    }
+
     #[test]
     fn periodic_ring_hides_only_whole_smooth_wall_joins() {
         let body = ring(256);

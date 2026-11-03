@@ -1872,7 +1872,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "matext4cgmath"
 version = "0.1.0"
-source = "git+https://github.com/bherbruck/solidcraft?rev=4687e3b0734e41d761be0d0a2611e5402f088348#4687e3b0734e41d761be0d0a2611e5402f088348"
+source = "git+https://github.com/tangency-labs/solidcraft?rev=d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516#d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516"
 dependencies = [
  "cgmath",
  "katexit",
@@ -3341,8 +3341,8 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-geom"
-version = "0.9.0"
-source = "git+https://github.com/bherbruck/solidcraft?rev=4687e3b0734e41d761be0d0a2611e5402f088348#4687e3b0734e41d761be0d0a2611e5402f088348"
+version = "0.28.0"
+source = "git+https://github.com/tangency-labs/solidcraft?rev=d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516#d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -3364,17 +3364,20 @@ dependencies = [
  "truck-shapeops",
  "truck-stepio",
  "truck-topology",
+ "web-time",
 ]
 
 [[package]]
 name = "solidcraft-sketch"
-version = "0.9.0"
-source = "git+https://github.com/bherbruck/solidcraft?rev=4687e3b0734e41d761be0d0a2611e5402f088348#4687e3b0734e41d761be0d0a2611e5402f088348"
+version = "0.28.0"
+source = "git+https://github.com/tangency-labs/solidcraft?rev=d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516#d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516"
 dependencies = [
+ "harfrust",
  "serde",
  "solidcraft-geom",
  "thiserror 2.0.21",
  "ttf-parser",
+ "unicode-bidi",
 ]
 
 [[package]]
@@ -3670,8 +3673,6 @@ dependencies = [
 [[package]]
 name = "truck-geometry"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d9d85f203fdbc2d206a38b8e7c4417a05a2eb589be8b81ecfe9f98faafc425d"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
@@ -3695,7 +3696,7 @@ dependencies = [
 [[package]]
 name = "truck-meshalgo"
 version = "0.4.0"
-source = "git+https://github.com/bherbruck/solidcraft?rev=4687e3b0734e41d761be0d0a2611e5402f088348#4687e3b0734e41d761be0d0a2611e5402f088348"
+source = "git+https://github.com/tangency-labs/solidcraft?rev=d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516#d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516"
 dependencies = [
  "array-macro",
  "derive_more",
@@ -3705,6 +3706,7 @@ dependencies = [
  "spade",
  "truck-base",
  "truck-geometry",
+ "truck-modeling",
  "truck-polymesh",
  "truck-topology",
 ]
@@ -3712,8 +3714,6 @@ dependencies = [
 [[package]]
 name = "truck-modeling"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8082c2dfac8c2732a014d81807fb5d24dbac0d72ee4de2a705b7fbc05fa05b18"
 dependencies = [
  "derive_more",
  "rustc-hash 2.1.3",
@@ -3745,7 +3745,7 @@ dependencies = [
 [[package]]
 name = "truck-shapeops"
 version = "0.4.0"
-source = "git+https://github.com/bherbruck/solidcraft?rev=4687e3b0734e41d761be0d0a2611e5402f088348#4687e3b0734e41d761be0d0a2611e5402f088348"
+source = "git+https://github.com/tangency-labs/solidcraft?rev=d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516#d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516"
 dependencies = [
  "derive_more",
  "itertools 0.13.0",
@@ -3760,7 +3760,7 @@ dependencies = [
 [[package]]
 name = "truck-stepio"
 version = "0.3.0"
-source = "git+https://github.com/bherbruck/solidcraft?rev=4687e3b0734e41d761be0d0a2611e5402f088348#4687e3b0734e41d761be0d0a2611e5402f088348"
+source = "git+https://github.com/tangency-labs/solidcraft?rev=d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516#d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516"
 dependencies = [
  "chrono",
  "truck-geometry",
@@ -3825,6 +3825,12 @@ dependencies = [
  "tempfile",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
 name = "unicode-bidi-mirroring"

@@ -2,9 +2,9 @@
 
 ## `solidcraft-kernel`
 
-SolidCraft's kernel crate (https://github.com/bherbruck/solidcraft, now tangency-labs/solidcraft),
-commit `4687e3b0734e41d761be0d0a2611e5402f088348`, MIT OR Apache-2.0 (`LICENSE-MIT`,
-`LICENSE-APACHE`), used through `[patch."https://github.com/bherbruck/solidcraft"]` in our
+SolidCraft's kernel crate (https://github.com/tangency-labs/solidcraft),
+commit `d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516`, MIT OR Apache-2.0 (`LICENSE-MIT`,
+`LICENSE-APACHE`), used through `[patch."https://github.com/tangency-labs/solidcraft"]` in our
 `Cargo.toml`. `src/` is the original apart from the changes below (each with a comment saying
 why); `Cargo.toml` spells out the original's workspace inheritance. Everything
 else (`solidcraft-geom`, the truck crates) still comes from the pinned commit.
@@ -47,6 +47,14 @@ A fix (not about speed): a chamfer of a concave straight edge went the wrong way
 |---|---|---|
 | `blend.rs` `edge_frame` | its convexity test could never fail (the directions were turned to pass it just before), so a concave edge got a convex edge's cutter; now each face's interior side comes from its boundary, as `blend_one` does | an L's inner edge, 1 mm: −102 mm³ → +15 mm³ (the same bug on the d4eeedb pin ends in a refusal there) |
 
+Speed of every general Boolean: what comes after the intersection cost more than the intersection
+(a cut over a rounded box: 122 ms in truck, 579 ms in the result's assembly).
+
+| File | Change | Effect |
+|---|---|---|
+| `heal.rs` `analytic_curve`, `ellipse_arc` | a plane meeting a plane or a cylinder is written from the surfaces (a line, a circle, an ellipse as exact rational quadratics), three samples checking it, instead of 17 samples of the intersection curve; other pairs are fitted as before | heal 260 → 99 ms; an ellipse no longer stays an intersection curve, so the checks after it cost nothing: result mesh 59 → 5 ms, edge reach 72 → 0 ms |
+| `boolean_record.rs` `edges_evaluate` | each edge once (`edge_iter` gives a shared edge once per face), and only intersection curves | 283 → 0 ms on that cut |
+
 An addition for Thicken/Offset's Allow Approximation (`docs/spec/2.14-thicken-offset.md`):
 
 | File | Change | Effect |
@@ -74,6 +82,32 @@ already does without its own matching).
 Kernel tests (`cargo test -p solidcraft-kernel --release` in a SolidCraft checkout with this
 `src/`): 476 pass; `issue_851_tests::arc_top_edge_sizes_never_panic` fails on Windows with the
 original source as well.
+
+A fix made when the pin moved to `d4eeedb` (the upstream commit has the defect):
+
+| File | Change | Effect |
+|---|---|---|
+| `coplanar.rs` `tool_past_flush_faces`, `ops.rs` `boolean_whole` (before the shifted tries), `whole_face.rs` `traced_onto` (visible in the crate) | a prism tool of a Cut flush with a face of the target, whose faces could not be pushed apart, is swept again from its end face past that face (history kept) before the shifted tries and the nudge: a nudged tool left a skin over the hole, a hair off the face, which `has_skin` cannot see | a bore through a tee pipe: 9 faces and the right area (was 10 faces, area 5 % too large, the same volume) |
+| `polyhedron.rs` `shell_convex`, `sew_cavity` | a convex body with analytic faces is shelled by sewing its faces, their offsets and a rim round each open face (the barrel's construction, generalised), checked against the tangent planes at its edges; anything else still goes through the cavity's Cut | shell of a chamfered rounded box 320 ms → 90 ms, and right: the pushed-out cavity took 2.5 % too much |
+| `ops.rs` `conical_cut_junction` | the finer tolerance for cuts between conical bodies only for a tool under half the target's size (a countersink, a pattern's copy) | shell of a chamfered rounded box: the cavity's Cut 4 s → 0.3 s |
+| `prism.rs` `simple_prism_indexed` | an intersection whose section is one operand's whole section leaves the 2D route only when the heights say the result is that operand too | a cylinder tangent to a box's walls, longer than the box: 1.7 s by a nudged tool → 25 ms, exact |
+| `blend.rs` `chamfer_loops` (exported), `record.rs` `rebuilt_placed`, `body.rs` `face_corners` | equal chamfers of whole loops of planar faces by editing the faces (`loopblend`), the loop found on the edge curves, no Boolean, no mesh of the whole body per rim | 6 holes countersunk at both ends: 954 ms to 134 ms; 36 holes 3.2 s to 0.86 s |
+| `blend.rs` `blend_wires` (in `chamfer`, `fillet`), `loopblend.rs` `one_circle`, edges by joint vertex, walls in one walk | a pick on a whole circle is blended by the same face edit, when the band it takes of the face is clear of the face's other boundaries (which stands in for `blend_fit`'s checks); `loopblend` no longer walks the whole body per joint | chamfer of 6 / 12 / 36 picked hole rims: 318 / 625 / 2049 ms to 85 / 177 / 541 ms; one rim's edit at 222 faces 12 ms to about 5 ms |
+| `blend_fit.rs` `meshed_volumes` (in `right_way`, `volume_in`) | a mesh at 1e-4 of the size, with its sag as the slack, before the full measure; only an unclear result is measured | a chamfer chain round a rounded box: the check 296 ms → a few ms (the chamfer itself 65 ms) |
+
+An addition for library fasteners (`docs/spec/6.3-content-center.md` §6.0b); not proposed upstream yet:
+
+| File | Change | Effect |
+|---|---|---|
+| `axial.rs` (new), `lib.rs` export | `axial_stack`: a stepped body about Z from its meridian's runs (turned chains of lines and arcs, polygon prisms, a cone cut on a prism's end meeting each flat in one exact rational quadratic), the runs' rings joined by planar faces that keep their edges; a new function, nothing else in the crate changes | ISO 4017 M8 x 30: 234 ms → 4.2 ms; chamfered: 1465 ms → 7 ms; orientation read off the lowest planar face (`Body::new_placed`), no mesh |
+
+
+A fix (not about speed): a chamfer of a concave straight edge went the wrong way.
+
+| File | Change | Effect |
+|---|---|---|
+| `blend.rs` `edge_frame` | its convexity test could never fail (the directions were turned to pass it just before), so a concave edge got a convex edge's cutter; now each face's interior side comes from its boundary, as `blend_one` does | an L's inner edge, 1 mm: −102 mm³ → +15 mm³ (the same bug on the d4eeedb pin ends in a refusal there) |
+
 
 ## `solidcraft-doc`
 
@@ -116,3 +150,26 @@ to `assets/` and their paths point there.
 | `surfaces.rs` `bridge_loops` (corner fade) | Loft Tangent between whole boundaries: the change that makes two bridges share a corner curve is faded in over the last 15 % of each reach row (moving the end point alone kinked the row and twisted the bridge next to the corner) | smoother corners of tangent lofts (spec 5.4a F6) |
 | `surfaces.rs` `bspline_sheet`, `bspline_tube` | Freeform: a clamped cubic B-spline sheet whose control net is a cage, and a tube closed (C2) around (the first three rings repeated, uniform knots, the period cut into two clamped faces sharing their seams) | Freeform Plane / Cylinder (spec 5.5) |
 | `splitface.rs` `cornered_fit`, `fit_kinked` (in `fit_on`) | sketch curves with corners splitting a curved face: each corner put in exactly (the face's point over it along the sketch's normal) and the split line kinked there, instead of the spline through the traced points rounding it | Trim of a curved surface by a closed sketch rectangle (spec 5.4a T2) |
+| `body.rs` `Body::edges` → `edge_polylines`; `blend.rs` `chamfer_tool_sides` (one mesh for its probes) | the edges a mesh would have, divided the same way without meshing a face (looking up the edge nearest a point was most of a blend's meshes); a chamfer tool's seven inside probes share one mesh. The polylines were compared with the mesh's, bit for bit, on all 5996 calls of the whole test suite | 8 edges filleted 55 → 37 ms, chamfered chain of 8 round a rounded top 74 → 38 ms, fillet chain 56 → 42 ms, 4 edges chamfered 38 → 32 ms |
+| `body.rs` `mesh_shells_within` (shells side by side); `ops.rs` `union_apart_untimed` (tools' boxes side by side), `join_pieces`; `record.rs` `rebuilt_blend` (all blends in `blend.rs`) | a body of many pieces meshes its shells in parallel; pieces and closed blends of oriented bodies are not meshed again to orient them (open shells still are): the check that would have turned them gave a positive volume on all 1182 calls of the whole test suite, and STEP and stitched solids are tested through them. A closed solid already inside out (`new_placed` with a wrong flag) is not turned here | 36 hole rims 331 → 256 ms, 8 edges filleted 37 → 33 ms, chamfered chain 38 → 34 ms, fillet chain 42 → 37 ms, a cabinet side with 32 shelf-pin tools 435 → 301–316 ms |
+
+## `truck-geometry`, `truck-modeling`
+
+truck (https://github.com/ricosjp/truck, RICOS Co. Ltd., Apache-2.0, `LICENSE`), used through
+`[patch.crates-io]` in our `Cargo.toml`: `truck-geometry` 0.5.0 as SolidCraft's fixed copy at commit
+`d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516` (its `vendor/truck-geometry`), `truck-modeling` 0.6.0 as
+published. Originals apart from the changes below; drop them when the pin moves to a commit that
+has them.
+
+A nearest-point search without a hint evaluates a whole grid of surface points on every call:
+51 × 51 for a NURBS surface, 101 × 101 for a revolved one (`truck-modeling` does not call
+`RevolutedCurve`'s own search there). A Boolean asks this for each point of its intersection curves.
+
+| File | Change | Effect |
+|---|---|---|
+| `truck-geometry/src/presearch_grid.rs` (new), `nurbs/nurbssurface.rs` `presearch_kept`, `truck-modeling/src/geometry.rs` `revolved_presearch` | the grid is kept per thread for the surfaces searched last (16 NURBS, 8 revolved straight lines: about 3 MB a thread); the same points in the same order give the same answer | wider chamfer 311 → 115 ms, turned tool's Cut 582 → 127 ms, hexagon and shank's Join 100 → 46 ms |
+
+The answers were compared with the plain search, bit for bit, on every search of the whole test
+suite (1 013 381, no difference). The crates' own tests keep that comparison; they are outside the
+workspace, so run them from each crate's folder: `cargo test --lib presearch` in `truck-geometry`, and in
+`truck-modeling` with `--config 'patch.crates-io.truck-geometry.path="../truck-geometry"'`.

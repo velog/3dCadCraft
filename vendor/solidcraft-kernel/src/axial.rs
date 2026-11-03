@@ -117,7 +117,7 @@ pub fn axial_stack(runs: &[AxialRun], first_cap: Option<usize>, closed: bool) ->
         // Which way the shell turned is read off its lowest planar face, whose outside faces -Z:
         // meshing the body for its volume's sign was most of a domed nut's time.
         let body = match bottom_faces_out(&solid) {
-            Some(out) => Body::new_placed(solid, !out, None)?,
+            Some(out) => Body::new_placed(solid, !out, None, false)?,
             None => Body::new(solid)?,
         };
         record::attach(body, &[], Some(history), Default::default())

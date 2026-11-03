@@ -146,8 +146,9 @@ pub(crate) fn build_placed(
     edges: Option<&HashMap<mt::EdgeID, Vec<EdgeOrigin>>>,
     flip: bool,
     coarse: Option<(f64, usize)>,
+    phased: bool,
 ) -> Result<Body> {
-    Ok(traced(Body::new_placed(solid, flip, coarse)?, counts, faces, edges))
+    Ok(traced(Body::new_placed(solid, flip, coarse, phased)?, counts, faces, edges))
 }
 
 /// The origins of `body`'s edges by identity, from its history `h` (edges in its edge order).
@@ -366,6 +367,24 @@ pub(crate) fn solid_counts(operands: &[&Solid]) -> Vec<(usize, usize)> {
 pub(crate) fn rebuilt(result: Solid, operands: &[&Solid], rec: &Rebuild) -> Result<Body> {
     let (faces, edges) = rec.history(&result, operands).unzip();
     build(result, &solid_counts(operands), faces, edges.as_ref())
+}
+
+/// [`rebuilt`] of a local edit of an oriented body: it stays oriented, so the whole is not meshed
+/// to check (3DCadCraft).
+pub(crate) fn rebuilt_placed(result: Solid, operands: &[&Solid], rec: &Rebuild) -> Result<Body> {
+    let (faces, edges) = rec.history(&result, operands).unzip();
+    build_placed(result, &solid_counts(operands), faces, edges.as_ref(), false, None, true)
+}
+
+/// [`rebuilt`] of a blend of an oriented body whose new faces have not been turned from their
+/// seams yet; it stays oriented too (3DCadCraft: 10 % of a fillet of 8 edges). Only a closed
+/// result: an open shell (a surface body) has no outward side it was oriented by.
+pub(crate) fn rebuilt_blend(result: Solid, operands: &[&Solid], rec: &Rebuild) -> Result<Body> {
+    if result.boundaries().iter().any(|s| s.shell_condition() != mt::ShellCondition::Closed) {
+        return rebuilt(result, operands, rec);
+    }
+    let (faces, edges) = rec.history(&result, operands).unzip();
+    build_placed(result, &solid_counts(operands), faces, edges.as_ref(), false, None, false)
 }
 
 /// [`rebuilt`] for a body made as it is (a surface, which `Body::new` does not take): its

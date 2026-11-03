@@ -1239,7 +1239,7 @@ impl SheetBody {
             }
             ctrl.extend([p0 + d0 * (h / 3.0), p1 - d1 * (h / 3.0), p1]);
         }
-        EdgeSpec::Chain { ctrl: ctrl.into() }
+        EdgeSpec::Chain { degree: 3, ctrl: ctrl.into() }
     }
 
     /// A flat edge of a piece as a 3D edge at height `z`.
@@ -1853,7 +1853,7 @@ impl SheetBody {
 
     /// Bounding size of the flat pattern (x, y in the flat frame).
     pub fn flat_size(&self) -> Result<(f64, f64)> {
-        let loops: Vec<Vec<Vec2>> = self.flat_regions()?.iter().map(|r| r.outer.polyline(1e-3)).collect();
+        let loops: Vec<Vec<Vec2>> = self.flat_regions()?.iter().map(|r| r.outer.polyline(1e-3).into_vec()).collect();
         let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
         for p in loops.iter().flatten() {
             lo = Vec2::new(lo.x.min(p.x), lo.y.min(p.y));

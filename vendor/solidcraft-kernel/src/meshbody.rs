@@ -41,6 +41,17 @@ impl TriMesh {
     }
 
     /// Distinct undirected triangle sides.
+    /// The diagonal of the box around the vertices: a mesh body's size ([`Body::size`]),
+    /// measured once when the body is made. 0 when it has none.
+    pub(crate) fn span(&self) -> f64 {
+        let mut b = solidcraft_geom::Aabb3::EMPTY;
+        for p in &self.positions {
+            b.add(*p);
+        }
+        let d = b.diagonal();
+        if d.is_finite() && d > 0.0 { d } else { 0.0 }
+    }
+
     pub(crate) fn edge_count(&self) -> usize {
         let mut set = std::collections::HashSet::new();
         for t in &self.triangles {
@@ -103,7 +114,8 @@ pub fn mesh_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
     }
     Ok(Body {
         solid: Arc::new(crate::body::Solid::new_unchecked(Vec::new())),
-        size: 0.0,
+        size: out.span(),
+        boundary_tol: None,
         volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
         coarse_missing: None,
         mesh: Some(Arc::new(out)),
@@ -112,6 +124,9 @@ pub fn mesh_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
         splits: None,
         face_sources: None,
         history: None,
+        display_of: None,
+        meshes: None,
+        phased: false,
         regularization_protected: false,
     })
 }
@@ -199,7 +214,8 @@ impl Body {
         }
         Some(Body {
             solid: self.solid.clone(),
-            size: 0.0,
+            size: out.span(),
+            boundary_tol: None,
             volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
             coarse_missing: None,
             mesh: Some(Arc::new(out)),
@@ -208,6 +224,9 @@ impl Body {
             splits: self.splits.clone(),
             face_sources: None,
             history: None,
+            display_of: None,
+            meshes: None,
+            phased: false,
             regularization_protected: self.regularization_protected,
         })
     }

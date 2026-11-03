@@ -169,7 +169,11 @@ pub fn trim(s: &ExactSolid, tool: &TrimBy, keep: Point3) -> Result<ExactSolid, S
             guarded("trim", || {
                 sk::trim(
                     &s.body,
-                    &sk::SplitTool::Curves { plane: pl, curves },
+                    &sk::SplitTool::Curves {
+                        plane: pl,
+                        curves,
+                        along: None,
+                    },
                     v3(&keep),
                 )
             })?

@@ -933,11 +933,13 @@ pub fn view_lines_simplified(
         }
     }
     lap("edges");
+    let silhouettes_from = curves.len();
     for s in silhouettes(model, &t) {
         for part in clip_curve(&s) {
             curves.push((part, None));
         }
     }
+    let silhouette_curves = silhouettes_from..curves.len();
     if let Some(c) = cut_depth {
         let lift =
             |q: &[f64; 2]| Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * c);
@@ -973,7 +975,11 @@ pub fn view_lines_simplified(
     let step = diag / 600.0;
     // Every curve cut into short pieces, each classified by its middle (on
     // every core: the curves are independent).
-    let classify = |c: &Vec<Point3>| {
+    // A silhouette has the outside of its body on one side: covered at its own point by a
+    // neighbouring facet of the same curved face (the mesh's sag at a joint of faces) it is
+    // still seen, while another body in front covers both sides of it.
+    let aside = (diag * 1e-3).max(0.05);
+    let classify = |c: &Vec<Point3>, silhouette: bool| {
         let mut list = Vec::new();
         for w in c.windows(2) {
             let (a, b) = (w[0], w[1]);
@@ -988,8 +994,17 @@ pub fn view_lines_simplified(
                 let s1 = (k + 1) as f64 / n as f64;
                 let mid = a + (b - a) * ((s0 + s1) * 0.5);
                 let (m2, md) = (p2(&mid), dp(&mid));
-                let hidden =
-                    grid.as_ref().is_some_and(|g| g.hidden(m2, md, eps)) || behind_cap(m2, md);
+                let (nx, ny) = (
+                    -(b2[1] - a2[1]) / len * aside,
+                    (b2[0] - a2[0]) / len * aside,
+                );
+                let hidden = behind_cap(m2, md)
+                    || grid.as_ref().is_some_and(|g| {
+                        g.hidden(m2, md, eps)
+                            && (!silhouette
+                                || (g.hidden([m2[0] + nx, m2[1] + ny], md, eps)
+                                    && g.hidden([m2[0] - nx, m2[1] - ny], md, eps)))
+                    });
                 if hidden && simplify.no_hidden {
                     continue;
                 }
@@ -1002,7 +1017,14 @@ pub fn view_lines_simplified(
         }
         list
     };
-    let pieces: Vec<Vec<Piece>> = par_map(&curves, |(c, _)| classify(c));
+    let indexed: Vec<(usize, &Vec<Point3>)> = curves
+        .iter()
+        .enumerate()
+        .map(|(i, (c, _))| (i, c))
+        .collect();
+    let pieces: Vec<Vec<Piece>> = par_map(&indexed, |(i, c)| {
+        classify(c, silhouette_curves.contains(i))
+    });
     lap("classify");
     // A piece lying on a visible one is not drawn again, and a hidden piece
     // on a visible one not at all (the visible line wins, as on paper).

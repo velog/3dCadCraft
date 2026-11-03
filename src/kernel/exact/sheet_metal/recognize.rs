@@ -508,7 +508,7 @@ fn rip_cut(b: &BRep, rip: &Rip, t: Real) -> Result<RipCut, String> {
 /// What [`recognize`] found.
 pub enum Recognized {
     /// The sheet: its solid and model.
-    Sheet(ExactSolid, SheetModel),
+    Sheet(Box<ExactSolid>, SheetModel),
     /// A closed shape: `loops` bends close a loop, so it needs a rip before
     /// it can unfold (Inventor converts it, its flat pattern fails). `model`
     /// is the sheet walked without those bends (no solid of it is made).
@@ -792,7 +792,7 @@ pub fn recognize(
         ));
     }
     s.name = solid.name.clone();
-    Ok(Recognized::Sheet(s, SheetModel(Arc::new(sheet))))
+    Ok(Recognized::Sheet(Box::new(s), SheetModel(Arc::new(sheet))))
 }
 
 fn point_in(poly: &[Vec2], p: Vec2) -> bool {

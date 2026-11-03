@@ -40,11 +40,11 @@ slotmap = { version = "1.1", features = ["serde"] }
 
 # Exact B-rep kernel: SolidCraft's kernel crate (MIT OR Apache-2.0, built on
 # truck, Apache-2.0), pinned to a reviewed commit. See ATTRIBUTION.md.
-solidcraft-kernel = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
-solidcraft-geom = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
 # Sheet metal (5.6): SolidCraft's sheet body model (flat pattern, bends, flanges),
 # reached only through `kernel::exact::sheet_metal`. See ATTRIBUTION.md.
-solidcraft-doc = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
 
 # --- Serialization (file format + JSON-RPC/MCP payloads) -------------------
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -104,13 +104,15 @@ codegen-units = 1
 
 # SolidCraft's fixed copies of truck crates (see its vendor/README.md).
 [patch.crates-io]
-truck-shapeops = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
-truck-stepio = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
-truck-meshalgo = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
-matext4cgmath = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+truck-geometry = { path = "vendor/truck-geometry" }
+truck-modeling = { path = "vendor/truck-modeling" }
+truck-shapeops = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+truck-stepio = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+truck-meshalgo = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+matext4cgmath = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
 
 # SolidCraft's kernel with our speed fixes for large patterns (vendor/README.md, ATTRIBUTION.md):
 # the commit pinned above plus a small patch; drop this when the fixes are upstream.
-[patch."https://github.com/bherbruck/solidcraft"]
+[patch."https://github.com/tangency-labs/solidcraft"]
 solidcraft-kernel = { path = "vendor/solidcraft-kernel" }
 solidcraft-doc = { path = "vendor/solidcraft-doc" }
