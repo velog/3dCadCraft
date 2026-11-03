@@ -469,3 +469,24 @@ pub(in crate::part) fn apply_fillets(
     }
     Ok(out)
 }
+
+/// Tools that touch each other as one solid per group: the body (slow once it has rounds) then
+/// meets one tool instead of each in turn.
+pub(super) fn one_tool(tools: Vec<ExactSolid>) -> Result<Vec<ExactSolid>, Fail> {
+    let mut out: Vec<ExactSolid> = Vec::new();
+    for mut t in tools {
+        let mut k = 0;
+        while k < out.len() {
+            if exact::meets(&out[k], &t) {
+                t = exact::boolean(&out[k], &t, exact::ExactOp::Union)
+                    .map_err(Fail::Kernel)?
+                    .ok_or_else(|| Fail::Kernel("joining the tools left nothing".into()))?;
+                out.remove(k);
+            } else {
+                k += 1;
+            }
+        }
+        out.push(t);
+    }
+    Ok(out)
+}

@@ -201,6 +201,10 @@ pub struct BossOp {
     /// Stiffening ribs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ribs: Option<BossRibs>,
+    /// The tools are joined to each other before they meet the body (faster on a body with rounds;
+    /// coplanar faces of the tools merge). Off in files saved before it: their face names stay.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub join_first: bool,
 }
 
 impl BossOp {
@@ -218,6 +222,7 @@ impl BossOp {
             outer_draft: 0.0,
             fillet: 0.0,
             ribs: None,
+            join_first: true,
         }
     }
 
@@ -549,7 +554,12 @@ pub(in crate::part) fn boss(
     }
     let ribs: Vec<ExactSolid> = ribs.into_iter().flatten().collect();
     if !ribs.is_empty() {
-        out = combine(out, ribs, Operation::Join, &op.solids, false)?;
+        let tools = if op.join_first {
+            common::one_tool(ribs)?
+        } else {
+            ribs
+        };
+        out = combine(out, tools, Operation::Join, &op.solids, false)?;
     }
     if !cut.is_empty() {
         out = combine(out, cut, Operation::Cut, &op.solids, false)?;

@@ -393,6 +393,10 @@ impl CadCraftApp {
             // The pattern command's Features selector takes browser rows.
             BrowserCmd::Select(Selection::Feature(k))
                 if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
+            // Rule Fillet's feature selectors and the plastic commands' sketch selectors take
+            // browser rows.
+            BrowserCmd::Select(Selection::Feature(k)) if self.plastic_pick_feature(k) => {}
+            BrowserCmd::Select(Selection::Sketch(i)) if self.plastic_pick_sketch(i) => {}
             // Thicken's Quilts / Solids selectors take body rows too.
             BrowserCmd::CommandPick(
                 super::combine_split::BodyPick::Surface(n)

@@ -95,87 +95,57 @@ const RULES: &[&str] = &[
     "Against Features",
     "Incident Edges",
 ];
-const RULE_ROW_1: &[Row] = &[
-    Radio("Source", &["Features", "Faces"], 0),
-    Sel(
-        "src1",
-        "Selection",
-        "Select the features or faces of this rule",
-        FEATURES,
-    ),
-    Combo("Rule", RULES, 1),
-    Sel(
-        "scope1",
-        "Scope",
-        "Select the features of the scope (Against Features)",
-        FEATURES,
-    ),
-    Sel(
-        "axis1",
-        "Axis",
-        "Select the axis (Incident Edges)",
-        DIRECTION,
-    ),
-    Check("Flip Axis", false),
-    Num("Tolerance", 1.0, "°"),
-    Num("Radius", 1.0, " mm"),
-    Check("All Rounds", true),
-    Check("All Fillets", true),
+/// One rule of Rule Fillet (a tab of its own).
+macro_rules! rule_row {
+    ($src:literal, $scope:literal, $axis:literal) => {
+        &[
+            Check(USE_RULE, true),
+            Radio("Source", &["Features", "Faces"], 0),
+            Sel(
+                $src,
+                "Selection",
+                "Select the features or faces of this rule",
+                FEATURES,
+            ),
+            Combo("Rule", RULES, 1),
+            Sel(
+                $scope,
+                "Scope",
+                "Select the features of the scope (Against Features)",
+                FEATURES,
+            ),
+            Sel($axis, "Axis", "Select the axis (Incident Edges)", DIRECTION),
+            Check("Flip Axis", false),
+            Num("Tolerance", 1.0, "°"),
+            Num("Radius", 1.0, " mm"),
+            Check("All Rounds", true),
+            Check("All Fillets", true),
+        ]
+    };
+}
+/// The check box that keeps a rule of Rule Fillet (off: OK drops it).
+pub(super) const USE_RULE: &str = "Use This Rule";
+/// The rules Rule Fillet's panel can show; a tab appears once the one before it has a source.
+pub(super) const RULE_TABS: usize = 8;
+/// The selectors of each rule: source, scope, axis.
+pub(super) const RULE_KEYS: [(&str, &str, &str); RULE_TABS] = [
+    ("src1", "scope1", "axis1"),
+    ("src2", "scope2", "axis2"),
+    ("src3", "scope3", "axis3"),
+    ("src4", "scope4", "axis4"),
+    ("src5", "scope5", "axis5"),
+    ("src6", "scope6", "axis6"),
+    ("src7", "scope7", "axis7"),
+    ("src8", "scope8", "axis8"),
 ];
-const RULE_ROW_2: &[Row] = &[
-    Radio("Source", &["Features", "Faces"], 0),
-    Sel(
-        "src2",
-        "Selection",
-        "Select the features or faces of this rule",
-        FEATURES,
-    ),
-    Combo("Rule", RULES, 1),
-    Sel(
-        "scope2",
-        "Scope",
-        "Select the features of the scope (Against Features)",
-        FEATURES,
-    ),
-    Sel(
-        "axis2",
-        "Axis",
-        "Select the axis (Incident Edges)",
-        DIRECTION,
-    ),
-    Check("Flip Axis", false),
-    Num("Tolerance", 1.0, "°"),
-    Num("Radius", 1.0, " mm"),
-    Check("All Rounds", true),
-    Check("All Fillets", true),
-];
-const RULE_ROW_3: &[Row] = &[
-    Radio("Source", &["Features", "Faces"], 0),
-    Sel(
-        "src3",
-        "Selection",
-        "Select the features or faces of this rule",
-        FEATURES,
-    ),
-    Combo("Rule", RULES, 1),
-    Sel(
-        "scope3",
-        "Scope",
-        "Select the features of the scope (Against Features)",
-        FEATURES,
-    ),
-    Sel(
-        "axis3",
-        "Axis",
-        "Select the axis (Incident Edges)",
-        DIRECTION,
-    ),
-    Check("Flip Axis", false),
-    Num("Tolerance", 1.0, "°"),
-    Num("Radius", 1.0, " mm"),
-    Check("All Rounds", true),
-    Check("All Fillets", true),
-];
+const RULE_ROW_1: &[Row] = rule_row!("src1", "scope1", "axis1");
+const RULE_ROW_2: &[Row] = rule_row!("src2", "scope2", "axis2");
+const RULE_ROW_3: &[Row] = rule_row!("src3", "scope3", "axis3");
+const RULE_ROW_4: &[Row] = rule_row!("src4", "scope4", "axis4");
+const RULE_ROW_5: &[Row] = rule_row!("src5", "scope5", "axis5");
+const RULE_ROW_6: &[Row] = rule_row!("src6", "scope6", "axis6");
+const RULE_ROW_7: &[Row] = rule_row!("src7", "scope7", "axis7");
+const RULE_ROW_8: &[Row] = rule_row!("src8", "scope8", "axis8");
 
 /// A part command with an interface and no logic yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1139,6 +1109,11 @@ impl PartPlanned {
                 Page("Rule 1", RULE_ROW_1),
                 Page("Rule 2", RULE_ROW_2),
                 Page("Rule 3", RULE_ROW_3),
+                Page("Rule 4", RULE_ROW_4),
+                Page("Rule 5", RULE_ROW_5),
+                Page("Rule 6", RULE_ROW_6),
+                Page("Rule 7", RULE_ROW_7),
+                Page("Rule 8", RULE_ROW_8),
                 Page(
                     "More",
                     &[
@@ -1779,6 +1754,8 @@ pub(super) struct PartDialog {
     pub pressed: Option<&'static str>,
     /// A result line the command shows in its panel (free edges found…).
     pub note: Option<String>,
+    /// Rule Fillet: the rules of the feature being edited (their tabs stay on show).
+    pub rule_rows: usize,
     /// Import: the STEP text Browse... read (Edit Feature without it keeps the embedded one).
     pub file_text: Option<std::sync::Arc<str>>,
     /// Insert Frame: the skeleton lines picked (edges and sketch lines), in
@@ -1936,6 +1913,7 @@ impl PartDialog {
             feature: None,
             pressed: None,
             note: None,
+            rule_rows: 0,
             file_text: None,
             skeletons: Vec::new(),
             clicks: Vec::new(),
@@ -2121,6 +2099,15 @@ impl PartDialog {
             items.push((item, at));
             self.picks.entry(key).or_default().push(what);
         }
+    }
+
+    /// Rule Fillet's rule tabs appear one by one: the next is there once the last has a source.
+    fn tab_hidden(&self, ti: usize) -> bool {
+        if self.kind != Planned::Part(PartPlanned::RuleFillet) || ti == 0 || ti >= RULE_TABS {
+            return false;
+        }
+        let used = |t: usize| t < self.rule_rows || !self.picks_of(RULE_KEYS[t].0).is_empty();
+        !(used(ti) || used(ti - 1))
     }
 
     /// The items picked for selector `key`.
@@ -2315,7 +2302,9 @@ impl PartDialog {
         if pages.len() > 1 {
             ui.horizontal_wrapped(|ui| {
                 for (i, p) in pages.iter().enumerate() {
-                    ui.selectable_value(&mut self.tab, i, p.0);
+                    if !self.tab_hidden(i) {
+                        ui.selectable_value(&mut self.tab, i, p.0);
+                    }
                 }
             });
             // A tab's selectors only take picks while it is shown.

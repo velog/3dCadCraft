@@ -1539,6 +1539,35 @@ fn rule_fillet_remove_merged() {
     );
 }
 
+/// Lines across the boundary that are not ribs (yet) do not cut it: a click in any cell of the grid
+/// means the whole boundary, and the same grid is what a Grill without ribs builds on.
+#[test]
+fn grill_boundary_ignores_loose_lines() {
+    let mut p = wall();
+    let i = grill_sketch(&mut p);
+    let id = p.sketches[i].id.clone();
+    lines(
+        &mut p,
+        i,
+        &[((40.0, 15.0), (40.0, 45.0)), ((25.0, 30.0), (75.0, 30.0))],
+    );
+    let op = GrillOp::new(id.clone());
+    let regions = regions_of(&op, &p.sketches[i].sketch, &id);
+    assert_eq!(regions.len(), 1, "one region, the boundary");
+    let mut op = op;
+    op.boundary = regions.first().map(|r| ProfileRef::of(r, p2(35.0, 25.0)));
+    op.outside_height = 1.0;
+    let def = op.clone();
+    add(&mut p, BodyOp::Grill(op));
+    close(volume(&p), V0 - 684.0 * 3.0 + 116.0, 0.02, "whole boundary");
+    close(
+        flow_area(&def, &p.sketches).unwrap_or_else(|e| panic!("{e}")),
+        684.0,
+        0.05,
+        "flow",
+    );
+}
+
 #[test]
 fn grill_draft() {
     let t = 2f64.to_radians().tan();

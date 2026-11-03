@@ -953,12 +953,17 @@ fn speed_budgets() {
 
     // Plastic parts: a grill with ribs, four thread bosses, a rule fillet (no cache hits).
     {
+        use cadcraft3d::part::blend::edge_ref;
         use cadcraft3d::part::plastic::boss::BossOp;
         use cadcraft3d::part::plastic::grill::{GrillCurves, GrillOp};
+        use cadcraft3d::part::plastic::lip::LipOp;
+        use cadcraft3d::part::plastic::rest::RestOp;
+        use cadcraft3d::part::plastic::rule_fillet::{FilletRule, RuleFilletOp, RuleRow};
+        use cadcraft3d::part::plastic::snap_fit::SnapFitOp;
         use cadcraft3d::part::work::WorkPlaneDef;
         use cadcraft3d::part::{
-            BodyOp, BodyOpFeature, OriginPlane, PlaneRef, SketchOptions, SketchPlacement, WorkDef,
-            WorkFeature,
+            BodyOp, BodyOpFeature, ExtrudeFeature, OriginPlane, PlaneRef, ProfileRef,
+            SketchOptions, SketchPlacement, WorkDef, WorkFeature,
         };
         let opts = SketchOptions {
             auto_project_origin: false,
@@ -1038,6 +1043,114 @@ fn speed_budgets() {
                 c.build_cache = Default::default();
                 c.regenerate().unwrap();
             }),
+        ));
+        let timed = |p: &PartDocument| {
+            median_ms(3, || {
+                let mut c = p.clone();
+                c.build_cache = Default::default();
+                c.regenerate().unwrap();
+            })
+        };
+        let p2 = nalgebra::Point2::new;
+        let mut rest = PartDocument::with_box("Box1", [200.0, 100.0, 3.0]).unwrap();
+        let i = sketch_at(&mut rest, 8.0);
+        rest.sketches[i]
+            .sketch
+            .add_rectangle_two_point(p2(40.0, 20.0), p2(60.0, 40.0))
+            .unwrap();
+        let op = RestOp::new(rest.sketches[i].id.clone(), 1.0);
+        rest.add_body_op(BodyOpFeature::new(BodyOp::Rest(op)))
+            .unwrap();
+        rows.push(("Rest: on a plate, regenerate", 200.0, timed(&rest)));
+        let mut snap = PartDocument::with_box("Box1", [200.0, 100.0, 3.0]).unwrap();
+        let i = sketch_at(&mut snap, 3.0);
+        for (x, y) in [(30.0, 25.0), (170.0, 25.0), (30.0, 75.0), (170.0, 75.0)] {
+            snap.sketches[i].sketch.add_center_point(p2(x, y));
+        }
+        let op = SnapFitOp::new(snap.sketches[i].id.clone());
+        snap.add_body_op(BodyOpFeature::new(BodyOp::SnapFit(op)))
+            .unwrap();
+        rows.push((
+            "Snap Fit: 4 hooks on a plate, regenerate",
+            200.0,
+            timed(&snap),
+        ));
+        let mut post = PartDocument::with_box("Box1", [200.0, 100.0, 3.0]).unwrap();
+        let i = sketch_at(&mut post, 3.0);
+        post.sketches[i]
+            .sketch
+            .add_circle(p2(50.0, 30.0), 3.0)
+            .unwrap();
+        let r: Vec<ProfileRef> = post.sketches[i]
+            .sketch
+            .regions()
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut ex = ExtrudeFeature::new(r, 10.0);
+        ex.operation = cadcraft3d::part::Operation::Join;
+        let id = post.add_extrude(i, ex).unwrap();
+        let op = RuleFilletOp {
+            rows: vec![RuleRow::features(vec![id], FilletRule::AllEdges, 1.0)],
+            exclude_faces: Vec::new(),
+            remove_merged: false,
+        };
+        post.add_body_op(BodyOpFeature::new(BodyOp::RuleFillet(op)))
+            .unwrap();
+        rows.push((
+            "Rule Fillet: a post's edges, regenerate",
+            200.0,
+            timed(&post),
+        ));
+        let mut ring = PartDocument::default();
+        let i = ring
+            .create_sketch(
+                SketchPlacement {
+                    plane: PlaneRef::Origin(OriginPlane::XY),
+                    ..Default::default()
+                },
+                &opts,
+            )
+            .unwrap();
+        let sk = &mut ring.sketches[i].sketch;
+        sk.add_rectangle_two_point(p2(0.0, 0.0), p2(100.0, 60.0))
+            .unwrap();
+        sk.add_rectangle_two_point(p2(3.0, 3.0), p2(97.0, 57.0))
+            .unwrap();
+        let r: Vec<ProfileRef> = sk
+            .regions()
+            .iter()
+            .filter(|r| !r.holes.is_empty())
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut ex = ExtrudeFeature::new(r, 10.0);
+        ex.operation = cadcraft3d::part::Operation::NewSolid;
+        ring.add_extrude(i, ex).unwrap();
+        let body = ring.body.clone();
+        let inner: Vec<_> = body
+            .visible_edges()
+            .into_iter()
+            .filter(|&e| {
+                body.sample_edge(e, &Default::default()).is_ok_and(|q| {
+                    q.iter().all(|v| {
+                        (v.z - 10.0).abs() < 1e-6
+                            && v.x > 2.0
+                            && v.x < 98.0
+                            && v.y > 2.0
+                            && v.y < 58.0
+                    })
+                })
+            })
+            .filter_map(|e| edge_ref(&body, e))
+            .collect();
+        let mut op = LipOp::new(inner, 1.0, 1.0);
+        op.pull = Some(cadcraft3d::part::work::LineRef::Origin(2));
+        ring.add_body_op(BodyOpFeature::new(BodyOp::Lip(op)))
+            .unwrap();
+        rows.push((
+            "Lip: a closed rim of 4 edges, regenerate",
+            100.0,
+            timed(&ring),
         ));
     }
 

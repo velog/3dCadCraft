@@ -283,10 +283,46 @@ impl Maker<'_> {
     }
 }
 
-/// The regions of a sketch without the ribs' and spars' curves: centre lines drawn across the
-/// boundary must not cut it (Inventor lets them share its sketch).
-pub fn regions_of(op: &GrillOp, sk: &Sketch, id: &str) -> Vec<crate::sketch::Region> {
+/// A copy of a sketch whose lines with a free end are construction: such a line bounds nothing,
+/// yet regions are split along it. An end is free when no other curve passes through it.
+pub fn without_free_lines(sk: &Sketch) -> Sketch {
+    let tol = 1e-6;
+    let curves: Vec<(EntityId, Vec<Point2>)> = sk
+        .entities()
+        .filter_map(|(e, _)| Some((e, sk.curve_of(e)?.sample(0.05))))
+        .collect();
+    let touched = |at: Point2, own: EntityId| {
+        curves.iter().any(|(e, pts)| {
+            *e != own
+                && pts.windows(2).any(|w| {
+                    let (a, b) = (w[0], w[1]);
+                    let along = b - a;
+                    let t = (at - a).dot(&along) / along.norm_squared().max(1e-30);
+                    (a + along * t.clamp(0.0, 1.0) - at).norm() < tol
+                })
+        })
+    };
     let mut clean = sk.clone();
+    for (e, ent) in sk.entities() {
+        let crate::sketch::Entity::Line { start, end } = ent else {
+            continue;
+        };
+        let free = [start, end]
+            .iter()
+            .filter_map(|p| sk.point(**p))
+            .any(|p| !touched(p.position, e));
+        if free {
+            let _ = clean.set_style(e, crate::sketch::Style::Construction);
+        }
+    }
+    clean
+}
+
+/// The regions of a sketch without the ribs' and spars' curves and without lines that end in the
+/// air: centre lines drawn across the boundary must not cut it (Inventor lets them share its
+/// sketch), picked or not.
+pub fn regions_of(op: &GrillOp, sk: &Sketch, id: &str) -> Vec<crate::sketch::Region> {
+    let mut clean = without_free_lines(sk);
     for c in [&op.ribs, &op.spars].into_iter().flatten() {
         if c.sketch == id {
             for &e in &c.curves {

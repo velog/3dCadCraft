@@ -8,6 +8,7 @@ use eframe::egui;
 
 use super::CadCraftApp;
 use super::part_planned::{PartDialog, PartPlanned};
+use super::part_planned::{RULE_KEYS, RULE_TABS, USE_RULE};
 use super::select::SelItem;
 use crate::kernel::{Point3, Real};
 use crate::part::placement::PointRef;
@@ -75,6 +76,64 @@ impl CadCraftApp {
         None
     }
 
+    /// A feature's browser row for Rule Fillet's active selector of features.
+    pub(super) fn plastic_pick_feature(&mut self, k: usize) -> bool {
+        let Some(d) = &self.part_planned else {
+            return false;
+        };
+        if d.kind != super::part_planned::Planned::Part(PartPlanned::RuleFillet) {
+            return false;
+        }
+        let tab = d.tab();
+        let takes = match d.active {
+            Some(key) if tab < RULE_TABS => {
+                let (src, scope, _) = RULE_KEYS[tab];
+                (key == src && d.index(tab, "Source") == 0) || key == scope
+            }
+            _ => false,
+        };
+        // Only what stands before an edited feature: the double click that opened its Edit is a
+        // click on its own row too, and a rule cannot start from itself.
+        let before_edit = d.feature.is_none_or(|e| k < e);
+        let Some(id) = self
+            .part()
+            .features
+            .get(k)
+            .filter(|_| takes && before_edit)
+            .map(|f| f.id().to_owned())
+        else {
+            return false;
+        };
+        let item = SelItem::Feature(id);
+        let what = self.item_label(&item);
+        if let Some(d) = self.part_planned.as_mut() {
+            d.pick_item(what, item, None);
+        }
+        true
+    }
+
+    /// A sketch's browser row for a plastic selector of sketch items: the whole sketch.
+    pub(super) fn plastic_pick_sketch(&mut self, i: usize) -> bool {
+        use crate::command::flow::PickKind as K;
+        let Some(d) = self.part_planned.as_ref().filter(|d| is_plastic(d)) else {
+            return false;
+        };
+        let takes = d.flow().current().is_some_and(|s| {
+            s.accepts
+                .iter()
+                .any(|k| matches!(k, K::Sketch | K::Region | K::SketchPoint))
+        });
+        if !takes || i >= self.part().sketches.len() {
+            return false;
+        }
+        let item = SelItem::Sketch(i);
+        let what = self.item_label(&item);
+        if let Some(d) = self.part_planned.as_mut() {
+            d.pick_item(what, item, None);
+        }
+        true
+    }
+
     /// The sketch and its plane point of a pick.
     fn plastic_sketch_pick(
         &self,
@@ -107,35 +166,140 @@ impl CadCraftApp {
     /// The curves of the closed outline a click on `at` means: regions read without curves that
     /// have a free end (centre lines usually cross it without sharing a point with it).
     fn outline_curves(&self, id: &str, at: crate::sketch::Point2) -> Vec<EntityId> {
+        self.region_curves(id, at, true)
+    }
+
+    /// The outline round `at`: the largest one (a Grill's boundary, with islands inside) or the
+    /// smallest (the region the click is in).
+    fn region_curves(&self, id: &str, at: crate::sketch::Point2, largest: bool) -> Vec<EntityId> {
         let Some(sk) = self.sketch_named(id) else {
             return Vec::new();
         };
-        let mut uses: std::collections::HashMap<PointId, usize> = Default::default();
-        let ends = |e: &crate::sketch::Entity| match e {
-            crate::sketch::Entity::Line { start, end } => vec![*start, *end],
-            _ => Vec::new(),
+        let clean = crate::part::plastic::grill::without_free_lines(sk);
+        let regions = clean.regions();
+        let round = regions.iter().filter(|r| r.contains(at));
+        let area = |r: &&crate::sketch::Region| r.outer.area().abs();
+        let found = if largest {
+            round.max_by(|a, b| area(a).total_cmp(&area(b)))
+        } else {
+            round.min_by(|a, b| area(a).total_cmp(&area(b)))
         };
-        for (_, e) in sk.entities() {
-            for p in ends(e) {
-                *uses.entry(p).or_default() += 1;
-            }
-        }
-        let mut clean = sk.clone();
-        for (e, ent) in sk.entities() {
-            if ends(ent)
-                .iter()
-                .any(|p| uses.get(p).copied().unwrap_or(0) < 2)
-            {
-                let _ = clean.set_style(e, crate::sketch::Style::Construction);
-            }
-        }
-        clean
-            .regions()
-            .iter()
-            .filter(|r| r.contains(at))
-            .max_by(|a, b| a.outer.area().abs().total_cmp(&b.outer.area().abs()))
+        found
             .map(|r| ProfileRef::of(r, at).sources)
             .unwrap_or_default()
+    }
+
+    /// Draws what one sketch pick of selector kinds `kinds` means: the region's outline, the
+    /// nearest curve or point. `None`: not that kind of pick (a whole sketch), drawn as such.
+    fn draw_sketch_pick(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        (i, at): (usize, Option<[f64; 3]>),
+        (kinds, largest): (&[crate::command::flow::PickKind], bool),
+        keep_off: &[EntityId],
+        color: egui::Color32,
+    ) -> Option<()> {
+        use crate::command::flow::PickKind as K;
+        let ps = self.part().sketches.get(i)?;
+        let sk = &ps.sketch;
+        let uv = sk.plane.project(&Point3::from(at?));
+        if kinds.contains(&K::SketchPoint) {
+            for p in self.plastic_points(&ps.id, &[Some(uv)]) {
+                let q = sk.point(p)?.position;
+                let s = self.camera.project(&sk.plane.point_at(q.x, q.y), rect)?;
+                painter.circle_filled(s, 5.0, color);
+            }
+            return Some(());
+        }
+        let curves = if kinds.contains(&K::SketchCurve) {
+            self.plastic_curves(&ps.id, &[Some(uv)], keep_off)
+        } else {
+            self.region_curves(&ps.id, uv, largest)
+        };
+        for e in curves {
+            let s: Vec<_> = crate::gui::overlay::polyline(sk, e)
+                .iter()
+                .filter_map(|q| self.camera.project(&sk.plane.point_at(q.x, q.y), rect))
+                .collect();
+            painter.add(egui::Shape::line(s, egui::Stroke::new(3.0, color)));
+        }
+        Some(())
+    }
+
+    /// The sketch picks of a plastic panel, each as what it means, and the one under the cursor;
+    /// they are taken out of `picked` and `hover`, which draw the whole sketch.
+    pub(super) fn draw_plastic_picks(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        pointer: Option<egui::Pos2>,
+        picked: &[SelItem],
+        hover: Option<&SelItem>,
+    ) -> (Vec<SelItem>, Option<SelItem>) {
+        let whole = (picked.to_vec(), hover.cloned());
+        let Some(d) = self.part_planned.as_ref().filter(|d| is_plastic(d)) else {
+            return whole;
+        };
+        let defs = super::part_planned::selector_defs(d.kind);
+        let kinds_of = |key: &str| defs.iter().find(|x| x.0 == key).map(|x| x.3);
+        // A rib or spar never lights the boundary's curves: a click there is dropped.
+        let keep_off = self
+            .plastic_sketch_pick(d.items_of("boundary"))
+            .and_then(|(id, pts)| {
+                pts.iter()
+                    .flatten()
+                    .next()
+                    .map(|at| self.outline_curves(&id, *at))
+            })
+            .unwrap_or_default();
+        let blue = egui::Color32::from_rgb(40, 110, 230);
+        let green = egui::Color32::from_rgb(60, 190, 90);
+        let mut drawn: Vec<usize> = Vec::new();
+        for (key, items) in &d.items {
+            let Some(kinds) = kinds_of(key) else {
+                continue;
+            };
+            for (item, at) in items {
+                if let SelItem::Sketch(i) = item
+                    && self
+                        .draw_sketch_pick(
+                            painter,
+                            rect,
+                            (*i, *at),
+                            (kinds, *key == "boundary"),
+                            &keep_off,
+                            blue,
+                        )
+                        .is_some()
+                {
+                    drawn.push(*i);
+                }
+            }
+        }
+        let mut rest: Vec<SelItem> = picked.to_vec();
+        rest.retain(|x| !matches!(x, SelItem::Sketch(i) if drawn.contains(i)));
+        let mut under = hover.cloned();
+        if let (Some(SelItem::Sketch(i)), Some(p), Some(cur)) = (hover, pointer, d.flow().current())
+        {
+            let at = self
+                .click_point(&SelItem::Sketch(*i), p, rect)
+                .map(|q| [q.x, q.y, q.z]);
+            if self
+                .draw_sketch_pick(
+                    painter,
+                    rect,
+                    (*i, at),
+                    (cur.accepts, cur.key == "boundary"),
+                    &keep_off,
+                    green,
+                )
+                .is_some()
+            {
+                under = None;
+            }
+        }
+        (rest, under)
     }
 
     /// The nearest curve to each click, never one of `keep_off`.
@@ -414,6 +578,7 @@ impl CadCraftApp {
             outer_draft: outer,
             fillet: num(0, "Fillet"),
             ribs,
+            join_first: prev.is_none_or(|o| o.join_first),
         }))
     }
 
@@ -535,6 +700,7 @@ impl CadCraftApp {
             landing,
             landing_taper: rad(d.num(1, "Landing Taper")),
             clearance_taper: rad(d.num(1, "Clearance Taper")),
+            join_first: prev.is_none_or(|o| o.join_first),
         }))
     }
 
@@ -663,14 +829,10 @@ impl CadCraftApp {
             _ => None,
         };
         let mut rows = Vec::new();
-        for (t, (src, scope, axis)) in [
-            ("src1", "scope1", "axis1"),
-            ("src2", "scope2", "axis2"),
-            ("src3", "scope3", "axis3"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        for (t, (src, scope, axis)) in RULE_KEYS.into_iter().enumerate() {
+            if !d.check(t, USE_RULE) {
+                continue;
+            }
             let was = prev.and_then(|o| o.rows.get(t));
             let features = d.index(t, "Source") == 0;
             let source = if features {
@@ -739,6 +901,10 @@ impl CadCraftApp {
                 all_fillets: d.check(t, "All Fillets"),
             });
         }
+        // Rows the panel has no tab for (from the API) stay as they are.
+        if let Some(o) = prev {
+            rows.extend(o.rows.iter().skip(RULE_TABS).cloned());
+        }
         let picked: Vec<String> = d
             .items_of("exclude")
             .iter()
@@ -755,7 +921,7 @@ impl CadCraftApp {
         Ok(BodyOp::RuleFillet(RuleFilletOp {
             rows,
             exclude_faces,
-            remove_merged: d.check(3, "Remove Merged Faces"),
+            remove_merged: d.check(RULE_TABS, "Remove Merged Faces"),
         }))
     }
 
@@ -1043,7 +1209,8 @@ pub(super) fn fill_dialog(d: &mut PartDialog, op: &BodyOp) {
             d.set_num(4, "Draft Angle", deg(o.draft));
         }
         BodyOp::RuleFillet(o) => {
-            for (t, r) in o.rows.iter().enumerate().take(3) {
+            d.rule_rows = o.rows.len().min(RULE_TABS);
+            for (t, r) in o.rows.iter().enumerate().take(RULE_TABS) {
                 d.set_index(
                     t,
                     "Source",
@@ -1067,7 +1234,7 @@ pub(super) fn fill_dialog(d: &mut PartDialog, op: &BodyOp) {
                 };
                 d.set_index(t, "Rule", k);
             }
-            d.set_check(3, "Remove Merged Faces", o.remove_merged);
+            d.set_check(RULE_TABS, "Remove Merged Faces", o.remove_merged);
         }
         BodyOp::Lip(o) => {
             d.set_index(0, "Type", usize::from(o.kind == LipKind::Groove));
@@ -1147,10 +1314,12 @@ pub(super) fn row_off(d: &PartDialog, kind: PartPlanned, tab: usize, label: &str
             (1, "Landing Offset") => d.index(1, "Landing") != 1,
             _ => false,
         },
-        PartPlanned::RuleFillet => match label {
-            "Tolerance" | "Flip Axis" => tab < 3 && d.index(tab, "Rule") != 4,
-            _ => false,
-        },
+        PartPlanned::RuleFillet => {
+            tab < RULE_TABS
+                && label != USE_RULE
+                && (!d.check(tab, USE_RULE)
+                    || (matches!(label, "Tolerance" | "Flip Axis") && d.index(tab, "Rule") != 4))
+        }
         _ => false,
     }
 }

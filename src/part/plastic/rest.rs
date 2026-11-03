@@ -86,6 +86,10 @@ pub struct RestOp {
     /// Draft of the clearance walls (radians).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub clearance_taper: Real,
+    /// The tools are joined to each other before they meet the body (faster on a body with rounds;
+    /// coplanar faces of the tools merge). Off in files saved before it: their face names stay.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub join_first: bool,
 }
 
 impl RestOp {
@@ -102,6 +106,7 @@ impl RestOp {
             landing: RestLanding::default(),
             landing_taper: 0.0,
             clearance_taper: 0.0,
+            join_first: true,
         }
     }
 
@@ -402,5 +407,8 @@ pub(in crate::part) fn rest(
         joined.extend(j);
     }
     let out = combine(cur.to_vec(), cut, Operation::Cut, &op.solids, true)?;
+    if op.join_first {
+        joined = common::one_tool(joined)?;
+    }
     combine(out, joined, Operation::Join, &op.solids, false)
 }

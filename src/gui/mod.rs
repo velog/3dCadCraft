@@ -7286,7 +7286,9 @@ impl CadCraftApp {
                     } else {
                         hover
                     };
-                    self.draw_planned_edges(&painter, rect, &picked, hover.as_ref());
+                    let (others, under) =
+                        self.draw_plastic_picks(&painter, rect, pointer, &picked, hover.as_ref());
+                    self.draw_planned_edges(&painter, rect, &others, under.as_ref());
                     (picked, hover)
                 }
                 None => (
