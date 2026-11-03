@@ -72,6 +72,8 @@ pub struct Tokens {
     /// The current choice and the main action of a panel; its text.
     pub accent: Color32,
     pub on_accent: Color32,
+    /// A selected tab or row: egui draws its text in `text`, so it must read on this.
+    pub selection: Color32,
     pub link: Color32,
     /// Text of a good state, a warning, an error; of actions that delete.
     pub ok: Color32,
@@ -105,6 +107,7 @@ impl Tokens {
             text_strong: Color32::WHITE,
             accent: Color32::from_rgb(0x2f, 0x74, 0xc8),
             on_accent: Color32::WHITE,
+            selection: Color32::from_rgb(0x28, 0x66, 0xb4),
             link: Color32::from_rgb(0x6c, 0xb0, 0xf5),
             ok: Color32::from_rgb(0x5a, 0xc8, 0x6e),
             warning: Color32::from_rgb(0xec, 0xaa, 0x46),
@@ -146,6 +149,7 @@ impl Tokens {
             text_strong: Color32::from_rgb(16, 18, 22),
             accent: Color32::from_rgb(28, 104, 198),
             on_accent: Color32::WHITE,
+            selection: Color32::from_rgb(186, 212, 245),
             link: Color32::from_rgb(20, 90, 180),
             ok: Color32::from_rgb(20, 120, 60),
             warning: Color32::from_rgb(150, 90, 0),

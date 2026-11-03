@@ -112,8 +112,8 @@ fn style(s: &mut egui::Style, k: &Tokens, dark: bool) {
     v.hyperlink_color = k.link;
     v.warn_fg_color = k.warning;
     v.error_fg_color = k.error;
-    v.selection.bg_fill = k.accent;
-    v.selection.stroke = Stroke::new(1.0, k.on_accent);
+    v.selection.bg_fill = k.selection;
+    v.selection.stroke = Stroke::new(1.0, k.text);
     let radius = CornerRadius::same(4);
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = k.panel;
@@ -135,6 +135,9 @@ fn style(s: &mut egui::Style, k: &Tokens, dark: bool) {
         // No growing under the cursor: the neighbours stay quiet.
         state.expansion = 0.0;
     }
+    // Check boxes and radio buttons use `bg_fill`, buttons `weak_bg_fill`: an unset
+    // box in `control` hardly showed on a window.
+    w.inactive.bg_fill = k.control_hover;
 }
 
 /// The main action of a panel or dialog (OK).
@@ -341,6 +344,7 @@ mod tests {
                     4.5,
                 ),
                 ("OK", k.on_accent, k.accent, 4.5),
+                ("selected tab", k.text, k.selection, 4.5),
                 ("Delete", k.danger, k.control, 4.5),
                 ("link", k.link, k.panel, 4.5),
                 ("good state", k.ok, k.panel, 4.5),
@@ -353,6 +357,15 @@ mod tests {
                 let c = contrast(fg, bg);
                 assert!(c >= min, "{theme:?} {name}: {c:.2} < {min}");
             }
+        }
+    }
+
+    #[test]
+    fn an_unset_check_box_shows_on_a_window() {
+        for theme in UiTheme::ALL {
+            let k = theme.tokens();
+            let c = contrast(k.control_hover, k.raised);
+            assert!(c >= 1.25, "{theme:?}: {c:.2}");
         }
     }
 

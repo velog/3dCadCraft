@@ -1401,6 +1401,7 @@ impl CadCraftApp {
             return;
         }
         self.editing = Some(i);
+        self.scene_dirty = true;
         self.selection = Selection::Sketch(i);
         // Finish Sketch returns to this tab (Sheet Metal stays Sheet Metal).
         if self.tab != Tab::Sketch {
@@ -1426,6 +1427,7 @@ impl CadCraftApp {
 
     /// Finish Sketch.
     fn finish_sketch(&mut self) {
+        self.scene_dirty = true;
         // Sketches that project from this one follow it now (Inventor
         // updates projections when the source sketch is finished).
         if let Some(i) = self.editing
@@ -5454,20 +5456,23 @@ impl CadCraftApp {
     fn build_scene(&self) -> SceneGeometry {
         let mut g = SceneGeometry::default();
 
-        // Ground grid on XY, 10 mm spacing.
-        let grid = [0.55, 0.56, 0.6];
-        for i in -10..=10 {
-            let t = i as f64 * 10.0;
-            g.add_line(
-                &Point3::new(t, -100.0, 0.0),
-                &Point3::new(t, 100.0, 0.0),
-                grid,
-            );
-            g.add_line(
-                &Point3::new(-100.0, t, 0.0),
-                &Point3::new(100.0, t, 0.0),
-                grid,
-            );
+        // Ground grid on XY, 10 mm spacing; a sketch being edited has its own
+        // grid, and two with different steps in one view read as noise.
+        if self.editing.is_none() {
+            let grid = [0.55, 0.56, 0.6];
+            for i in -10..=10 {
+                let t = i as f64 * 10.0;
+                g.add_line(
+                    &Point3::new(t, -100.0, 0.0),
+                    &Point3::new(t, 100.0, 0.0),
+                    grid,
+                );
+                g.add_line(
+                    &Point3::new(-100.0, t, 0.0),
+                    &Point3::new(100.0, t, 0.0),
+                    grid,
+                );
+            }
         }
         // World axes.
         let o = Point3::origin();

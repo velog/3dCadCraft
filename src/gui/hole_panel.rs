@@ -427,6 +427,13 @@ fn set_type(spec: &mut HoleSpec, ty: HoleType) {
     }
 }
 
+/// Is this preview message a problem? Not while nothing is picked yet: an empty
+/// message (no draft) or the request for the first centre, which the status bar
+/// shows anyway. A warning before any action reads as an error.
+fn is_warning(message: &str) -> bool {
+    !message.is_empty() && message != super::hole::HOLE_NO_CENTRES
+}
+
 impl CadCraftApp {
     /// The Hole command's panel.
     pub(super) fn hole_dialog(&mut self, ui: &mut egui::Ui) {
@@ -859,7 +866,7 @@ impl CadCraftApp {
                 Termination::To(_) => 2,
             };
             let mut k = kind(&spec.termination);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.radio_value(&mut k, 0, "Distance");
                 ui.radio_value(&mut k, 1, "Through All");
                 ui.radio_value(&mut k, 2, "To");
@@ -1166,7 +1173,7 @@ impl CadCraftApp {
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(50));
             }
-            Err(e) => warning_box(ui, e),
+            Err(e) if is_warning(e) => warning_box(ui, e),
             _ => {}
         }
         ui.horizontal(|ui| {
@@ -1395,5 +1402,17 @@ fn field_label(field: &str) -> &'static str {
         "offset" => "Offset",
         "length" => "Length",
         _ => "Value",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_warning;
+
+    #[test]
+    fn no_warning_before_the_first_centre() {
+        assert!(!is_warning(super::super::hole::HOLE_NO_CENTRES));
+        assert!(!is_warning(""));
+        assert!(is_warning("Hole: the centre is not on the part"));
     }
 }

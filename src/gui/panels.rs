@@ -83,6 +83,19 @@ fn warning_color() -> Color32 {
 const SLOW_CLICK_S: f64 = 0.5;
 
 /// A 16 px browser icon before the next widget in a horizontal row.
+/// The width of a browser row's fold arrow and the gap after it: rows without
+/// children start their icon after it, so all icons of a level stand in one column.
+pub(super) const TREE_FOLD_COLUMN: f32 = 18.0;
+
+/// A control in the fold arrow's column (a visibility check box), the icon right after it.
+fn in_fold_column<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let gap = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = 0.0;
+    let r = add(ui);
+    ui.spacing_mut().item_spacing.x = gap;
+    r
+}
+
 pub(super) fn tree_icon(ui: &mut egui::Ui, icon: Icon) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
     super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::enabled());
@@ -758,11 +771,12 @@ impl CadCraftApp {
         let n = part.features.len();
         let eop = part.eop_index();
         ui.horizontal(|ui| {
+            ui.add_space(TREE_FOLD_COLUMN);
             let (bar, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
             ui.painter().rect_filled(
                 egui::Rect::from_center_size(bar.center(), egui::vec2(12.0, 4.0)),
                 1.0,
-                Color32::from_rgb(200, 60, 60),
+                super::theme::tokens().error,
             );
             let text = RichText::new("End of Part").italics();
             let r = ui
@@ -1115,13 +1129,16 @@ impl CadCraftApp {
             ui.horizontal(|ui| {
                 if let Feature::Work(w) = f {
                     let mut visible = w.visible;
-                    if ui
-                        .checkbox(&mut visible, "")
-                        .on_hover_text("Visibility")
-                        .changed()
-                    {
+                    let changed = in_fold_column(ui, |ui| {
+                        ui.checkbox(&mut visible, "")
+                            .on_hover_text("Visibility")
+                            .changed()
+                    });
+                    if changed {
                         cmds.push(BrowserCmd::FeatureVisible(k, visible));
                     }
+                } else {
+                    ui.add_space(TREE_FOLD_COLUMN);
                 }
                 if let Some(r) = self.feature_label(ui, k, icon, hover, selected, select, cmds) {
                     r.context_menu(|ui| self.feature_menu(ui, k, &used, cmds));
@@ -1157,11 +1174,12 @@ impl CadCraftApp {
         let target = RenameTarget::Sketch(ps.id.clone());
         ui.horizontal(|ui| {
             let mut visible = ps.visible;
-            if ui
-                .checkbox(&mut visible, "")
-                .on_hover_text("Visibility")
-                .changed()
-            {
+            let changed = in_fold_column(ui, |ui| {
+                ui.checkbox(&mut visible, "")
+                    .on_hover_text("Visibility")
+                    .changed()
+            });
+            if changed {
                 cmds.push(BrowserCmd::SetVisible(i, visible));
             }
             tree_icon(ui, Icon::Sketch);
@@ -1190,7 +1208,7 @@ impl CadCraftApp {
             if editing && selected {
                 // The state's colour was unreadable on the selection's; the
                 // status bar and Properties show it.
-                text = text.strong().color(super::theme::tokens().on_accent);
+                text = text.strong().color(super::theme::tokens().text);
             } else if editing {
                 text = text.strong().color(self.sketch_color());
             } else if rolled {
@@ -5602,7 +5620,10 @@ pub(super) fn warning_box(ui: &mut egui::Ui, text: &str) {
         .corner_radius(3.0)
         .inner_margin(6.0)
         .show(ui, |ui| {
-            ui.label(RichText::new(format!("Warning: {text}")).color(k.warn_box_text));
+            ui.add(
+                egui::Label::new(RichText::new(format!("Warning: {text}")).color(k.warn_box_text))
+                    .wrap(),
+            );
         });
 }
 
