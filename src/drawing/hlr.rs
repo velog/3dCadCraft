@@ -755,29 +755,34 @@ pub fn view_lines_simplified(
     // 20 000 components).
     let plain = cells.is_none() && cut.is_none() && far_depth.is_none() && outs.is_empty();
     if plain {
-        let parts: Vec<Vec<Tri>> = par_map(&meshes[..], |m| {
+        let parts: Vec<(Vec<Tri>, [f64; 2], [f64; 2])> = par_map(&meshes[..], |m| {
             let pos = &m.faces.positions;
-            let mut part = Vec::new();
+            let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+            let mut part = Vec::with_capacity(m.faces.triangles.len());
             for tri in &m.faces.triangles {
                 let [a, b, c] = tri.map(|i| pos[i as usize]);
                 let nrm = (b - a).cross(&(c - a));
                 if nrm.dot(&t) > 1e-12 * nrm.norm().max(1e-30) {
+                    let p = [p2(&a), p2(&b), p2(&c)];
+                    for q in &p {
+                        for i in 0..2 {
+                            lo[i] = lo[i].min(q[i]);
+                            hi[i] = hi[i].max(q[i]);
+                        }
+                    }
                     part.push(Tri {
-                        p: [p2(&a), p2(&b), p2(&c)],
+                        p,
                         d: [dp(&a), dp(&b), dp(&c)],
                     });
                 }
             }
-            part
+            (part, lo, hi)
         });
-        for part in parts {
-            for tr in &part {
-                for q in &tr.p {
-                    for i in 0..2 {
-                        lo[i] = lo[i].min(q[i]);
-                        hi[i] = hi[i].max(q[i]);
-                    }
-                }
+        tris.reserve(parts.iter().map(|(part, _, _)| part.len()).sum());
+        for (part, l, h) in parts {
+            for i in 0..2 {
+                lo[i] = lo[i].min(l[i]);
+                hi[i] = hi[i].max(h[i]);
             }
             tris.extend(part);
         }
