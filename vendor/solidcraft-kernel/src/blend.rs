@@ -2716,18 +2716,21 @@ fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, b
     // The cross-section sits past the edge ends, so test the offset at mid-edge. The cutter
     // is still built: a caller that cannot blend the edge keeps it (#814).
     let mid_edge = (f.p0 + f.p1) * 0.5;
-    let extension_inside = cur.contains(mid_edge + (a_ext - base)) || cur.contains(mid_edge + (b_ext - base));
+    // One mesh for all these probes (`Body::contains` makes one each: 7 for each chamfer tool).
+    let mesh = cur.tessellate(size * 2e-3);
+    let inside = |q: Vec3| mesh.as_ref().is_ok_and(|m| m.contains(q));
+    let extension_inside = inside(mid_edge + (a_ext - base)) || inside(mid_edge + (b_ext - base));
     // The material beyond both ends must be empty (the cutter runs past them).
     let mid = (a + b + base) / 3.0;
     for probe in [mid + f.d * (ext * 0.5), mid + f.d * (len + ext * 1.5)] {
-        if cur.contains(probe) {
+        if inside(probe) {
             return Err(unsupported("chamfers ending at a concave corner"));
         }
     }
     // So must its far side: it reaches several times the chamfer's size out from the edge, and
     // beside a wall (a pin standing in a socket) that is inside the wall, which the cut would
     // take a bite out of.
-    if [0.0, ext + len * 0.5, len + 2.0 * ext].iter().any(|t| cur.contains(e_far + f.d * *t)) {
+    if [0.0, ext + len * 0.5, len + 2.0 * ext].iter().any(|t| inside(e_far + f.d * *t)) {
         return Err(unsupported("the chamfer cutter reaches other material"));
     }
     let loc: Vec<solidcraft_geom::Vec2> = [a_ext, b_ext, e_far].iter().map(|q| plane.to_local(*q)).collect();

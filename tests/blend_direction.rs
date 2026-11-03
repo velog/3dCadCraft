@@ -729,3 +729,51 @@ fn an_inclined_cut_is_an_exact_ellipse() {
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
     assert!(volume(&p) < before, "the chamfer must take material away");
 }
+
+/// `Body::edges` divides the edges without meshing a face: the same polylines, in the same order
+/// and direction, bit for bit, as those of the mesh.
+#[test]
+fn edges_without_a_mesh_are_those_of_the_mesh() {
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2, Vec3};
+    use solidcraft_kernel::{BoolOp, boolean, extrude, fillet};
+    let disc = |r: f64, z0: f64, z1: f64| {
+        let region = Region2 {
+            outer: Loop2::circle(Vec2::ZERO, r),
+            holes: vec![],
+        };
+        extrude(&Plane::XY, &[region], z0, z1)
+            .unwrap()
+            .pop()
+            .unwrap()
+    };
+    let cup = boolean(&disc(50.0, 0.0, 10.0), &disc(48.0, 2.0, 20.0), BoolOp::Cut)
+        .unwrap()
+        .unwrap();
+    let ring = boolean(&disc(50.0, 0.0, 10.0), &disc(30.0, -1.0, 20.0), BoolOp::Cut)
+        .unwrap()
+        .unwrap();
+    // Round and cut: curved blend faces, intersection curves, edges a face runs backwards.
+    let rounded = fillet(&disc(20.0, 0.0, 10.0), &[Vec3::new(20.0, 0.0, 10.0)], 2.0).unwrap();
+    let cut = boolean(&rounded, &disc(5.0, 5.0, 20.0), BoolOp::Cut)
+        .unwrap()
+        .unwrap();
+    for (name, body) in [
+        ("cup", cup),
+        ("ring", ring),
+        ("rounded", rounded),
+        ("cut round", cut),
+    ] {
+        for tol in [0.1, 0.01] {
+            let (mesh, edges) = (body.tessellate(tol).unwrap(), body.edges(tol).unwrap());
+            assert_eq!(mesh.edges.len(), edges.len(), "{name}");
+            for (m, e) in mesh.edges.iter().zip(&edges) {
+                assert_eq!(m.len(), e.points.len(), "{name}");
+                let bits = |p: &Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+                assert!(
+                    m.iter().zip(&e.points).all(|(a, b)| bits(a) == bits(b)),
+                    "{name} at {tol}"
+                );
+            }
+        }
+    }
+}

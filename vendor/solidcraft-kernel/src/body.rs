@@ -1,6 +1,8 @@
 use serde::Serialize;
 use solidcraft_geom::{Aabb3, Mesh, Vec3};
+use rayon::prelude::*;
 use truck_meshalgo::prelude::*;
+use truck_meshalgo::tessellation::bounded_polyline;
 use truck_modeling as mt;
 
 use crate::{KernelError, Result, guard};
@@ -1664,8 +1666,8 @@ impl Body {
 
     /// Edges with polylines (index = position in [`Body::tessellate`]'s `edges`).
     pub fn edges(&self, tol: f64) -> Result<Vec<EdgeInfo>> {
-        let m = self.tessellate(tol)?;
-        Ok(m.edges
+        Ok(self
+            .edge_polylines(tol)?
             .into_iter()
             .enumerate()
             .map(|(index, points)| {
@@ -1673,6 +1675,43 @@ impl Body {
                 EdgeInfo { index, points, mid, length }
             })
             .collect())
+    }
+
+    /// The `edges` of [`Body::tessellate`] at `tol`, without meshing a face: the mesher divides
+    /// the edges first and the faces only read them. 3DCadCraft: looking up the edge nearest a
+    /// point was most of the meshing in a blend (8 edges round a rounded top: 45 of 74 meshes).
+    fn edge_polylines(&self, tol: f64) -> Result<Vec<Vec<Vec3>>> {
+        let planned = || guard("tessellate", || Ok(crate::tess::seam::turns_more_than_once(&self.solid) || crate::tess::seam::closes_on_itself(&self.solid)));
+        // Meshed some other way, or kept from an earlier mesh: as they come from there.
+        if self.mesh.is_some() || self.meshes.is_some() || planned().unwrap_or(false) {
+            return Ok(self.tessellate(tol)?.edges);
+        }
+        let tol = if tol.is_finite() && tol > 0.0 { tol } else { 0.05 };
+        let tol = tol.max(self.size() * 1e-6);
+        let deflection = Deflection { display: true, ..Deflection::chord(tol) };
+        crate::profile::timed(crate::profile::Kind::Tessellate, || {
+            guard("tessellate", || {
+                let mut out = Vec::new();
+                // Shell by shell, as they are meshed: an edge counts once in each.
+                for shell in self.solid.boundaries() {
+                    let d = revolved_cap(shell, deflection);
+                    let (edges, _) = edge_order(shell.face_iter());
+                    let lines: Vec<Vec<Vec3>> = edges
+                        .par_iter()
+                        .map(|e| {
+                            let curve = e.curve();
+                            let mut line: Vec<Vec3> = bounded_polyline(&curve, curve.range_tuple(), d).0.iter().map(|p| Vec3::new(p.x, p.y, p.z)).collect();
+                            if !e.orientation() {
+                                line.reverse();
+                            }
+                            line
+                        })
+                        .collect();
+                    out.extend(lines);
+                }
+                Ok(out)
+            })
+        })
     }
 
     /// Edges `indices` (as in [`Body::tessellate`]'s `edges`) in `plane`'s coordinates,
