@@ -138,7 +138,23 @@ pub enum Icon {
     // 3D model
     StartSketch,
     Extrude,
+    /// Browser row of an Extrude that cuts.
+    ExtrudeCut,
+    /// Browser row of an Extrude that intersects.
+    ExtrudeIntersect,
+    /// Browser row of an Extrude making a new solid.
+    ExtrudeNewSolid,
+    /// Browser row of an Extrude with Output Surface.
+    ExtrudeSurface,
     Revolve,
+    /// Browser row of a Revolve that cuts.
+    RevolveCut,
+    /// Browser row of a Revolve that intersects.
+    RevolveIntersect,
+    /// Browser row of a Revolve making a new solid.
+    RevolveNewSolid,
+    /// Browser row of a Revolve with Output Surface.
+    RevolveSurface,
     Sweep,
     Loft,
     Coil,
@@ -1458,15 +1474,23 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
                 hot,
             );
         }
-        Extrude => {
+        Extrude | ExtrudeCut | ExtrudeIntersect | ExtrudeNewSolid | ExtrudeSurface => {
             p.block([2.0, 7.0, 9.0, 6.0, 5.0], ink, soft);
-            p.line(&[(8.0, 6.0), (8.0, 1.5)], hot);
-            p.head((8.0, 1.0), (0.0, -1.0), hot);
+            if icon == ExtrudeCut {
+                // The arrow goes into the material.
+                p.line(&[(8.0, 1.0), (8.0, 8.5)], hot);
+                p.head((8.0, 9.5), (0.0, 1.0), hot);
+            } else {
+                p.line(&[(8.0, 6.0), (8.0, 1.5)], hot);
+                p.head((8.0, 1.0), (0.0, -1.0), hot);
+            }
+            operation_badge(p, icon, hot, acc);
         }
-        Revolve => {
+        Revolve | RevolveCut | RevolveIntersect | RevolveNewSolid | RevolveSurface => {
             p.dashed((3.0, 1.0), (3.0, 15.0), hot);
             p.arc(3.0, 8.0, 10.0, -50.0, 50.0, acc);
             p.closed(&[(5.0, 4.0), (10.0, 4.0), (10.0, 12.0), (5.0, 12.0)], ink);
+            operation_badge(p, icon, hot, acc);
         }
         Sweep => {
             let path: Vec<(f32, f32)> = (0..=16)
@@ -3302,6 +3326,34 @@ fn sheet(p: &Pen, c: Color32) {
         c,
     );
     p.line(&[(10.0, 1.5), (10.0, 4.5), (13.0, 4.5)], c);
+}
+
+/// The corner mark telling an Extrude's or a Revolve's operation apart in the
+/// browser; a Join has none.
+fn operation_badge(p: &Pen, icon: Icon, hot: Color32, acc: Color32) {
+    use Icon::*;
+    match icon {
+        ExtrudeCut | RevolveCut => p.fill(
+            &[(10.0, 12.5), (15.5, 12.5), (15.5, 14.5), (10.0, 14.5)],
+            hot,
+        ),
+        ExtrudeIntersect | RevolveIntersect => p.line(
+            &[
+                (10.5, 15.5),
+                (10.5, 12.0),
+                (13.0, 10.5),
+                (15.5, 12.0),
+                (15.5, 15.5),
+            ],
+            hot,
+        ),
+        ExtrudeNewSolid | RevolveNewSolid => plus(p, acc),
+        ExtrudeSurface | RevolveSurface => p.line(
+            &[(9.5, 14.5), (11.5, 11.5), (13.5, 14.5), (15.5, 11.5)],
+            hot,
+        ),
+        _ => {}
+    }
 }
 
 /// The "new" sign in a document icon's corner.

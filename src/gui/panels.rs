@@ -877,7 +877,7 @@ impl CadCraftApp {
         if rolled {
             tip.push_str("\nBelow the End of Part (rolled back)");
         }
-        tip.push_str("\nDrag to reorder · F2 or slow double-click: Rename");
+        tip.push_str("\nDouble-click: Edit · Drag to reorder · F2 or slow double-click: Rename");
         let r = ui
             .selectable_label(selected, text)
             .interact(egui::Sense::drag())
@@ -889,7 +889,7 @@ impl CadCraftApp {
         if r.clicked() {
             cmds.push(BrowserCmd::Select(select));
         }
-        if r.double_clicked() && !matches!(f, Feature::Box(_)) && !rolled {
+        if r.double_clicked() && !rolled {
             cmds.push(BrowserCmd::EditFeature(k));
         }
         drop_target(ui, &r, k, cmds);
@@ -6963,8 +6963,42 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
                 b.size[0], b.size[1], b.size[2]
             ),
         ),
-        Feature::Extrude(e) => (Icon::Extrude, format!("Extrude of {}", e.sketch)),
-        Feature::Revolve(r) => (Icon::Revolve, format!("Revolve of {}", r.sketch)),
+        Feature::Extrude(e) => (
+            operation_icon(
+                e.operation,
+                e.output,
+                [
+                    Icon::Extrude,
+                    Icon::ExtrudeCut,
+                    Icon::ExtrudeIntersect,
+                    Icon::ExtrudeNewSolid,
+                    Icon::ExtrudeSurface,
+                ],
+            ),
+            format!(
+                "Extrude of {} ({})",
+                e.sketch,
+                operation_word(e.operation, e.output)
+            ),
+        ),
+        Feature::Revolve(r) => (
+            operation_icon(
+                r.operation,
+                r.output,
+                [
+                    Icon::Revolve,
+                    Icon::RevolveCut,
+                    Icon::RevolveIntersect,
+                    Icon::RevolveNewSolid,
+                    Icon::RevolveSurface,
+                ],
+            ),
+            format!(
+                "Revolve of {} ({})",
+                r.sketch,
+                operation_word(r.operation, r.output)
+            ),
+        ),
         Feature::Sweep(s) => (Icon::Sweep, format!("Sweep of {}", s.sketch)),
         Feature::Coil(c) => (Icon::Coil, format!("Coil of {}", c.sketch)),
         Feature::Rib(r) => (Icon::Rib, format!("Rib of {}", r.sketch)),
@@ -7071,6 +7105,31 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
     }
 }
 
+/// The browser icon of an Extrude / Revolve: `[join, cut, intersect, new solid, surface]`.
+fn operation_icon(
+    op: crate::part::Operation,
+    output: crate::part::Output,
+    icons: [Icon; 5],
+) -> Icon {
+    use crate::part::{Operation, Output};
+    let k = match (output, op) {
+        (Output::Surface, _) => 4,
+        (_, Operation::Join) => 0,
+        (_, Operation::Cut) => 1,
+        (_, Operation::Intersect) => 2,
+        (_, Operation::NewSolid) => 3,
+    };
+    icons[k]
+}
+
+/// What the Extrude / Revolve does, for its row's tooltip.
+fn operation_word(op: crate::part::Operation, output: crate::part::Output) -> &'static str {
+    match output {
+        crate::part::Output::Surface => "Surface",
+        crate::part::Output::Solid => op.label(),
+    }
+}
+
 /// Tooltip of a feature's Adaptive switch (spec 3.10 §3.4).
 const ADAPTIVE_FEATURE_TIP: &str = "In an assembly where this part is Adaptive, the feature's free sizes follow the \
 relationships: its sketch's free points and, for an Extrude with a Distance, the distance";
@@ -7078,3 +7137,32 @@ relationships: its sketch's free points and, for an Extrude with a Distance, the
 /// Tooltip of a sketch's Adaptive switch.
 const ADAPTIVE_SKETCH_TIP: &str = "In an assembly where this part is Adaptive, the sketch's free points (not fixed by \
 its dimensions and constraints) follow the relationships";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::part::{ExtrudeFeature, Operation, Output, RevolveFeature};
+
+    /// Every kind of Extrude / Revolve has an icon of its own in the browser.
+    #[test]
+    fn extrude_and_revolve_rows_show_their_operation() {
+        let mut seen = Vec::new();
+        for (op, output) in [
+            (Operation::Join, Output::Solid),
+            (Operation::Cut, Output::Solid),
+            (Operation::Intersect, Output::Solid),
+            (Operation::NewSolid, Output::Solid),
+            (Operation::Join, Output::Surface),
+        ] {
+            let mut e = ExtrudeFeature::new(Vec::new(), 1.0);
+            (e.operation, e.output) = (op, output);
+            seen.push(feature_look(&Feature::Extrude(e)).0);
+            let mut r = RevolveFeature::new(Vec::new(), crate::part::AxisRef::Origin(2));
+            (r.operation, r.output) = (op, output);
+            seen.push(feature_look(&Feature::Revolve(r)).0);
+        }
+        for (k, a) in seen.iter().enumerate() {
+            assert!(!seen[k + 1..].contains(a), "{a:?} is used twice");
+        }
+    }
+}

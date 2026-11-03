@@ -31,7 +31,7 @@ Status: ✅ done · 🟡 partial · ⬜ to do.
 | **Menu icons** | the right-click menus show an icon before each entry that has one (Next, Back, OK, Apply, Cancel, Flip, Repeat, the selection tools, the commands by their own icon); the text stays in one column (`icons::menu_item`, `icons::sub_menu`) | 🟡 |
 | **Command icons** | our own vector icons (`gui/icons.rs`), two-coloured (outline + accent, points in orange, removed parts in red); faded for unavailable commands | ✅ |
 | **Ribbon** | as in Inventor: large buttons (icon above text), columns of three small buttons (icon + text), icon-only columns for the constraints (the name is in the tooltip); drop-down buttons show the icon of the current variant; toggles (Construction, Relax, DOF) stay pressed while on; all panels of a tab fit in 1400 px | ✅ |
-| Model browser icons | project, part, Origin, planes, axes, box, features, sketches | ✅ |
+| Model browser icons | project, part, Origin, planes, axes, box, sketches; every feature type has its own, and an Extrude / Revolve also shows its operation (Join plain, Cut with the arrow into the material and a minus, Intersect, New Solid with a plus, Surface) | ✅ |
 
 ### 2.2 Sketch colours (the meanings are as in Inventor)
 
@@ -201,6 +201,7 @@ Sources: [Dynamic input (HUD) in sketches](https://help.autodesk.com/cloudhelp/2
 - Values in Properties apply immediately and the model regenerates. Dragging a value is one Undo step. ✅
 - A double click on a dimension opens Edit Dimension. ✅
 - A double click on a sketch in the browser enters the sketch edit. ✅
+- A double click on a feature in the browser opens its command for editing (a Box selects it and shows its sizes in Properties; a feature below the End of Part stays closed). ✅
 - A double click on a feature opens its edit. ⬜ (for now through selection and Properties)
 
 ### 3.3a View: projection
