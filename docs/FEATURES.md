@@ -1234,6 +1234,8 @@ Generators that **calculate** and **model** standard machine elements:
 
 **Specification:** [spec/6.3-content-center.md](spec/6.3-content-center.md) — stages CC0–CC7.
 
+**State (2026-11-03).** Place from Library with 102 families, Smart Drop (bolts, nuts, washers, bearings; Follow Pattern, Lock Rotation, Bolted Connection), Change Size, Connection (`CNN`), own families published and dropped. Open: the other types, several connections per part, spec 6.3 lists them.
+
 **What it does.** Thousands of standard parts: bolts, nuts, washers, bearings, profiles, seals per ISO/DIN/ANSI. New in Inventor 2027: publishing **whole assemblies** to the library.
 
 **3DCadCraft approach.**

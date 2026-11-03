@@ -29,6 +29,7 @@ pub mod body_op;
 pub mod boolean;
 pub mod coil;
 pub mod combine;
+pub mod connection;
 pub mod context;
 pub mod copy_object;
 mod cut_edges;
@@ -961,6 +962,9 @@ pub struct PartDocument {
     /// The table of a part family (spec 5.7). A new field old builds ignore.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<family::FamilyTable>,
+    /// Named geometry for being placed (spec 6.3 §3.5). A new field old builds ignore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<connection::Connection>,
     /// Whether the last regeneration used the exact kernel (`false`: the
     /// faceted one, see [`PartDocument::regenerate`]).
     #[serde(skip)]

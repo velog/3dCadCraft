@@ -6,6 +6,7 @@
 //! first time it is used; assemblies link it like any part.
 
 pub mod catalog;
+pub mod fit;
 pub mod samples;
 
 use std::path::{Path, PathBuf};

@@ -275,6 +275,8 @@ pub struct AppOptions {
     pub library_standard: Option<String>,
     /// Place from Library: the level of detail, by its name.
     pub library_detail: String,
+    /// Place from Library places by hand instead of Smart Drop.
+    pub library_manual: bool,
     /// The assembly browser's view and filters (spec 3.0 §3.9).
     pub asm_browser: super::asm_browser::AsmBrowserOpts,
     /// Application Options › Display: a drawing's view sketch shows its
@@ -354,6 +356,7 @@ impl Default for AppOptions {
             new_documents_separate: false,
             library_standard: None,
             library_detail: String::new(),
+            library_manual: false,
             asm_browser: Default::default(),
             drawing_sketch_toolbar: true,
             in_place: InPlaceOptions::default(),
@@ -973,6 +976,7 @@ impl CadCraftApp {
             new_documents_separate: self.docs.separate,
             library_standard: self.library_standard.clone(),
             library_detail: self.library_detail.clone(),
+            library_manual: self.library_manual,
             asm_browser: self.asm_browser,
             drawing_sketch_toolbar: self.sketch_toolbar,
             in_place: self.in_place_opts,
@@ -1022,6 +1026,7 @@ impl CadCraftApp {
         self.docs.separate = o.new_documents_separate;
         self.library_standard = o.library_standard;
         self.library_detail = o.library_detail;
+        self.library_manual = o.library_manual;
         self.asm_browser = o.asm_browser;
         self.sketch_toolbar = o.drawing_sketch_toolbar;
         self.in_place_opts = o.in_place;

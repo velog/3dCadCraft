@@ -753,6 +753,8 @@ impl CadCraftApp {
         }
         self.asm.place_name = name.clone();
         self.asm.tool = Some(super::assembly::AsmTool::Place(r));
+        // A part with its own connection lands by it.
+        self.smart_drop_start_part(r);
         self.file_status = Some(Ok(format!(
             "Place: {name} ({where_}); click in the view to place it"
         )));
@@ -881,6 +883,8 @@ impl CadCraftApp {
                 self.asm.place = None;
                 self.asm.place_name = base_name(&path, &parts, doc);
                 self.asm.tool = Some(super::assembly::AsmTool::Place(r));
+                // A part with its own connection lands by it.
+                self.smart_drop_start_part(r);
                 self.file_status = Some(Ok(format!(
                     "Place: {} is linked; click in the view to place it",
                     path.display()

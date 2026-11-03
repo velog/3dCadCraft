@@ -468,6 +468,8 @@ pub enum Icon {
     // assembly commands with an interface only (`gui/asm_planned.rs`, spec 3.0)
     /// Place from Library (a bolt from a library shelf).
     PlaceFromLibrary,
+    ChangeSize,
+    Connection,
     /// Place Imported CAD Files (a file arrow onto a component).
     PlaceImported,
     /// Create In-Place Component (a new block with a plus).
@@ -2888,6 +2890,23 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             }
         }
         // ---- assembly commands with an interface only (spec 3.0) ----
+        Connection => {
+            // A pin over the ring it lands on.
+            p.rect(6.0, 1.5, 10.0, 8.0, k.ink);
+            p.line(&[(2.0, 11.0), (14.0, 11.0)], k.ink);
+            p.line(&[(2.0, 14.0), (14.0, 14.0)], k.ink);
+            p.line(&[(6.0, 11.0), (6.0, 14.0)], k.accent);
+            p.line(&[(10.0, 11.0), (10.0, 14.0)], k.accent);
+            p.line(&[(8.0, 8.5), (8.0, 10.5)], k.accent);
+        }
+        ChangeSize => {
+            // A small bolt beside a large one.
+            p.rect(1.5, 6.5, 6.0, 8.5, k.ink);
+            p.rect(2.8, 8.5, 4.7, 14.0, k.ink);
+            p.rect(7.5, 1.5, 14.5, 4.5, k.ink);
+            p.rect(9.5, 4.5, 12.5, 14.0, k.ink);
+            p.line(&[(5.0, 3.5), (7.0, 2.5)], k.accent);
+        }
         PlaceFromLibrary => {
             p.line(&[(1.5, 14.0), (14.5, 14.0)], ink);
             p.rect(3.0, 2.0, 7.0, 5.0, acc);

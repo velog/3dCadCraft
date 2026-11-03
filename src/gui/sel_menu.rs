@@ -139,6 +139,7 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
             E::Chamfer,
             E::Separator,
             E::Planned(Pp::RuledSurface),
+            E::Planned(Pp::Connection),
             E::Separator,
             E::WorkPoint,
         ],

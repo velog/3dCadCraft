@@ -27,6 +27,8 @@ pub(super) struct LibraryUi {
     detail: Detail,
     /// Only families of this standard (`None` = all).
     standard: Option<String>,
+    /// Place starts Smart Drop where the family supports it.
+    smart: bool,
 
     error: Option<String>,
     /// Family pictures that have arrived, and the worker drawing the others.
@@ -73,6 +75,7 @@ impl CadCraftApp {
             search: String::new(),
             detail: Detail::from_label(&self.library_detail),
             standard,
+            smart: !self.library_manual,
             error,
             thumbnails: HashMap::new(),
             thumbnail_rx,
@@ -167,6 +170,16 @@ impl CadCraftApp {
                     }
                 });
                     ui.horizontal(|ui| {
+                        let droppable = lib
+                            .family
+                            .is_some_and(|f| lib.catalog.fits(f).iter().any(|x| x.droppable()));
+                        ui.add_enabled(
+                            droppable || lib.family.is_none(),
+                            egui::Checkbox::new(&mut lib.smart, "Smart Drop"),
+                        )
+                        .on_hover_text("The size follows the hole or shaft under the cursor; a click places it with its relationships.")
+                        .on_disabled_hover_text("This family is placed by hand");
+                        ui.add_space(12.0);
                         if ui
                             .add_enabled(lib.shown.is_some(), egui::Button::new("Place"))
                             .clicked()
@@ -338,6 +351,18 @@ impl CadCraftApp {
         }
         self.library_standard = lib.standard.clone();
         self.library_detail = lib.detail.label().to_owned();
+        self.library_manual = !lib.smart;
+        if place
+            && lib.smart
+            && let Some(f) = lib.family
+            && lib.catalog.fits(f).iter().any(|x| x.droppable())
+        {
+            let LibraryUi {
+                catalog, detail, ..
+            } = lib;
+            self.smart_drop_start(catalog, f, detail);
+            return;
+        }
         if place && let Some(path) = lib.shown.clone() {
             let doc = first_document(self, &path);
             if let Some(doc) = doc {

@@ -469,6 +469,10 @@ impl CadCraftApp {
     }
 
     /// The edges of a component (cached).
+    pub(super) fn asm_edges_pub(&self, r: DocRef) -> Option<Arc<EdgeList>> {
+        self.asm_edges(r)
+    }
+
     fn asm_edges(&self, r: DocRef) -> Option<Arc<EdgeList>> {
         let sig = self.with_part(r, |p| p.body_signature())?;
         if let Some((k, v)) = self.cons.edges.borrow().get(&r)

@@ -253,7 +253,7 @@ axes, centre point), its part's work features and its constraints; with Constrai
 row is a selection (it lights up in the view under the cursor). **Use the current distance** (Constrain
 panel, remembered): on, the offset is the distance the components have now; off, they snap together at 0.
 **The whole assembly command set** ([spec/3.0](spec/3.0-assembly-commands.md), interface only — OK disabled): tabs
-Assemble (Component: Place from Library **PFL**, Place Imported CAD Files **PIF**, Create **CRC**, Replace
+Assemble (Component: Place from Library **PFL**, Change Size **CSZ**, Place Imported CAD Files **PIF**, Create **CRC**, Replace
 **RC** / **RA**; Relationships: Assemble **ASM**, Show **SHR**, Show Sick **SSR**, Hide All **HAR**; Pattern **PCO**,
 Mirror **MIC**, Copy **CPC**; Productivity: Make Layout **MKL**, Create Derived Substitutes **CDS**; Simplify
 **SIM**), **Design** (Bolted Connection **BC**, Clevis / Secure / Radial Pin **CVP SCP RDP**, Insert Frame **IFR**,
@@ -365,7 +365,7 @@ Sketch Driven Pattern **SDP**, Stitch **STI**, Sculpt **SCU**, Patch **PAT**, Tr
 Surface **RUS**, Replace Face **RF**, Repair Bodies **RB**, Fit Mesh Face **FMF**, Grill **GRL**, Boss **BOS**, Rest
 **RST**, Snap Fit **SNF**, Rule Fillet **RUF**, Lip **LIP**, Freeform Box / Plane / Cylinder / Sphere / Torus /
 Quadball / Face / Convert **FFB FFP FFY FFS FFT FFQ FFF FFC**, Zebra **ZEB**, Draft Analysis **DFA**, Curvature
-**CUR**, Surface Analysis **SAN**, Section Analysis **SEA**, Extract Feature Template **XFT**, Create Part Family **CPF**, Insert Feature Template **IFT**, Insert Object **INO**, Make Part **MKP**, Make Components **MKC**, Assembly Features **AF**, Author Frame Profile **AFP**, Customize **CUS**, Studio
+**CUR**, Surface Analysis **SAN**, Section Analysis **SEA**, Extract Feature Template **XFT**, Create Part Family **CPF**, Connection **CNN**, Insert Feature Template **IFT**, Insert Object **INO**, Make Part **MKP**, Make Components **MKC**, Assembly Features **AF**, Author Frame Profile **AFP**, Customize **CUS**, Studio
 **STU**, Stress Analysis **STA**, Shape Generator **SHG**, 3D Print **3DP**, BIM Content **BIM**, Center of Gravity
 **COG**, Analysis Visibility **ANV**, Shadows **SHD**, Reflections **RFL**, Ground Plane **GRP**, Ray Tracing **RTR**.
 Emboss, Extend and Extract Feature Template do not start with E (E must start Extrude at once).

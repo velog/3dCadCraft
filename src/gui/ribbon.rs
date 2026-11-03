@@ -742,6 +742,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("asm.place_imported"),
                     c("asm.create").large(),
                     c("asm.replace"),
+                    c("asm.change_size"),
                 ],
             ),
             panel(
@@ -1222,6 +1223,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         vec![
                             c("manage.extract_ifeature"),
                             c("manage.create_ipart"),
+                            c("manage.connection"),
                             c("manage.author_frame_profile"),
                         ],
                     ),
