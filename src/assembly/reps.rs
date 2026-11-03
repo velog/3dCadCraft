@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::document::{AssemblyDocument, OccurrenceLooks};
 use crate::kernel::{Real, Transform3, Vector3};
 
-/// The list every kind starts with: [Primary] has the id 0.
+/// The list every kind starts with: `[Primary]` has the id 0.
 pub const PRIMARY: u32 = 0;
 
 /// The view representation an assembly starts in.
@@ -76,7 +76,7 @@ pub struct SavedCamera {
 /// A view representation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ViewRep {
-    /// Stable id ([`PRIMARY`] for [Primary]).
+    /// Stable id ([`PRIMARY`] for `[Primary]`).
     pub id: u32,
     /// Its name.
     pub name: String,
@@ -119,7 +119,7 @@ pub struct OccOverride {
 /// A positional representation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PositionRep {
-    /// Stable id (never [`PRIMARY`]: [Primary] holds no overrides).
+    /// Stable id (never [`PRIMARY`]: `[Primary]` holds no overrides).
     pub id: u32,
     /// Its name.
     pub name: String,
@@ -138,7 +138,7 @@ pub struct PositionRep {
 /// A model state.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelState {
-    /// Stable id ([`PRIMARY`] for [Primary]).
+    /// Stable id ([`PRIMARY`] for `[Primary]`).
     pub id: u32,
     /// Its name.
     pub name: String,
@@ -150,7 +150,7 @@ pub struct ModelState {
     pub relationships: BTreeSet<u32>,
 }
 
-/// [Primary]'s values of what a positional representation can override.
+/// `[Primary]`'s values of what a positional representation can override.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PrimaryPosition {
     /// Relationship id → value.
@@ -168,25 +168,25 @@ pub struct PrimaryPosition {
 }
 
 /// All three lists of an assembly. Empty in an assembly that has only its
-/// [Primary] entries, so such a file does not change.
+/// `[Primary]` entries, so such a file does not change.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Representations {
-    /// View representations ([Primary] first, once there is another).
+    /// View representations (`[Primary]` first, once there is another).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<ViewRep>,
     /// The active view representation.
     #[serde(default, skip_serializing_if = "is_primary")]
     pub active_view: u32,
-    /// Positional representations (without [Primary]).
+    /// Positional representations (without `[Primary]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub positions: Vec<PositionRep>,
     /// The active positional representation.
     #[serde(default, skip_serializing_if = "is_primary")]
     pub active_position: u32,
-    /// [Primary]'s values.
+    /// `[Primary]`'s values.
     #[serde(default, skip_serializing_if = "is_default")]
     pub primary: PrimaryPosition,
-    /// Model states ([Primary] first, once there is another).
+    /// Model states (`[Primary]` first, once there is another).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub states: Vec<ModelState>,
     /// The active model state.
@@ -226,7 +226,7 @@ fn next_name<'a>(base: &str, names: impl Iterator<Item = &'a str>) -> String {
 }
 
 impl Representations {
-    /// Only [Primary] entries.
+    /// Only `[Primary]` entries.
     pub fn is_empty(&self) -> bool {
         self.views.is_empty() && self.positions.is_empty() && self.states.is_empty()
     }
@@ -277,7 +277,7 @@ impl Representations {
         self.views.iter().find(|v| v.id == self.active_view)
     }
 
-    /// The active positional representation; `None` is [Primary].
+    /// The active positional representation; `None` is `[Primary]`.
     pub fn active_position(&self) -> Option<&PositionRep> {
         self.positions.iter().find(|p| p.id == self.active_position)
     }
@@ -287,7 +287,7 @@ impl Representations {
         self.states.iter().find(|s| s.id == self.active_state)
     }
 
-    /// [Primary] is the active positional representation.
+    /// `[Primary]` is the active positional representation.
     pub fn is_primary_position(&self) -> bool {
         self.active_position == PRIMARY
     }
@@ -304,7 +304,7 @@ impl Representations {
         self.states.iter().map(|s| s.id).max().unwrap_or(0) + 1
     }
 
-    /// The view list comes to life: a locked [Primary] (everything shown, no
+    /// The view list comes to life: a locked `[Primary]` (everything shown, no
     /// overrides) and an active `Default` with the present display.
     pub fn ensure_views(&mut self, a: &AssemblyDocument) {
         if self.views.is_empty() {
@@ -581,7 +581,7 @@ impl Representations {
         true
     }
 
-    /// Deletes a view representation (not [Primary], not the active one).
+    /// Deletes a view representation (not `[Primary]`, not the active one).
     pub fn delete_view(&mut self, id: u32) -> bool {
         if id == PRIMARY || id == self.active_view {
             return false;
@@ -612,7 +612,7 @@ impl Representations {
     }
 
     /// New positional representation: active; returns its id. It starts as a
-    /// copy of [Primary], so it holds no overrides.
+    /// copy of `[Primary]`, so it holds no overrides.
     pub fn new_position(&mut self, a: &mut AssemblyDocument) -> u32 {
         self.sync(a);
         // A relationship's own suppression lives in the model states: an
@@ -700,7 +700,7 @@ impl Representations {
         true
     }
 
-    /// Deletes a model state (not [Primary], not the active one; every scope).
+    /// Deletes a model state (not `[Primary]`, not the active one; every scope).
     pub fn delete_state(&mut self, id: u32) -> bool {
         if id == PRIMARY || id == self.active_state {
             return false;
@@ -766,7 +766,7 @@ fn placed_at(t: &Transform3, q: [Real; 3]) -> Transform3 {
 }
 
 /// Writes a view's display on the occurrences; `true` when something changed.
-/// An occurrence it does not list: visible, unless the view is locked ([Primary]
+/// An occurrence it does not list: visible, unless the view is locked (`[Primary]`
 /// lists nothing and shows everything).
 fn apply_view(v: &ViewRep, a: &mut AssemblyDocument) -> bool {
     let mut changed = false;

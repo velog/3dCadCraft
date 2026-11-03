@@ -685,7 +685,7 @@ impl CadCraftApp {
         });
     }
 
-    /// The active position differs from [Primary]: a relationship's row is bold
+    /// The active position differs from `[Primary]`: a relationship's row is bold
     /// and shows the value in parentheses.
     pub(super) fn rel_override_text(&self, id: u32) -> Option<String> {
         let a = self.assembly()?;
@@ -706,7 +706,7 @@ impl CadCraftApp {
             .is_some_and(|p| p.occurrences.contains_key(&id))
     }
 
-    /// Adding or deleting components and relationships belongs in [Primary]:
+    /// Adding or deleting components and relationships belongs in `[Primary]`:
     /// `true` (and a message) when another position is active.
     pub(super) fn reps_refuse_structure(&mut self) -> bool {
         if self.can_override() {
@@ -720,7 +720,7 @@ impl CadCraftApp {
     }
 
     /// Whether Override can be used: a positional representation other than
-    /// [Primary] is active.
+    /// `[Primary]` is active.
     pub(super) fn can_override(&self) -> bool {
         self.assembly()
             .is_some_and(|a| !a.reps.is_primary_position())
