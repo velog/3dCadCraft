@@ -160,13 +160,10 @@ fn chains(sk: &Sketch, curves: &[EntityId]) -> Result<Vec<(Vec<Piece>, bool)>, S
     let mut out = Vec::new();
     while let Some(first) = left.pop() {
         let mut chain = vec![first];
-        loop {
-            let (Some(a), Some(b)) = (
-                chain.first().map(Piece::start),
-                chain.last().map(Piece::end),
-            ) else {
-                break;
-            };
+        while let (Some(a), Some(b)) = (
+            chain.first().map(Piece::start),
+            chain.last().map(Piece::end),
+        ) {
             if (a - b).norm() < tol {
                 break;
             }
@@ -313,6 +310,9 @@ fn boundary_of(op: &GrillOp, sk: &Sketch) -> Result<Vec<Piece>, String> {
     Ok(common::pieces_of(&r.outer))
 }
 
+/// A polygon with holes that fills part of the opening.
+type Filled = (Vec<Point2>, Vec<Vec<Point2>>);
+
 /// The area of the openings (mm²), drafts left out: the boundary's inside less islands, ribs and
 /// spars, scanned along the sketch's Y.
 pub fn flow_area(op: &GrillOp, sketches: &[crate::part::PartSketch]) -> Result<Real, String> {
@@ -332,7 +332,7 @@ pub fn flow_area(op: &GrillOp, sketches: &[crate::part::PartSketch]) -> Result<R
     };
     let inside = common::polygon(&common::offset(&outline, true, op.thickness * turn)?);
     // What fills the opening: polygons with holes.
-    let mut solid: Vec<(Vec<Point2>, Vec<Vec<Point2>>)> = Vec::new();
+    let mut solid: Vec<Filled> = Vec::new();
     let island_id = op.island_sketch.as_deref().unwrap_or(&op.sketch);
     let regions = regions_of(op, find(island_id)?, island_id);
     for i in &op.islands {
@@ -386,7 +386,7 @@ fn crossings(poly: &[Point2], y: Real) -> Vec<Real> {
 }
 
 fn pairs(xs: &[Real]) -> Vec<(Real, Real)> {
-    xs.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+    xs.as_chunks::<2>().0.iter().map(|c| (c[0], c[1])).collect()
 }
 
 fn subtract(a: &[(Real, Real)], b: &[(Real, Real)]) -> Vec<(Real, Real)> {

@@ -2932,7 +2932,7 @@ fn plastic_r64() -> PartDocument {
         auto_reference_edges: false,
         ..Default::default()
     };
-    let mut sketch_at = |part: &mut PartDocument, z: f64| {
+    let sketch_at = |part: &mut PartDocument, z: f64| {
         let wp = part
             .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
                 base: PlaneRef::Origin(OriginPlane::XY),

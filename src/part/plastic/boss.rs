@@ -556,6 +556,9 @@ pub(in crate::part) fn boss(
     rib_fillets(op, id, out)
 }
 
+/// Does an edge between two named faces belong to a set?
+type EdgeTest<'a> = dyn Fn(&str, &str) -> bool + 'a;
+
 /// The ribs' rounds. Each set goes on alone: a set the kernel refuses says which it was.
 fn rib_fillets(op: &BossOp, id: &str, mut out: Vec<ExactSolid>) -> Result<Vec<ExactSolid>, Fail> {
     let Some(r) = &op.ribs else {
@@ -577,7 +580,7 @@ fn rib_fillets(op: &BossOp, id: &str, mut out: Vec<ExactSolid>) -> Result<Vec<Ex
     };
     let foot =
         |a: &str, b: &str| (rib(a) && !b.starts_with(&own)) || (rib(b) && !a.starts_with(&own));
-    let sets: [(Real, &str, &dyn Fn(&str, &str) -> bool); 3] = [
+    let sets: [(Real, &str, &EdgeTest); 3] = [
         (r.shoulder_radius, "Shoulder Radius", &shoulder),
         (r.blend_radius, "Blend Radius", &blend),
         (r.rib_radius, "Rib Radius", &foot),

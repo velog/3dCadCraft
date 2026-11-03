@@ -565,11 +565,10 @@ fn grill_sketch(p: &mut PartDocument) -> usize {
     i
 }
 
-fn lines(
-    p: &mut PartDocument,
-    i: usize,
-    l: &[((Real, Real), (Real, Real))],
-) -> Vec<cadcraft3d::sketch::EntityId> {
+/// A line by its two ends.
+type Ends = ((Real, Real), (Real, Real));
+
+fn lines(p: &mut PartDocument, i: usize, l: &[Ends]) -> Vec<cadcraft3d::sketch::EntityId> {
     l.iter()
         .map(|(a, b)| p.sketches[i].sketch.add_line(p2(a.0, a.1), p2(b.0, b.1)))
         .collect()
