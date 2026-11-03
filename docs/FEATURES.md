@@ -1238,7 +1238,7 @@ Generators that **calculate** and **model** standard machine elements:
 
 **Specification:** [spec/6.3-content-center.md](spec/6.3-content-center.md) — stages CC0–CC7.
 
-**State (2026-11-03).** Place from Library with 122 families (74 of 110 types have a builder), Smart Drop (bolts, nuts, washers, bearings; Follow Pattern, Lock Rotation, Bolted Connection), Change Size, Connection (`CNN`), own families published and dropped. Open: the other types, several connections per part, spec 6.3 lists them.
+**State (2026-11-03).** Place from Library with 160 families (every one of the 110 types has a builder; seventeen tables typed for shape and placement, marked not compared in `data/components/SOURCES.md`), bearing families shown by their section, Full bearings with every rolling element, T-slot nuts landing on a slot's floor, several connections per part, Smart Drop (bolts, nuts, washers, bearings; Follow Pattern, Lock Rotation, Bolted Connection), Change Size, Connection (`CNN`), own families published and dropped. Open: the other types, several connections per part, spec 6.3 lists them.
 
 **What it does.** Thousands of standard parts: bolts, nuts, washers, bearings, profiles, seals per ISO/DIN/ANSI. New in Inventor 2027: publishing **whole assemblies** to the library.
 

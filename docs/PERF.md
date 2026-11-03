@@ -31,6 +31,7 @@ Target times for interactive work:
 | Project Cut Edges of a plate with 36 holes (outline + 36 circles) | 60 ms | 1.2 ms (2026-10-27; 7 s through the kernel's split and `to_brep` before the section came from the face triangles + exact surfaces) |
 | Project Geometry of a face with 36 holes (every loop, linked) | 60 ms | 6.5 ms (2026-10-27) |
 | Frames: a SHS 40×40×3 member on each of the 12 edges of a box skeleton (12 member parts) + a solve | 400 ms | 217 ms (2026-10-29, machine 96 % busy, others 84 %); 98 ms (machine 44 % busy) |
+| Library flange DN 600 and tee NPS 24 built directly (`library_flange_and_tee_build_directly`, through the Boolean 5 s and 39 s) | 150 ms | 65-86 ms, 40 ms |
 | Library fasteners built directly: smallest and largest of each family, every level (`library_fasteners_build_directly`) | 50 ms | worst 33.7 ms, DIN 1587 M16; ISO 4017 M8 x 30 4.2 ms, chamfered 7.0 ms (2026-11-02, machine 1 % busy); before: 234 ms and 1465 ms (97 % the Boolean) |
 | A chamfer wider than the rounds of a box's top (a ring cut, `blend_routes_with_times`, 100 x 60 box) | 400 ms | 89 ms (2026-11-03, machine 4-13 % busy, edges found without meshing the faces: `vendor/README.md`); before: 111 ms with the search grids kept, 311 ms before them, 1006 ms before the curves written from their surfaces |
 | The same on the 40 x 30 box with 8 rounds, the rounds rebuilt too (`tests/perf.rs`) | 300 ms | 205 ms (2026-11-02, machine 9 % busy) |
