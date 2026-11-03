@@ -3,7 +3,7 @@
 //! picture with the fields next to it, Threads / Fastener; preview, OK /
 //! Apply / Cancel; Properties of existing features.
 
-use eframe::egui::{self, Color32, RichText, Stroke};
+use eframe::egui::{self, RichText, Stroke};
 
 use super::CadCraftApp;
 use super::icons::Icon;
@@ -158,16 +158,72 @@ fn thread_choice(
     out
 }
 
-/// The hole's section with its sizes (Inventor's dimension picture): the
-/// seat, the bore, the drill point and the far side countersink. Every
-/// size the hole takes as a field is a label that opens its expression
+/// A tool's half profile: (radius, z) points.
+type HoleTool = Vec<([Real; 2], &'static str)>;
+
+/// Is (r, z) strictly inside the half profile `tool`?
+fn in_tool(tool: &HoleTool, q: [Real; 2]) -> bool {
+    let mut inside = false;
+    for k in 0..tool.len() {
+        let (a, b) = (tool[k].0, tool[(k + 1) % tool.len()].0);
+        // On the boundary is not inside: two tools share their walls.
+        let (dr, dz) = (b[0] - a[0], b[1] - a[1]);
+        let len2 = (dr * dr + dz * dz).max(1e-18);
+        let u = (((q[0] - a[0]) * dr + (q[1] - a[1]) * dz) / len2).clamp(0.0, 1.0);
+        let (er, ez) = (a[0] + u * dr - q[0], a[1] + u * dz - q[1]);
+        if er * er + ez * ez < 1e-12 {
+            return false;
+        }
+        if (a[1] > q[1]) != (b[1] > q[1]) && q[0] < a[0] + (q[1] - a[1]) / dz * dr {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// The hole's outline in the section, as pieces in (radius, z): the tools' edges without
+/// the axis, the openings at the face (and at the far face `open_at`) and what lies inside
+/// another tool, so a counterbore's floor stops at the bore and no line crosses the hole.
+fn hole_outline(tools: &[HoleTool], open_at: Option<Real>) -> Vec<[[Real; 2]; 2]> {
+    const PIECES: usize = 24;
+    let mut out = Vec::new();
+    for (i, tool) in tools.iter().enumerate() {
+        for k in 0..tool.len() {
+            let (a, b) = (tool[k].0, tool[(k + 1) % tool.len()].0);
+            if a[0].abs() < 1e-9 && b[0].abs() < 1e-9 {
+                continue;
+            }
+            for n in 0..PIECES {
+                let at = |u: Real| [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+                let (s, e) = (n as Real / PIECES as Real, (n + 1) as Real / PIECES as Real);
+                let mid = at((s + e) / 2.0);
+                let open = mid[1] > -1e-9 || open_at.is_some_and(|z| mid[1] < z + 1e-9);
+                let hidden = tools
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| j != i && in_tool(other, mid));
+                if !open && !hidden {
+                    out.push([at(s), at(e)]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The hole's section with its sizes (Inventor's dimension picture), drawn to show
+/// its shape, not to scale: a small bore in a deep hole must still read. The
+/// seat, the bore, the drill point and the far side countersink, with dimension lines.
+/// Every size the hole takes as a field is a label that opens its expression
 /// field right there (Enter applies, Esc closes); the commit goes with the
 /// panel's other fields (`fx.commits`).
 fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Feature) {
     use crate::part::params::{feature_field_param, feature_field_unit, feature_value};
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(250.0, 150.0), egui::Sense::hover());
+    let k = super::theme::tokens();
+    let width = ui.available_width().clamp(220.0, 300.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 178.0), egui::Sense::hover());
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 2.0, Color32::from_gray(235));
+    p.rect_filled(rect, 3.0, k.field);
     let through = !matches!(spec.termination, Termination::Distance);
     let r = spec.bore_radius();
     // A through hole is drawn in a plate it leaves (so the far side shows).
@@ -182,92 +238,190 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
     let pts: Vec<[Real; 2]> = tools.iter().flatten().map(|x| x.0).collect();
     let rmax = pts.iter().map(|q| q[0]).fold(1e-3, Real::max);
     let zmin = pts.iter().map(|q| q[1]).fold(0.0, Real::min).min(-depth);
-    let frame = rect.shrink2(egui::vec2(70.0, 18.0));
-    let sx = (frame.width() as Real / 2.0) / rmax;
-    let sz = frame.height() as Real / (-zmin).max(1e-3);
-    let s = sx.min(sz);
-    let cx = frame.center().x;
-    let top = frame.top();
-    let to = |r: Real, z: Real| egui::pos2(cx + (r * s) as f32, top - (z * s) as f32);
-    // The material: a block from the face down (to the far face when the
-    // hole goes through).
+    let cx = rect.center().x;
+    let top = rect.top() + 32.0;
+    let foot = rect.bottom() - 26.0;
+    let half = if rmax > r * 1.05 { 46.0 } else { 26.0 };
+    let (sx, sz) = (half / rmax, f64::from(foot - top) / (-zmin).max(1e-3));
+    let to = |r: Real, z: Real| egui::pos2(cx + (r * sx) as f32, top - (z * sz) as f32);
+    // The material: from the face down (to the far face when the hole goes through).
     let bottom = if through {
         to(0.0, -depth).y
     } else {
-        rect.bottom() - 4.0
+        rect.bottom() - 10.0
     };
     let block = egui::Rect::from_min_max(
         egui::pos2(rect.left() + 8.0, top),
         egui::pos2(rect.right() - 8.0, bottom),
     );
-    p.rect_filled(block, 0.0, Color32::from_rgb(190, 200, 215));
+    let inside = ui.painter_at(block);
+    inside.rect_filled(block, 0.0, k.control);
+    let hatch = Stroke::new(1.0, k.line);
+    let mut x = block.left() - block.height();
+    while x < block.right() {
+        inside.line_segment(
+            [
+                egui::pos2(x, block.bottom()),
+                egui::pos2(x + block.height(), block.top()),
+            ],
+            hatch,
+        );
+        x += 9.0;
+    }
     for t in &tools {
         for side in [1.0, -1.0] {
-            let poly: Vec<egui::Pos2> = t
-                .iter()
-                .map(|q| {
-                    let a = to(side * q.0[0], q.0[1]);
-                    egui::pos2(a.x, a.y.clamp(top - 4.0, bottom + 4.0))
-                })
-                .collect();
-            p.add(egui::Shape::convex_polygon(
-                poly.clone(),
-                Color32::from_gray(245),
-                Stroke::NONE,
-            ));
-            p.add(egui::Shape::closed_line(
-                poly,
-                Stroke::new(1.0, Color32::from_gray(60)),
-            ));
+            let poly: Vec<egui::Pos2> = t.iter().map(|q| to(side * q.0[0], q.0[1])).collect();
+            inside.add(egui::Shape::convex_polygon(poly, k.field, Stroke::NONE));
         }
     }
+    // The outline, and the faces up to it.
+    let pen = Stroke::new(1.5, k.text);
+    let open_at = through.then_some(-depth);
+    for [a, b] in hole_outline(&tools, open_at) {
+        for side in [1.0, -1.0] {
+            inside.line_segment([to(side * a[0], a[1]), to(side * b[0], b[1])], pen);
+        }
+    }
+    let width_at = |z: Real| {
+        tools
+            .iter()
+            .flatten()
+            .filter(|q| (q.0[1] - z).abs() < 1e-9)
+            .map(|q| q.0[0])
+            .fold(0.0, Real::max)
+    };
+    let face = width_at(0.0);
+    let far = if through {
+        width_at(-depth).max(r)
+    } else {
+        0.0
+    };
+    let hline = |y: f32, r: Real| {
+        p.line_segment(
+            [egui::pos2(block.left(), y), egui::pos2(to(-r, 0.0).x, y)],
+            pen,
+        );
+        p.line_segment(
+            [egui::pos2(to(r, 0.0).x, y), egui::pos2(block.right(), y)],
+            pen,
+        );
+    };
+    hline(top, face);
+    if through {
+        hline(bottom, far);
+    }
+    let axis = Stroke::new(1.0, k.text_weak);
+    p.extend(egui::Shape::dashed_line(
+        &[
+            egui::pos2(cx, top - 8.0),
+            egui::pos2(cx, (to(0.0, zmin).y + 6.0).min(rect.bottom() - 2.0)),
+        ],
+        axis,
+        7.0,
+        3.0,
+    ));
+    // Dimension lines.
+    let thin = Stroke::new(1.0, k.text_weak);
+    let arrow = |at: egui::Pos2, dir: egui::Vec2| {
+        let side = egui::vec2(-dir.y, dir.x) * 2.5;
+        p.add(egui::Shape::convex_polygon(
+            vec![at, at - dir * 6.0 + side, at - dir * 6.0 - side],
+            k.text_weak,
+            Stroke::NONE,
+        ));
+    };
+    // Across a width at `y`, with extension lines from `from` (arrows point at them).
+    let across = |x0: f32, x1: f32, y: f32, from: f32| {
+        for x in [x0, x1] {
+            p.line_segment([egui::pos2(x, from), egui::pos2(x, y)], thin);
+        }
+        p.line_segment([egui::pos2(x0, y), egui::pos2(x1, y)], thin);
+        arrow(egui::pos2(x0, y), egui::vec2(-1.0, 0.0));
+        arrow(egui::pos2(x1, y), egui::vec2(1.0, 0.0));
+    };
+    // Along a depth at `x`, from `y0` to `y1`, with extension lines from `from`.
+    let along = |x: f32, y0: f32, y1: f32, from: f32| {
+        for y in [y0, y1] {
+            p.line_segment([egui::pos2(from, y), egui::pos2(x, y)], thin);
+        }
+        p.line_segment([egui::pos2(x, y0), egui::pos2(x, y1)], thin);
+        arrow(egui::pos2(x, y0), egui::vec2(0.0, -1.0));
+        arrow(egui::pos2(x, y1), egui::vec2(0.0, 1.0));
+    };
     // The sizes: (field, text, anchor, alignment).
     let n = |v: Real| hole::num(v, 2);
+    let right = to(rmax, 0.0).x + 16.0;
+    let left = to(-rmax, 0.0).x - 14.0;
+    // Where the bore's own wall begins under a seat.
+    let seat_floor = match spec.seat {
+        SeatType::Counterbore | SeatType::Spotface => spec.seat_depth,
+        SeatType::Countersink => (spec.csink_diameter / 2.0 - r) / (spec.csink_angle / 2.0).tan(),
+        SeatType::None => 0.0,
+    };
+    let bore_y = to(0.0, -(seat_floor + depth) / 2.0).y;
+    let (wall_l, wall_r) = (to(-r, 0.0).x, to(r, 0.0).x);
+    p.line_segment(
+        [
+            egui::pos2(wall_l - 12.0, bore_y),
+            egui::pos2(wall_r, bore_y),
+        ],
+        thin,
+    );
+    arrow(egui::pos2(wall_l, bore_y), egui::vec2(1.0, 0.0));
+    arrow(egui::pos2(wall_r, bore_y), egui::vec2(-1.0, 0.0));
     let mut labels: Vec<(&'static str, String, egui::Pos2, egui::Align2)> = vec![(
         "diameter",
         format!("Ø{}", n(2.0 * r)),
-        to(0.0, -depth / 2.0),
-        egui::Align2::CENTER_CENTER,
+        egui::pos2(wall_l - 14.0, bore_y),
+        egui::Align2::RIGHT_CENTER,
     )];
     let depth_text = match spec.termination {
         Termination::Distance => n(spec.depth),
         Termination::ThroughAll => "THRU".into(),
         Termination::To(_) => "To".into(),
     };
+    let depth_y = to(0.0, -depth).y;
+    along(right, top, depth_y, to(r, 0.0).x);
     labels.push((
         "depth",
-        format!("depth {depth_text}"),
-        egui::pos2(to(rmax, 0.0).x + 6.0, to(0.0, -depth / 2.0).y),
+        depth_text,
+        egui::pos2(right + 5.0, (top + depth_y) / 2.0),
         egui::Align2::LEFT_CENTER,
     ));
-    let corner = egui::pos2(rect.left() + 10.0, rect.top() + 3.0);
+    let band = top - 15.0;
     match spec.seat {
         SeatType::Counterbore | SeatType::Spotface => {
+            across(to(-face, 0.0).x, to(face, 0.0).x, band, top);
             labels.push((
                 "seat_diameter",
                 format!("Ø{}", n(spec.seat_diameter)),
-                corner,
-                egui::Align2::LEFT_TOP,
+                egui::pos2(to(face, 0.0).x + 6.0, band),
+                egui::Align2::LEFT_CENTER,
             ));
+            let floor = to(0.0, -spec.seat_depth).y;
+            along(left, top, floor, to(-face, 0.0).x);
             labels.push((
                 "seat_depth",
-                format!("depth {}", n(spec.seat_depth)),
-                egui::pos2(rect.right() - 10.0, rect.top() + 3.0),
-                egui::Align2::RIGHT_TOP,
+                n(spec.seat_depth),
+                egui::pos2(left - 5.0, (top + floor) / 2.0),
+                egui::Align2::RIGHT_CENTER,
             ));
         }
         SeatType::Countersink => {
+            across(to(-face, 0.0).x, to(face, 0.0).x, band, top);
             labels.push((
                 "csink_diameter",
                 format!("Ø{}", n(spec.csink_diameter)),
-                corner,
-                egui::Align2::LEFT_TOP,
+                egui::pos2(to(face, 0.0).x + 6.0, band),
+                egui::Align2::LEFT_CENTER,
             ));
+            let on_cone = to(-(face + r) / 2.0, -seat_floor / 2.0);
+            p.line_segment([on_cone, egui::pos2(left, on_cone.y)], thin);
             labels.push((
                 "csink_angle",
                 format!("{}°", hole::num(spec.csink_angle.to_degrees(), 1)),
-                egui::pos2(rect.right() - 10.0, rect.top() + 3.0),
-                egui::Align2::RIGHT_TOP,
+                egui::pos2(left - 2.0, on_cone.y),
+                egui::Align2::RIGHT_CENTER,
             ));
         }
         SeatType::None => {}
@@ -276,22 +430,24 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
         labels.push((
             "point_angle",
             format!("{}°", hole::num(spec.point_angle.to_degrees(), 1)),
-            egui::pos2(cx, rect.bottom() - 3.0),
-            egui::Align2::CENTER_BOTTOM,
+            egui::pos2(cx, to(0.0, zmin).y + 3.0),
+            egui::Align2::CENTER_TOP,
         ));
     }
     if spec.far_csink && through {
+        let low = bottom + 14.0;
+        across(to(-far, 0.0).x, to(far, 0.0).x, low, bottom);
         labels.push((
             "far_csink_diameter",
             format!("Ø{}", n(spec.far_diameter())),
-            egui::pos2(rect.left() + 10.0, rect.bottom() - 3.0),
-            egui::Align2::LEFT_BOTTOM,
+            egui::pos2(to(far, 0.0).x + 6.0, low),
+            egui::Align2::LEFT_CENTER,
         ));
         labels.push((
             "far_csink_angle",
             format!("{}°", hole::num(spec.far_angle().to_degrees(), 1)),
-            egui::pos2(rect.right() - 10.0, rect.bottom() - 3.0),
-            egui::Align2::RIGHT_BOTTOM,
+            egui::pos2(left - 2.0, bottom - 8.0),
+            egui::Align2::RIGHT_CENTER,
         ));
     }
     let takes = |field: &str| match f {
@@ -299,8 +455,7 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
         _ => false,
     };
     let font = egui::FontId::proportional(11.0);
-    let ink = Color32::from_gray(20);
-    let blue = Color32::from_rgb(20, 90, 200);
+    let (ink, blue) = (k.text, k.link);
     let edit_id = egui::Id::new(("hole_picture_edit", fx.key.as_str()));
     let editing: Option<&'static str> = ui.data(|d| d.get_temp(edit_id));
     let mut open: Option<&'static str> = None;
@@ -312,9 +467,7 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
             if editable { blue } else { ink },
         );
         let lr = align.anchor_size(*at, g.size()).expand(2.0);
-        if editable {
-            p.rect_filled(lr, 2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 190));
-        }
+        p.rect_filled(lr, 2.0, k.field);
         p.galley(lr.min + egui::vec2(2.0, 2.0), g, ink);
         if !editable {
             continue;
@@ -335,8 +488,10 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
                 .as_ref()
                 .map(|p| p.name.as_str())
                 .filter(|n| !n.is_empty());
+            // An id of its own: the same field in the list below is on another layer, and
+            // one widget on two layers is an egui assertion (a crash in debug builds).
             let fs = super::valuefield::FieldSpec {
-                id: egui::Id::new(("field", fx.key.as_str(), *field)),
+                id: egui::Id::new(("hole_picture_field", fx.key.as_str(), *field)),
                 value: feature_value(f, field).unwrap_or_default(),
                 unit: feature_field_unit(f, field).unwrap_or_default(),
                 name,
@@ -354,6 +509,12 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
                                 fx.commits.push((field, t));
                                 done = true;
                             }
+                            // Once, and only now that the field exists: focus on a widget
+                            // this frame does not have stops AccessKit ("not in the node list").
+                            let first = edit_id.with("focus");
+                            if ui.data_mut(|d| d.remove_temp::<bool>(first)).is_some() {
+                                ui.memory_mut(|m| m.request_focus(fs.id.with("te")));
+                            }
                             done |= super::theme::glyph(ui, super::theme::Glyph::Close)
                                 .on_hover_text("Close (Esc)")
                                 .clicked();
@@ -366,10 +527,9 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
         }
     }
     if let Some(field) = open {
-        ui.data_mut(|d| d.insert_temp(edit_id, field));
-        // The value is ready to type over.
-        ui.memory_mut(|m| {
-            m.request_focus(egui::Id::new(("field", fx.key.as_str(), field)).with("te"))
+        ui.data_mut(|d| {
+            d.insert_temp(edit_id, field);
+            d.insert_temp(edit_id.with("focus"), true);
         });
     }
 }
@@ -1414,5 +1574,72 @@ mod tests {
         assert!(!is_warning(super::super::hole::HOLE_NO_CENTRES));
         assert!(!is_warning(""));
         assert!(is_warning("Hole: the centre is not on the part"));
+    }
+}
+
+#[cfg(test)]
+mod picture_tests {
+    use super::*;
+
+    fn counterbore() -> Vec<HoleTool> {
+        vec![
+            vec![
+                ([0.0, 0.0], "Top"),
+                ([6.0, 0.0], "CBore"),
+                ([6.0, -2.0], "CBoreFloor"),
+                ([0.0, -2.0], "Axis"),
+            ],
+            vec![
+                ([0.0, 0.0], "Top"),
+                ([3.0, 0.0], "Bore"),
+                ([3.0, -10.0], "Floor"),
+                ([0.0, -10.0], "Axis"),
+            ],
+        ]
+    }
+
+    #[test]
+    fn no_line_crosses_the_hole() {
+        let pieces = hole_outline(&counterbore(), None);
+        assert!(!pieces.is_empty());
+        for [a, b] in &pieces {
+            let mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+            assert!(mid[1] < 0.0, "the opening at the face: {mid:?}");
+            // The counterbore's floor stops at the bore, whose wall starts at the floor.
+            if (mid[1] + 2.0).abs() < 1e-9 {
+                assert!(mid[0] > 3.0 - 1e-9, "{mid:?}");
+            }
+            if (mid[0] - 3.0).abs() < 1e-9 {
+                assert!(mid[1] < -2.0, "{mid:?}");
+            }
+        }
+        // The seat's wall, its floor, the bore's wall and floor all remain.
+        let has = |f: &dyn Fn([Real; 2]) -> bool| {
+            pieces
+                .iter()
+                .any(|[a, b]| f([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]))
+        };
+        assert!(has(&|m| (m[0] - 6.0).abs() < 1e-9));
+        assert!(has(&|m| (m[1] + 2.0).abs() < 1e-9));
+        assert!(has(&|m| (m[0] - 3.0).abs() < 1e-9));
+        assert!(has(&|m| (m[1] + 10.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn a_through_hole_stays_open_at_the_far_face() {
+        let pieces = hole_outline(&counterbore(), Some(-10.0));
+        assert!(
+            pieces
+                .iter()
+                .all(|[a, b]| (a[1] + b[1]) / 2.0 > -10.0 + 1e-9)
+        );
+    }
+
+    #[test]
+    fn a_point_on_a_shared_wall_is_not_inside() {
+        let t = counterbore();
+        assert!(in_tool(&t[0], [1.0, -1.0]));
+        assert!(!in_tool(&t[0], [6.0, -1.0]));
+        assert!(!in_tool(&t[0], [7.0, -1.0]));
     }
 }
