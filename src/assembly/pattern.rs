@@ -536,6 +536,7 @@ mod tests {
         DocRef {
             document: *ID.get_or_init(DocumentId::new_random),
             library: None,
+            variant: None,
         }
     }
 

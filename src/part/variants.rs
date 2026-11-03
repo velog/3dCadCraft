@@ -18,13 +18,138 @@ use serde::{Deserialize, Serialize};
 use super::expr::Unit;
 use super::params::ParamOwner;
 use super::{PartDocument, PartError};
+use crate::document::iprops::{BomStructure, IProperties};
 use crate::kernel::Real;
 
 /// `[Primary]` has the id 0.
 pub const PRIMARY: u32 = 0;
 
+/// The Properties a variant has its own values of.
+pub const VARIANT_PROPS: [(&str, &str); 3] = [
+    ("part_number", "Part Number"),
+    ("stock_number", "Stock Number"),
+    ("description", "Description"),
+];
+
+/// A BOM Structure's words, for a cell.
+pub const BOM_WORDS: [(BomStructure, &str); 5] = [
+    (BomStructure::Normal, "Normal"),
+    (BomStructure::Phantom, "Phantom"),
+    (BomStructure::Reference, "Reference"),
+    (BomStructure::Purchased, "Purchased"),
+    (BomStructure::Inseparable, "Inseparable"),
+];
+
+/// A BOM Structure from its word.
+pub fn bom_of_word(word: &str) -> Option<BomStructure> {
+    BOM_WORDS.iter().find(|w| w.1 == word).map(|w| w.0)
+}
+
+/// The word of a BOM Structure.
+pub fn word_of_bom(b: BomStructure) -> &'static str {
+    BOM_WORDS
+        .iter()
+        .find(|w| w.0 == b)
+        .map_or("Normal", |w| w.1)
+}
+
+/// A variant's Properties and BOM Structure.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct VariantInfo {
+    /// Values of [`VARIANT_PROPS`], by key; empty ones are absent.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub props: BTreeMap<String, String>,
+    /// How the document counts in a BOM.
+    #[serde(default, skip_serializing_if = "is_normal")]
+    pub bom: BomStructure,
+}
+
+fn is_normal(b: &BomStructure) -> bool {
+    *b == BomStructure::Normal
+}
+
+impl VariantInfo {
+    /// What a document's Properties hold of it.
+    pub fn of(p: &IProperties) -> Self {
+        Self {
+            props: VARIANT_PROPS
+                .iter()
+                .filter(|(k, _)| !p.get(k).is_empty())
+                .map(|(k, _)| ((*k).to_owned(), p.get(k).to_owned()))
+                .collect(),
+            bom: p.bom_structure,
+        }
+    }
+
+    /// Writes it into a document's Properties.
+    pub fn write(&self, p: &mut IProperties) {
+        for (k, _) in VARIANT_PROPS {
+            p.set(k, self.props.get(k).map_or("", String::as_str));
+        }
+        p.bom_structure = self.bom;
+    }
+
+    /// The Property `key`, empty when absent.
+    pub fn get(&self, key: &str) -> &str {
+        self.props.get(key).map_or("", String::as_str)
+    }
+
+    /// Sets the Property `key`; an empty text removes it.
+    pub fn set(&mut self, key: &str, text: &str) {
+        let t = text.trim();
+        if t.is_empty() {
+            self.props.remove(key);
+        } else {
+            self.props.insert(key.to_owned(), t.to_owned());
+        }
+    }
+}
+
+/// The table's rows of a variant's Properties, one column per entry of `infos`.
+pub fn info_rows(infos: &[VariantInfo]) -> Vec<Row> {
+    let mut rows: Vec<Row> = VARIANT_PROPS
+        .iter()
+        .map(|(k, label)| Row {
+            key: RowKey::Prop((*k).to_owned()),
+            label: (*label).to_owned(),
+            cells: infos
+                .iter()
+                .map(|i| Cell::Text(i.get(k).to_owned()))
+                .collect(),
+        })
+        .collect();
+    rows.push(Row {
+        key: RowKey::BomStructure,
+        label: "BOM Structure".to_owned(),
+        cells: infos
+            .iter()
+            .map(|i| Cell::Choice {
+                options: BOM_WORDS.iter().map(|w| w.1.to_owned()).collect(),
+                selected: word_of_bom(i.bom).to_owned(),
+            })
+            .collect(),
+    });
+    rows
+}
+
+/// Writes one cell of a Properties row into `info`; `false` when it is no such row.
+pub fn set_info(info: &mut VariantInfo, key: &RowKey, cell: &Cell) -> Result<bool, String> {
+    match (key, cell) {
+        (RowKey::Prop(k), Cell::Text(t)) => {
+            info.set(k, t);
+            Ok(true)
+        }
+        (RowKey::BomStructure, Cell::Choice { selected, .. }) => {
+            info.bom =
+                bom_of_word(selected).ok_or_else(|| format!("'{selected}' is no BOM Structure"))?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// One variant of a part.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PartVariant {
     /// Stable id ([`PRIMARY`] for `[Primary]`).
     pub id: u32,
@@ -36,6 +161,16 @@ pub struct PartVariant {
     /// Every parameter's equation here, by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, String>,
+    /// Its material (`None`: the Generic one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// Its Properties and BOM Structure.
+    #[serde(default, skip_serializing_if = "is_default_info")]
+    pub info: VariantInfo,
+}
+
+fn is_default_info(i: &VariantInfo) -> bool {
+    *i == VariantInfo::default()
 }
 
 /// The variants of a part. Empty in a part with only its `[Primary]`, so such a
@@ -117,6 +252,8 @@ impl PartDocument {
                 name: "Primary".into(),
                 suppressed: self.suppressed.clone(),
                 params: self.parameter_equations(),
+                material: self.material.clone(),
+                info: VariantInfo::default(),
             };
             self.variants.list.push(v);
             self.variants.known = self.features.iter().map(|f| f.id().to_owned()).collect();
@@ -133,6 +270,7 @@ impl PartDocument {
         }
         let live = self.parameter_equations();
         let suppressed = self.suppressed.clone();
+        let material = self.material.clone();
         let features: BTreeSet<String> = self.features.iter().map(|f| f.id().to_owned()).collect();
         let vs = &mut self.variants;
         let active = vs.active;
@@ -174,6 +312,10 @@ impl PartDocument {
                         changed = true;
                     }
                 }
+                if old.material != material && v.material != material {
+                    v.material = material.clone();
+                    changed = true;
+                }
             } else {
                 for f in &fresh {
                     changed |= v.suppressed.insert(f.clone());
@@ -181,13 +323,74 @@ impl PartDocument {
             }
         }
         if let Some(v) = vs.get_mut(active)
-            && (v.suppressed != suppressed || v.params != live)
+            && (v.suppressed != suppressed || v.params != live || v.material != material)
         {
             v.suppressed = suppressed;
             v.params = live;
+            v.material = material;
             changed = true;
         }
         changed
+    }
+
+    /// The active variant takes a document's Properties (and, in Factory Scope,
+    /// every variant the ones that changed); `true` when something changed.
+    pub fn variants_take_info(&mut self, props: &IProperties) -> bool {
+        let now = VariantInfo::of(props);
+        take_info(
+            &mut self.variants.list,
+            self.variants.active,
+            self.variants.factory_scope,
+            &now,
+            |v| &mut v.info,
+            |v| v.id,
+        )
+    }
+
+    /// The Properties and BOM Structure of the active variant.
+    pub fn active_variant_info(&self) -> Option<&VariantInfo> {
+        self.variants.get(self.variants.active).map(|v| &v.info)
+    }
+
+    /// Variants without Properties take these (right after a new variant: the
+    /// list started without the document's Properties).
+    pub fn variants_fill_info(&mut self, props: &IProperties) {
+        let now = VariantInfo::of(props);
+        for v in &mut self.variants.list {
+            if v.info == VariantInfo::default() {
+                v.info = now.clone();
+            }
+        }
+    }
+
+    /// Writes one Properties or Material cell of variant `col`.
+    pub fn set_variant_info(
+        &mut self,
+        col: u32,
+        key: &RowKey,
+        cell: &Cell,
+    ) -> Result<(), PartError> {
+        let bad = PartError::Feature;
+        if let (RowKey::Material, Cell::Text(name)) = (key, cell) {
+            let lib = crate::materials::with_user();
+            let name = name.trim();
+            let chosen = (!name.is_empty()).then_some(name);
+            if col == self.variants.active || self.variants.is_empty() {
+                return self.set_material(chosen, lib).map_err(bad);
+            }
+            // Checked on a copy: the material is copied into the part only when used.
+            self.clone().set_material(chosen, lib).map_err(bad)?;
+            if let Some(v) = self.variants.get_mut(col) {
+                v.material = chosen.map(str::to_owned);
+            }
+            return Ok(());
+        }
+        let v = self
+            .variants
+            .get_mut(col)
+            .ok_or_else(|| bad("the variant no longer exists".to_owned()))?;
+        set_info(&mut v.info, key, cell).map_err(bad)?;
+        Ok(())
     }
 
     /// A new variant from the part as it is: active; returns its id.
@@ -199,11 +402,18 @@ impl PartDocument {
             "Variant",
             self.variants.list.iter().map(|v| v.name.as_str()),
         );
+        let info = self
+            .variants
+            .get(self.variants.active)
+            .map(|v| v.info.clone())
+            .unwrap_or_default();
         let v = PartVariant {
             id,
             name,
             suppressed: self.suppressed.clone(),
             params: self.parameter_equations(),
+            material: self.material.clone(),
+            info,
         };
         self.variants.list.push(v);
         self.variants.active = id;
@@ -244,6 +454,10 @@ impl PartDocument {
             return Err(PartError::Feature("the variant no longer exists".into()));
         };
         self.suppressed = v.suppressed;
+        if self.material != v.material {
+            self.set_material(v.material.as_deref(), crate::materials::with_user())
+                .map_err(PartError::Feature)?;
+        }
         let live = self.parameter_equations();
         for (p, e) in &v.params {
             if live.get(p).is_some_and(|now| now != e) {
@@ -324,14 +538,16 @@ impl PartDocument {
         Ok(())
     }
 
-    /// What the Variants window shows.
-    pub fn variants_table(&self) -> Table {
+    /// What the Variants window shows; `props` are the document's Properties.
+    pub fn variants_table(&self, props: &IProperties) -> Table {
         let vs = &self.variants;
         let one = PartVariant {
             id: PRIMARY,
             name: "Primary".into(),
             suppressed: self.suppressed.clone(),
             params: self.parameter_equations(),
+            material: self.material.clone(),
+            info: VariantInfo::of(props),
         };
         let list: Vec<&PartVariant> = if vs.is_empty() {
             vec![&one]
@@ -381,9 +597,60 @@ impl PartDocument {
             sections: vec![
                 ("Features".into(), features),
                 ("Parameters".into(), parameters),
+                ("Properties".into(), {
+                    let infos: Vec<VariantInfo> = list.iter().map(|v| v.info.clone()).collect();
+                    let mut rows = info_rows(&infos);
+                    rows.push(Row {
+                        key: RowKey::Material,
+                        label: "Material".to_owned(),
+                        cells: list
+                            .iter()
+                            .map(|v| Cell::Text(v.material.clone().unwrap_or_default()))
+                            .collect(),
+                    });
+                    rows
+                }),
             ],
         }
     }
+}
+
+/// The active entry of `list` takes `now`; in Factory Scope the others take what
+/// changed. `true` when something changed.
+pub fn take_info<T>(
+    list: &mut [T],
+    active: u32,
+    factory: bool,
+    now: &VariantInfo,
+    info: impl Fn(&mut T) -> &mut VariantInfo,
+    id: impl Fn(&T) -> u32,
+) -> bool {
+    let Some(old) = list
+        .iter_mut()
+        .find(|t| id(t) == active)
+        .map(|t| info(t).clone())
+    else {
+        return false;
+    };
+    if old == *now {
+        return false;
+    }
+    for t in list.iter_mut() {
+        if id(t) == active {
+            *info(t) = now.clone();
+        } else if factory {
+            let i = info(t);
+            for (k, _) in VARIANT_PROPS {
+                if old.get(k) != now.get(k) {
+                    i.set(k, now.get(k));
+                }
+            }
+            if old.bom != now.bom {
+                i.bom = now.bom;
+            }
+        }
+    }
+    true
 }
 
 /// What a row of the table stands for.
@@ -397,6 +664,20 @@ pub enum RowKey {
     Feature(String),
     /// A part's parameter, by name.
     Param(String),
+    /// A Property, by key ([`VARIANT_PROPS`]).
+    Prop(String),
+    /// The document's BOM Structure.
+    BomStructure,
+    /// A part's material.
+    Material,
+    /// The value of an assembly's relationship.
+    RelValue(u32),
+    /// A value of a component pattern: its id, the field.
+    Pattern(u32, String),
+    /// The variant of the part an occurrence places.
+    OccVariant(u32),
+    /// An occurrence counted as Reference in the BOM.
+    OccReference(u32),
 }
 
 /// One cell.
@@ -413,6 +694,15 @@ pub enum Cell {
         /// The value it has now (for the field).
         value: Real,
     },
+    /// Free text (a Property, a material's name).
+    Text(String),
+    /// One of a list.
+    Choice {
+        /// What can be chosen.
+        options: Vec<String>,
+        /// What is chosen.
+        selected: String,
+    },
 }
 
 impl Cell {
@@ -421,6 +711,8 @@ impl Cell {
         match (self, other) {
             (Cell::Suppressed(a), Cell::Suppressed(b)) => a == b,
             (Cell::Value { text: a, .. }, Cell::Value { text: b, .. }) => a == b,
+            (Cell::Text(a), Cell::Text(b)) => a == b,
+            (Cell::Choice { selected: a, .. }, Cell::Choice { selected: b, .. }) => a == b,
             _ => false,
         }
     }
@@ -430,7 +722,8 @@ impl Cell {
         match self {
             Cell::Suppressed(true) => "Suppressed".into(),
             Cell::Suppressed(false) => "Included".into(),
-            Cell::Value { text, .. } => text.clone(),
+            Cell::Value { text, .. } | Cell::Text(text) => text.clone(),
+            Cell::Choice { selected, .. } => selected.clone(),
         }
     }
 }
@@ -606,6 +899,20 @@ impl Table {
                         unit: *unit,
                         value: *value,
                     },
+                    (Cell::Text(_), other) => Cell::Text(other.to_owned()),
+                    (Cell::Choice { options, .. }, other) => {
+                        if !options.iter().any(|o| o == other) {
+                            return Err(format!(
+                                "{}: '{other}' is none of {}",
+                                row.label,
+                                options.join(", ")
+                            ));
+                        }
+                        Cell::Choice {
+                            options: options.clone(),
+                            selected: other.to_owned(),
+                        }
+                    }
                 };
                 if !row.cells[*c].same(&cell) {
                     out.push(Set {
@@ -776,7 +1083,7 @@ mod tests {
         let v = p.new_variant();
         p.set_variant_suppressed(v, &id, true).unwrap();
         p.variants_sync();
-        let t = p.variants_table();
+        let t = p.variants_table(&IProperties::default());
         assert_eq!(t.columns.len(), 2);
         assert_eq!(t.active, v);
         let key = RowKey::Feature(id.clone());
@@ -806,7 +1113,7 @@ mod tests {
     fn csv_goes_round_and_refuses_what_it_does_not_know() {
         let mut p = with_boss();
         let v = p.new_variant();
-        let t = p.variants_table();
+        let t = p.variants_table(&IProperties::default());
         let text = t.to_csv();
         assert!(t.from_csv(&text).unwrap().is_empty(), "{text}");
         // A changed cell is one Set.
@@ -827,6 +1134,69 @@ mod tests {
         let bad = format!("Section,Item,Primary\nFeatures,{label},Maybe\n");
         assert!(t.from_csv(&bad).is_err());
         assert_eq!(csv_fields("a,\"b,c\",\"d\"\"e\""), ["a", "b,c", "d\"e"]);
+    }
+
+    #[test]
+    fn a_variant_has_its_own_material_and_properties() {
+        let mut p = box_part();
+        let lib = crate::materials::with_user();
+        let steel = lib
+            .materials
+            .iter()
+            .map(|m| m.name.clone())
+            .find(|n| n != "Generic")
+            .unwrap();
+        let mut doc = IProperties::default();
+        doc.set("part_number", "A-100");
+        let v = p.new_variant();
+        p.variants_fill_info(&doc);
+        assert_eq!(
+            p.variants.get(PRIMARY).unwrap().info.get("part_number"),
+            "A-100"
+        );
+        // The active one follows the document.
+        doc.set("part_number", "A-200");
+        doc.bom_structure = BomStructure::Purchased;
+        assert!(p.variants_take_info(&doc));
+        assert_eq!(p.active_variant_info().unwrap().get("part_number"), "A-200");
+        assert_eq!(
+            p.variants.get(PRIMARY).unwrap().info.get("part_number"),
+            "A-100"
+        );
+        assert_eq!(
+            p.variants.get(PRIMARY).unwrap().info.bom,
+            BomStructure::Normal
+        );
+        // Material, from the table's cell.
+        p.set_variant_info(v, &RowKey::Material, &Cell::Text(steel.clone()))
+            .unwrap();
+        p.variants_sync();
+        assert_eq!(p.material.as_deref(), Some(steel.as_str()));
+        p.activate_variant(PRIMARY).unwrap();
+        assert_eq!(p.material, None);
+        p.activate_variant(v).unwrap();
+        assert_eq!(p.material.as_deref(), Some(steel.as_str()));
+        // Not in the library: refused, for any variant.
+        let before = p.variants.clone();
+        assert!(
+            p.set_variant_info(PRIMARY, &RowKey::Material, &Cell::Text("Nothing".into()))
+                .is_err()
+        );
+        assert_eq!(p.variants, before);
+        // The table lists them; a word that is no BOM Structure is refused.
+        let t = p.variants_table(&doc);
+        let props = &t.sections[2].1;
+        assert_eq!(props[0].cells[0], Cell::Text("A-100".into()));
+        assert!(
+            t.from_csv("Section,Item,Primary\nProperties,BOM Structure,Maybe\n")
+                .is_err()
+        );
+        assert_eq!(
+            t.from_csv("Section,Item,Primary\nProperties,BOM Structure,Phantom\n")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

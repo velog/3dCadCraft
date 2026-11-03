@@ -99,6 +99,7 @@ fn associative_pattern_follows_the_part() {
 
     // A bolt in the first hole follows the pattern, then its new count.
     let doc = DocRef {
+        variant: None,
         document: DocumentId::new_random(),
         library: None,
     };

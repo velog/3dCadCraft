@@ -129,10 +129,7 @@ pub fn demote(
     outer.move_to_folder(None, ids);
     let document = project.add_document(name, DocumentData::Assembly(inner));
     let occurrence = outer.place(
-        DocRef {
-            library: None,
-            document,
-        },
+        DocRef::local(document),
         name,
         Transform3::identity(),
         grounded,
@@ -273,6 +270,7 @@ mod tests {
         let r = DocRef {
             library: None,
             document: part,
+            variant: None,
         };
         let at = |x: f64| Transform3::new(Vector3::new(x, 0.0, 0.0), Vector3::zeros());
         let ids = [

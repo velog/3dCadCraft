@@ -3070,6 +3070,7 @@ fn speed_budgets() {
         use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
         use cadcraft3d::kernel::{Transform3, Vector3};
         let doc = DocRef {
+            variant: None,
             document: DocumentId::new_random(),
             library: None,
         };

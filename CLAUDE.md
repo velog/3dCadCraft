@@ -1091,6 +1091,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   frame (a locked view stores nothing); `activate_*` syncs, then `compose` writes the new state, and the GUI solves through
   `asm_try` (rule 5). A new per-occurrence display field must join `OccDisplay`; a command that adds or deletes components or
   relationships must call `reps_refuse_structure` (they belong in [Primary]).
+- **Variants** (Inventor: Model States; `part::variants`, `assembly::reps`, GUI `gui/variants.rs`, spec 3.9): the active variant follows
+  the live state, so never edit the active entry directly (the next sync overwrites it): go through the table's `Set`s or activate another
+  first. Maps by id are lists of pairs (`id_map`): a `u32`-keyed JSON map fails inside the internally tagged `DocumentData`, though a direct
+  round trip of `AssemblyDocument` passes (test through `Project::save` / `load`). `DocRef::variant` = which variant an occurrence places: read
+  parts only through `with_part`, compare documents with `.base()`; `DocumentData::references` / `remap_references` see base references and
+  keep the variant. A new row kind is a `RowKey` + a cell in `assembly_table` or `variants_table` + its case in `apply_set` / `set_variant_info`.
 - **Assembly constraints (A2)**: data in `AssemblyDocument::constraints` (`assembly::relation`), solved by
   `assembly::solve` (6 unknowns per free component, turn about its own origin scaled by 50 mm, min-norm
   Levenberg, dragged component weighted). GUI changes go through `asm_try` (solve a copy, commit only when

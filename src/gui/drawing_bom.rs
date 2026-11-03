@@ -313,9 +313,14 @@ impl CadCraftApp {
         let asm = if reps.is_active() {
             asm
         } else {
-            composed = asm
+            let mut c = asm
                 .reps
                 .composed(asm, reps.view, reps.position, reps.variant);
+            // A variant's pattern count makes or removes copies.
+            if let Err(e) = self.place_patterns(&mut c) {
+                log::warn!("{e}");
+            }
+            composed = c;
             &composed
         };
         Some(

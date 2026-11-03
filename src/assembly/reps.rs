@@ -14,8 +14,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::document::{AssemblyDocument, OccurrenceLooks};
+use super::pattern::Layout;
+use super::relation::ConstraintKind;
+use crate::document::iprops::{BomStructure, IProperties};
+use crate::document::{AssemblyDocument, DocRef, OccurrenceLooks};
 use crate::kernel::{Real, Transform3, Vector3};
+use crate::part::expr::{self, Unit};
+use crate::part::params::format_value;
+use crate::part::variants::{Cell, Row, RowKey, Set, Table, VariantInfo, info_rows, set_info};
 
 /// The list every kind starts with: `[Primary]` has the id 0.
 pub const PRIMARY: u32 = 0;
@@ -135,8 +141,21 @@ pub struct PositionRep {
     pub poses: BTreeMap<u32, Transform3>,
 }
 
+/// A relationship's value in a variant.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RelValue {
+    /// Offset (mm) or angle (radians).
+    pub value: Real,
+    /// A joint holds it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
+    /// The equation, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr: Option<String>,
+}
+
 /// A variant.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Variant {
     /// Stable id ([`PRIMARY`] for `[Primary]`).
     pub id: u32,
@@ -148,6 +167,89 @@ pub struct Variant {
     /// Relationships suppressed here.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub relationships: BTreeSet<u32>,
+    /// Relationships' values here, by id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "id_map")]
+    pub values: BTreeMap<u32, RelValue>,
+    /// Component patterns' layouts here, by pattern id: a count that differs makes
+    /// or removes copies when the patterns are placed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "id_map")]
+    pub patterns: BTreeMap<u32, Layout>,
+    /// The part variant each occurrence places here, by occurrence id (absent:
+    /// the one active in the part).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "id_map")]
+    pub parts: BTreeMap<u32, u32>,
+    /// Occurrences counted as Reference in the BOM here.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub references: BTreeSet<u32>,
+    /// Its Properties and BOM Structure.
+    #[serde(default, skip_serializing_if = "is_default_info")]
+    pub info: VariantInfo,
+}
+
+fn is_default_info(i: &VariantInfo) -> bool {
+    *i == VariantInfo::default()
+}
+
+/// What a variant holds besides its suppressions, as the assembly has it now.
+fn extras_of(a: &AssemblyDocument) -> Extras {
+    Extras {
+        values: a
+            .constraints
+            .iter()
+            .map(|c| {
+                (
+                    c.id,
+                    RelValue {
+                        value: c.value,
+                        locked: c.locked,
+                        expr: c.expr.clone(),
+                    },
+                )
+            })
+            .collect(),
+        patterns: a
+            .patterns
+            .iter()
+            .map(|p| (p.id, p.layout.clone()))
+            .collect(),
+        parts: a
+            .occurrences
+            .iter()
+            .filter_map(|o| Some((o.id, o.component.variant?)))
+            .collect(),
+        references: a
+            .occurrences
+            .iter()
+            .filter(|o| o.bom == Some(BomStructure::Reference))
+            .map(|o| o.id)
+            .collect(),
+    }
+}
+
+/// See [`extras_of`].
+struct Extras {
+    values: BTreeMap<u32, RelValue>,
+    patterns: BTreeMap<u32, Layout>,
+    parts: BTreeMap<u32, u32>,
+    references: BTreeSet<u32>,
+}
+
+/// In Factory Scope another variant takes the entries that changed.
+fn spread_map<T: Clone + PartialEq>(
+    other: &mut BTreeMap<u32, T>,
+    old: &BTreeMap<u32, T>,
+    now: &BTreeMap<u32, T>,
+) {
+    for (k, v) in now {
+        if old.get(k) != Some(v) {
+            other.insert(*k, v.clone());
+        }
+    }
+    for k in old.keys() {
+        if !now.contains_key(k) {
+            other.remove(k);
+        }
+    }
 }
 
 /// `[Primary]`'s values of what a positional representation can override.
@@ -332,11 +434,17 @@ impl Representations {
     fn ensure_variants(&mut self, a: &AssemblyDocument) {
         if self.variants.is_empty() {
             let (occurrences, relationships) = Self::variant_of(a);
+            let x = extras_of(a);
             self.variants.push(Variant {
                 id: PRIMARY,
                 name: "Primary".into(),
                 occurrences,
                 relationships,
+                values: x.values,
+                patterns: x.patterns,
+                parts: x.parts,
+                references: x.references,
+                info: VariantInfo::default(),
             });
         }
     }
@@ -368,6 +476,11 @@ impl Representations {
             let n = s.occurrences.len() + s.relationships.len();
             s.occurrences.retain(occ_ok);
             s.relationships.retain(rel_ok);
+            s.values.retain(|id, _| rel_ok(id));
+            s.patterns
+                .retain(|id, _| a.patterns.iter().any(|p| p.id == *id));
+            s.parts.retain(|id, _| occ_ok(id));
+            s.references.retain(occ_ok);
             changed |= n != s.occurrences.len() + s.relationships.len();
         }
         // View.
@@ -396,16 +509,22 @@ impl Representations {
                 .active_variant()
                 .map(|s| s.relationships.clone())
                 .unwrap_or_default();
+            let base_values = self
+                .active_variant()
+                .map(|s| s.values.clone())
+                .unwrap_or_default();
             let active = self.active_position;
             if let Some(p) = self.positions.iter_mut().find(|p| p.id == active) {
                 for c in &a.constraints {
                     let e = p.relationships.entry(c.id).or_default();
                     let before = *e;
-                    // A relationship new since [Primary] was stored has no base value.
-                    e.value = primary
-                        .values
+                    // The variant's value is the base; a relationship new since
+                    // [Primary] was stored has none.
+                    e.value = base_values
                         .get(&c.id)
-                        .filter(|v| (**v - c.value).abs() > 1e-12)
+                        .map(|v| v.value)
+                        .or_else(|| primary.values.get(&c.id).copied())
+                        .filter(|v| (*v - c.value).abs() > 1e-12)
                         .map(|_| c.value);
                     let base = base_suppressed.contains(&c.id);
                     e.suppressed = (c.suppressed != base).then_some(c.suppressed);
@@ -442,22 +561,45 @@ impl Representations {
                 } else {
                     old.relationships.clone()
                 };
-                if old.occurrences != occ_now || old.relationships != rel_now {
+                let mut x = extras_of(a);
+                if !primary_position {
+                    // Values changed in a position are that position's overrides.
+                    x.values = old.values.clone();
+                }
+                if old.occurrences != occ_now
+                    || old.relationships != rel_now
+                    || old.values != x.values
+                    || old.patterns != x.patterns
+                    || old.parts != x.parts
+                    || old.references != x.references
+                {
                     changed = true;
                     for s in &mut self.variants {
                         if s.id == active {
                             s.occurrences = occ_now.clone();
                             s.relationships = rel_now.clone();
+                            s.values = x.values.clone();
+                            s.patterns = x.patterns.clone();
+                            s.parts = x.parts.clone();
+                            s.references = x.references.clone();
                         } else if factory {
                             apply_diff(&mut s.occurrences, &old.occurrences, &occ_now);
                             apply_diff(&mut s.relationships, &old.relationships, &rel_now);
+                            spread_map(&mut s.values, &old.values, &x.values);
+                            spread_map(&mut s.patterns, &old.patterns, &x.patterns);
+                            spread_map(&mut s.parts, &old.parts, &x.parts);
+                            apply_diff(&mut s.references, &old.references, &x.references);
                         }
                     }
                 }
             }
             // Added in Member Scope: only the active state has it.
             if fresh && !factory {
-                for o in a.occurrences.iter().filter(|o| o.id > self.known) {
+                for o in a
+                    .occurrences
+                    .iter()
+                    .filter(|o| o.id > self.known && a.pattern_of(o.id).is_none())
+                {
                     for s in self.variants.iter_mut().filter(|s| s.id != active) {
                         changed |= s.occurrences.insert(o.id);
                     }
@@ -485,9 +627,24 @@ impl Representations {
             for c in &mut a.constraints {
                 c.suppressed = s.relationships.contains(&c.id);
             }
+            for p in &mut a.patterns {
+                if let Some(l) = s.patterns.get(&p.id) {
+                    p.layout = l.clone();
+                }
+            }
+            for o in &mut a.occurrences {
+                o.component.variant = s.parts.get(&o.id).copied();
+                let reference = s.references.contains(&o.id);
+                if reference {
+                    o.bom = Some(BomStructure::Reference);
+                } else if o.bom == Some(BomStructure::Reference) {
+                    o.bom = None;
+                }
+            }
         }
         // Without positions there is no stored [Primary] to go back to.
         if self.positions.is_empty() {
+            apply_values(state, a);
             return;
         }
         for c in &mut a.constraints {
@@ -498,6 +655,7 @@ impl Representations {
                 c.locked = *l;
             }
         }
+        apply_values(state, a);
         for o in &mut a.occurrences {
             if let Some(g) = self.primary.grounded.get(&o.id) {
                 o.grounded = *g;
@@ -677,11 +835,21 @@ impl Representations {
         let id = self.next_variant_id();
         let name = next_name("Variant", self.variants.iter().map(|s| s.name.as_str()));
         let (occurrences, relationships) = Self::variant_of(a);
+        let x = extras_of(a);
+        let info = self
+            .active_variant()
+            .map(|v| v.info.clone())
+            .unwrap_or_default();
         self.variants.push(Variant {
             id,
             name,
             occurrences,
             relationships,
+            values: x.values,
+            patterns: x.patterns,
+            parts: x.parts,
+            references: x.references,
+            info,
         });
         self.active_variant = id;
         self.known = self.known.max(a.next_id() - 1);
@@ -724,6 +892,30 @@ impl Representations {
         n != self.variants.len()
     }
 
+    /// The active variant takes a document's Properties (and, in Factory Scope,
+    /// every variant the ones that changed); `true` when something changed.
+    pub fn take_info(&mut self, props: &IProperties) -> bool {
+        let now = VariantInfo::of(props);
+        crate::part::variants::take_info(
+            &mut self.variants,
+            self.active_variant,
+            self.factory_scope,
+            &now,
+            |v| &mut v.info,
+            |v| v.id,
+        )
+    }
+
+    /// Variants without Properties take these (right after a new variant).
+    pub fn fill_info(&mut self, props: &IProperties) {
+        let now = VariantInfo::of(props);
+        for v in &mut self.variants {
+            if v.info == VariantInfo::default() {
+                v.info = now.clone();
+            }
+        }
+    }
+
     /// Is `name` free among the given names (case-insensitive), ignoring the
     /// entry itself?
     pub fn name_free<'a>(name: &str, own: &str, mut names: impl Iterator<Item = &'a str>) -> bool {
@@ -759,6 +951,412 @@ impl Representations {
         }
         r.compose(&mut out);
         out
+    }
+}
+
+/// The fields of a pattern's layout a cell can change: (field, label, unit, value).
+fn layout_fields(l: &Layout) -> Vec<(&'static str, &'static str, Unit, Real)> {
+    match l {
+        Layout::Rectangular {
+            column_count,
+            column_spacing,
+            row,
+            row_count,
+            row_spacing,
+            ..
+        } => {
+            let mut f = vec![
+                ("column_count", "Columns", Unit::Ul, *column_count as Real),
+                (
+                    "column_spacing",
+                    "Column spacing",
+                    Unit::Mm,
+                    *column_spacing,
+                ),
+            ];
+            if row.is_some() {
+                f.push(("row_count", "Rows", Unit::Ul, *row_count as Real));
+                f.push(("row_spacing", "Row spacing", Unit::Mm, *row_spacing));
+            }
+            f
+        }
+        Layout::Circular { count, angle, .. } => vec![
+            ("count", "Count", Unit::Ul, *count as Real),
+            ("angle", "Angle", Unit::Deg, *angle),
+        ],
+        Layout::Feature { .. } => Vec::new(),
+    }
+}
+
+/// Sets one field of a layout; a count must be a whole number of at least 1.
+fn set_layout_field(l: &mut Layout, field: &str, v: Real) -> Result<(), String> {
+    let count = || {
+        if v < 1.0 || (v - v.round()).abs() > 1e-9 {
+            Err(format!(
+                "a count must be a whole number of at least 1, not {v}"
+            ))
+        } else {
+            Ok(v.round() as u32)
+        }
+    };
+    match (l, field) {
+        (Layout::Rectangular { column_count, .. }, "column_count") => *column_count = count()?,
+        (Layout::Rectangular { column_spacing, .. }, "column_spacing") => *column_spacing = v,
+        (Layout::Rectangular { row_count, .. }, "row_count") => *row_count = count()?,
+        (Layout::Rectangular { row_spacing, .. }, "row_spacing") => *row_spacing = v,
+        (Layout::Circular { count: c, .. }, "count") => *c = count()?,
+        (Layout::Circular { angle, .. }, "angle") => *angle = v,
+        _ => return Err(format!("the pattern has no {field}")),
+    }
+    Ok(())
+}
+
+/// A value cell's number in internal units.
+fn cell_number(cell: &Cell) -> Result<Real, String> {
+    let Cell::Value { text, unit, .. } = cell else {
+        return Err("a value was expected".to_owned());
+    };
+    expr::eval_simple(text, *unit, &|_| None)
+        .map(|r| r.0)
+        .map_err(|e| format!("'{}': {e}", text.trim()))
+}
+
+/// Does a relationship have a value a variant can change?
+fn has_value(k: ConstraintKind) -> bool {
+    use ConstraintKind::*;
+    matches!(
+        k,
+        Mate | Flush | Angle | Insert | Tangent | Rotational | Slider | Cylindrical
+    )
+}
+
+/// The unit of a relationship's value.
+fn value_unit(k: ConstraintKind) -> Unit {
+    use ConstraintKind::*;
+    if matches!(k, Angle | Rotational) {
+        Unit::Deg
+    } else {
+        Unit::Mm
+    }
+}
+
+/// The word of "the variant active in the part".
+pub const PART_ACTIVE: &str = "(active in the part)";
+
+/// What the Variants window shows of an assembly. `props`: the document's
+/// Properties; `part_variants`: a component's own variants (empty: it has none).
+pub fn assembly_table(
+    a: &AssemblyDocument,
+    props: &IProperties,
+    part_variants: &dyn Fn(DocRef) -> Vec<(u32, String)>,
+) -> Table {
+    let r = &a.reps;
+    // Before there is a list, one [Primary] stands for what the assembly holds.
+    let live = Variant {
+        id: PRIMARY,
+        name: "Primary".to_owned(),
+        occurrences: Representations::variant_of(a).0,
+        relationships: Representations::variant_of(a).1,
+        values: extras_of(a).values,
+        patterns: extras_of(a).patterns,
+        parts: extras_of(a).parts,
+        references: extras_of(a).references,
+        info: VariantInfo::of(props),
+    };
+    let list: Vec<&Variant> = if r.variants.is_empty() {
+        vec![&live]
+    } else {
+        r.variants.iter().collect()
+    };
+    let cells = |f: &dyn Fn(&Variant) -> Cell| list.iter().map(|v| f(v)).collect::<Vec<_>>();
+    let components = a
+        .occurrences
+        .iter()
+        .map(|o| Row {
+            key: RowKey::Occurrence(o.id),
+            label: o.name.clone(),
+            cells: cells(&|v| Cell::Suppressed(v.occurrences.contains(&o.id))),
+        })
+        .collect();
+    let relationships = a
+        .constraints
+        .iter()
+        .map(|c| Row {
+            key: RowKey::Relationship(c.id),
+            label: c.name.clone(),
+            cells: cells(&|v| Cell::Suppressed(v.relationships.contains(&c.id))),
+        })
+        .collect();
+    let values = a
+        .constraints
+        .iter()
+        .filter(|c| has_value(c.kind))
+        .map(|c| {
+            let unit = value_unit(c.kind);
+            Row {
+                key: RowKey::RelValue(c.id),
+                label: c.name.clone(),
+                cells: cells(&|v| {
+                    let x = v.values.get(&c.id);
+                    let value = x.map_or(c.value, |x| x.value);
+                    Cell::Value {
+                        text: x
+                            .and_then(|x| x.expr.clone())
+                            .unwrap_or_else(|| format_value(value, unit)),
+                        unit,
+                        value,
+                    }
+                }),
+            }
+        })
+        .collect();
+    let mut patterns = Vec::new();
+    for p in &a.patterns {
+        for (field, label, unit, _) in layout_fields(&p.layout) {
+            patterns.push(Row {
+                key: RowKey::Pattern(p.id, field.to_owned()),
+                label: format!("{}: {label}", p.name),
+                cells: cells(&|v| {
+                    let l = v.patterns.get(&p.id).unwrap_or(&p.layout);
+                    let value = layout_fields(l)
+                        .iter()
+                        .find(|f| f.0 == field)
+                        .map_or(0.0, |f| f.3);
+                    Cell::Value {
+                        text: format_value(value, unit),
+                        unit,
+                        value,
+                    }
+                }),
+            });
+        }
+    }
+    let mut parts = Vec::new();
+    for o in a
+        .occurrences
+        .iter()
+        .filter(|o| a.pattern_of(o.id).is_none_or(|p| p.sources.contains(&o.id)))
+    {
+        let own = part_variants(o.component.base());
+        if own.is_empty() {
+            continue;
+        }
+        let mut options = vec![PART_ACTIVE.to_owned()];
+        options.extend(own.iter().map(|x| x.1.clone()));
+        parts.push(Row {
+            key: RowKey::OccVariant(o.id),
+            label: o.name.clone(),
+            cells: cells(&|v| Cell::Choice {
+                options: options.clone(),
+                selected: v
+                    .parts
+                    .get(&o.id)
+                    .and_then(|id| own.iter().find(|x| x.0 == *id))
+                    .map_or(PART_ACTIVE.to_owned(), |x| x.1.clone()),
+            }),
+        });
+    }
+    let references = a
+        .occurrences
+        .iter()
+        .map(|o| Row {
+            key: RowKey::OccReference(o.id),
+            label: o.name.clone(),
+            cells: cells(&|v| Cell::Choice {
+                options: vec!["Counted".to_owned(), "Reference".to_owned()],
+                selected: if v.references.contains(&o.id) {
+                    "Reference"
+                } else {
+                    "Counted"
+                }
+                .to_owned(),
+            }),
+        })
+        .collect();
+    let infos: Vec<VariantInfo> = list.iter().map(|v| v.info.clone()).collect();
+    Table {
+        columns: list.iter().map(|v| (v.id, v.name.clone())).collect(),
+        active: r.active_variant,
+        factory_scope: r.factory_scope,
+        sections: vec![
+            ("Components".to_owned(), components),
+            ("Part Variants".to_owned(), parts),
+            ("Relationships".to_owned(), relationships),
+            ("Relationship Values".to_owned(), values),
+            ("Patterns".to_owned(), patterns),
+            ("Properties".to_owned(), info_rows(&infos)),
+            ("BOM of Components".to_owned(), references),
+        ],
+    }
+}
+
+/// Checks what [`apply_sets`] cannot refuse half way: every number evaluates.
+pub fn check_sets(a: &AssemblyDocument, sets: &[Set]) -> Result<(), String> {
+    for s in sets {
+        match &s.key {
+            RowKey::RelValue(_) => {
+                cell_number(&s.cell)?;
+            }
+            RowKey::Pattern(id, field) => {
+                let v = cell_number(&s.cell)?;
+                let p = a.patterns.iter().find(|p| p.id == *id);
+                let mut l = p.ok_or("the pattern no longer exists")?.layout.clone();
+                set_layout_field(&mut l, field, v)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Writes changes of the table: the active variant through the live state, the
+/// others into their lists. `part_variants` as in [`assembly_table`]. Call
+/// [`check_sets`] first.
+pub fn apply_sets(
+    a: &mut AssemblyDocument,
+    sets: &[Set],
+    part_variants: &dyn Fn(DocRef) -> Vec<(u32, String)>,
+) {
+    let mut r = std::mem::take(&mut a.reps);
+    for s in sets {
+        let live = s.col == r.active_variant || r.variants.is_empty();
+        apply_set(&mut r, a, s, live, part_variants);
+    }
+    a.reps = r;
+}
+
+fn apply_set(
+    r: &mut Representations,
+    a: &mut AssemblyDocument,
+    s: &Set,
+    live: bool,
+    part_variants: &dyn Fn(DocRef) -> Vec<(u32, String)>,
+) {
+    let target = r.variants.iter_mut().find(|v| v.id == s.col);
+    match (&s.key, &s.cell) {
+        (RowKey::Occurrence(id), Cell::Suppressed(on)) => {
+            if live {
+                if let Some(o) = a.find_mut(*id) {
+                    o.suppressed = *on;
+                }
+            } else if let Some(v) = target {
+                toggle(&mut v.occurrences, *id, *on);
+            }
+        }
+        (RowKey::Relationship(id), Cell::Suppressed(on)) => {
+            if live {
+                if let Some(c) = a.constraint_mut(*id) {
+                    c.suppressed = *on;
+                }
+            } else if let Some(v) = target {
+                toggle(&mut v.relationships, *id, *on);
+            }
+        }
+        (RowKey::RelValue(id), cell) => {
+            let Ok(value) = cell_number(cell) else {
+                return;
+            };
+            let joint = a.constraint(*id).is_some_and(|c| c.kind.is_joint());
+            if live {
+                if let Some(c) = a.constraint_mut(*id) {
+                    c.value = value;
+                    c.locked = joint || c.locked;
+                    c.expr = None;
+                }
+            } else if let Some(v) = target {
+                v.values.insert(
+                    *id,
+                    RelValue {
+                        value,
+                        locked: joint,
+                        expr: None,
+                    },
+                );
+            }
+        }
+        (RowKey::Pattern(id, field), cell) => {
+            let Ok(value) = cell_number(cell) else {
+                return;
+            };
+            if live {
+                if let Some(p) = a.patterns.iter_mut().find(|p| p.id == *id) {
+                    let _ = set_layout_field(&mut p.layout, field, value);
+                }
+            } else if let Some(v) = target {
+                let base = a
+                    .patterns
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .map(|p| p.layout.clone());
+                let e = v.patterns.get(id).cloned().or(base);
+                if let Some(mut l) = e
+                    && set_layout_field(&mut l, field, value).is_ok()
+                {
+                    v.patterns.insert(*id, l);
+                }
+            }
+        }
+        (RowKey::OccVariant(id), Cell::Choice { selected, .. }) => {
+            let Some(base) = a.find(*id).map(|o| o.component.base()) else {
+                return;
+            };
+            let chosen = part_variants(base)
+                .into_iter()
+                .find(|x| x.1 == *selected)
+                .map(|x| x.0);
+            if live {
+                if let Some(o) = a.find_mut(*id) {
+                    o.component.variant = chosen;
+                }
+            } else if let Some(v) = target {
+                match chosen {
+                    Some(c) => {
+                        v.parts.insert(*id, c);
+                    }
+                    None => {
+                        v.parts.remove(id);
+                    }
+                }
+            }
+        }
+        (RowKey::OccReference(id), Cell::Choice { selected, .. }) => {
+            let on = selected == "Reference";
+            if live {
+                if let Some(o) = a.find_mut(*id) {
+                    o.bom = on.then_some(BomStructure::Reference);
+                }
+            } else if let Some(v) = target {
+                toggle(&mut v.references, *id, on);
+            }
+        }
+        (key @ (RowKey::Prop(_) | RowKey::BomStructure), cell) => {
+            if let Some(v) = target {
+                let _ = set_info(&mut v.info, key, cell);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn toggle(set: &mut BTreeSet<u32>, id: u32, on: bool) {
+    if on {
+        set.insert(id);
+    } else {
+        set.remove(&id);
+    }
+}
+
+/// A variant's relationship values go on the relationships.
+fn apply_values(state: Option<&Variant>, a: &mut AssemblyDocument) {
+    let Some(s) = state else {
+        return;
+    };
+    for c in &mut a.constraints {
+        if let Some(v) = s.values.get(&c.id) {
+            c.value = v.value;
+            c.locked = v.locked;
+            c.expr = v.expr.clone();
+        }
     }
 }
 
@@ -1022,6 +1620,22 @@ mod tests {
     }
 
     #[test]
+    fn a_copy_of_a_pattern_is_not_taken_for_a_new_component() {
+        let mut a = with_pattern();
+        let mut r = take(&mut a);
+        r.new_variant(&a);
+        let id = a.place(comp(), "C", Transform3::identity(), false);
+        a.patterns[0]
+            .elements
+            .push(crate::assembly::pattern::Element {
+                index: 2,
+                occurrences: vec![id],
+            });
+        r.sync(&a);
+        assert!(!r.variants[0].occurrences.contains(&id));
+    }
+
+    #[test]
     fn the_three_lists_are_independent() {
         let mut a = asm();
         let mut r = take(&mut a);
@@ -1076,6 +1690,189 @@ mod tests {
         assert!(r.views.iter().all(|v| !v.display.contains_key(&2)));
         assert!(!r.positions[0].poses.contains_key(&2));
         assert!(r.positions[0].relationships.is_empty());
+    }
+
+    #[test]
+    fn a_variant_has_its_own_relationship_values_and_a_position_overrides_them() {
+        let mut a = asm();
+        let mut r = take(&mut a);
+        let v = r.new_variant(&a);
+        a.constraints[0].value = 8.0;
+        r.sync(&a);
+        r.activate_variant(PRIMARY, &mut a);
+        assert_eq!(a.constraints[0].value, 5.0);
+        r.activate_variant(v, &mut a);
+        assert_eq!(a.constraints[0].value, 8.0);
+        // A position's override goes over the variant's value, and leaves it.
+        let p = r.new_position(&mut a);
+        assert_eq!(a.constraints[0].value, 8.0);
+        a.constraints[0].value = 30.0;
+        r.sync(&a);
+        assert_eq!(r.positions[0].relationships[&1].value, Some(30.0));
+        assert_eq!(r.active_variant().unwrap().values[&1].value, 8.0);
+        r.activate_variant(PRIMARY, &mut a);
+        assert_eq!(a.constraints[0].value, 30.0, "the override stays on");
+        r.activate_position(PRIMARY, &mut a);
+        assert_eq!(a.constraints[0].value, 5.0);
+        r.activate_variant(v, &mut a);
+        assert_eq!(a.constraints[0].value, 8.0);
+        r.activate_position(p, &mut a);
+        assert_eq!(a.constraints[0].value, 30.0);
+    }
+
+    #[test]
+    fn a_free_joint_holds_a_value_set_for_a_variant() {
+        let mut a = asm();
+        a.constraints[0].kind = ConstraintKind::Slider;
+        let mut r = take(&mut a);
+        let v = r.new_variant(&a);
+        r.activate_variant(PRIMARY, &mut a);
+        a.reps = r;
+        let none = |_: DocRef| Vec::new();
+        let set = Set {
+            key: RowKey::RelValue(1),
+            col: v,
+            cell: Cell::Value {
+                text: "40 mm".into(),
+                unit: Unit::Mm,
+                value: 0.0,
+            },
+        };
+        check_sets(&a, std::slice::from_ref(&set)).unwrap();
+        apply_sets(&mut a, &[set], &none);
+        assert_eq!(a.constraints[0].value, 5.0);
+        let mut r = take(&mut a);
+        r.activate_variant(v, &mut a);
+        assert_eq!(a.constraints[0].value, 40.0);
+        assert!(a.constraints[0].locked);
+        r.activate_variant(PRIMARY, &mut a);
+        assert!(!a.constraints[0].locked);
+    }
+
+    fn with_pattern() -> AssemblyDocument {
+        let mut a = asm();
+        a.patterns.push(crate::assembly::pattern::ComponentPattern {
+            id: 1,
+            name: "Component Pattern 1".into(),
+            sources: vec![3],
+            layout: Layout::Circular {
+                axis: GeomRef::Origin {
+                    occurrence: 0,
+                    sub: Vec::new(),
+                    item: OriginItem::ZAxis,
+                },
+                flip: false,
+                count: 4,
+                angle: 90f64.to_radians(),
+            },
+            elements: Vec::new(),
+        });
+        a
+    }
+
+    #[test]
+    fn a_variant_has_its_own_pattern_layout_and_bad_counts_are_refused() {
+        let mut a = with_pattern();
+        let mut r = take(&mut a);
+        let v = r.new_variant(&a);
+        r.activate_variant(PRIMARY, &mut a);
+        a.reps = r;
+        let none = |_: DocRef| Vec::new();
+        let cell = |text: &str| Cell::Value {
+            text: text.into(),
+            unit: Unit::Ul,
+            value: 0.0,
+        };
+        let key = RowKey::Pattern(1, "count".into());
+        let set = |t: &str| Set {
+            key: key.clone(),
+            col: v,
+            cell: cell(t),
+        };
+        assert!(check_sets(&a, &[set("2.5")]).is_err());
+        assert!(check_sets(&a, &[set("0")]).is_err());
+        assert!(check_sets(&a, &[set("1 +")]).is_err());
+        check_sets(&a, &[set("8")]).unwrap();
+        apply_sets(&mut a, &[set("8")], &none);
+        assert_eq!(a.patterns[0].layout.count(), 4);
+        let mut r = take(&mut a);
+        r.activate_variant(v, &mut a);
+        assert_eq!(a.patterns[0].layout.count(), 8);
+        r.activate_variant(PRIMARY, &mut a);
+        assert_eq!(a.patterns[0].layout.count(), 4);
+        a.reps = r;
+        let t = assembly_table(&a, &IProperties::default(), &none);
+        let rows = &t.sections.iter().find(|s| s.0 == "Patterns").unwrap().1;
+        assert_eq!(rows[0].cells[1].text(), "8");
+        assert!(Table::differs(&rows[0]));
+    }
+
+    #[test]
+    fn a_variant_chooses_what_each_occurrence_places_and_how_it_counts() {
+        let mut a = asm();
+        let lookup = |_: DocRef| vec![(0, "Primary".to_owned()), (7, "Long".to_owned())];
+        let mut r = take(&mut a);
+        let v = r.new_variant(&a);
+        a.reps = r;
+        let choice = |t: &str| Cell::Choice {
+            options: Vec::new(),
+            selected: t.to_owned(),
+        };
+        let sets = [
+            Set {
+                key: RowKey::OccVariant(2),
+                col: v,
+                cell: choice("Long"),
+            },
+            Set {
+                key: RowKey::OccReference(3),
+                col: v,
+                cell: choice("Reference"),
+            },
+        ];
+        apply_sets(&mut a, &sets, &lookup);
+        assert_eq!(a.find(2).unwrap().component.variant, Some(7));
+        assert_eq!(a.find(3).unwrap().bom, Some(BomStructure::Reference));
+        let mut r = take(&mut a);
+        r.sync(&a);
+        r.activate_variant(PRIMARY, &mut a);
+        assert_eq!(a.find(2).unwrap().component.variant, None);
+        assert_eq!(a.find(3).unwrap().bom, None);
+        r.activate_variant(v, &mut a);
+        assert_eq!(a.find(2).unwrap().component.variant, Some(7));
+        assert_eq!(a.find(3).unwrap().bom, Some(BomStructure::Reference));
+        a.reps = r;
+        let t = assembly_table(&a, &IProperties::default(), &lookup);
+        let rows = &t
+            .sections
+            .iter()
+            .find(|s| s.0 == "Part Variants")
+            .unwrap()
+            .1;
+        assert_eq!(rows.len(), a.occurrences.len());
+        assert_eq!(rows[1].cells[1].text(), "Long");
+        assert_eq!(rows[1].cells[0].text(), PART_ACTIVE);
+    }
+
+    #[test]
+    fn a_variant_has_its_own_properties() {
+        let mut a = asm();
+        let mut doc = IProperties::default();
+        doc.set("part_number", "ASM-1");
+        let mut r = take(&mut a);
+        let v = r.new_variant(&a);
+        r.fill_info(&doc);
+        doc.set("part_number", "ASM-2");
+        assert!(r.take_info(&doc));
+        assert_eq!(r.active_variant().unwrap().info.get("part_number"), "ASM-2");
+        assert_eq!(r.variants[0].info.get("part_number"), "ASM-1");
+        // Factory Scope: what changed reaches all.
+        r.factory_scope = true;
+        doc.set("description", "Pump");
+        assert!(r.take_info(&doc));
+        assert_eq!(r.variants[0].info.get("description"), "Pump");
+        assert_eq!(r.variants[0].info.get("part_number"), "ASM-1");
+        assert_eq!(v, r.active_variant);
     }
 
     #[test]

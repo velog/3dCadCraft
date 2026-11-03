@@ -60,6 +60,7 @@ pub fn rebase(r: DocRef, from: Option<LibraryId>) -> DocRef {
         None => DocRef {
             library: from,
             document: r.document,
+            variant: r.variant,
         },
         Some(_) => r,
     }
@@ -368,6 +369,7 @@ mod tests {
         let s = DocRef {
             library: Some(lib),
             document: sid,
+            variant: None,
         };
         a.place(s, "Sub", Transform3::identity(), true);
         a.place(s, "Sub", Transform3::translation(0.0, 0.0, 50.0), false);
@@ -379,6 +381,7 @@ mod tests {
         let want = DocRef {
             library: Some(lib),
             document: bolt,
+            variant: None,
         };
         assert!(l.iter().all(|x| x.component == want));
         assert!(part_of(&p, &linked, want).is_some());

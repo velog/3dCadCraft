@@ -211,6 +211,7 @@ fn an_assembly_links_library_files_and_reopens() {
     let linked = resolver.load(&file).unwrap();
     let part_doc = linked.documents().first().unwrap().id;
     let r = DocRef {
+        variant: None,
         library: Some(id),
         document: part_doc,
     };

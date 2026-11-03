@@ -100,6 +100,7 @@ impl CadCraftApp {
         let mut r = std::mem::take(&mut a.reps);
         r.sync(a);
         a.reps = r;
+        self.variants_take_doc_info();
     }
 
     /// Runs `f` on the assembly's representations and the assembly, taken apart.
@@ -191,6 +192,13 @@ impl CadCraftApp {
     }
 
     fn run_rep(&mut self, c: Cmd) {
+        // What the document's Properties hold belongs to the variant being left.
+        self.variants_take_doc_info();
+        self.run_rep_inner(c);
+        self.variants_push_info();
+    }
+
+    fn run_rep_inner(&mut self, c: Cmd) {
         match c {
             Cmd::New(RepKind::View) => {
                 let camera = self.saved_camera();
@@ -216,6 +224,14 @@ impl CadCraftApp {
                 self.reps_solved("New Variant", RepKind::Variant, |r, a| {
                     r.new_variant(a);
                 });
+                let props = self
+                    .project
+                    .document(self.part_id)
+                    .map(|d| d.properties.clone())
+                    .unwrap_or_default();
+                if let Some(a) = self.assembly_mut() {
+                    a.reps.fill_info(&props);
+                }
             }
             Cmd::Activate(RepKind::View, id) => {
                 let camera = self.saved_camera();

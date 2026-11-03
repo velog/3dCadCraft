@@ -2713,6 +2713,7 @@ impl CadCraftApp {
         }
         if let [id] = ids {
             self.override_menu(ui, super::reps::OverrideOf::Occurrence(*id));
+            self.occurrence_variant_menu(ui, *id);
         }
         if ui.button("Hide Others").clicked() {
             self.hide_others(ids);
@@ -2847,6 +2848,7 @@ impl CadCraftApp {
                     self.toggle_visible(&[o.id]);
                 }
                 ui.end_row();
+                self.occurrence_variant_row(ui, o.id, o.component);
                 let mut ad = o.adaptive;
                 super::panels::plabel(ui, "Adaptive");
                 if ui

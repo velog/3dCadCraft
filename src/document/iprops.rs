@@ -82,7 +82,7 @@ impl DesignState {
 }
 
 /// How a component counts in a bill of materials (`docs/spec/3.6-bom.md`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BomStructure {
     /// Listed and counted (the default).
     #[default]

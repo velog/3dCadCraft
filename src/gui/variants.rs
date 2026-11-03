@@ -11,7 +11,8 @@ use eframe::egui::{self, Color32, RichText, Stroke};
 use super::CadCraftApp;
 use super::theme;
 use super::valuefield::{self, FieldSpec};
-use crate::assembly::reps::Representations;
+use crate::assembly::reps::{apply_sets, assembly_table, check_sets};
+use crate::document::DocRef;
 use crate::part::variants::{Cell, PRIMARY, Row, RowKey, Set, Table};
 
 /// How often a part's active variant is brought up to date (seconds): reading
@@ -89,14 +90,151 @@ impl CadCraftApp {
         }
         self.asm.variants.synced = now;
         self.part_mut().variants_sync();
+        self.variants_take_doc_info();
+    }
+
+    /// The occurrence places variant `chosen` of its part (`None`: the active one).
+    fn set_occurrence_variant(&mut self, id: u32, chosen: Option<u32>) {
+        let r = self.asm_try("Part Variant", move |a| {
+            if let Some(o) = a.find_mut(id) {
+                o.component.variant = chosen;
+            }
+        });
+        if let Err(e) = r {
+            self.file_status = Some(Err(format!("Variant: {e}")));
+        }
+        self.scene_dirty = true;
+        self.asm_refresh_status();
+    }
+
+    /// The row of an occurrence's Properties; nothing for a part without variants.
+    pub(super) fn occurrence_variant_row(&mut self, ui: &mut egui::Ui, id: u32, r: DocRef) {
+        let list = self.part_variant_names(r);
+        if list.is_empty() {
+            return;
+        }
+        super::panels::plabel(ui, "Variant");
+        let shown = r
+            .variant
+            .and_then(|v| list.iter().find(|x| x.0 == v))
+            .map_or(crate::assembly::reps::PART_ACTIVE, |x| x.1.as_str())
+            .to_owned();
+        let mut pick = None;
+        egui::ComboBox::from_id_salt("occurrence_variant")
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(r.variant.is_none(), crate::assembly::reps::PART_ACTIVE)
+                    .clicked()
+                {
+                    pick = Some(None);
+                }
+                for (v, n) in &list {
+                    if ui.selectable_label(r.variant == Some(*v), n).clicked() {
+                        pick = Some(Some(*v));
+                    }
+                }
+            });
+        ui.end_row();
+        if let Some(c) = pick {
+            self.set_occurrence_variant(id, c);
+        }
+    }
+
+    /// The same in an occurrence's menu (rule 17).
+    pub(super) fn occurrence_variant_menu(&mut self, ui: &mut egui::Ui, id: u32) {
+        let Some(r) = self
+            .assembly()
+            .and_then(|a| a.find(id))
+            .map(|o| o.component)
+        else {
+            return;
+        };
+        let list = self.part_variant_names(r);
+        if list.is_empty() {
+            return;
+        }
+        let mut pick = None;
+        ui.menu_button("Variant", |ui| {
+            if ui
+                .selectable_label(r.variant.is_none(), crate::assembly::reps::PART_ACTIVE)
+                .clicked()
+            {
+                pick = Some(None);
+                ui.close();
+            }
+            for (v, n) in &list {
+                if ui.selectable_label(r.variant == Some(*v), n).clicked() {
+                    pick = Some(Some(*v));
+                    ui.close();
+                }
+            }
+        });
+        if let Some(c) = pick {
+            self.set_occurrence_variant(id, c);
+        }
+    }
+
+    /// A component's own variants; empty when it has only its `[Primary]` (or is
+    /// no part).
+    pub(super) fn part_variant_names(&self, r: DocRef) -> Vec<(u32, String)> {
+        self.with_part(r.base(), |p| {
+            p.variants
+                .list
+                .iter()
+                .map(|v| (v.id, column_title(v.id, &v.name)))
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// The active variant's Properties go into the document.
+    pub(super) fn variants_push_info(&mut self) {
+        let info = if self.is_assembly() {
+            self.assembly()
+                .and_then(|a| a.reps.active_variant())
+                .map(|v| v.info.clone())
+        } else if self.is_drawing() {
+            None
+        } else {
+            self.part().active_variant_info().cloned()
+        };
+        let id = self.part_id;
+        if let (Some(i), Some(d)) = (info, self.project.document_mut(id)) {
+            i.write(&mut d.properties);
+        }
+    }
+
+    /// The active variant takes the document's Properties.
+    pub(super) fn variants_take_doc_info(&mut self) {
+        let Some(props) = self
+            .project
+            .document(self.part_id)
+            .map(|d| d.properties.clone())
+        else {
+            return;
+        };
+        if self.is_assembly() {
+            if let Some(a) = self.assembly_mut() {
+                a.reps.take_info(&props);
+            }
+        } else if !self.is_drawing() {
+            self.part_mut().variants_take_info(&props);
+        }
     }
 
     /// The active document's table.
     fn variants_model(&self) -> Option<Table> {
+        let props = self
+            .project
+            .document(self.part_id)
+            .map(|d| d.properties.clone())
+            .unwrap_or_default();
         if self.is_assembly() {
-            return self.assembly().map(assembly_table);
+            let lookup = |r: DocRef| self.part_variant_names(r);
+            return self.assembly().map(|a| assembly_table(a, &props, &lookup));
         }
-        (!self.is_drawing()).then(|| self.part().variants_table())
+        (!self.is_drawing()).then(|| self.part().variants_table(&props))
     }
 
     /// The browser's folder of a part (an assembly's is in `reps_tree`).
@@ -236,6 +374,9 @@ impl CadCraftApp {
 
     /// Runs what the window, the browser or the ribbon asked for.
     fn variants_ask(&mut self, a: Ask) {
+        // The new variant starts with what the document has now.
+        self.variants_take_doc_info();
+        let is_new = matches!(a, Ask::New);
         if self.is_assembly() {
             self.assembly_variants_ask(a);
         } else if self.asm.in_place.is_some() {
@@ -244,6 +385,28 @@ impl CadCraftApp {
             ));
         } else if !self.is_drawing() {
             self.part_variants_ask(a);
+        }
+        if is_new {
+            self.variants_fill_new_info();
+        }
+        self.variants_push_info();
+    }
+
+    /// A list that has just come to life has no Properties in its entries yet.
+    fn variants_fill_new_info(&mut self) {
+        let Some(props) = self
+            .project
+            .document(self.part_id)
+            .map(|d| d.properties.clone())
+        else {
+            return;
+        };
+        if self.is_assembly() {
+            if let Some(a) = self.assembly_mut() {
+                a.reps.fill_info(&props);
+            }
+        } else if !self.is_drawing() {
+            self.part_mut().variants_fill_info(&props);
         }
     }
 
@@ -290,7 +453,9 @@ impl CadCraftApp {
                             (RowKey::Param(n), Cell::Value { text, .. }) => {
                                 p.set_variant_param(s.col, n, text).map_err(map)?;
                             }
-                            _ => {}
+                            (key, cell) => {
+                                p.set_variant_info(s.col, key, cell).map_err(map)?;
+                            }
                         }
                     }
                 }
@@ -322,7 +487,26 @@ impl CadCraftApp {
                 }
             }
             Ask::Sets(sets) => {
-                let r = self.asm_try("Edit Variants", move |a| apply_assembly_sets(a, &sets));
+                let checked = self.assembly().map_or(Ok(()), |a| check_sets(a, &sets));
+                if let Err(e) = checked {
+                    self.file_status = Some(Err(format!("Variants: {e}")));
+                    return;
+                }
+                // The names are read first: the closure has the assembly.
+                let names: std::collections::HashMap<DocRef, Vec<(u32, String)>> = self
+                    .assembly()
+                    .map(|a| {
+                        a.occurrences
+                            .iter()
+                            .map(|o| o.component.base())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| (r, self.part_variant_names(r)))
+                    .collect();
+                let lookup = move |r: DocRef| names.get(&r).cloned().unwrap_or_default();
+                let r = self.asm_try("Edit Variants", move |a| apply_sets(a, &sets, &lookup));
                 if let Err(e) = r {
                     self.file_status = Some(Err(format!("Variants: {e}")));
                 }
@@ -350,118 +534,6 @@ impl CadCraftApp {
             Err(e) => self.file_status = Some(Err(format!("Variants: {e}"))),
         }
     }
-}
-
-/// The table of an assembly: Components, Relationships.
-pub(super) fn assembly_table(a: &crate::document::AssemblyDocument) -> Table {
-    let r = &a.reps;
-    // Before there is a list, [Primary] stands for what the assembly holds.
-    let (live_o, live_r): (BTreeSet<u32>, BTreeSet<u32>) = (
-        a.occurrences
-            .iter()
-            .filter(|o| o.suppressed)
-            .map(|o| o.id)
-            .collect(),
-        a.constraints
-            .iter()
-            .filter(|c| c.suppressed)
-            .map(|c| c.id)
-            .collect(),
-    );
-    let columns: Vec<(u32, String)> = if r.variants.is_empty() {
-        vec![(PRIMARY, "Primary".to_owned())]
-    } else {
-        r.variants.iter().map(|v| (v.id, v.name.clone())).collect()
-    };
-    let occ_of = |id: u32, o: u32| {
-        r.variants
-            .iter()
-            .find(|v| v.id == id)
-            .map_or(live_o.contains(&o), |v| v.occurrences.contains(&o))
-    };
-    let rel_of = |id: u32, c: u32| {
-        r.variants
-            .iter()
-            .find(|v| v.id == id)
-            .map_or(live_r.contains(&c), |v| v.relationships.contains(&c))
-    };
-    let components = a
-        .occurrences
-        .iter()
-        .map(|o| Row {
-            key: RowKey::Occurrence(o.id),
-            label: o.name.clone(),
-            cells: columns
-                .iter()
-                .map(|(id, _)| Cell::Suppressed(occ_of(*id, o.id)))
-                .collect(),
-        })
-        .collect();
-    let relationships = a
-        .constraints
-        .iter()
-        .map(|c| Row {
-            key: RowKey::Relationship(c.id),
-            label: c.name.clone(),
-            cells: columns
-                .iter()
-                .map(|(id, _)| Cell::Suppressed(rel_of(*id, c.id)))
-                .collect(),
-        })
-        .collect();
-    Table {
-        columns,
-        active: r.active_variant,
-        factory_scope: r.factory_scope,
-        sections: vec![
-            ("Components".to_owned(), components),
-            ("Relationships".to_owned(), relationships),
-        ],
-    }
-}
-
-/// Writes changes of the table into an assembly: the active variant through the
-/// live state, the others into their lists.
-pub(super) fn apply_assembly_sets(a: &mut crate::document::AssemblyDocument, sets: &[Set]) {
-    let mut r: Representations = std::mem::take(&mut a.reps);
-    for s in sets {
-        let Cell::Suppressed(on) = s.cell else {
-            continue;
-        };
-        let active = s.col == r.active_variant || r.variants.is_empty();
-        match s.key {
-            RowKey::Occurrence(id) if active => {
-                if let Some(o) = a.find_mut(id) {
-                    o.suppressed = on;
-                }
-            }
-            RowKey::Relationship(id) if active => {
-                if let Some(c) = a.constraint_mut(id) {
-                    c.suppressed = on;
-                }
-            }
-            RowKey::Occurrence(id) => {
-                if let Some(v) = r.variants.iter_mut().find(|v| v.id == s.col) {
-                    if on {
-                        v.occurrences.insert(id);
-                    } else {
-                        v.occurrences.remove(&id);
-                    }
-                }
-            }
-            RowKey::Relationship(id) => {
-                if let Some(v) = r.variants.iter_mut().find(|v| v.id == s.col) {
-                    if on {
-                        v.relationships.insert(id);
-                    } else {
-                        v.relationships.remove(&id);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    a.reps = r;
 }
 
 fn column_title(id: u32, name: &str) -> String {
@@ -728,6 +800,10 @@ fn section(
 ) {
     let tk = theme::tokens();
     let rows = shown(rows, &st.search, st.differences);
+    // A filter leaves only the sections it found something in.
+    if rows.is_empty() && (st.differences || !st.search.trim().is_empty()) {
+        return;
+    }
     let folded = st.folded.contains(title);
     let n = rows.iter().filter(|r| Table::differs(r)).count();
     let head = format!(
@@ -851,6 +927,63 @@ fn cell(
                 }]));
             }
         }
+        Cell::Text(text) => {
+            let cell_id = egui::Id::new(("variant_text", &row.key, id));
+            let mut buf: String = ui
+                .data(|d| d.get_temp(cell_id))
+                .unwrap_or_else(|| text.clone());
+            let e = ui.add_sized(
+                [COL_W, 22.0],
+                egui::TextEdit::singleline(&mut buf).text_color(if differs {
+                    tk.warning
+                } else {
+                    tk.text
+                }),
+            );
+            if e.has_focus() {
+                ui.data_mut(|d| d.insert_temp(cell_id, buf.clone()));
+            }
+            if e.lost_focus() {
+                ui.data_mut(|d| d.remove::<String>(cell_id));
+                let keep = ui.input(|i| !i.key_pressed(egui::Key::Escape));
+                if keep && buf.trim() != text {
+                    asks.push(Ask::Sets(vec![Set {
+                        key: row.key.clone(),
+                        col: id,
+                        cell: Cell::Text(buf),
+                    }]));
+                }
+            }
+        }
+        Cell::Choice { options, selected } => {
+            let frame = egui::Frame::new()
+                .stroke(if differs {
+                    Stroke::new(1.5, tk.warning)
+                } else {
+                    Stroke::NONE
+                })
+                .corner_radius(4.0);
+            frame.show(ui, |ui| {
+                ui.set_width(COL_W);
+                egui::ComboBox::from_id_salt(("variant_choice", &row.key, id))
+                    .selected_text(selected.as_str())
+                    .width(COL_W - 4.0)
+                    .show_ui(ui, |ui| {
+                        for o in options {
+                            if ui.selectable_label(o == selected, o).clicked() && o != selected {
+                                asks.push(Ask::Sets(vec![Set {
+                                    key: row.key.clone(),
+                                    col: id,
+                                    cell: Cell::Choice {
+                                        options: options.clone(),
+                                        selected: o.clone(),
+                                    },
+                                }]));
+                            }
+                        }
+                    });
+            });
+        }
         Cell::Value { text, unit, value } => {
             let cell_id = egui::Id::new(("variant_cell", &row.key, id));
             // The field paints over a fill, so what differs gets a frame.
@@ -916,61 +1049,6 @@ fn pill_look(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{AssemblyDocument, DocRef, DocumentId};
-    use crate::kernel::Transform3;
-
-    fn asm() -> AssemblyDocument {
-        let mut a = AssemblyDocument::default();
-        let r = DocRef::local(DocumentId::new_random());
-        a.place(r, "A", Transform3::identity(), true);
-        a.place(r, "B", Transform3::identity(), false);
-        a
-    }
-
-    #[test]
-    fn the_assembly_table_follows_the_variants_and_sets_reach_them() {
-        let mut a = asm();
-        // No list yet: one [Primary] column showing what the assembly holds.
-        a.find_mut(2).unwrap().suppressed = true;
-        let t = assembly_table(&a);
-        assert_eq!(t.columns.len(), 1);
-        assert_eq!(t.sections[0].1[1].cells[0], Cell::Suppressed(true));
-        a.find_mut(2).unwrap().suppressed = false;
-        let mut r = std::mem::take(&mut a.reps);
-        let v = r.new_variant(&a);
-        a.reps = r;
-        // A set for the active variant goes through the live state.
-        let key = RowKey::Occurrence(2);
-        apply_assembly_sets(
-            &mut a,
-            &[Set {
-                key: key.clone(),
-                col: v,
-                cell: Cell::Suppressed(true),
-            }],
-        );
-        assert!(a.find(2).unwrap().suppressed);
-        // One for another variant leaves the live state.
-        apply_assembly_sets(
-            &mut a,
-            &[Set {
-                key: RowKey::Occurrence(1),
-                col: PRIMARY,
-                cell: Cell::Suppressed(true),
-            }],
-        );
-        assert!(!a.find(1).unwrap().suppressed);
-        assert!(a.reps.variants[0].occurrences.contains(&1));
-        // After a sync the table shows both; the corrections reduce to sets.
-        let mut r = std::mem::take(&mut a.reps);
-        r.sync(&a);
-        a.reps = r;
-        let t = assembly_table(&a);
-        assert!(Table::differs(&t.sections[0].1[1]));
-        let back = t.copy_column(PRIMARY, v, Some(std::slice::from_ref(&key)));
-        assert_eq!(back.len(), 1);
-        assert_eq!(back[0].cell, Cell::Suppressed(false));
-    }
 
     #[test]
     fn the_filters_keep_what_is_asked_for() {

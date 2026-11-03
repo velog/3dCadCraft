@@ -150,6 +150,7 @@ pub fn extract(
             DocRef {
                 library: Some(lib),
                 document: r.document,
+                variant: r.variant,
             },
         );
     }
@@ -167,6 +168,7 @@ pub fn extract(
     let to = DocRef {
         library: Some(lib),
         document: id,
+        variant: None,
     };
     for d in &mut project.documents {
         d.data
@@ -213,6 +215,7 @@ pub fn embed(
             None => DocRef {
                 library: Some(lib),
                 document: r.document,
+                variant: r.variant,
             },
             Some(l) => {
                 let sl = source
@@ -220,13 +223,17 @@ pub fn embed(
                     .ok_or(ProjectError::UnknownLibrary(l))?
                     .clone();
                 if sl.project == project.id {
-                    DocRef::local(r.document)
+                    DocRef {
+                        variant: r.variant,
+                        ..DocRef::local(r.document)
+                    }
                 } else {
                     let abs = source_dir.join(&sl.path);
                     let new = link_to(project, &owner_dir, &abs, sl.project, &sl.name);
                     DocRef {
                         library: Some(new),
                         document: r.document,
+                        variant: r.variant,
                     }
                 }
             }
@@ -245,6 +252,7 @@ pub fn embed(
     let from = DocRef {
         library: Some(lib),
         document: doc,
+        variant: None,
     };
     for d in &mut project.documents {
         d.data
@@ -344,13 +352,20 @@ pub fn insert_file(
                 .unwrap_or(base);
         }
         copy.data.remap_references(|r| match r.library {
-            None => DocRef::local(ids.get(&r.document).copied().unwrap_or(r.document)),
+            None => DocRef {
+                variant: r.variant,
+                ..DocRef::local(ids.get(&r.document).copied().unwrap_or(r.document))
+            },
             Some(l) => match libs.get(&l) {
                 Some(Some(to)) => DocRef {
                     library: Some(*to),
                     document: r.document,
+                    variant: r.variant,
                 },
-                Some(None) => DocRef::local(r.document),
+                Some(None) => DocRef {
+                    variant: r.variant,
+                    ..DocRef::local(r.document)
+                },
                 None => r,
             },
         });
@@ -530,6 +545,42 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_variant_stays_when_references_are_rewritten() {
+        let id = DocumentId::new_random();
+        let other = DocumentId::new_random();
+        let mut a = crate::document::AssemblyDocument::default();
+        let r = DocRef {
+            variant: Some(3),
+            ..DocRef::local(id)
+        };
+        a.place(r, "A", crate::kernel::Transform3::identity(), true);
+        let mut data = DocumentData::Assembly(a);
+        // A reference is found whichever variant it shows.
+        assert_eq!(data.references(), vec![DocRef::local(id)]);
+        data.remap_references(|x| {
+            if x == DocRef::local(id) {
+                DocRef::local(other)
+            } else {
+                x
+            }
+        });
+        let DocumentData::Assembly(a) = &data else {
+            panic!("an assembly");
+        };
+        assert_eq!(a.occurrences[0].component.document, other);
+        assert_eq!(a.occurrences[0].component.variant, Some(3));
+        // And it round-trips; without a choice nothing is written.
+        let text = serde_json::to_string(&a.occurrences[0].component).unwrap();
+        let back: DocRef = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.variant, Some(3));
+        assert!(
+            !serde_json::to_string(&DocRef::local(id))
+                .unwrap()
+                .contains("variant")
+        );
+    }
+
+    #[test]
     fn extract_writes_a_part_file_and_links_it() {
         let d = tmp("extract");
         let (mut p, path, part, a) = design(&d);
@@ -602,6 +653,7 @@ mod tests {
             DocRef {
                 library: Some(lib),
                 document: a,
+                variant: None,
             },
             Transform3::identity(),
         ));

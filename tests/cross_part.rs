@@ -1007,6 +1007,7 @@ fn linked_gasket(
     a.place(DocRef::local(f), "Flange", Transform3::identity(), true);
     a.place(
         DocRef {
+            variant: None,
             library: Some(lib),
             document: g,
         },

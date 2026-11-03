@@ -34,6 +34,9 @@ struct LibEntry {
     checked: Instant,
 }
 
+/// A part built standing in a variant, with the key of what it was built from.
+type Member = (u64, Arc<PartDocument>);
+
 /// Linked part files, by canonical path: loaded (and regenerated) once,
 /// reloaded when the file's time changes.
 #[derive(Default)]
@@ -46,6 +49,8 @@ pub(super) struct LibCache {
     /// walk: (file path, its library ids, the projects). Built again when
     /// either changes or a file is (re)loaded.
     linked: RefCell<Option<LinkedKey>>,
+    /// Parts standing in a chosen variant, with what they were built from.
+    members: RefCell<HashMap<(DocRef, u32), Member>>,
     /// Files being read and rebuilt on a worker thread (a large one takes a second), until
     /// `part_file` takes them.
     loading: RefCell<HashMap<PathBuf, Loading>>,
@@ -244,6 +249,30 @@ impl LibCache {
 
     /// Drops the cached linked projects (`CadCraftApp::linked`): this
     /// file's edits of linked files changed.
+    /// Part `p` (reached as `r`) standing in its variant `v`. A variant that is gone
+    /// or does not build gives the part as it is, and says so in the log.
+    fn variant_part(&self, r: DocRef, v: u32, p: &PartDocument) -> Arc<PartDocument> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.body_signature().hash(&mut h);
+        p.variants.get(v).hash(&mut h);
+        p.variants.active.hash(&mut h);
+        let key = h.finish();
+        if let Some((k, m)) = self.members.borrow().get(&(r, v))
+            && *k == key
+        {
+            return m.clone();
+        }
+        let mut m = p.clone();
+        m.build_cache = Default::default();
+        if let Err(e) = m.activate_variant(v) {
+            log::warn!("variant {v} of a part: {e}");
+        }
+        let m = Arc::new(m);
+        self.members.borrow_mut().insert((r, v), (key, m.clone()));
+        m
+    }
+
     pub(super) fn forget_linked(&self) {
         *self.linked.borrow_mut() = None;
     }
@@ -570,6 +599,11 @@ impl CadCraftApp {
     /// Runs `f` on the part a component reference shows: a part of this
     /// file, or of a linked part file. `None` when it cannot be found.
     pub(super) fn with_part<R>(&self, r: DocRef, f: impl FnOnce(&PartDocument) -> R) -> Option<R> {
+        // A chosen variant: the part built standing in it, kept until it changes.
+        if let Some(v) = r.variant {
+            let member = self.variant_member(r.base(), v)?;
+            return Some(f(&member));
+        }
         match r.library {
             None => asm::part_of(&self.project, r).map(f),
             // Changed from this file and not saved yet.
@@ -591,6 +625,11 @@ impl CadCraftApp {
                 }
             }
         }
+    }
+
+    /// Part `r` standing in its variant `v` (not generic: `with_part` is, and calls this).
+    fn variant_member(&self, r: DocRef, v: u32) -> Option<Arc<PartDocument>> {
+        self.with_part(r, |p| self.asm.libs.variant_part(r, v, p))
     }
 
     /// Assemble › Place: the file browser (the assembly must be saved
@@ -705,6 +744,7 @@ impl CadCraftApp {
                 let r = DocRef {
                     library: Some(l.id),
                     document: id,
+                    variant: None,
                 };
                 v.push((r, format!("{name} ({f})")));
             }
@@ -1443,6 +1483,38 @@ pub(super) fn draw_ghost(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_variant_part_is_built_once_and_again_when_it_changes() {
+        use crate::document::DocumentId;
+        let mut p = PartDocument::with_box("Box1", [20.0, 10.0, 5.0]).unwrap();
+        let name = p.parameter_table()[0].name.clone();
+        let v = p.new_variant();
+        p.set_parameter_expr(&name, "33 mm").unwrap();
+        p.variants_sync();
+        p.activate_variant(crate::part::variants::PRIMARY).unwrap();
+        let (x, z) = (
+            p.body.bounding_box().unwrap().1,
+            p.parameter(&name).unwrap().value,
+        );
+        let libs = LibCache::default();
+        let r = DocRef::local(DocumentId::new_random());
+        let m = libs.variant_part(r, v, &p);
+        assert_eq!(m.parameter(&name).unwrap().value, 33.0);
+        // The part itself stays as it was.
+        assert_eq!(p.parameter(&name).unwrap().value, z);
+        assert_eq!(p.body.bounding_box().unwrap().1, x);
+        // Kept while nothing changes.
+        assert!(Arc::ptr_eq(&m, &libs.variant_part(r, v, &p)));
+        // A changed variant builds again.
+        p.set_variant_param(v, &name, "44 mm").unwrap();
+        let n = libs.variant_part(r, v, &p);
+        assert!(!Arc::ptr_eq(&m, &n));
+        assert_eq!(n.parameter(&name).unwrap().value, 44.0);
+        // A variant that is gone: the part as it is, not a failure.
+        let gone = libs.variant_part(r, 99, &p);
+        assert_eq!(gone.parameter(&name).unwrap().value, z);
+    }
 
     #[test]
     fn occurrences_are_named_after_the_file() {

@@ -194,6 +194,10 @@ pub struct DocRef {
     pub library: Option<LibraryId>,
     /// The referenced document.
     pub document: DocumentId,
+    /// A part's variant this reference shows (`None`: the one active in the part;
+    /// spec 3.9). Old builds ignore it and show the active one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<u32>,
 }
 
 impl DocRef {
@@ -202,6 +206,15 @@ impl DocRef {
         Self {
             library: None,
             document,
+            variant: None,
+        }
+    }
+
+    /// The same document, whichever variant.
+    pub fn base(self) -> Self {
+        Self {
+            variant: None,
+            ..self
         }
     }
 }
@@ -434,21 +447,26 @@ impl DocumentData {
         }
     }
 
-    /// Every document this one references.
+    /// Every document this one references, whichever variant of it.
     pub fn references(&self) -> Vec<DocRef> {
         match self {
             DocumentData::Part(_) => Vec::new(),
-            DocumentData::Assembly(a) => a.occurrences.iter().map(|o| o.component).collect(),
+            DocumentData::Assembly(a) => a.occurrences.iter().map(|o| o.component.base()).collect(),
             DocumentData::Drawing(d) => d.references(),
         }
     }
 
-    /// Rewrites every reference through `f`.
+    /// Rewrites every reference through `f`, which sees the document only: a
+    /// chosen variant stays.
     pub(crate) fn remap_references(&mut self, mut f: impl FnMut(DocRef) -> DocRef) {
         match self {
             DocumentData::Assembly(a) => {
                 for o in &mut a.occurrences {
-                    o.component = f(o.component);
+                    let variant = o.component.variant;
+                    o.component = DocRef {
+                        variant,
+                        ..f(o.component.base())
+                    };
                 }
             }
             DocumentData::Drawing(d) => d.remap_references(&mut f),

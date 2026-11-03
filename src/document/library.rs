@@ -134,6 +134,7 @@ impl Resolver {
         Ok(DocRef {
             library: Some(id),
             document: doc,
+            variant: None,
         })
     }
 
