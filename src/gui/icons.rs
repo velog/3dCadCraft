@@ -800,8 +800,36 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
     let section = |pts: &[(f32, f32)]| p.closed(pts, ink);
     let leaf = category.rsplit('/').next().unwrap_or(category);
     match leaf {
-        "Fasteners" | "Bolts" | "Hex Head" | "Square Head" | "T-Bolt" | "Eye" | "Carriage"
-        | "Shoulder" => {
+        "Carriage" if category.contains("Linear") => {
+            p.rect(2.0, 11.0, 14.0, 14.0, acc);
+            p.rect(3.5, 4.0, 12.5, 11.0, ink);
+            p.line(&[(6.0, 4.0), (6.0, 11.0)], ink);
+            p.line(&[(10.0, 4.0), (10.0, 11.0)], ink);
+        }
+        "Eye" => {
+            p.circle(8.0, 4.5, 3.2, ink);
+            p.circle(8.0, 4.5, 1.3, acc);
+            shank(6.4, 9.6, 7.7, 14.5);
+            threads(6.4, 9.6, 9.5, 14.0);
+        }
+        "T-Bolt" => {
+            p.rect(2.5, 1.5, 13.5, 4.5, ink);
+            shank(6.0, 10.0, 4.5, 14.5);
+            threads(6.0, 10.0, 8.0, 14.0);
+        }
+        "Square Head" => {
+            p.rect(4.5, 1.5, 11.5, 5.0, ink);
+            p.rect(3.0, 5.0, 13.0, 6.2, ink);
+            shank(6.0, 10.0, 6.2, 14.5);
+            threads(6.0, 10.0, 8.5, 14.0);
+        }
+        "Shoulder" => {
+            p.rect(3.5, 1.5, 12.5, 5.0, ink);
+            shank(5.5, 10.5, 5.0, 10.5);
+            shank(6.5, 9.5, 10.5, 14.5);
+            threads(6.5, 9.5, 11.0, 14.0);
+        }
+        "Fasteners" | "Bolts" | "Hex Head" | "Carriage" => {
             p.rect(3.5, 1.5, 12.5, 5.0, ink);
             p.line(&[(6.5, 1.5), (6.5, 5.0)], ink);
             p.line(&[(9.5, 1.5), (9.5, 5.0)], ink);
@@ -920,7 +948,7 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
             p.line(&[(6.0, 13.0), (10.0, 13.0)], acc);
         }
         "Taper" => p.closed(&[(5.5, 1.5), (10.5, 1.5), (9.5, 14.5), (6.5, 14.5)], ink),
-        "Rivets" | "Blind" => {
+        "Rivets" | "Blind" if !category.contains("Flanges") => {
             p.arc(8.0, 6.0, 5.0, 0.0, 180.0, ink);
             p.line(&[(3.0, 6.0), (13.0, 6.0)], ink);
             shank(6.0, 10.0, 6.0, 14.5);
@@ -1056,6 +1084,148 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
                 ink,
                 Color32::from_rgba_unmultiplied(acc.r(), acc.g(), acc.b(), 60),
             );
+        }
+        "Machine Elements" | "Gears and Chains" | "Spur Gear" => {
+            for k in 0..8 {
+                let a = (k as f32 * 45.0).to_radians();
+                let (c, s) = (a.cos(), a.sin());
+                p.line(
+                    &[
+                        (8.0 + 4.5 * c, 8.0 + 4.5 * s),
+                        (8.0 + 6.8 * c, 8.0 + 6.8 * s),
+                    ],
+                    ink,
+                );
+            }
+            p.circle(8.0, 8.0, 4.8, ink);
+            p.circle(8.0, 8.0, 1.8, acc);
+        }
+        "Chain Sprocket" => {
+            p.circle(8.0, 8.0, 6.0, ink);
+            for k in 0..8 {
+                let a = (k as f32 * 45.0).to_radians();
+                p.disc(8.0 + 6.0 * a.cos(), 8.0 + 6.0 * a.sin(), 1.1, ink);
+            }
+            p.circle(8.0, 8.0, 2.0, acc);
+        }
+        "Pulley" => {
+            p.line(
+                &[
+                    (2.5, 2.5),
+                    (13.5, 2.5),
+                    (13.5, 3.5),
+                    (10.0, 8.0),
+                    (13.5, 12.5),
+                    (13.5, 13.5),
+                    (2.5, 13.5),
+                    (2.5, 12.5),
+                    (6.0, 8.0),
+                    (2.5, 3.5),
+                    (2.5, 2.5),
+                ],
+                ink,
+            );
+            p.line(&[(1.0, 8.0), (15.0, 8.0)], acc);
+        }
+        "Springs" | "Compression" | "Extension" => {
+            let mut pts = Vec::new();
+            for k in 0..=12 {
+                let y = 1.5 + 13.0 * k as f32 / 12.0;
+                pts.push((if k % 2 == 0 { 4.0 } else { 12.0 }, y));
+            }
+            p.line(&pts, ink);
+        }
+        "Linear Motion" | "Rail" => {
+            p.rect(1.5, 6.0, 14.5, 10.0, ink);
+            p.line(&[(1.5, 8.0), (14.5, 8.0)], acc);
+        }
+        "Pipe Parts" | "Fittings" | "Elbow" => {
+            p.arc(13.0, 13.0, 9.5, 180.0, 270.0, ink);
+            p.arc(13.0, 13.0, 4.5, 180.0, 270.0, ink);
+            p.line(&[(3.5, 13.0), (8.5, 13.0)], acc);
+            p.line(&[(13.0, 3.5), (13.0, 8.5)], acc);
+        }
+        "Reducer" => {
+            p.closed(&[(2.0, 2.5), (14.0, 5.5), (14.0, 10.5), (2.0, 13.5)], ink);
+        }
+        "Threaded Coupling" => {
+            p.rect(3.0, 4.0, 13.0, 12.0, ink);
+            threads(4.0, 12.0, 5.0, 11.0);
+        }
+        "Tee" => {
+            p.rect(1.5, 2.5, 14.5, 8.0, ink);
+            p.rect(5.5, 8.0, 10.5, 14.5, ink);
+        }
+        "Flanges" | "Weld Neck" | "Slip-On" | "Blind" => {
+            p.circle(8.0, 8.0, 6.5, ink);
+            for k in 0..4 {
+                let a = (45.0 + k as f32 * 90.0_f32).to_radians();
+                p.circle(8.0 + 4.6 * a.cos(), 8.0 + 4.6 * a.sin(), 0.9, ink);
+            }
+            if leaf != "Blind" {
+                p.circle(8.0, 8.0, 2.5, acc);
+            }
+        }
+        "Valves" | "Ball Valve" => {
+            p.closed(&[(1.5, 5.0), (8.0, 9.0), (1.5, 13.0)], ink);
+            p.closed(&[(14.5, 5.0), (8.0, 9.0), (14.5, 13.0)], ink);
+            p.line(&[(8.0, 9.0), (8.0, 3.0)], acc);
+            p.line(&[(5.0, 3.0), (11.0, 3.0)], acc);
+        }
+        "Sheet Metal Hardware" | "Standoffs" => {
+            hexagon(8.0, 8.0, 6.0, ink);
+            p.circle(8.0, 8.0, 2.4, acc);
+        }
+        "Clinch Studs" => {
+            p.rect(4.0, 1.5, 12.0, 4.5, ink);
+            shank(6.0, 10.0, 4.5, 14.5);
+            threads(6.0, 10.0, 7.0, 14.0);
+        }
+        "Other Parts" | "Plugs" => {
+            p.rect(3.0, 2.0, 13.0, 6.0, ink);
+            shank(5.0, 11.0, 6.0, 14.0);
+            threads(5.0, 11.0, 7.5, 13.5);
+        }
+        "Grease Fittings" => {
+            hexagon(8.0, 10.5, 4.0, ink);
+            p.line(&[(8.0, 6.5), (8.0, 2.5)], acc);
+            p.circle(8.0, 2.8, 1.3, acc);
+        }
+        "Clamps" => {
+            p.arc(8.0, 8.0, 6.0, -60.0, 240.0, ink);
+            p.rect(10.0, 1.5, 14.5, 5.0, acc);
+        }
+        "Caps" => {
+            p.line(&[(3.5, 13.5), (3.5, 5.0)], ink);
+            p.arc(8.0, 5.0, 4.5, 180.0, 360.0, ink);
+            p.line(&[(12.5, 5.0), (12.5, 13.5)], ink);
+        }
+        "Handles" => {
+            p.line(
+                &[
+                    (2.5, 13.5),
+                    (2.5, 6.0),
+                    (4.5, 4.0),
+                    (11.5, 4.0),
+                    (13.5, 6.0),
+                    (13.5, 13.5),
+                ],
+                ink,
+            );
+            p.line(&[(5.0, 13.5), (5.0, 7.0), (11.0, 7.0), (11.0, 13.5)], ink);
+        }
+        "Knobs" => {
+            p.circle(8.0, 6.0, 4.6, ink);
+            shank(6.5, 9.5, 10.5, 14.5);
+        }
+        "Feet" => {
+            shank(6.8, 9.2, 1.5, 10.0);
+            p.rect(2.5, 10.0, 13.5, 13.5, ink);
+        }
+        "Hinges" => {
+            p.rect(1.5, 3.0, 7.0, 13.0, ink);
+            p.rect(9.0, 3.0, 14.5, 13.0, ink);
+            p.rect(7.0, 2.0, 9.0, 14.0, acc);
         }
         _ => {
             p.block([3.0, 6.0, 7.0, 7.0, 3.5], ink, Color32::TRANSPARENT);

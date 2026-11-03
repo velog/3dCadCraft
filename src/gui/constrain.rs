@@ -577,6 +577,23 @@ impl CadCraftApp {
         self.geom_under(pos, rect)
     }
 
+    /// The face of a component under the cursor, edges ignored: what an input that takes only
+    /// faces picks (a slot's floor seen through its neck lies between two edges a few pixels apart).
+    pub(super) fn face_under_pub(&self, pos: Pos2, rect: Rect) -> Option<GeomRef> {
+        let parts = self.pick_parts();
+        let (part, f, t) = self.part_hit_in(&parts, pos, rect)?;
+        let (o, dir) = self.camera.ray(pos, rect)?;
+        let dir = dir.try_normalize(1e-12)?;
+        let name = self.face_name(&part, f)?;
+        let local = part.place.inverse() * (o + dir * t);
+        Some(GeomRef::Face {
+            sub: part.sub,
+            occurrence: part.top,
+            name,
+            hint: [local.x, local.y, local.z],
+        })
+    }
+
     /// The face or edge of a component under the cursor (an edge within a
     /// few pixels wins over the face behind it).
     fn geom_under(&self, pos: Pos2, rect: Rect) -> Option<GeomRef> {

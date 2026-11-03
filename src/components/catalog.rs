@@ -352,7 +352,7 @@ impl Catalog {
         let m = f.members.first().ok_or("the family has no members")?;
         let identity = match (&m.source, &f.file) {
             // `section` in the name: the pictures saved before bearings drew their section.
-            (Source::Sample(s), _) => format!("{}|{:?}|section", s.designation(), s.kind),
+            (Source::Sample(s), _) => format!("{}|{:?}|section2", s.designation(), s.kind),
             (Source::Row(_), Some(file)) => {
                 let time = std::fs::metadata(file)
                     .and_then(|d| d.modified())

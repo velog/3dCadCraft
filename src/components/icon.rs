@@ -208,21 +208,24 @@ pub fn row_heights(rows: u32, b: Real) -> Vec<Real> {
     }
 }
 
-/// The section as a square RGBA picture (`size` pixels, 4x supersampled, clear background): both sides
-/// of the axis, the axis dashed. A thin bearing keeps enough width for its elements to show.
+/// The section above the axis as a square RGBA picture (`size` pixels, 4x supersampled, clear
+/// background), filling it: the list shows pictures small, and both sides of the axis came out too
+/// tiny to read. Proportions are kept within what stays legible; the axis is dashed below it.
 pub fn bearing_section(style: BearingStyle, d: Real, od: Real, b: Real, size: u32) -> Vec<u8> {
-    let (r0, r1) = (d / 2.0, od / 2.0);
-    // The bore never takes more than half the picture: the section is the point.
-    let shown_bore = r0.min((r1 - r0) * 0.8);
-    let (r0, r1) = (shown_bore, shown_bore + (r1 - r0));
-    let b = b.max(r1 * 0.55);
+    let t_real = (od - d) / 2.0;
+    let (r0, r1) = (t_real, 2.0 * t_real);
+    let b = b.clamp(t_real * 0.7, t_real * 1.5);
     let n = size as usize;
     let mut out = vec![0u8; n * n * 4];
     let margin = 2.0;
-    let scale = (Real::from(size) - 2.0 * margin) / (2.0 * r1).max(b);
+    let axis_room = Real::from(size) * 0.14;
+    let scale = (Real::from(size) - 2.0 * margin - axis_room) / t_real.max(b);
     let centre = Real::from(size) / 2.0;
+    let bottom = centre + t_real * scale / 2.0 - axis_room / 2.0 + margin / 2.0;
+    let axis_y = Real::from(size) - margin - 0.5;
     let layers = upper(style, r0, r1, b);
-    let line = 1.0 / scale;
+    // Two pixels of the picture: it is shown at half size.
+    let line = 2.0 / scale;
     let samples = 4;
     for py in 0..n {
         for px in 0..n {
@@ -232,7 +235,7 @@ pub fn bearing_section(style: BearingStyle, d: Real, od: Real, b: Real, size: u3
                     let x = px as Real + (Real::from(sx) + 0.5) / Real::from(samples);
                     let y = py as Real + (Real::from(sy) + 0.5) / Real::from(samples);
                     let z = (x - centre) / scale + b / 2.0;
-                    let r = ((y - centre) / scale).abs();
+                    let r = r0 + (bottom - y) / scale;
                     let mut colour: Option<[u8; 3]> = None;
                     for l in &layers {
                         let dist = l.shape.distance(z, r);
@@ -241,8 +244,8 @@ pub fn bearing_section(style: BearingStyle, d: Real, od: Real, b: Real, size: u3
                         }
                     }
                     if colour.is_none()
-                        && (y - centre).abs() < 0.6
-                        && ((x / 5.0).floor() as i64).rem_euclid(2) == 0
+                        && (y - axis_y).abs() < 1.0
+                        && ((x / 6.0).floor() as i64).rem_euclid(2) == 0
                     {
                         colour = Some(AXIS);
                     }

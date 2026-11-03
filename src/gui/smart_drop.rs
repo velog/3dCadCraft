@@ -535,7 +535,7 @@ impl CadCraftApp {
             }
             return;
         };
-        let g = self.geom_under_pub(p, rect);
+        let g = self.drop_under(p, rect);
         let waiting_plane = self
             .asm
             .smart
@@ -759,7 +759,7 @@ impl CadCraftApp {
     /// A click in the view.
     pub(super) fn smart_drop_click(&mut self, pointer: Option<Pos2>, rect: Rect) {
         let Some(p) = pointer else { return };
-        let g = self.geom_under_pub(p, rect);
+        let g = self.drop_under(p, rect);
         if let Some(g) = &g {
             self.drop_prepare(g);
         }
@@ -862,6 +862,20 @@ impl CadCraftApp {
     }
 
     /// A part placed by its connection: one Insert of its edge into the rim.
+    /// What the cursor is on, as this family takes it: a slot's floor is a face (rule 19).
+    fn drop_under(&self, p: Pos2, rect: Rect) -> Option<GeomRef> {
+        let slot = self
+            .asm
+            .smart
+            .as_ref()
+            .is_some_and(|s| s.fits.iter().any(|f| matches!(f, Fit::Slot { .. })));
+        if slot {
+            self.face_under_pub(p, rect)
+        } else {
+            self.geom_under_pub(p, rect)
+        }
+    }
+
     /// The status bar's prompt: a T-slot nut asks for a slot's floor.
     pub(super) fn drop_prompt(&self) -> String {
         let slot = self
