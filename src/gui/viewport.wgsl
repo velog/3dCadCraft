@@ -14,6 +14,9 @@ struct Uniforms {
     // x: monochrome faces, y: the two planes cut where either does
     // (Three Quarter) instead of where both do (Quarter).
     style: vec4<f32>,
+    // The view's background, gamma-encoded: top and bottom of the gradient.
+    bg_top: vec4<f32>,
+    bg_bottom: vec4<f32>,
 };
 
 fn cut_by(c: vec4<f32>, p: vec3<f32>) -> bool {
@@ -61,6 +64,27 @@ fn to_gamma(c: vec3<f32>) -> vec3<f32> {
     return pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
 }
 
+// The background: one triangle over the whole target, drawn first.
+struct BackgroundOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) t: f32,
+};
+
+@vertex
+fn vs_background(@builtin(vertex_index) k: u32) -> BackgroundOut {
+    var o: BackgroundOut;
+    let x = f32(i32(k & 1u) * 4 - 1);
+    let y = f32(i32(k >> 1u) * 4 - 1);
+    o.clip = vec4<f32>(x, y, 1.0, 1.0);
+    o.t = (y + 1.0) / 2.0;
+    return o;
+}
+
+@fragment
+fn fs_background(i: BackgroundOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(mix(u.bg_bottom.xyz, u.bg_top.xyz, clamp(i.t, 0.0, 1.0)), 1.0);
+}
+
 // Shaded front faces: headlight (light at the eye) + a little specular.
 @fragment
 fn fs_shaded(i: VsOut) -> @location(0) vec4<f32> {
@@ -70,8 +94,10 @@ fn fs_shaded(i: VsOut) -> @location(0) vec4<f32> {
     let n = normalize(i.normal);
     let v = normalize(u.eye.xyz - i.world);
     let ndv = abs(dot(n, v));
-    let diffuse = 0.25 + 0.75 * ndv;
-    let spec = 0.15 * pow(ndv, 48.0);
+    // A big flat face seen square on keeps its colour: a stronger highlight
+    // washed it out to a bright spot under a perspective camera.
+    let diffuse = 0.3 + 0.65 * ndv;
+    let spec = 0.05 * pow(ndv, 96.0);
     var col = i.color;
     if (u.style.x > 0.5) {
         // Monochrome: one light grey, the shading stays.

@@ -29,6 +29,9 @@ const CLEAR: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
+/// `Uniforms` in the shader: a matrix and six vectors.
+const UNIFORM_SIZE: u64 = 16 * 4 + 6 * 4 * 4;
+
 /// CPU-side geometry for one upload: triangles and line segments.
 #[derive(Default)]
 pub struct SceneGeometry {
@@ -230,6 +233,8 @@ struct Target {
 
 /// Owns all GPU resources of the 3D viewport.
 pub struct ViewportRenderer {
+    /// The gradient behind everything.
+    background: wgpu::RenderPipeline,
     shaded: wgpu::RenderPipeline,
     backfaces: wgpu::RenderPipeline,
     backfaces_under: wgpu::RenderPipeline,
@@ -281,7 +286,7 @@ impl ViewportRenderer {
 
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport uniforms"),
-            size: 128, // mat4x4<f32> + 4 × vec4<f32>
+            size: UNIFORM_SIZE,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -433,6 +438,46 @@ impl ViewportRenderer {
             wgpu::CompareFunction::Greater,
             wgpu::ColorWrites::ALL,
         );
+        // No vertex buffer, no depth: it only fills the target.
+        let background = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("background"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_background"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: Topo::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_background"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: COLOR_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         // See-through faces: blended over the opaque scene, depth-tested
         // but not written (faces behind stay visible), both sides.
         let alpha_attributes =
@@ -548,6 +593,7 @@ impl ViewportRenderer {
             depth_faces,
             hidden_lines,
             transparent,
+            background,
             threads,
             uniform_buf,
             bind_group,
@@ -652,7 +698,10 @@ impl ViewportRenderer {
             return egui::TextureId::default();
         };
 
-        let mut uniforms = Vec::with_capacity(128);
+        let mut uniforms = Vec::with_capacity(UNIFORM_SIZE as usize);
+        let canvas = super::theme::canvas();
+        let (top, bottom) = (canvas.background_top, canvas.background_bottom);
+        let unit = |v: u8| f64::from(v) / 255.0;
         let (cn, cw) = cut.a.unwrap_or((Vector3::zeros(), 0.0));
         let (dn, dw) = cut.b.unwrap_or((Vector3::zeros(), 0.0));
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
@@ -663,6 +712,8 @@ impl ViewportRenderer {
             .chain([cn.x, cn.y, cn.z, cw])
             .chain([dn.x, dn.y, dn.z, dw])
             .chain([flag(style.monochrome), flag(cut.union), 0.0, 0.0])
+            .chain([unit(top.r()), unit(top.g()), unit(top.b()), 1.0])
+            .chain([unit(bottom.r()), unit(bottom.g()), unit(bottom.b()), 1.0])
         {
             uniforms.extend_from_slice(&(v as f32).to_le_bytes()); // column-major, as WGSL expects
         }
@@ -702,6 +753,8 @@ impl ViewportRenderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_pipeline(&self.background);
+            pass.draw(0..3, 0..1);
 
             if let Some(g) = &self.geometry {
                 if let (Some(vb), Some(ib)) = (&g.tri_vbuf, &g.tri_ibuf) {

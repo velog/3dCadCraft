@@ -197,3 +197,27 @@ pub fn set_current(t: UiTheme) {
 pub fn tokens() -> Tokens {
     current().tokens()
 }
+
+/// The colours of the graphics window (In-canvas Color Scheme, spec 0.18): they
+/// do not follow the UI Theme. For now the one built-in scheme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CanvasColors {
+    /// The background's gradient, top and bottom.
+    pub background_top: Color32,
+    pub background_bottom: Color32,
+}
+
+impl CanvasColors {
+    /// The built-in scheme: light and neutral, so the model and the sketch stand out.
+    pub const fn light() -> CanvasColors {
+        CanvasColors {
+            background_top: Color32::from_rgb(240, 243, 247),
+            background_bottom: Color32::from_rgb(208, 214, 223),
+        }
+    }
+}
+
+/// The In-canvas colours in use.
+pub fn canvas() -> CanvasColors {
+    CanvasColors::light()
+}

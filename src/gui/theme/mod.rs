@@ -16,7 +16,7 @@ mod colors_tab;
 mod tokens;
 
 pub use colors_tab::colors_tab;
-pub use tokens::{IconColors, Tokens, UiTheme, current, set_current, tokens};
+pub use tokens::{IconColors, Tokens, UiTheme, canvas, current, set_current, tokens};
 
 /// Family of text drawn on a drawing sheet: the PDF embeds this same font and
 /// Format Text measures with it, so it does not follow the interface's font.
@@ -358,6 +358,16 @@ mod tests {
                 assert!(c >= min, "{theme:?} {name}: {c:.2} < {min}");
             }
         }
+    }
+
+    #[test]
+    fn the_background_gradient_is_soft_and_lets_lines_show() {
+        let c = canvas();
+        assert!(luminance(c.background_top) > luminance(c.background_bottom));
+        assert!(contrast(c.background_top, c.background_bottom) < 1.5);
+        // Dark edges and sketch lines stand out on both ends.
+        let edge = Color32::from_gray(40);
+        assert!(contrast(edge, c.background_bottom) >= 4.5);
     }
 
     #[test]
