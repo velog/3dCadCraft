@@ -751,7 +751,38 @@ pub fn view_lines_simplified(
     let mut tris = Vec::new();
     let mut crossings: Vec<([f64; 2], [f64; 2])> = Vec::new();
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
-    for m in meshes {
+    // No cut of any kind: mesh by mesh on every core, in the same order (a tenth of a view of
+    // 20 000 components).
+    let plain = cells.is_none() && cut.is_none() && far_depth.is_none() && outs.is_empty();
+    if plain {
+        let parts: Vec<Vec<Tri>> = par_map(&meshes[..], |m| {
+            let pos = &m.faces.positions;
+            let mut part = Vec::new();
+            for tri in &m.faces.triangles {
+                let [a, b, c] = tri.map(|i| pos[i as usize]);
+                let nrm = (b - a).cross(&(c - a));
+                if nrm.dot(&t) > 1e-12 * nrm.norm().max(1e-30) {
+                    part.push(Tri {
+                        p: [p2(&a), p2(&b), p2(&c)],
+                        d: [dp(&a), dp(&b), dp(&c)],
+                    });
+                }
+            }
+            part
+        });
+        for part in parts {
+            for tr in &part {
+                for q in &tr.p {
+                    for i in 0..2 {
+                        lo[i] = lo[i].min(q[i]);
+                        hi[i] = hi[i].max(q[i]);
+                    }
+                }
+            }
+            tris.extend(part);
+        }
+    }
+    for m in meshes.iter().filter(|_| !plain) {
         let pos = &m.faces.positions;
         for tri in &m.faces.triangles {
             let [a, b, c] = tri.map(|i| pos[i as usize]);
@@ -2636,8 +2667,17 @@ fn all_flat(m: &SolidMesh) -> bool {
 
 /// `f` over `items` on every core, in order (small inputs on this thread).
 pub(crate) fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    par_map_from(items, 2048, f)
+}
+
+/// [`par_map`] for items costly enough to share from `least` of them.
+pub(crate) fn par_map_from<T: Sync, R: Send>(
+    items: &[T],
+    least: usize,
+    f: impl Fn(&T) -> R + Sync,
+) -> Vec<R> {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-    if cores < 2 || items.len() < 2048 {
+    if cores < 2 || items.len() < least {
         return items.iter().map(&f).collect();
     }
     let chunk = items.len().div_ceil(cores);

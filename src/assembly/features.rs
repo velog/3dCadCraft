@@ -66,7 +66,7 @@ pub fn cut(
     // them meeting; our boxes follow the smallest side.
     if local.len() > 1 {
         // Side by side: each box is a fine mesh of a long tool (32 pins: most of the cut).
-        let boxes = crate::drawing::hlr::par_map(&local, exact::bounds);
+        let boxes = crate::drawing::hlr::par_map_from(&local, 2, exact::bounds);
         let apart = boxes.iter().enumerate().all(|(i, a)| {
             boxes[i + 1..].iter().all(|b| match (a, b) {
                 (Some((alo, ahi)), Some((blo, bhi))) => {
