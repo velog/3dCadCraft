@@ -1222,7 +1222,7 @@ pub(super) fn buttons(
     }
     let ok = preview.is_ok() || matches!(preview, Err(e) if e == super::PREVIEW_PENDING);
     let mut out = None;
-    ui.horizontal(|ui| {
+    super::theme::panel_footer(ui, |ui| {
         let size = egui::vec2(60.0, 22.0);
         if ui
             .add_enabled(ok, super::theme::ok_button("OK").min_size(size))

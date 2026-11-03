@@ -359,7 +359,7 @@ impl CadCraftApp {
         }
         let ok = matches!(built, Some(Ok(_)));
         self.work_draft = Some(d);
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             if ui
                 .add_enabled(
                     ok,

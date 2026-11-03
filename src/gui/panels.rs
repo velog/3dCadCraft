@@ -87,6 +87,24 @@ const SLOW_CLICK_S: f64 = 0.5;
 /// children start their icon after it, so all icons of a level stand in one column.
 pub(super) const TREE_FOLD_COLUMN: f32 = 18.0;
 
+/// The part's overall size, X × Y × Z.
+fn size_note(s: [f64; 3]) -> String {
+    let n = |v: f64| {
+        let t = format!("{v:.2}");
+        t.trim_end_matches('0').trim_end_matches('.').to_owned()
+    };
+    format!("{} × {} × {} mm", n(s[0]), n(s[1]), n(s[2]))
+}
+
+/// The one line that says the part's bodies passed the check.
+fn valid_note(bodies: usize) -> String {
+    if bodies == 1 {
+        "Valid".to_owned()
+    } else {
+        format!("All {bodies} bodies valid")
+    }
+}
+
 /// A control in the fold arrow's column (a visibility check box), the icon right after it.
 fn in_fold_column<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let gap = ui.spacing().item_spacing.x;
@@ -1491,9 +1509,9 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             );
         }
         ui.separator();
-        ui.label(RichText::new("Validation").strong());
         // Validation walks the whole body: once per body, not every frame.
         let key = self.body_key();
+        self.part_summary(ui, &key);
         // One row per body: a solid gets the closed-manifold check, a surface
         // body (open on purpose) only its counts.
         type Row = (
@@ -1541,52 +1559,112 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             }
         };
         let many = rows.len() > 1;
-        for (k, (name, open, mesh, check)) in rows.into_iter().enumerate() {
-            if many {
-                ui.label(RichText::new(&name).weak());
-            }
-            if let Some(n) = mesh {
-                ui.label(format!("{n} triangles"));
-                ui.colored_label(
-                    super::theme::tokens().ok,
-                    if open {
-                        "✔ open mesh body: view and measure"
-                    } else {
-                        "✔ closed mesh body: view and measure"
-                    },
-                );
-                continue;
-            }
-            match check {
-                Ok(s) if open => {
-                    ui.label(format!("V {}   E {}   F {}", s.vertices, s.edges, s.faces));
-                    ui.colored_label(
-                        super::theme::tokens().ok,
-                        "✔ surface body (open, not a solid)",
-                    );
-                }
-                Ok(s) => {
-                    ui.colored_label(super::theme::tokens().ok, "✔ valid solid");
-                    // One per body: two with one label id were egui's red "widget ID" warning.
-                    egui::CollapsingHeader::new("Details")
-                        .id_salt(("body_details", k))
-                        .show(ui, |ui| {
-                            ui.label(format!(
-                                "V {}   E {}   F {}   shells {}",
-                                s.vertices, s.edges, s.faces, s.shells
-                            ));
-                            ui.label(format!(
-                                "Euler–Poincaré: V - E + F = {}, genus {}",
-                                s.euler_characteristic(),
-                                s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
-                            ));
-                        });
-                }
-                Err(e) => {
-                    ui.colored_label(super::theme::tokens().error, format!("✘ {e}"));
-                }
-            }
+        let failed = rows.iter().filter(|r| r.3.is_err()).count();
+        if rows.is_empty() {
+            return;
         }
+        let k_ok = super::theme::tokens();
+        if failed == 0 {
+            ui.colored_label(k_ok.ok, format!("✔ {}", valid_note(rows.len())));
+        } else {
+            ui.colored_label(
+                k_ok.error,
+                format!("✘ {failed} of {} not valid", rows.len()),
+            );
+        }
+        // Open by itself when something is wrong.
+        egui::CollapsingHeader::new("Validation")
+            .default_open(failed > 0)
+            .show(ui, |ui| {
+                for (k, (name, open, mesh, check)) in rows.into_iter().enumerate() {
+                    if many {
+                        ui.label(RichText::new(&name).weak());
+                    }
+                    if let Some(n) = mesh {
+                        ui.label(format!("{n} triangles"));
+                        ui.colored_label(
+                            super::theme::tokens().ok,
+                            if open {
+                                "✔ open mesh body: view and measure"
+                            } else {
+                                "✔ closed mesh body: view and measure"
+                            },
+                        );
+                        continue;
+                    }
+                    match check {
+                        Ok(s) if open => {
+                            ui.label(format!("V {}   E {}   F {}", s.vertices, s.edges, s.faces));
+                            ui.colored_label(
+                                super::theme::tokens().ok,
+                                "✔ surface body (open, not a solid)",
+                            );
+                        }
+                        Ok(s) => {
+                            ui.colored_label(super::theme::tokens().ok, "✔ valid solid");
+                            // One per body: two with one label id were egui's red "widget ID" warning.
+                            egui::CollapsingHeader::new("Details")
+                                .id_salt(("body_details", k))
+                                .show(ui, |ui| {
+                                    ui.label(format!(
+                                        "V {}   E {}   F {}   shells {}",
+                                        s.vertices, s.edges, s.faces, s.shells
+                                    ));
+                                    ui.label(format!(
+                                        "Euler–Poincaré: V - E + F = {}, genus {}",
+                                        s.euler_characteristic(),
+                                        s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
+                                    ));
+                                });
+                        }
+                        Err(e) => {
+                            ui.colored_label(super::theme::tokens().error, format!("✘ {e}"));
+                        }
+                    }
+                }
+            });
+    }
+
+    /// What the part is, at a glance: material, bodies, features, size. The size
+    /// reads every mesh position, so it is kept per body (`key`), never per frame.
+    fn part_summary(&self, ui: &mut egui::Ui, key: &str) {
+        let part = self.part();
+        let id = egui::Id::new("part_summary_size");
+        let cached = ui
+            .ctx()
+            .data(|d| d.get_temp::<(String, Option<[f64; 3]>)>(id));
+        let size = match cached {
+            Some((k, s)) if k == key => s,
+            _ => {
+                let s = part.body.bounding_box().map(|(a, b)| {
+                    let d = b - a;
+                    [d.x, d.y, d.z]
+                });
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(id, (key.to_owned(), s)));
+                s
+            }
+        };
+        let bodies = part.body.solids().count();
+        egui::Grid::new("part_summary")
+            .num_columns(2)
+            .min_col_width(label_width(ui.ctx()))
+            .show(ui, |ui| {
+                plabel(ui, "Material");
+                ui.label(part.material.as_deref().unwrap_or("Generic"));
+                ui.end_row();
+                plabel(ui, "Bodies");
+                ui.label(bodies.to_string());
+                ui.end_row();
+                plabel(ui, "Features");
+                ui.label(part.features.len().to_string());
+                ui.end_row();
+                if let Some(s) = size {
+                    plabel(ui, "Size");
+                    ui.label(size_note(s));
+                    ui.end_row();
+                }
+            });
     }
 
     /// The header of the property panel: icon, title and `?` (F1).
@@ -1768,7 +1846,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         {
             d.axis_pick = true;
         }
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             if ui
                 .add_enabled(
                     ready,
@@ -2455,7 +2533,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         }
         let ready = matches!(check, Some(Ok(())));
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             if ui
                 .add_enabled(
                     ready,
@@ -3147,7 +3225,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             Err(e) if d.def.has_input() => warning_box(ui, e),
             _ => {}
         }
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(
@@ -3350,7 +3428,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             Err(e) => warning_box(ui, e),
             _ => {}
         }
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(
@@ -3724,7 +3802,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             Err(e) if !d.def.faces.is_empty() => warning_box(ui, e),
             _ => {}
         }
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(
@@ -4043,7 +4121,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             Err(e) if has_input => warning_box(ui, e),
             _ => {}
         }
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(
@@ -7218,5 +7296,22 @@ mod tests {
         for (k, a) in seen.iter().enumerate() {
             assert!(!seen[k + 1..].contains(a), "{a:?} is used twice");
         }
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::{size_note, valid_note};
+
+    #[test]
+    fn a_size_reads_without_trailing_zeros() {
+        assert_eq!(size_note([100.0, 40.5, 2.25]), "100 × 40.5 × 2.25 mm");
+        assert_eq!(size_note([0.0, 10.0, 1000.0]), "0 × 10 × 1000 mm");
+    }
+
+    #[test]
+    fn the_valid_line_counts_bodies() {
+        assert_eq!(valid_note(1), "Valid");
+        assert_eq!(valid_note(3), "All 3 bodies valid");
     }
 }

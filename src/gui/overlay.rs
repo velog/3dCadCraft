@@ -934,26 +934,41 @@ pub fn draw_sketch_frame(
             painter.line_segment([p, q], stroke);
         }
     };
+    // What the view shows of the plane; the sketch's own size where a corner
+    // misses it (a plane seen nearly edge on).
+    let corners = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.left_bottom(),
+        rect.right_bottom(),
+    ]
+    .map(|c| {
+        cam.ray_plane(c, rect, plane).map(|p| {
+            let q = plane.project(&p);
+            (q.x, q.y)
+        })
+    });
+    let shown = view_range(corners, extent);
     if grid {
-        let step = nice_step(extent / 10.0);
-        let n = (extent / step).ceil() as i32;
-        let e = n as Real * step;
         let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(90, 110, 140, 60));
-        for i in -n..=n {
-            let t = i as Real * step;
-            line((t, -e), (t, e), stroke);
-            line((-e, t), (e, t), stroke);
+        let lines = grid_lines(shown);
+        let (u, v) = shown;
+        for t in lines.0 {
+            line((t, v.0), (t, v.1), stroke);
+        }
+        for t in lines.1 {
+            line((u.0, t), (u.1, t), stroke);
         }
     }
     if axes {
         line(
-            (-extent, 0.0),
-            (extent, 0.0),
+            (shown.0.0, 0.0),
+            (shown.0.1, 0.0),
             Stroke::new(1.0, Color32::from_rgba_unmultiplied(200, 40, 40, 150)),
         );
         line(
-            (0.0, -extent),
-            (0.0, extent),
+            (0.0, shown.1.0),
+            (0.0, shown.1.1),
             Stroke::new(1.0, Color32::from_rgba_unmultiplied(40, 160, 40, 150)),
         );
     }
@@ -978,6 +993,33 @@ pub fn draw_sketch_frame(
 }
 
 /// 1, 2 or 5 × 10ⁿ just above `x`.
+/// The ranges of u and v a sketch grid must cover: every corner of the view, or
+/// `+-extent` when one of them does not meet the plane.
+fn view_range(corners: [Option<(Real, Real)>; 4], extent: Real) -> ((Real, Real), (Real, Real)) {
+    let all: Option<Vec<(Real, Real)>> = corners.into_iter().collect();
+    let Some(all) = all else {
+        return ((-extent, extent), (-extent, extent));
+    };
+    let span = |f: fn(&(Real, Real)) -> Real| {
+        all.iter()
+            .map(f)
+            .fold((Real::MAX, Real::MIN), |(a, b), x| (a.min(x), b.max(x)))
+    };
+    (span(|p| p.0), span(|p| p.1))
+}
+
+/// The grid's lines over `shown`, at round values on one step, at most about 40 a
+/// direction however far the view is zoomed out (each is drawn every frame).
+fn grid_lines(shown: ((Real, Real), (Real, Real))) -> (Vec<Real>, Vec<Real>) {
+    let ((u0, u1), (v0, v1)) = shown;
+    let step = nice_step(((u1 - u0).max(v1 - v0) / 20.0).max(1e-6));
+    let at = |a: Real, b: Real| -> Vec<Real> {
+        let (first, last) = ((a / step).ceil() as i64, (b / step).floor() as i64);
+        (first..=last).map(|k| k as Real * step).collect()
+    };
+    (at(u0, u1), at(v0, v1))
+}
+
 fn nice_step(x: Real) -> Real {
     let p = 10f64.powf(x.max(1e-9).log10().floor());
     [1.0, 2.0, 5.0, 10.0]
@@ -1242,4 +1284,41 @@ pub fn draw_snap(
         FontId::proportional(11.0),
         HIGHLIGHT,
     );
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::{grid_lines, view_range};
+
+    #[test]
+    fn the_grid_covers_every_corner_of_the_view() {
+        let r = view_range(
+            [
+                Some((-5.0, 2.0)),
+                Some((40.0, 2.0)),
+                Some((-5.0, -9.0)),
+                Some((40.0, -9.0)),
+            ],
+            1.0,
+        );
+        assert_eq!(r, ((-5.0, 40.0), (-9.0, 2.0)));
+    }
+
+    #[test]
+    fn a_corner_off_the_plane_falls_back_to_the_sketch_size() {
+        let r = view_range(
+            [None, Some((1.0, 1.0)), Some((1.0, 1.0)), Some((1.0, 1.0))],
+            7.0,
+        );
+        assert_eq!(r, ((-7.0, 7.0), (-7.0, 7.0)));
+    }
+
+    #[test]
+    fn the_number_of_grid_lines_stays_small_at_any_zoom() {
+        for size in [0.01, 1.0, 37.0, 1000.0, 2.5e6] {
+            let (u, v) = grid_lines(((-size, size), (-size * 0.6, size * 0.6)));
+            assert!(!u.is_empty() && u.len() <= 45, "{size}: {}", u.len());
+            assert!(!v.is_empty() && v.len() <= 45, "{size}: {}", v.len());
+        }
+    }
 }

@@ -1911,7 +1911,7 @@ impl CadCraftApp {
             _ => {}
         }
         let ready = d.flow().ready() && !failed && !d.stub();
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             let size = egui::vec2(60.0, 22.0);
             if ui
                 .add_enabled(ready, super::theme::ok_button("OK").min_size(size))

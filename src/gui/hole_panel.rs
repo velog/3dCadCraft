@@ -1176,7 +1176,7 @@ impl CadCraftApp {
             Err(e) if is_warning(e) => warning_box(ui, e),
             _ => {}
         }
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             let ok = preview.is_ok() || matches!(preview, Err(e) if e == super::PREVIEW_PENDING);
             // Enter / Ctrl+Enter: OK; +: create it and start another (Inventor).
             let plus = !ui.ctx().egui_wants_keyboard_input()

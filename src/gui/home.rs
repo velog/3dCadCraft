@@ -378,6 +378,51 @@ enum Ask {
     Options,
 }
 
+/// Size of a card on the empty Home page, and the gap between cards.
+const CARD: egui::Vec2 = egui::vec2(132.0, 112.0);
+const CARD_GAP: f32 = 8.0;
+
+/// Width of a row of `n` cards.
+fn cards_width(n: usize) -> f32 {
+    n as f32 * CARD.x + n.saturating_sub(1) as f32 * CARD_GAP
+}
+
+/// A large button of the empty Home page: icon above its text.
+fn start_card(ui: &mut egui::Ui, icon: Icon, text: &str) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(CARD, egui::Sense::click());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), text));
+    if ui.is_rect_visible(rect) {
+        let v = ui.style().interact(&r);
+        let k = super::theme::tokens();
+        let fill = if r.hovered() { k.control } else { k.raised };
+        ui.painter().rect(
+            rect,
+            8.0,
+            fill,
+            egui::Stroke::new(1.0, k.line),
+            egui::StrokeKind::Inside,
+        );
+        let icon_rect = egui::Rect::from_center_size(
+            rect.center() - egui::vec2(0.0, 14.0),
+            egui::Vec2::splat(44.0),
+        );
+        super::icons::paint(
+            ui.painter(),
+            icon_rect,
+            icon,
+            &super::icons::Palette::enabled(),
+        );
+        ui.painter().text(
+            rect.center_bottom() - egui::vec2(0.0, 22.0),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::TextStyle::Body.resolve(ui.style()),
+            v.fg_stroke.color,
+        );
+    }
+    r
+}
+
 /// A disabled control's tooltip: the spec row it waits for.
 fn planned(r: egui::Response, what: &str) -> egui::Response {
     r.on_disabled_hover_text(format!("{what} — not yet (spec 0.17 / 0.6a)"))
@@ -788,15 +833,25 @@ impl CadCraftApp {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new("No recent documents").heading().weak());
                 ui.label("Make a new file or open one from disk.");
-                // A `horizontal` row here starts at the left edge, far from
-                // the centred text: one centred button per line instead.
-                ui.add_space(6.0);
-                if ui.button("New").clicked() {
-                    *ask = Some(Ask::NewDialog);
-                }
-                if ui.button("Open").clicked() {
-                    *ask = Some(Ask::OpenDialog);
-                }
+                ui.add_space(14.0);
+                use super::new_file::Kind;
+                let cards = [
+                    (Icon::Part, "New Part", Ask::New(Kind::Part)),
+                    (Icon::Assembly, "New Assembly", Ask::New(Kind::Assembly)),
+                    (Icon::Drawing, "New Drawing", Ask::New(Kind::Drawing)),
+                    (Icon::Folder, "Open...", Ask::OpenDialog),
+                ];
+                let width = cards_width(cards.len());
+                // A row in a centred column starts at the left edge: centre it by hand.
+                let left = (ui.available_width() - width).max(0.0) / 2.0;
+                ui.horizontal(|ui| {
+                    ui.add_space(left);
+                    for (icon, text, action) in cards {
+                        if start_card(ui, icon, text).clicked() {
+                            *ask = Some(action);
+                        }
+                    }
+                });
             });
         } else if list.is_empty() {
             ui.label(RichText::new("No file matches the search or filter.").weak());
@@ -1083,6 +1138,18 @@ fn home_learn(ui: &mut egui::Ui, ask: &mut Option<Ask>) {
         );
     });
     ui.add_space(4.0);
+}
+
+#[cfg(test)]
+mod card_tests {
+    use super::{CARD, CARD_GAP, cards_width};
+
+    #[test]
+    fn a_row_of_cards_has_gaps_between() {
+        assert_eq!(cards_width(0), 0.0);
+        assert_eq!(cards_width(1), CARD.x);
+        assert_eq!(cards_width(4), 4.0 * CARD.x + 3.0 * CARD_GAP);
+    }
 }
 
 #[cfg(test)]

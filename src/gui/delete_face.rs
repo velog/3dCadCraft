@@ -317,7 +317,7 @@ impl CadCraftApp {
         }
         let ok =
             ready && (preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING));
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             if ui
                 .add_enabled(
                     ok,

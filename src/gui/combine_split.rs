@@ -766,7 +766,7 @@ impl CadCraftApp {
         }
         let ok =
             ready && (preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING));
-        ui.horizontal(|ui| {
+        super::theme::panel_footer(ui, |ui| {
             let commit = |app: &mut Self, keep: bool| {
                 if combine {
                     app.commit_combine(keep);

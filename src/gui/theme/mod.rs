@@ -151,6 +151,39 @@ pub fn danger_button(text: &str) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.to_owned()).color(tokens().danger))
 }
 
+/// Height of [`panel_footer`]'s row.
+const FOOTER_HEIGHT: f32 = 30.0;
+
+/// Where a footer of `FOOTER_HEIGHT` stands: after the panel's content, or at the
+/// bottom of what is visible while that lies below it.
+fn footer_top(natural_top: f32, visible_bottom: f32) -> f32 {
+    natural_top.min(visible_bottom - FOOTER_HEIGHT)
+}
+
+/// The OK / Cancel row of a command panel: it stays in view while the panel scrolls.
+pub fn panel_footer<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    let (slot, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), FOOTER_HEIGHT),
+        Sense::hover(),
+    );
+    let top = footer_top(slot.top(), ui.clip_rect().bottom());
+    let at = Pos2::new(slot.left(), top);
+    egui::Area::new(ui.id().with("panel_footer"))
+        .order(egui::Order::Middle)
+        .fixed_pos(at)
+        .show(ui.ctx(), |ui| {
+            ui.set_width(slot.width());
+            egui::Frame::new()
+                .fill(tokens().panel)
+                .inner_margin(Margin::symmetric(0, 4))
+                .show(ui, |ui| {
+                    ui.set_min_width(slot.width());
+                    ui.horizontal(add).inner
+                })
+                .inner
+        })
+}
+
 /// The symbols of small buttons, drawn so that they do not depend on a font.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Glyph {
@@ -358,6 +391,17 @@ mod tests {
                 assert!(c >= min, "{theme:?} {name}: {c:.2} < {min}");
             }
         }
+    }
+
+    #[test]
+    fn the_footer_follows_the_content_until_it_would_leave_the_view() {
+        // A short panel: right after the content.
+        assert_eq!(footer_top(300.0, 800.0), 300.0);
+        // A long one: on the bottom edge.
+        assert_eq!(footer_top(1500.0, 800.0), 800.0 - FOOTER_HEIGHT);
+        // Scrolled to its end: back in the flow, once its whole height fits.
+        assert_eq!(footer_top(775.0, 800.0), 800.0 - FOOTER_HEIGHT);
+        assert_eq!(footer_top(760.0, 800.0), 760.0);
     }
 
     #[test]
