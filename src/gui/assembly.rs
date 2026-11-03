@@ -2523,7 +2523,8 @@ impl CadCraftApp {
                 let next = self.assembly()?.next_name(&self.asm.place_name);
                 Some(format!("Place {next}"))
             }
-            AsmTool::SmartDrop => Some("Smart Drop".into()),
+            // Its own label beside the cursor says more.
+            AsmTool::SmartDrop => None,
             AsmTool::FreeMove => Some("Free Move".into()),
             AsmTool::FreeRotate(None) => Some("Free Rotate: click a component".into()),
             AsmTool::FreeRotate(Some(_)) => None,

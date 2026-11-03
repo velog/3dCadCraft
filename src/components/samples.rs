@@ -11,7 +11,9 @@
 
 use crate::document::iprops::IProperties;
 use crate::kernel::{Point3, Real, Surface};
-use crate::part::axial::{AxialCone, AxialHole, AxialOp, AxialRun, AxialSeg, AxialShape, AxialTee};
+use crate::part::axial::{
+    AxialBend, AxialCone, AxialHole, AxialOp, AxialRun, AxialSeg, AxialShape, AxialTee,
+};
 use crate::part::frame::{Library, Loop, draw_loop, hidden};
 use crate::part::hole::{ThreadFeature, ThreadSpec};
 use crate::part::standards::{ANSI_UNIFIED, ISO_METRIC, Standards};
@@ -1584,6 +1586,7 @@ fn axial_part(
         closed,
         holes: Vec::new(),
         tee: None,
+        bend: None,
     })))?;
     Ok(part)
 }
@@ -1885,7 +1888,10 @@ fn eye_bolt(d: Real, l: Real, hole: Real, d2: Real, w: Real) -> Result<PartDocum
         .iter()
         .find(|r| r.contains(q))
         .ok_or_else(|| bad("the eye has no ring"))?;
-    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(region, q)], w);
+    // A shank as wide as the eye touches its sides along a line (M27, M30), and the kernel's
+    // Union finds no result after 15 s: the eye stands 0.1 mm past it.
+    let width = w.max(d + 0.1);
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(region, q)], width);
     e.direction = ExtentDirection::Symmetric;
     part.add_extrude(i, e)?;
     let spec = shank(&mut part, d, l, (d2 - hole) / 4.0)?;
@@ -2003,34 +2009,18 @@ fn shoulder(
     Ok(part)
 }
 
-/// A bend of pipe: the ring revolved about a line at `r` from the end's centre.
+/// A bend of pipe, built directly.
 fn pipe_elbow(d: Real, t: Real, r: Real, angle: Real) -> Result<PartDocument, PartError> {
     let mut part = blank();
-    let i = part.create_sketch(
-        SketchPlacement::on_origin_plane(OriginPlane::XY),
-        &options(),
-    )?;
-    let sk = &mut part.sketches[i].sketch;
-    let c = Point2::new(0.0, 0.0);
-    sk.add_circle(c, d / 2.0).map_err(|e| bad(&e.to_string()))?;
-    sk.add_circle(c, d / 2.0 - t)
-        .map_err(|e| bad(&e.to_string()))?;
-    let axis = sk.add_line(Point2::new(r, d), Point2::new(r, -d));
-    sk.set_style(axis, crate::sketch::Style::Centerline)
-        .map_err(|e| bad(&e.to_string()))?;
-    let q = Point2::new(d / 2.0 - t / 2.0, 0.0);
-    let regions = sk.regions();
-    let ring_region = regions
-        .iter()
-        .find(|x| x.contains(q))
-        .ok_or_else(|| bad("the pipe's section is not closed"))?;
-    let mut f = RevolveFeature::new(
-        vec![ProfileRef::of(ring_region, q)],
-        AxisRef::SketchLine(axis),
-    );
-    f.extent = crate::part::RevolveExtent::Angle;
-    f.angle = angle.to_radians();
-    part.add_revolve(i, f)?;
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        bend: Some(AxialBend {
+            outside: d,
+            wall: t,
+            radius: r,
+            angle: angle.to_radians(),
+        }),
+        ..AxialOp::default()
+    })))?;
     Ok(part)
 }
 
@@ -2047,6 +2037,7 @@ fn pipe_tee(d: Real, t: Real, c: Real) -> Result<PartDocument, PartError> {
             wall: t,
             centre: c,
         }),
+        bend: None,
     })))?;
     Ok(part)
 }
@@ -2100,33 +2091,21 @@ fn pipe_cap(d: Real, t: Real, e: Real) -> Result<PartDocument, PartError> {
     };
     let (ox, oz) = join(0.0);
     let (ix, iz) = join(t);
-    let outside = vec![
-        arc_to(ox, oz, centre_crown, "Crown"),
-        arc_to(r, skirt, centre_knuckle, "Knuckle"),
-        line_to(r, 0.0, "Skirt"),
-    ];
-    // Clockwise on the way back along the inside.
-    let back = |to: (Real, Real), c: [Real; 2], role: &str| AxialSeg {
-        to: [to.0, to.1],
-        arc: Some((c, false)),
-        role: role.to_owned(),
-    };
-    let inside = vec![
-        line_to(r - t, skirt, "InnerSkirt"),
-        back((ix, iz), centre_knuckle, "InnerKnuckle"),
-        back((0.0, e - t), centre_crown, "InnerCrown"),
+    let k = Point2::new(centre_knuckle[0], centre_knuckle[1]);
+    let c = Point2::new(centre_crown[0], centre_crown[1]);
+    // From the outside's apex over the crown and the knuckle down the skirt, back up inside.
+    let outline = vec![
+        (Point2::new(0.0, e), Some((c, false))),
+        (Point2::new(ox, oz), Some((k, false))),
+        (Point2::new(r, skirt), None),
+        (Point2::new(r, 0.0), None),
+        (Point2::new(r - t, 0.0), None),
+        (Point2::new(r - t, skirt), Some((k, true))),
+        (Point2::new(ix, iz), Some((c, true))),
+        (Point2::new(0.0, e - t), None),
     ];
     let mut part = blank();
-    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
-        runs: vec![
-            chain([0.0, e], outside, Some("End")),
-            chain([r - t, 0.0], inside, None),
-        ],
-        first_cap: None,
-        closed: false,
-        holes: Vec::new(),
-        tee: None,
-    })))?;
+    revolve_loop(&mut part, Loop::Path(outline), Operation::NewSolid)?;
     Ok(part)
 }
 
@@ -2212,6 +2191,7 @@ fn flange(f: Flange, with_holes: bool) -> Result<PartDocument, PartError> {
         closed,
         holes,
         tee: None,
+        bend: None,
     })))?;
     Ok(part)
 }

@@ -4968,3 +4968,21 @@ fn part_variants_sync_stays_small() {
     println!("part variants sync, 200 parameters: {ms:.2} ms");
     assert!(ms < 20.0, "{ms:.2} ms > 20 ms");
 }
+
+/// Spec 6.3 §6.5b: the fittings with most in them stay direct builds: DN 600 with 20 bolt holes,
+/// the largest tee. Through the Boolean they took 5 s and 39 s.
+#[test]
+fn library_flange_and_tee_build_directly() {
+    let every = cadcraft3d::components::samples::all();
+    for (family, size) in [("EN 1092-1 Type 11", "DN600"), ("ASME B16.9 Tee", "NPS 24")] {
+        let s = every
+            .iter()
+            .find(|s| s.family == family && s.size == size)
+            .unwrap();
+        let ms = median_ms(3, || {
+            s.part().unwrap();
+        });
+        println!("library {}: {ms:.0} ms", s.designation());
+        assert!(ms < 150.0, "{}: {ms:.0} ms > 150 ms", s.designation());
+    }
+}

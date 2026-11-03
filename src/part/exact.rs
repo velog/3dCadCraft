@@ -1307,11 +1307,18 @@ pub(super) fn body_op(
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
         }
         super::BodyOp::Axial(o) => {
-            let made = match o.tee {
-                Some(t) => {
+            let made = match (o.tee, o.bend) {
+                (Some(t), _) => {
                     exact::pipe_tee(t.outside / 2.0, t.outside / 2.0 - t.wall, t.centre, &f.id)
                 }
-                None => {
+                (None, Some(b)) => exact::pipe_bend(
+                    b.outside / 2.0,
+                    b.outside / 2.0 - b.wall,
+                    b.radius,
+                    b.angle,
+                    &f.id,
+                ),
+                (None, None) => {
                     exact::axial_stack(&o.runs, o.first_cap.as_deref(), o.closed, &o.holes, &f.id)
                 }
             }

@@ -9,7 +9,7 @@ pub use crate::kernel::exact::{AxialCone, AxialHole, AxialRun, AxialSeg, AxialSh
 
 /// The runs of the meridian, in order. Faces are named `<feature id>:<role>`
 /// with the roles given here, so they stay the same at every size (Change Size).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AxialOp {
     /// The runs.
     pub runs: Vec<AxialRun>,
@@ -27,6 +27,22 @@ pub struct AxialOp {
     /// reports the feature, it never builds something else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tee: Option<AxialTee>,
+    /// A bend of pipe instead of the runs, likewise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bend: Option<AxialBend>,
+}
+
+/// A bend of pipe.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AxialBend {
+    /// Outside diameter.
+    pub outside: f64,
+    /// Wall.
+    pub wall: f64,
+    /// Bend radius.
+    pub radius: f64,
+    /// Angle in radians.
+    pub angle: f64,
 }
 
 /// A straight tee of pipe.
@@ -51,6 +67,14 @@ impl AxialOp {
                 Ok(())
             } else {
                 Err("a tee needs a wall inside its radius and ends beyond it".into())
+            };
+        }
+        if let Some(b) = &self.bend {
+            let r = b.outside / 2.0;
+            return if b.wall > 0.0 && b.wall < r && r < b.radius && b.angle > 0.0 {
+                Ok(())
+            } else {
+                Err("a bend needs a wall inside its radius and a radius beyond it".into())
             };
         }
         if self.runs.is_empty() {

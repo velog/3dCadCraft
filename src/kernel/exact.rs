@@ -405,6 +405,33 @@ pub fn pipe_tee(radius: Real, bore: Real, c: Real, prefix: &str) -> Result<Exact
     })
 }
 
+/// A bend of pipe, face by face (`sk::pipe_bend`): the end on the XY plane, leaving along +Z and
+/// turning towards +X. Faces: `<prefix>:Outside`, `Bore`, `StartEnd`, `FarEnd`.
+pub fn pipe_bend(
+    radius: Real,
+    bore: Real,
+    bend: Real,
+    angle: Real,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    const ROLES: [&str; 4] = ["Outside", "Bore", "StartEnd", "FarEnd"];
+    let body = guarded("bend", || {
+        sk::pipe_bend(radius, bore, bend, angle, [0, 1, 2, 3])
+    })
+    .map_err(|e| format!("this part cannot be built ({e})"))?;
+    let face_names = names_from(&body, &[], &|o| match o {
+        FaceOrigin::Profile { segment } => ROLES.get(*segment).map(|n| format!("{prefix}:{n}")),
+        _ => None,
+    });
+    Ok(ExactSolid {
+        name: Some(prefix.to_owned()),
+        body,
+        face_names,
+        profiles: Vec::new(),
+        sheet: false,
+    })
+}
+
 /// Boolean operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExactOp {

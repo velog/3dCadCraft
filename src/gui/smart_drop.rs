@@ -574,11 +574,10 @@ impl CadCraftApp {
                 .and_then(|s| s.catalog.families.get(s.family))
                 .map(|f| f.name.clone())
                 .unwrap_or_default();
-            painter.text(
-                cursor + egui::vec2(16.0, 34.0),
-                egui::Align2::LEFT_TOP,
+            drop_label(
+                painter,
+                cursor,
                 format!("x  No size of {what} fits {:.2} mm", 2.0 * spot.radius),
-                egui::FontId::proportional(13.0),
                 red,
             );
             return;
@@ -607,13 +606,7 @@ impl CadCraftApp {
                 super::place::draw_ghost(painter, &self.camera, painter.clip_rect(), &mesh, &t);
             }
         }
-        painter.text(
-            cursor + egui::vec2(16.0, 34.0),
-            egui::Align2::LEFT_TOP,
-            format!("✔  {label}"),
-            egui::FontId::proportional(13.0),
-            green,
-        );
+        drop_label(painter, cursor, format!("✔  {label}"), green);
     }
 
     fn drop_member_name(&self, member: usize) -> String {
@@ -774,6 +767,15 @@ impl CadCraftApp {
     }
 
     /// A part placed by its connection: one Insert of its edge into the rim.
+    /// Lock Rotation's reference: the target's axis most square to the hole.
+    fn drop_lock_axis(&self, spot: &Spot) -> Option<(OriginItem, Vector3)> {
+        if !self.asm.smart.as_ref().is_some_and(|s| s.lock_rotation) {
+            return None;
+        }
+        let (_, place) = self.geom_part(&spot.axis)?;
+        most_square(place, spot.normal)
+    }
+
     fn drop_commit_single(&mut self, spot: Spot, x: Single) {
         let fits = self
             .asm
@@ -799,6 +801,9 @@ impl CadCraftApp {
             .map_or((false, false), |s| (s.flip, s.insert_multiple));
         let mut placed = 0;
         let edge = x.edge.clone();
+        let lock = self.drop_lock_axis(&spot);
+        // The part's own axis most square to its connection is the one that turns.
+        let own = most_square(Transform3::identity(), x.normal);
         let res = self.asm_try("Place", |a| {
             placed = a.place(x.component, &x.name, t, false);
             let mut c = Constraint::new(
@@ -812,6 +817,23 @@ impl CadCraftApp {
             );
             c.aligned = flip;
             a.add_constraint(c);
+            if let (Some((which, dir)), Some((item, axis))) = (lock, own) {
+                let mut c = Constraint::new(
+                    ConstraintKind::Angle,
+                    GeomRef::Origin {
+                        occurrence: spot.axis.occurrence(),
+                        sub: spot.axis.sub().to_vec(),
+                        item: which,
+                    },
+                    GeomRef::Origin {
+                        occurrence: placed,
+                        sub: Vec::new(),
+                        item,
+                    },
+                );
+                c.value = (t * axis).dot(&dir).clamp(-1.0, 1.0).acos();
+                a.add_constraint(c);
+            }
         });
         if let Err(e) = res {
             self.file_status = Some(Err(format!("Place: {e}")));
@@ -926,28 +948,8 @@ impl CadCraftApp {
         }
         // Lock Rotation holds each part's X axis at its angle to an axis of the
         // target; the target's axis most square to the hole is the steadiest.
-        let lock = self.asm.smart.as_ref().is_some_and(|s| s.lock_rotation);
-        let reference: Vec<Option<(OriginItem, Vector3)>> = spots
-            .iter()
-            .map(|spot| {
-                if !lock {
-                    return None;
-                }
-                let (_, place) = self.geom_part(&spot.axis)?;
-                [
-                    (OriginItem::XAxis, Vector3::x()),
-                    (OriginItem::YAxis, Vector3::y()),
-                    (OriginItem::ZAxis, Vector3::z()),
-                ]
-                .into_iter()
-                .map(|(i, v)| (i, place * v))
-                .min_by(|a, b| {
-                    a.1.dot(&spot.normal)
-                        .abs()
-                        .total_cmp(&b.1.dot(&spot.normal).abs())
-                })
-            })
-            .collect();
+        let reference: Vec<Option<(OriginItem, Vector3)>> =
+            spots.iter().map(|spot| self.drop_lock_axis(spot)).collect();
         let first_name = items
             .get(usize::from(items.len() > 1))
             .map(|i| self.item_name(i))
@@ -990,7 +992,8 @@ impl CadCraftApp {
                             plane.clone(),
                             origin(OriginItem::XyPlane),
                         );
-                        c.value = -item.sink;
+                        // Not `-sink`: a seat on the face would read "-0 mm".
+                        c.value = 0.0 - item.sink;
                         a.add_constraint(c);
                     }
                     if let Some((which, dir)) = axis_ref {
@@ -1186,15 +1189,14 @@ impl CadCraftApp {
                 .on_disabled_hover_text("Only a library family follows a pattern for now");
                 ui.checkbox(&mut s.insert_multiple, "Insert Multiple")
                     .on_hover_text("The tool stays after a placement");
-                let plain = s.single.is_none();
-                ui.add_enabled(plain, egui::Checkbox::new(&mut s.lock_rotation, "Lock Rotation"))
+                ui.checkbox(&mut s.lock_rotation, "Lock Rotation")
                     .on_hover_text("It cannot turn about its axis");
                 let bolts = s
                     .fits
                     .iter()
                     .any(|f| matches!(f, Fit::Into { length: Some(_), .. }));
                 let was = s.bolted;
-                ui.add_enabled(plain && bolts, egui::Checkbox::new(&mut s.bolted, "Bolted Connection"))
+                ui.add_enabled(s.single.is_none() && bolts, egui::Checkbox::new(&mut s.bolted, "Bolted Connection"))
                     .on_hover_text("Through a hole: a washer under the head, a washer and a nut on the far side, and a bolt long enough for them")
                     .on_disabled_hover_text("Only for bolts of a library family");
                 if s.bolted != was {
@@ -1573,6 +1575,33 @@ fn own_landing(p: &crate::part::PartDocument, name: &str) -> Option<Single> {
         center,
         normal: n,
     })
+}
+
+/// The origin axis, moved by `place`, most square to `normal`.
+fn most_square(place: Transform3, normal: Vector3) -> Option<(OriginItem, Vector3)> {
+    [
+        (OriginItem::XAxis, Vector3::x()),
+        (OriginItem::YAxis, Vector3::y()),
+        (OriginItem::ZAxis, Vector3::z()),
+    ]
+    .into_iter()
+    .map(|(i, v)| (i, place * v))
+    .min_by(|a, b| a.1.dot(&normal).abs().total_cmp(&b.1.dot(&normal).abs()))
+}
+
+/// What fits, beside the cursor: on a dark plate so it reads over any model, inside the view.
+fn drop_label(painter: &egui::Painter, cursor: Pos2, text: String, color: egui::Color32) {
+    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), color);
+    let view = painter.clip_rect().shrink(4.0);
+    let size = galley.size() + egui::vec2(10.0, 6.0);
+    let min = cursor + egui::vec2(16.0, 18.0);
+    let at = Pos2::new(
+        min.x.min(view.right() - size.x).max(view.left()),
+        min.y.min(view.bottom() - size.y).max(view.top()),
+    );
+    let plate = Rect::from_min_size(at, size);
+    painter.rect_filled(plate, 3.0, egui::Color32::from_black_alpha(205));
+    painter.galley(at + egui::vec2(5.0, 3.0), galley, color);
 }
 
 /// How far a member's seat lies below the face.

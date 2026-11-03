@@ -694,3 +694,43 @@ pub fn pipe_tee(radius: f64, bore: f64, c: f64, numbers: TeeNumbers) -> Result<B
         record::attach(body, &[], Some(history), Default::default())
     })
 }
+
+/// A bend of pipe face by face: the end on the XY plane about the origin, leaving along +Z and turning
+/// towards +X about a line at `bend` from the axis, by `angle` radians (below a half turn). Numbers:
+/// outside, bore, the end on the plane, the far end. No orientation mesh, which is most of what a
+/// revolved bend costs (0.6 s at 24 inches).
+pub fn pipe_bend(radius: f64, bore: f64, bend: f64, angle: f64, numbers: [usize; 4]) -> Result<Body> {
+    if !(bore > 0.0 && bore < radius && radius < bend && angle > 0.0 && angle < TAU / 2.0) {
+        return Err(fail("a bend needs a bore inside its radius, a bend beyond it and an angle below a half turn"));
+    }
+    guard("bend", || {
+        let ring = |r: f64, side: usize| -> Result<(Vec<(mt::Face, FaceProv)>, mt::Wire, mt::Wire)> {
+            let (a, b) = (builder::vertex(p3(Vec3::new(r, 0.0, 0.0))), builder::vertex(p3(Vec3::new(-r, 0.0, 0.0))));
+            let base: mt::Wire = vec![builder::circle_arc(&a, &b, p3(Vec3::new(0.0, r, 0.0))), builder::circle_arc(&b, &a, p3(Vec3::new(0.0, -r, 0.0)))].into();
+            let shell: mt::Shell = builder::rsweep(&base, p3(Vec3::new(bend, 0.0, 0.0)), v3(Vec3::Y), mt::Rad(angle));
+            let faces = shell.face_iter().map(|f| (f.clone(), record::profile(&[side]))).collect();
+            let boundaries = shell.extract_boundaries();
+            let at_plane = |w: &&mt::Wire| w.vertex_iter().all(|x| x.point().z.abs() < 1e-9);
+            let near = boundaries.iter().find(at_plane).cloned();
+            let far = boundaries.iter().find(|w| !at_plane(w)).cloned();
+            match (near, far) {
+                (Some(n), Some(f)) => Ok((faces, n, f)),
+                _ => Err(fail("a bend lost its end ring")),
+            }
+        };
+        let (outside, near_o, far_o) = ring(radius, numbers[0])?;
+        let (inside, near_i, far_i) = ring(bore, numbers[1])?;
+        let mut faces = outside;
+        faces.extend(inside);
+        faces.push((tee_ring(&near_o, &near_i)?, record::profile(&[numbers[2]])));
+        faces.push((tee_ring(&far_o, &far_i)?, record::profile(&[numbers[3]])));
+        let (faces, history): (Vec<mt::Face>, Vec<FaceProv>) = oriented(faces)?.into_iter().unzip();
+        let shell: mt::Shell = faces.into();
+        let solid = Solid::try_new(vec![shell]).map_err(|e| fail(&format!("the shell does not close: {e}")))?;
+        let body = match bottom_faces_out(&solid) {
+            Some(out) => Body::new_placed(solid, !out, None, false)?,
+            None => Body::new(solid)?,
+        };
+        record::attach(body, &[], Some(history), Default::default())
+    })
+}

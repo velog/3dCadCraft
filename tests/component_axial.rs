@@ -690,6 +690,7 @@ fn a_chain_that_cannot_close_is_refused() {
             closed: false,
             holes: Vec::new(),
             tee: None,
+            bend: None,
         })));
         assert!(r.is_err());
         assert!(part.features.is_empty());

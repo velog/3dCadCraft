@@ -2984,6 +2984,7 @@ fn axial_r61() -> PartDocument {
         closed: false,
         holes: Vec::new(),
         tee: None,
+        bend: None,
     })))
     .unwrap();
     part
