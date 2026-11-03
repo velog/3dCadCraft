@@ -52,25 +52,35 @@ impl Fit {
             | Kind::SetScrew(d, l, ..)
             | Kind::FlangeBolt(d, l, ..)
             | Kind::Rivet(d, l, ..)
+            | Kind::RoundHeadScrew(d, l, ..)
+            | Kind::FlatHeadScrew(d, l, ..)
             | Kind::Rod(d, l)
             | Kind::Pin(d, l)
             | Kind::TaperPin(d, l) => into(d, l),
-            Kind::Countersunk(d, l, _, k, _) => Fit::Into {
+            Kind::Countersunk(d, l, _, k, _) | Kind::ConeRivet(d, l, _, k) => Fit::Into {
                 d,
                 length: Some(l),
                 sink: k,
             },
-            Kind::HexNut(d, ..) | Kind::FlangeNut(d, ..) | Kind::CapNut(d, ..) => {
-                Fit::Over { bore: d }
-            }
-            Kind::Washer(d1, ..) | Kind::Circlip(d1, ..) | Kind::SplitRing(d1, ..) => {
-                Fit::Over { bore: d1 }
-            }
+            Kind::HexNut(d, ..)
+            | Kind::FlangeNut(d, ..)
+            | Kind::CapNut(d, ..)
+            | Kind::SquareNut(d, ..) => Fit::Over { bore: d },
+            Kind::Washer(d1, ..)
+            | Kind::Circlip(d1, ..)
+            | Kind::SplitRing(d1, ..)
+            | Kind::DiscSpring(d1, ..)
+            | Kind::SquareWasher(d1, ..) => Fit::Over { bore: d1 },
             Kind::Bearing(d, od, _) => Fit::Bearing {
                 bore: d,
                 outside: od,
             },
-            Kind::Key(..) | Kind::Woodruff(..) | Kind::ORing(..) | Kind::Shape(..) => Fit::Manual,
+            // A T-slot nut goes into a slot: its placement comes with the slot rules.
+            Kind::Key(..)
+            | Kind::Woodruff(..)
+            | Kind::ORing(..)
+            | Kind::TNut(..)
+            | Kind::Shape(..) => Fit::Manual,
         }
     }
 

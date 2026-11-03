@@ -1064,7 +1064,7 @@ impl CadCraftApp {
                 // of their height made the window grow every frame).
                 egui::Panel::bottom("place_buttons").show(ui, |ui| {
                     if let Some(e) = &d.error {
-                        ui.colored_label(Color32::from_rgb(235, 80, 70), e);
+                        ui.colored_label(super::theme::tokens().error, e);
                     }
                     ui.horizontal(|ui| {
                         let ready =

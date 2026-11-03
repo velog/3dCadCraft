@@ -1,0 +1,7 @@
+# DIN 661: Countersunk rivet. Nominal values in mm, typed for this library; compared with fasten.it.
+size,d,dk,k,lengths
+3,3,5.2,1.4,6;8;10;12;16;20;25;30
+4,4,7,2,6;8;10;12;16;20;25;30
+5,5,8.8,2.5,8;10;12;16;20;25;30
+6,6,10.5,3,8;10;12;16;20;25;30
+8,8,14,4,10;12;16;20;25;30

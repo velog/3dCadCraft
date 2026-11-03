@@ -253,7 +253,10 @@ impl CadCraftApp {
                 for (k, n) in names.iter().enumerate() {
                     ui.horizontal(|ui| {
                         ui.label(format!("{}. {n}", k + 1));
-                        if ui.small_button("x").on_hover_text("Remove").clicked() {
+                        if super::theme::glyph(ui, super::theme::Glyph::Close)
+                            .on_hover_text("Remove")
+                            .clicked()
+                        {
                             remove = Some(k);
                         }
                     });
@@ -279,7 +282,10 @@ impl CadCraftApp {
                     for (j, r) in d.def.rails.iter().enumerate() {
                         ui.horizontal(|ui| {
                             ui.label(format!("{}. {}", j + 1, describe_path(r, part)));
-                            if ui.small_button("x").on_hover_text("Remove").clicked() {
+                            if super::theme::glyph(ui, super::theme::Glyph::Close)
+                                .on_hover_text("Remove")
+                                .clicked()
+                            {
                                 drop = Some(j);
                             }
                         });
@@ -350,7 +356,7 @@ impl CadCraftApp {
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut p.driving, "Driving")
                             .on_hover_text("A driving section sets the size there; a driven one only shows it");
-                        if ui.small_button("x").on_hover_text("Remove").clicked() {
+                        if super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("Remove").clicked() {
                             drop = Some(i);
                         }
                     });
@@ -508,7 +514,10 @@ impl CadCraftApp {
                         d.map_set = i;
                         d.input = "map";
                     }
-                    if ui.small_button("x").on_hover_text("Remove").clicked() {
+                    if super::theme::glyph(ui, super::theme::Glyph::Close)
+                        .on_hover_text("Remove")
+                        .clicked()
+                    {
                         drop = Some(i);
                     }
                 });

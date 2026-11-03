@@ -1283,8 +1283,7 @@ impl Planned {
                     )
                     .on_hover_text(format!("The radius of corner edge set {}", k + 1));
                     if n > 1
-                        && ui
-                            .small_button("x")
+                        && super::theme::glyph(ui, super::theme::Glyph::Close)
                             .on_hover_text("Remove this set")
                             .clicked()
                     {

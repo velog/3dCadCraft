@@ -6,7 +6,7 @@
 //! stays the source of truth: the builder reads a typed condition back
 //! when it can, and falls back to the text otherwise.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use crate::part::expr::{self, Unit};
 use crate::part::params::ParamRow;
@@ -339,8 +339,7 @@ impl CondBuilder {
                         ui.label("");
                     }
                     if self.rows.len() > 1
-                        && ui
-                            .small_button("x")
+                        && super::theme::glyph(ui, super::theme::Glyph::Close)
                             .on_hover_text("Remove this row")
                             .clicked()
                     {
@@ -454,11 +453,11 @@ pub(super) fn state_label(
 ) {
     match state {
         Ok(true) => ui.label(
-            RichText::new(format!("Now: true — {if_true}")).color(Color32::from_rgb(60, 170, 90)),
+            RichText::new(format!("Now: true — {if_true}")).color(super::theme::tokens().ok),
         ),
         Ok(false) => ui.label(RichText::new(format!("Now: false — {if_false}")).weak()),
         Err(e) => ui.label(
-            RichText::new(format!("Not a condition: {e}")).color(Color32::from_rgb(230, 70, 60)),
+            RichText::new(format!("Not a condition: {e}")).color(super::theme::tokens().error),
         ),
     };
 }
@@ -537,7 +536,7 @@ pub(super) fn window(
             match &result {
                 Ok(v) => ui.label(format!("= {v}")),
                 Err(_) if unfinished(&b.cond) => ui.label(""),
-                Err(e) => ui.label(RichText::new(e).color(Color32::from_rgb(230, 70, 60))),
+                Err(e) => ui.label(RichText::new(e).color(super::theme::tokens().error)),
             };
             ui.horizontal(|ui| {
                 if ui
@@ -637,7 +636,7 @@ pub(super) fn draw_hint(ui: &egui::Ui, below: egui::Rect, text: &str, table: &[P
                         Err(e) => ui.label(
                             RichText::new(format!("{c}: {e}"))
                                 .small()
-                                .color(Color32::from_rgb(230, 70, 60)),
+                                .color(super::theme::tokens().error),
                         ),
                     };
                 }

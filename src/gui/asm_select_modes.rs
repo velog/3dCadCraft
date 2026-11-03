@@ -328,7 +328,7 @@ impl CadCraftApp {
                 }
                 ui.label(format!("{} component(s)", self.asm.sel.len()));
                 ui.horizontal(|ui| {
-                    ok = ui.button("OK").clicked();
+                    ok = ui.add(super::theme::ok_button("OK")).clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
             });

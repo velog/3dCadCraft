@@ -1,0 +1,12 @@
+# DIN 5406: Tab washer for slotted round nuts. Nominal values in mm, typed for this library; compared with fasten.it.
+size,d1,d2,s
+MB 10,10,21,1
+MB 12,12,25,1
+MB 15,15,28,1
+MB 17,17,32,1
+MB 20,20,36,1
+MB 25,25,42,1.25
+MB 30,30,49,1.25
+MB 35,35,57,1.25
+MB 40,40,62,1.25
+MB 50,50,74,1.25

@@ -15,6 +15,21 @@ Status: ✅ done · 🟡 partial · ⬜ to do.
 
 ## 2. Visual language
 
+### 2.1a Interface theme (`gui/theme/`)
+
+The look of everything around the view has one source. New panels take colours from the style or from
+`theme::tokens()` and never define their own greys.
+
+| Item | Requirement | Status |
+|---|---|---|
+| Palette | neutral graphite in steps: fields darkest, then panels, floating windows and menus, buttons; one blue accent for the current choice and the main action. Text contrast is held by a test: at least 7:1 for text and labels on panels, 4.5:1 for text on buttons, on the accent and for labels in windows | 🟡 waiting for the owner's check |
+| Labels | quieter than values but clearly readable; only a disabled control looks disabled | 🟡 waiting for the owner's check |
+| Interface font | Inter, regular weight, with Latin and Cyrillic; egui's built-in fonts remain the fallback for symbols | 🟡 waiting for the owner's check |
+| Drawing sheet font | stays Ubuntu-Light (family `theme::SHEET_FAMILY`): the sheet on screen, Format Text's measuring and the PDF must use one font, whatever the interface uses | 🟡 waiting for the owner's check |
+| Small symbols | close, add, remove, arrows, check and help are drawn (`theme::Glyph`), never typed as `x`, `+`, `v`, `^`, `<`, `>` | 🟡 waiting for the owner's check |
+| Quick access toolbar | icons with a tooltip (name + key), no frame until the cursor is over them; File, View and Help are plain words until then | 🟡 waiting for the owner's check |
+| Button kinds | OK has the accent (`theme::ok_button`), Cancel is neutral, deleting from a panel has a red text (`theme::danger_button`) | 🟡 waiting for the owner's check |
+
 ### 2.1 General look
 
 | Item | Requirement | Status |
@@ -27,7 +42,7 @@ Status: ✅ done · 🟡 partial · ⬜ to do.
 | ViewCube | top right; a click on a face gives a standard view; Home | ✅ |
 | Anti-aliasing | MSAA 4× where the hardware allows it | ✅ |
 | High DPI | the interface follows the system scale | ✅ (egui) |
-| Selectable theme (light/dark) and a custom colour scheme | like Inventor's In-canvas Color Scheme | ⬜ |
+| Selectable theme (light/dark) and a custom colour scheme | like Inventor's In-canvas Color Scheme; see [0.18](0.18-themes-colours.md) | 🟡 UI Theme; schemes to do |
 | **Menu icons** | the right-click menus show an icon before each entry that has one (Next, Back, OK, Apply, Cancel, Flip, Repeat, the selection tools, the commands by their own icon); the text stays in one column (`icons::menu_item`, `icons::sub_menu`) | 🟡 |
 | **Command icons** | our own vector icons (`gui/icons.rs`), two-coloured (outline + accent, points in orange, removed parts in red); faded for unavailable commands | ✅ |
 | **Ribbon** | as in Inventor: large buttons (icon above text), columns of three small buttons (icon + text), icon-only columns for the constraints (the name is in the tooltip); drop-down buttons show the icon of the current variant; toggles (Construction, Relax, DOF) stay pressed while on; all panels of a tab fit in 1400 px | ✅ |

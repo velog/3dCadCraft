@@ -1914,7 +1914,7 @@ impl CadCraftApp {
         ui.horizontal(|ui| {
             let size = egui::vec2(60.0, 22.0);
             if ui
-                .add_enabled(ready, egui::Button::new("OK").min_size(size))
+                .add_enabled(ready, super::theme::ok_button("OK").min_size(size))
                 .on_hover_text("Enter")
                 .clicked()
             {
@@ -3580,7 +3580,7 @@ impl CadCraftApp {
                         ui.end_row();
                     });
                 if let Err(e) = r.validate() {
-                    ui.colored_label(Color32::from_rgb(235, 80, 70), e);
+                    ui.colored_label(super::theme::tokens().error, e);
                 }
                 ui.horizontal(|ui| {
                     edit_file = ui
@@ -3595,14 +3595,14 @@ impl CadCraftApp {
                         .clicked();
                 });
                 for p in &problems {
-                    ui.colored_label(Color32::from_rgb(235, 160, 60), p);
+                    ui.colored_label(super::theme::tokens().warning, p);
                 }
                 if let Some(n) = &self.sm.rules_note {
                     ui.weak(n);
                 }
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(r.validate().is_ok(), egui::Button::new("OK"))
+                        .add_enabled(r.validate().is_ok(), super::theme::ok_button("OK"))
                         .clicked()
                     {
                         apply = true;
@@ -3781,8 +3781,7 @@ fn further_bends(ui: &mut egui::Ui, fx: &mut Fields, f: &mut SheetFlangeFeature,
                     .on_hover_text("Turns the same way as the bend before it");
                 ui.selectable_value(&mut b.flip, true, "Flipped")
                     .on_hover_text("Turns the other way than the bend before it");
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Remove this bend")
                     .clicked()
                 {

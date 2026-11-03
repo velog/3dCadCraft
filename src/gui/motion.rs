@@ -624,8 +624,7 @@ impl CadCraftApp {
                 if ui.checkbox(&mut on, label).changed() {
                     toggle = Some((l.id, !on));
                 }
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Delete the link")
                     .clicked()
                 {
@@ -761,8 +760,7 @@ impl CadCraftApp {
                 {
                     cmd = Some((s.id, SetCmd::Remove));
                 }
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Delete the set")
                     .clicked()
                 {
@@ -930,8 +928,7 @@ impl CadCraftApp {
                         edit = Some(s);
                     }
                 }
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Delete the track")
                     .clicked()
                 {
@@ -1269,8 +1266,7 @@ impl CadCraftApp {
                     show = if on { None } else { Some((v.id, 1.0)) };
                 }
                 ui.label(RichText::new(format!("{} moved", v.moves.len())).weak());
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Delete the view")
                     .clicked()
                 {

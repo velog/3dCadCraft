@@ -130,6 +130,7 @@ mod smart_drop;
 mod steps;
 mod surface_cmd;
 mod sweep;
+mod theme;
 mod thicken;
 mod trim_preview;
 mod valuefield;
@@ -999,11 +1000,12 @@ enum SketchCtx {
 impl CadCraftApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         i18n::load();
+        theme::apply(&cc.egui_ctx);
         // Format Text runs are measured with the font the sheet is drawn in
         // (screen and PDF), so runs of different styles line up.
         if let Some(font) = egui::FontDefinitions::default()
             .font_data
-            .get("Ubuntu-Light")
+            .get(theme::SHEET_FONT)
             .map(|f| f.font.to_vec())
         {
             crate::drawing::rich::set_measure(Box::new(move |s, h| {
@@ -1399,6 +1401,7 @@ impl CadCraftApp {
             return;
         }
         self.editing = Some(i);
+        self.scene_dirty = true;
         self.selection = Selection::Sketch(i);
         // Finish Sketch returns to this tab (Sheet Metal stays Sheet Metal).
         if self.tab != Tab::Sketch {
@@ -1424,6 +1427,7 @@ impl CadCraftApp {
 
     /// Finish Sketch.
     fn finish_sketch(&mut self) {
+        self.scene_dirty = true;
         // Sketches that project from this one follow it now (Inventor
         // updates projections when the source sketch is finished).
         if let Some(i) = self.editing
@@ -2818,14 +2822,16 @@ impl CadCraftApp {
                     .inner_margin(3.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            if ui
-                                .small_button("<")
+                            if theme::glyph(ui, theme::Glyph::Left)
                                 .on_hover_text("Previous (Left)")
                                 .clicked()
                             {
                                 step = -1;
                             }
-                            if ui.small_button(">").on_hover_text("Next (Right)").clicked() {
+                            if theme::glyph(ui, theme::Glyph::Right)
+                                .on_hover_text("Next (Right)")
+                                .clicked()
+                            {
                                 step = 1;
                             }
                             if ui
@@ -3679,7 +3685,7 @@ impl CadCraftApp {
                         .weak(),
                 );
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
+                    if ui.add(theme::ok_button("OK")).clicked() {
                         apply = Some(v);
                     }
                     if ui.button("Reset").clicked() {
@@ -4226,12 +4232,12 @@ impl CadCraftApp {
     /// meaning of colours).
     fn sketch_color(&self) -> Color32 {
         match &self.report {
-            Some(Ok(r)) if r.status == SolveStatus::Failed => Color32::from_rgb(220, 30, 30),
-            Some(Ok(r)) if r.redundant > 0 => Color32::from_rgb(230, 130, 0),
-            Some(Ok(r)) if r.dof == 0 => Color32::from_rgb(20, 150, 50),
-            Some(Ok(_)) => Color32::from_rgb(30, 90, 220),
-            Some(Err(_)) => Color32::from_rgb(220, 30, 30),
-            None => Color32::from_gray(120),
+            Some(Ok(r)) if r.status == SolveStatus::Failed => theme::tokens().error,
+            Some(Ok(r)) if r.redundant > 0 => theme::tokens().warning,
+            Some(Ok(r)) if r.dof == 0 => theme::tokens().ok,
+            Some(Ok(_)) => theme::tokens().link,
+            Some(Err(_)) => theme::tokens().error,
+            None => theme::tokens().text_weak,
         }
     }
 
@@ -4801,7 +4807,7 @@ impl CadCraftApp {
                     ui.label(RichText::new("Pattern").weak());
                     let sick = ps.sketch.pattern_health(pid);
                     if let Some(h) = &sick {
-                        ui.colored_label(Color32::from_rgb(230, 140, 0), format!("Warning: {h}"));
+                        ui.colored_label(theme::tokens().warning, format!("Warning: {h}"));
                     }
                     let kind = ps.sketch.pattern_current_kind(pid);
                     let suppressed = inst.is_some_and(|k| {
@@ -5341,6 +5347,8 @@ impl CadCraftApp {
     /// Quick Access bar with the File menu.
     fn quick_access(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            // Menu titles are plain words until the cursor is over them.
+            ui.visuals_mut().button_frame = false;
             ui.menu_button(RichText::new("File").strong(), |ui| {
                 ui.set_min_width(260.0);
                 self.file_menu(ui);
@@ -5351,9 +5359,13 @@ impl CadCraftApp {
             })
             .response
             .on_hover_text("User Interface: panels, Clean Screen (Ctrl+0), Full Screen (F11)");
+            ui.visuals_mut().button_frame = true;
             ui.separator();
             let now = ui.input(|i| i.time);
-            if ui.button("Open").on_hover_text("Ctrl+O").clicked() {
+            if theme::tool_button(ui, icons::Icon::Folder, true, "Open")
+                .on_hover_text("Open (Ctrl+O)")
+                .clicked()
+            {
                 self.request(files::Pending::Open, now);
             }
             // Home has no document: no Save, Undo, selection or material.
@@ -5361,6 +5373,7 @@ impl CadCraftApp {
                 ui.separator();
                 ui.label(RichText::new("Home").strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.visuals_mut().button_frame = false;
                     ui.menu_button("Help", |ui| {
                         ui.set_min_width(200.0);
                         self.help_menu(ui);
@@ -5369,7 +5382,10 @@ impl CadCraftApp {
                 });
                 return;
             }
-            if ui.button("Save").on_hover_text("Ctrl+S").clicked() {
+            if theme::tool_button(ui, icons::Icon::FileSave, true, "Save")
+                .on_hover_text("Save (Ctrl+S)")
+                .clicked()
+            {
                 self.save();
             }
             ui.separator();
@@ -5377,9 +5393,8 @@ impl CadCraftApp {
                 .history
                 .undo_label()
                 .map(|l| format!("Undo {l} (Ctrl+Z)"));
-            if ui
-                .add_enabled(undo.is_some(), egui::Button::new("Undo"))
-                .on_hover_text(undo.unwrap_or_default())
+            if theme::tool_button(ui, icons::Icon::Undo, undo.is_some(), "Undo")
+                .on_hover_text(undo.unwrap_or_else(|| "Undo (Ctrl+Z)".to_owned()))
                 .clicked()
             {
                 self.undo();
@@ -5388,15 +5403,13 @@ impl CadCraftApp {
                 .history
                 .redo_label()
                 .map(|l| format!("Redo {l} (Ctrl+Y)"));
-            if ui
-                .add_enabled(redo.is_some(), egui::Button::new("Redo"))
-                .on_hover_text(redo.unwrap_or_default())
+            if theme::tool_button(ui, icons::Icon::Redo, redo.is_some(), "Redo")
+                .on_hover_text(redo.unwrap_or_else(|| "Redo (Ctrl+Y)".to_owned()))
                 .clicked()
             {
                 self.redo();
             }
-            if ui
-                .button("Rebuild")
+            if theme::tool_button(ui, icons::Icon::Rebuild, true, "Rebuild All")
                 .on_hover_text("Rebuild All: recompute every feature from scratch")
                 .clicked()
             {
@@ -5428,10 +5441,12 @@ impl CadCraftApp {
             )
             .on_hover_text(if dirty { "Unsaved changes" } else { "Saved" });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.visuals_mut().button_frame = false;
                 ui.menu_button("Help", |ui| {
                     ui.set_min_width(200.0);
                     self.help_menu(ui);
                 });
+                ui.visuals_mut().button_frame = true;
                 self.command_search(ui);
                 ui.label(RichText::new("3DCadCraft").weak());
             });
@@ -5441,20 +5456,23 @@ impl CadCraftApp {
     fn build_scene(&self) -> SceneGeometry {
         let mut g = SceneGeometry::default();
 
-        // Ground grid on XY, 10 mm spacing.
-        let grid = [0.55, 0.56, 0.6];
-        for i in -10..=10 {
-            let t = i as f64 * 10.0;
-            g.add_line(
-                &Point3::new(t, -100.0, 0.0),
-                &Point3::new(t, 100.0, 0.0),
-                grid,
-            );
-            g.add_line(
-                &Point3::new(-100.0, t, 0.0),
-                &Point3::new(100.0, t, 0.0),
-                grid,
-            );
+        // Ground grid on XY, 10 mm spacing; a sketch being edited has its own
+        // grid, and two with different steps in one view read as noise.
+        if self.editing.is_none() {
+            let grid = [0.55, 0.56, 0.6];
+            for i in -10..=10 {
+                let t = i as f64 * 10.0;
+                g.add_line(
+                    &Point3::new(t, -100.0, 0.0),
+                    &Point3::new(t, 100.0, 0.0),
+                    grid,
+                );
+                g.add_line(
+                    &Point3::new(-100.0, t, 0.0),
+                    &Point3::new(100.0, t, 0.0),
+                    grid,
+                );
+            }
         }
         // World axes.
         let o = Point3::origin();
@@ -6368,7 +6386,9 @@ impl CadCraftApp {
                 }
                 if self.editing.is_none() && !self.part().hidden_bodies.is_empty() {
                     let n = self.part().hidden_bodies.len();
-                    if ui.button(format!("Show All Bodies ({n} hidden)")).clicked() {
+                    if icons::menu_item(ui, None, &format!("Show All Bodies ({n} hidden)"), true)
+                        .clicked()
+                    {
                         self.show_all_bodies();
                         ui.close();
                     }
@@ -8003,7 +8023,7 @@ impl CadCraftApp {
                         }
                         ui.label(if angle { "deg" } else { "mm" });
                         // The `>` menu: a parameter's name, or a measured value.
-                        ui.menu_button(">", |ui| {
+                        ui.menu_button("›", |ui| {
                             ui.menu_button("List Parameters", |ui| {
                                 let rows = self.part().parameter_table();
                                 if rows.iter().all(|p| p.name == name) {
@@ -8053,12 +8073,10 @@ impl CadCraftApp {
                         if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                             apply = true;
                         }
-                        apply |= ui
-                            .small_button("✔")
+                        apply |= theme::glyph(ui, theme::Glyph::Check)
                             .on_hover_text("Apply (Enter)")
                             .clicked();
-                        cancel |= ui
-                            .small_button("x")
+                        cancel |= theme::glyph(ui, theme::Glyph::Close)
                             .on_hover_text("Keep the measured value (Esc)")
                             .clicked();
                         if ui
@@ -8297,6 +8315,7 @@ impl eframe::App for CadCraftApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let frame_start = std::time::Instant::now();
+        theme::sync(&ctx);
         self.body_key_frame.replace((true, None));
         // Expression fields everywhere evaluate against the part's parameters.
         valuefield::set_frame_table(&ctx, self.part().parameter_table());

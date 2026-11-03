@@ -264,14 +264,13 @@ impl CadCraftApp {
                         }
                     }
                 });
-            if ui
-                .small_button("+")
+            if super::theme::glyph(ui, super::theme::Glyph::Plus)
                 .on_hover_text("Create new preset from the current values")
                 .clicked()
             {
                 action = Some(RowAction::StartCreate);
             }
-            ui.menu_button("...", |ui| {
+            ui.menu_button("…", |ui| {
                 let current = match &active {
                     Active::Named(n) if user_named => Some(n.clone()),
                     _ => None,

@@ -1290,7 +1290,7 @@ impl CadCraftApp {
                             );
                         });
                         if let Some(n) = &d.note {
-                            ui.colored_label(egui::Color32::from_rgb(220, 120, 40), n);
+                            ui.colored_label(super::theme::tokens().warning, n);
                         }
                     });
                 let list_h = ui.available_height().max(120.0);
@@ -1472,11 +1472,17 @@ impl CadCraftApp {
     /// The File menu.
     pub(super) fn file_menu(&mut self, ui: &mut egui::Ui) {
         let now = ui.input(|i| i.time);
-        if ui.button("New...         Ctrl+N").clicked() {
+        if ui
+            .add(egui::Button::new("New...").shortcut_text("Ctrl+N"))
+            .clicked()
+        {
             self.open_new_file();
             ui.close();
         }
-        if ui.button("Open...        Ctrl+O").clicked() {
+        if ui
+            .add(egui::Button::new("Open...").shortcut_text("Ctrl+O"))
+            .clicked()
+        {
             self.request(Pending::Open, now);
             ui.close();
         }
@@ -1505,11 +1511,17 @@ impl CadCraftApp {
             ui.close();
         }
         ui.separator();
-        if ui.button("Save           Ctrl+S").clicked() {
+        if ui
+            .add(egui::Button::new("Save").shortcut_text("Ctrl+S"))
+            .clicked()
+        {
             self.save();
             ui.close();
         }
-        if ui.button("Save As...     Ctrl+Shift+S").clicked() {
+        if ui
+            .add(egui::Button::new("Save As...").shortcut_text("Ctrl+Shift+S"))
+            .clicked()
+        {
             self.open_dialog(DialogPurpose::SaveAs);
             ui.close();
         }
@@ -1778,7 +1790,7 @@ fn icon_row(
             rect.min + egui::vec2(4.0, (h - 16.0) / 2.0),
             egui::vec2(16.0, 16.0),
         );
-        super::icons::paint(painter, ir, i, &super::icons::Palette::ENABLED);
+        super::icons::paint(painter, ir, i, &super::icons::Palette::enabled());
     }
     let color = if on {
         vis.selection.stroke.color
@@ -1929,7 +1941,7 @@ fn file_list(
                     rect.min + egui::vec2(4.0, (row_h - 16.0) / 2.0),
                     egui::vec2(16.0, 16.0),
                 );
-                super::icons::paint(painter, ir, i, &Palette::ENABLED);
+                super::icons::paint(painter, ir, i, &Palette::enabled());
             }
             let (label, folder) = if d.recent {
                 let p = Path::new(&e.name);

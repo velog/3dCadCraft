@@ -521,7 +521,14 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   panels are `egui::Panel::left/right/top/bottom(..).show(ui, ..)`, sizes via
   `default_size`; `ui.close()` closes menus.
 - **Missing glyphs** in egui default fonts: `→`, `≡`, `⚠`, `✕`, `✘` render as boxes.
-  Use plain text (`:` `x` `Warning:`). `✔`, `°`, `±`, `Ø` work.
+  Use plain text (`:` `Warning:`), and `theme::Glyph` for the small symbol buttons. `✔`, `°`, `±`, `Ø` work.
+- **The interface's look is `gui/theme/`** (spec 0.18, 0-ui §2.1a): `theme::tokens()` = the frame's colours by name for the
+  current UI Theme (`Tokens::dark` / `light`), Inter font, egui style for both themes, `theme::glyph`, `ok_button`,
+  `danger_button`, `tool_button`; icons through `Palette::enabled()` / `disabled()`. A status text uses `tokens().ok` /
+  `warning` / `error`, never a literal: `frame_files_do_not_gain_literal_colours` holds the frame's files to a shrinking count. Text on a drawing sheet uses `theme::sheet_font` (Ubuntu-Light, the font the PDF embeds and
+  Format Text measures with), never `FontId::proportional`: that one follows the interface.
+- **`gui_win.py`'s input is global, even with an explicit HWND**: it focuses the window, then sends keys and clicks to
+  whatever is in front. Another session's window that came forward in between gets them (a scripted `r` opened Revolve there).
 - **Drag start:** egui reports a drag only after a few pixels of travel — pick the
   target at `ui.input(|i| i.pointer.press_origin())`, not at the current position.
 - **wgpu 30 via eframe:** use `eframe::wgpu` (don't add a direct wgpu dependency).

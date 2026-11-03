@@ -307,7 +307,7 @@ fn paint_prims_with(
                     text,
                     0.0,
                     egui::TextFormat {
-                        font_id: FontId::proportional(size),
+                        font_id: super::theme::sheet_font(size),
                         color,
                         italics: *italic,
                         // The width factor as letter spacing (egui cannot
@@ -394,7 +394,7 @@ fn paint_prims_with(
                 if size < 4.0 {
                     continue;
                 }
-                let galley = p.layout_no_wrap(text.clone(), FontId::proportional(size), color);
+                let galley = p.layout_no_wrap(text.clone(), super::theme::sheet_font(size), color);
                 let w = galley.size().x;
                 let h = galley.size().y;
                 // Anchor on the baseline, then turn about it.
@@ -1437,7 +1437,9 @@ impl CadCraftApp {
                 super::format_text::editor(ui, &mut d.text, &mut d.rich, &mut d.ed, &mut d.height);
                 ui.weak("Enter starts a new line; Ctrl+Enter or OK places the text");
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, true) {
+                    if ui.add(super::theme::ok_button("OK")).clicked()
+                        || super::keys::panel_ok_key(ui, true)
+                    {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {
@@ -1538,7 +1540,9 @@ impl CadCraftApp {
                 ui.checkbox(&mut d.open_after, "Display Published File in Viewer");
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, false) {
+                    if ui.add(super::theme::ok_button("OK")).clicked()
+                        || super::keys::panel_ok_key(ui, false)
+                    {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {
@@ -1606,7 +1610,7 @@ impl CadCraftApp {
         }
         let font = egui::FontDefinitions::default()
             .font_data
-            .get("Ubuntu-Light")
+            .get(super::theme::SHEET_FONT)
             .map(|f| f.font.to_vec());
         let result = crate::drawing::pdf::write(
             &pages,

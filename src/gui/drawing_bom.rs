@@ -987,7 +987,7 @@ impl CadCraftApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(d.view.is_some(), egui::Button::new("OK"))
+                        .add_enabled(d.view.is_some(), super::theme::ok_button("OK"))
                         .on_disabled_hover_text("Select a view first")
                         .clicked()
                         || (d.view.is_some() && super::keys::panel_ok_key(ui, true))
@@ -1066,7 +1066,9 @@ impl CadCraftApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if o.edit.is_some() {
-                        if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, true) {
+                        if ui.add(super::theme::ok_button("OK")).clicked()
+                            || super::keys::panel_ok_key(ui, true)
+                        {
                             apply = true;
                             done = true;
                         }
@@ -1218,7 +1220,7 @@ impl CadCraftApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(d.view.is_some(), egui::Button::new("OK"))
+                        .add_enabled(d.view.is_some(), super::theme::ok_button("OK"))
                         .on_disabled_hover_text("Select a view first")
                         .clicked()
                         || (d.view.is_some() && super::keys::panel_ok_key(ui, true))
@@ -1361,10 +1363,10 @@ impl CadCraftApp {
                                 ui.group(|ui| {
                                     ui.add(egui::TextEdit::singleline(&mut c.title).desired_width(90.0));
                                     ui.add(ExprValue::new(&mut c.width).suffix(" mm"));
-                                    if i > 0 && ui.small_button("<").on_hover_text("Move left").clicked() {
+                                    if i > 0 && super::theme::glyph(ui, super::theme::Glyph::Left).on_hover_text("Move left").clicked() {
                                         up = Some(i);
                                     }
-                                    if ui.small_button("x").on_hover_text("Remove").clicked() {
+                                    if super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("Remove").clicked() {
                                         remove = Some(i);
                                     }
                                 });
@@ -1451,7 +1453,7 @@ impl CadCraftApp {
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, true) {
+                    if ui.add(super::theme::ok_button("OK")).clicked() || super::keys::panel_ok_key(ui, true) {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {

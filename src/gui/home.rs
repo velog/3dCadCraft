@@ -429,7 +429,7 @@ impl CadCraftApp {
             ui.painter(),
             rect.shrink(2.0),
             Icon::Home,
-            &Palette::ENABLED,
+            &Palette::enabled(),
         );
         if r.on_hover_text("Home").clicked() && !on {
             self.show_home();
@@ -611,7 +611,7 @@ impl CadCraftApp {
             {
                 *ask = Some(Ask::NewDialog);
             }
-            ui.menu_button("v", |ui| {
+            ui.menu_button("⏷", |ui| {
                 use super::new_file::Kind;
                 for (k, label) in [
                     (Kind::Part, "Part"),
@@ -641,7 +641,7 @@ impl CadCraftApp {
             {
                 *ask = Some(Ask::OpenDialog);
             }
-            ui.menu_button("...", |ui| {
+            ui.menu_button("…", |ui| {
                 planned(
                     ui.add_enabled(false, egui::Button::new("Settings...")),
                     "Projects editor",
@@ -660,7 +660,7 @@ impl CadCraftApp {
         }
         if let Some(m) = &self.home.message {
             ui.add_space(8.0);
-            ui.label(RichText::new(m).color(Color32::from_rgb(230, 170, 60)));
+            ui.label(RichText::new(m).color(super::theme::tokens().warning));
         }
     }
 
@@ -678,7 +678,10 @@ impl CadCraftApp {
             if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.home.search.clear();
             }
-            if !self.home.search.is_empty() && ui.small_button("x").on_hover_text("Clear").clicked()
+            if !self.home.search.is_empty()
+                && super::theme::glyph(ui, super::theme::Glyph::Close)
+                    .on_hover_text("Clear")
+                    .clicked()
             {
                 self.home.search.clear();
             }
@@ -721,9 +724,12 @@ impl CadCraftApp {
                             .changed();
                     }
                 });
-            let arrow = if self.home.s.descending { "v" } else { "^" };
-            if ui
-                .small_button(arrow)
+            let arrow = if self.home.s.descending {
+                super::theme::Glyph::Down
+            } else {
+                super::theme::Glyph::Up
+            };
+            if super::theme::glyph(ui, arrow)
                 .on_hover_text("Ascending / descending")
                 .clicked()
             {
@@ -875,9 +881,9 @@ impl CadCraftApp {
                             let ir =
                                 egui::Rect::from_center_size(rect.center(), egui::vec2(48.0, 48.0));
                             let pal = if r.exists {
-                                Palette::ENABLED
+                                Palette::enabled()
                             } else {
-                                Palette::DISABLED
+                                Palette::disabled()
                             };
                             super::icons::paint(ui.painter(), ir, r.icon(), &pal);
                         }
@@ -912,7 +918,7 @@ impl CadCraftApp {
                         {
                             *pin = Some(r.path.clone());
                         }
-                        ui.menu_button("...", |ui| card_menu(ui, r, ask, remove));
+                        ui.menu_button("…", |ui| card_menu(ui, r, ask, remove));
                     });
                 });
             })

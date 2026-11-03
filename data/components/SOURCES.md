@@ -36,6 +36,8 @@ Both values kept:
 
 | Family | Rows | Why |
 |---|---|---|
+| DIN 557 | `M10` s 16 and `M10 (s 17)`; `M12` s 18 and `M12 (s 19)` | the page gives both across flats |
+| DIN 434 | `M12` d1 13.5 and `M12 (d1 14)`; `M16` d1 17.5 and `M16 (d1 18)` | the page's two tables differ |
 | ISO 4032 | `M6` 5.2 and `M6 (m 5)`; `M24` 21.5 and `M24 (m 19)` | fasten.it prints the heights DIN 934 has for these sizes |
 | DIN 1587 | `M10` s 17 and `M10 (s 16)`; `M12` s 19 and `M12 (s 18)` | the page gives both across flats |
 | ISO 4161 | `M10` s 15 and `M10 (s 16)` | ISO 4161 against DIN EN 1661 |
@@ -48,6 +50,11 @@ Other findings:
 - ISO 4017 M30 / M36: 18.7 / 22.5 is the middle of the standard's limits; one page rounds them to 19 / 23.
 - Set screws: socket depth `t` depends on the length; the tables hold the long screws' value.
 - ASME B18.21.1 1/2: the page repeats the row of 5/8, so this size was not compared.
+
+Types added 2026-11-03 (DIN 84, 85, 94, 434, 508, 557, 603, 661, 929, 937, 938, 981, 1444, 1473, 2093, 5406, 6319, 6797, 6799, 6886) were
+written from the fasten.it pages, each `checked` cell saying so. Their shapes leave some details out for now, which the numbers do not depend
+on: screw slots, a carriage bolt's square neck, castle slots, washer teeth, a taper washer's slope, a stud's plain middle, and a cotter
+pin is a plain pin; `spec/6.3-content-center.md` §6.5b keeps the list.
 
 Compared only in part: HK2516 and HK3016 (the name gives bore and width, not the outside diameter), DIN 179 (sizes 6 and 12), SAE (1/4, 1/2) and USS (1/2) washers; ISO 2339, DIN 975 and 976, UNC rods: diameters and pitches, not lengths. ASME B18.2.2 lists no No.10 nut.
 

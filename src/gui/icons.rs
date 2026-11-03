@@ -19,22 +19,25 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Colours for an enabled command on the dark theme.
-    pub const ENABLED: Palette = Palette {
-        ink: Color32::from_rgb(205, 210, 218),
-        accent: Color32::from_rgb(80, 160, 255),
-        hot: Color32::from_rgb(255, 160, 50),
-        warn: Color32::from_rgb(235, 80, 70),
-        ok: Color32::from_rgb(90, 200, 110),
-    };
-    /// Colours for a disabled (or planned) command.
-    pub const DISABLED: Palette = Palette {
-        ink: Color32::from_rgb(95, 98, 104),
-        accent: Color32::from_rgb(70, 90, 115),
-        hot: Color32::from_rgb(110, 95, 75),
-        warn: Color32::from_rgb(110, 80, 78),
-        ok: Color32::from_rgb(80, 105, 85),
-    };
+    fn of(c: super::theme::IconColors) -> Palette {
+        Palette {
+            ink: c.ink,
+            accent: c.accent,
+            hot: c.hot,
+            warn: c.warn,
+            ok: c.ok,
+        }
+    }
+
+    /// Colours for an enabled command in the current UI Theme.
+    pub fn enabled() -> Palette {
+        Self::of(super::theme::tokens().icon)
+    }
+
+    /// Colours for a disabled (or planned) command in the current UI Theme.
+    pub fn disabled() -> Palette {
+        Self::of(super::theme::tokens().icon_disabled)
+    }
 }
 
 /// All command icons.
@@ -229,6 +232,8 @@ pub enum Icon {
     // assembly
     Assembly,
     Folder,
+    /// File › Save: a diskette.
+    FileSave,
     SheetMetal,
     // sheet metal commands (one each)
     SmFace,
@@ -694,20 +699,44 @@ pub fn menu_item(
     on: bool,
 ) -> eframe::egui::Response {
     use eframe::egui;
-    let r = ui.add_enabled(on, egui::Button::new(format!("       {text}")));
+    let (name, key) = split_key(text);
+    let mut button = egui::Button::new(format!("       {name}"));
+    if let Some(key) = key {
+        button = button.shortcut_text(key);
+    }
+    let r = ui.add_enabled(on, button);
     if let Some(icon) = icon {
         let at = egui::Rect::from_center_size(
             egui::pos2(r.rect.left() + 11.0, r.rect.center().y),
             egui::vec2(15.0, 15.0),
         );
         let pal = if on {
-            Palette::ENABLED
+            Palette::enabled()
         } else {
-            Palette::DISABLED
+            Palette::disabled()
         };
         paint(ui.painter(), at, icon, &pal);
     }
     r
+}
+
+/// A menu text's name and its key, for `Home View (F6)`: the key goes to the
+/// menu's right-aligned column. Other brackets stay part of the name.
+pub fn split_key(text: &str) -> (&str, Option<&str>) {
+    let is_key = |k: &str| {
+        k.starts_with("Ctrl+")
+            || k.starts_with("Alt+")
+            || k.starts_with("Shift+")
+            || k.starts_with("Esc")
+            || (k.len() <= 3 && k.starts_with('F') && k[1..].parse::<u8>().is_ok())
+    };
+    if let Some(body) = text.strip_suffix(')')
+        && let Some(open) = body.rfind(" (")
+        && is_key(&body[open + 2..])
+    {
+        return (&body[..open], Some(&body[open + 2..]));
+    }
+    (text, None)
 }
 
 /// A sub-menu in line with [`menu_item`]s.
@@ -724,7 +753,7 @@ pub fn sub_menu<R>(
             egui::pos2(r.response.rect.left() + 11.0, r.response.rect.center().y),
             egui::vec2(15.0, 15.0),
         );
-        paint(ui.painter(), at, icon, &Palette::ENABLED);
+        paint(ui.painter(), at, icon, &Palette::enabled());
     }
     r.inner
 }
@@ -732,7 +761,7 @@ pub fn sub_menu<R>(
 /// The icon of a library category (`Fasteners/Bolts/Hex Head`), by its last
 /// level: each kind drawn side on, as it looks on a catalogue page.
 pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
-    let k = Palette::ENABLED;
+    let k = Palette::enabled();
     let (ink, acc) = (k.ink, k.accent);
     let p = Pen {
         p: painter,
@@ -2233,6 +2262,30 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.line(&[(11.0, 4.5), (11.0, 11.5)], ink);
             p.circle(3.25, 8.0, 1.6, acc);
         }
+        FileSave => {
+            p.fill(
+                &[
+                    (2.5, 2.5),
+                    (11.5, 2.5),
+                    (13.5, 4.5),
+                    (13.5, 13.5),
+                    (2.5, 13.5),
+                ],
+                soft,
+            );
+            p.closed(
+                &[
+                    (2.5, 2.5),
+                    (11.5, 2.5),
+                    (13.5, 4.5),
+                    (13.5, 13.5),
+                    (2.5, 13.5),
+                ],
+                acc,
+            );
+            p.rect(5.0, 2.5, 10.5, 6.0, ink);
+            p.rect(4.5, 9.0, 11.5, 13.5, ink);
+        }
         Folder => {
             p.fill(
                 &[
@@ -3436,4 +3489,33 @@ fn operation_badge(p: &Pen, icon: Icon, hot: Color32, acc: Color32) {
 fn plus(p: &Pen, c: Color32) {
     p.line(&[(12.5, 10.5), (12.5, 15.5)], c);
     p.line(&[(10.0, 13.0), (15.0, 13.0)], c);
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::split_key;
+
+    #[test]
+    fn a_menu_key_is_split_off() {
+        assert_eq!(split_key("Home View (F6)"), ("Home View", Some("F6")));
+        assert_eq!(
+            split_key("Visibility (Alt+V)"),
+            ("Visibility", Some("Alt+V"))
+        );
+        assert_eq!(split_key("OK (Ctrl+Enter)"), ("OK", Some("Ctrl+Enter")));
+    }
+
+    #[test]
+    fn other_brackets_stay_in_the_name() {
+        assert_eq!(
+            split_key("Shell (remove these faces)"),
+            ("Shell (remove these faces)", None)
+        );
+        assert_eq!(
+            split_key("Extrude (Press/Pull)"),
+            ("Extrude (Press/Pull)", None)
+        );
+        assert_eq!(split_key("Fit (Family)"), ("Fit (Family)", None));
+        assert_eq!(split_key("Plain"), ("Plain", None));
+    }
 }

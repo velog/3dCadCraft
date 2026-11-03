@@ -507,7 +507,10 @@ impl CadCraftApp {
 
     /// The Help menu.
     pub(super) fn help_menu(&mut self, ui: &mut egui::Ui) {
-        if ui.button("Help                F1").clicked() {
+        if ui
+            .add(egui::Button::new("Help").shortcut_text("F1"))
+            .clicked()
+        {
             self.open_help();
             ui.close();
         }

@@ -1,0 +1,11 @@
+# DIN 6797 A: Serrated lock washer, outer teeth. Nominal values in mm, typed for this library; compared with fasten.it.
+size,d1,d2,s
+M3,3.2,6,0.4
+M4,4.3,8,0.5
+M5,5.1,9,0.5
+M6,6.4,11,0.7
+M8,8.2,14,0.8
+M10,10.5,18,0.9
+M12,13,20.5,1
+M16,17,26,1.2
+M20,21,33,1.4

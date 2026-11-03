@@ -2161,7 +2161,7 @@ impl CadCraftApp {
             if self.cons.draft.is_some() {
                 self.step_menu(ui);
                 ui.separator();
-                if ui.button("OK").clicked() {
+                if ui.add(super::theme::ok_button("OK")).clicked() {
                     self.commit_constrain_pub(true);
                     ui.close();
                 }
@@ -2524,7 +2524,7 @@ impl CadCraftApp {
     /// The view's right-click menu in an assembly.
     fn asm_context_menu(&mut self, ui: &mut egui::Ui, under: Option<u32>) {
         if let Some(AsmTool::Place(doc)) = self.asm.tool {
-            if ui.button("OK").clicked() {
+            if ui.add(super::theme::ok_button("OK")).clicked() {
                 self.asm.tool = None;
                 self.asm.place_turn = None;
                 ui.close();
@@ -2549,7 +2549,7 @@ impl CadCraftApp {
             return;
         }
         if self.asm.tool.is_some() {
-            if ui.button("OK").clicked() {
+            if ui.add(super::theme::ok_button("OK")).clicked() {
                 self.asm.tool = None;
                 ui.close();
             }
@@ -2567,7 +2567,10 @@ impl CadCraftApp {
                 ui.separator();
             }
             self.occurrence_menu(ui, &ids);
-            if ui.button("Copy        Ctrl+C").clicked() {
+            if ui
+                .add(egui::Button::new("Copy").shortcut_text("Ctrl+C"))
+                .clicked()
+            {
                 self.copy_occurrences();
                 ui.close();
             }
@@ -2584,7 +2587,11 @@ impl CadCraftApp {
                 ui.close();
             }
         }
-        if !self.asm.clipboard.is_empty() && ui.button("Paste       Ctrl+V").clicked() {
+        if !self.asm.clipboard.is_empty()
+            && ui
+                .add(egui::Button::new("Paste").shortcut_text("Ctrl+V"))
+                .clicked()
+        {
             self.paste_occurrences();
             ui.close();
         }

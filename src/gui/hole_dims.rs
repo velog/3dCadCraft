@@ -700,7 +700,9 @@ impl CadCraftApp {
                         {
                             ui.memory_mut(|m| m.request_focus(id.with("te")));
                         }
-                        close |= ui.small_button("x").on_hover_text("Close (Esc)").clicked();
+                        close |= super::theme::glyph(ui, super::theme::Glyph::Close)
+                            .on_hover_text("Close (Esc)")
+                            .clicked();
                     });
                 });
             });

@@ -1,0 +1,10 @@
+# DIN 6886: Taper key, form A. Nominal values in mm, typed for this library; compared with fasten.it (b, h).
+size,b,h,lengths
+4 x 4,4,4,20;30;40;50;60
+5 x 5,5,5,20;30;40;50;60
+6 x 6,6,6,20;30;40;50;60
+8 x 7,8,7,20;30;40;50;60
+10 x 8,10,8,20;30;40;50;60
+12 x 8,12,8,20;30;40;50;60
+14 x 9,14,9,20;30;40;50;60
+16 x 10,16,10,20;30;40;50;60

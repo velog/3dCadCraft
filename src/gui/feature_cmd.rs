@@ -169,7 +169,7 @@ impl CadCraftApp {
 
     /// The Advanced Settings menu of the panel header.
     pub(super) fn feature_advanced_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("...", |ui| {
+        ui.menu_button("…", |ui| {
             let s = &mut self.feature_settings;
             ui.checkbox(&mut s.predict_boolean, "Predict Boolean Operation")
                 .on_hover_text("Propose Join or Cut from where the profile and the direction are");

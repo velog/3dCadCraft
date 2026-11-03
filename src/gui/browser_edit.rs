@@ -2,7 +2,7 @@
 //! End of Part, reorder by drag, Suppress / Unsuppress, Delete with
 //! options, Rename. The part-side logic is in `part::history`.
 
-use eframe::egui::{self, Color32, Key, RichText};
+use eframe::egui::{self, Key, RichText};
 
 use super::{CadCraftApp, Selection};
 use crate::part::history::DeleteOptions;
@@ -255,7 +255,7 @@ impl CadCraftApp {
                     ui.label(RichText::new("Kept, they become sick:").small());
                     for (what, why) in &hit {
                         ui.horizontal(|ui| {
-                            ui.colored_label(Color32::from_rgb(230, 140, 0), "!");
+                            ui.colored_label(super::theme::tokens().warning, "!");
                             ui.label(RichText::new(what).strong());
                             ui.label(RichText::new(why).small().weak());
                         });
@@ -263,7 +263,7 @@ impl CadCraftApp {
                 }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
+                    if ui.add(super::theme::ok_button("OK")).clicked() {
                         answer = Some(true);
                     }
                     if ui.button("Cancel").clicked() {

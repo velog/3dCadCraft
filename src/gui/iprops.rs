@@ -170,7 +170,7 @@ impl CadCraftApp {
                     }
                 });
                 if let Some(e) = &w.error {
-                    ui.colored_label(Color32::from_rgb(235, 80, 70), format!("Properties: {e}"));
+                    ui.colored_label(super::theme::tokens().error, format!("Properties: {e}"));
                 }
             });
         if edited != props {
@@ -317,7 +317,10 @@ fn custom_tab(ui: &mut egui::Ui, p: &mut IProperties, w: &mut IPropsWin) {
                         ui.checkbox(b, label);
                     }
                 }
-                if ui.small_button("x").on_hover_text("Delete").clicked() {
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
+                    .on_hover_text("Delete")
+                    .clicked()
+                {
                     delete = Some(k);
                 }
                 ui.end_row();

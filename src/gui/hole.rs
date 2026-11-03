@@ -94,6 +94,11 @@ impl HoleDim {
     }
 }
 
+/// What the preview says before any centre is picked: the status bar already
+/// asks for it, so it is no warning (`hole_panel::is_warning`).
+pub(super) const HOLE_NO_CENTRES: &str =
+    "Hole: click a face, a sketch point or a circular edge for the centres";
+
 /// The open Hole command.
 #[derive(Clone, Debug)]
 pub(super) struct HoleDraft {
@@ -790,9 +795,7 @@ impl CadCraftApp {
             return Err(String::new());
         };
         if d.count() == 0 {
-            return Err(
-                "Hole: click a face, a sketch point or a circular edge for the centres".into(),
-            );
+            return Err(HOLE_NO_CENTRES.into());
         }
         let key = format!(
             "hole|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",

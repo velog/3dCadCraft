@@ -1197,7 +1197,7 @@ impl CadCraftApp {
         let mut action = None;
         ui.horizontal(|ui| {
             let ready = d.a.is_some() && d.b.is_some();
-            let ok = ui.add_enabled(ready, egui::Button::new("OK"));
+            let ok = ui.add_enabled(ready, super::theme::ok_button("OK"));
             if ok.clicked() || super::keys::panel_ok_key(ui, ready) {
                 action = Some(true);
             }
@@ -1674,7 +1674,7 @@ impl CadCraftApp {
         ui.label(format!("{}: {}", self.geom_label(&c.a), c.a.label()));
         ui.label(format!("{}: {}", self.geom_label(&c.b), c.b.label()));
         if let Some((_, e)) = self.cons.last.sick.iter().find(|(id, _)| *id == c.id) {
-            ui.colored_label(Color32::from_rgb(235, 80, 70), format!("Sick: {e}"));
+            ui.colored_label(super::theme::tokens().error, format!("Sick: {e}"));
         }
         if c.kind.is_joint() {
             ui.label(format!("Joint type: {}", c.kind.label()));

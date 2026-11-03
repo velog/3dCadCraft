@@ -140,6 +140,8 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **Many documents in one file** — 🟡 (2026-10-27; D1, Place in this file, D3 Save to Separate File / Embed / Embed All / Separate All, Link File, Insert Document, document tabs of the file and the New documents option, waiting for the owner's check): the design is kept in one `.3dcadcraft` file; Manage › Documents creates parts, sheet metal parts, assemblies and drawings inside it, and any document can be saved to its own file and linked back, or embedded again (extract / embed / pack / unpack). **Specification:** [spec/0.6b-multi-document-files.md](spec/0.6b-multi-document-files.md)
 
+**Themes and colours** — 🟡 (2026-11-03): UI Theme Dark / Light in Application Options › Colors, every frame colour by name (`gui/theme/`); In-canvas schemes shown disabled. **Specification:** [spec/0.18-themes-colours.md](spec/0.18-themes-colours.md)
+
 **Home** — 🟡 (2026-10-26): the start page as the first tab — project, New (with the kinds) / Open, recent documents as cards or a list with search, sort, filter, pins and Remove Unpinned, learning links; shown at start and after the last document closes. **Specification:** [spec/0.17-home.md](spec/0.17-home.md)
 
 **Inventor equivalent.** Project files (`.ipj`), Pack and Go, Vault (partly).
@@ -1234,7 +1236,7 @@ Generators that **calculate** and **model** standard machine elements:
 
 **Specification:** [spec/6.3-content-center.md](spec/6.3-content-center.md) — stages CC0–CC7.
 
-**State (2026-11-03).** Place from Library with 102 families, Smart Drop (bolts, nuts, washers, bearings; Follow Pattern, Lock Rotation, Bolted Connection), Change Size, Connection (`CNN`), own families published and dropped. Open: the other types, several connections per part, spec 6.3 lists them.
+**State (2026-11-03).** Place from Library with 122 families (74 of 110 types have a builder), Smart Drop (bolts, nuts, washers, bearings; Follow Pattern, Lock Rotation, Bolted Connection), Change Size, Connection (`CNN`), own families published and dropped. Open: the other types, several connections per part, spec 6.3 lists them.
 
 **What it does.** Thousands of standard parts: bolts, nuts, washers, bearings, profiles, seals per ISO/DIN/ANSI. New in Inventor 2027: publishing **whole assemblies** to the library.
 

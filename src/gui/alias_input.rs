@@ -326,9 +326,9 @@ impl CadCraftApp {
                             let (rect, _) = ui
                                 .allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
                             let pal = if can {
-                                Palette::ENABLED
+                                Palette::enabled()
                             } else {
-                                Palette::DISABLED
+                                Palette::disabled()
                             };
                             icons::paint(ui.painter(), rect, h.cmd.icon, &pal);
                             let mut t = RichText::new(if bg { h.cmd.bg } else { h.cmd.name });
@@ -336,7 +336,7 @@ impl CadCraftApp {
                                 t = t.strong();
                             }
                             if !can {
-                                t = t.color(Color32::GRAY);
+                                t = t.color(super::theme::tokens().text_weak);
                             }
                             let b = ui.add(egui::Button::new(t).frame(k == current));
                             if let Some(key) = self.keymap.shown_key(h.cmd) {

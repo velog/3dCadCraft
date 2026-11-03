@@ -15,7 +15,7 @@
 //! (`docs/spec/3.1a-subassemblies.md` S4): read-only, greyed eyes; a click
 //! selects a part inside it, a double-click opens its document.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use super::CadCraftApp;
 use super::icons::Icon;
@@ -54,6 +54,9 @@ struct FeatureRow {
 }
 
 /// The features of `p` in history order.
+/// The tooltip of a component in a file of its own.
+const LINKED_FILE_TIP: &str = "A linked part file: changes are saved to that file";
+
 fn feature_rows(p: &crate::part::PartDocument) -> Vec<FeatureRow> {
     p.features
         .iter()
@@ -282,12 +285,9 @@ impl CadCraftApp {
                     if grounded {
                         super::panels::tree_icon(ui, Icon::Ground);
                     }
-                    // A component in a file of its own says so.
-                    let mut text = RichText::new(if component.library.is_some() {
-                        format!("{label}  (linked)")
-                    } else {
-                        label.clone()
-                    });
+                    // A component in a file of its own says so in its tooltip.
+                    let linked_file = component.library.is_some();
+                    let mut text = RichText::new(label.clone());
                     if !visible || suppressed {
                         text = text.weak();
                     }
@@ -306,6 +306,11 @@ impl CadCraftApp {
                     }
                     let r = if grounded {
                         r.on_hover_text("Grounded")
+                    } else {
+                        r
+                    };
+                    let r = if linked_file {
+                        r.on_hover_text(LINKED_FILE_TIP)
                     } else {
                         r
                     };
@@ -664,15 +669,15 @@ impl CadCraftApp {
                     super::panels::tree_icon(ui, Icon::Ground);
                 }
                 // A component in a file of its own says so (one of this file does not).
-                let mut text = RichText::new(if o.component.library.is_some() {
-                    format!("{}  (linked)", o.name)
-                } else {
-                    o.name.clone()
-                });
+                let linked_file = o.component.library.is_some();
+                let mut text = RichText::new(o.name.clone());
                 if !o.shown() {
                     text = text.weak();
                 }
-                let r = ui.selectable_label(selected, text);
+                let mut r = ui.selectable_label(selected, text);
+                if linked_file {
+                    r = r.on_hover_text(LINKED_FILE_TIP);
+                }
                 if r.clicked() {
                     let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
                     cmds.push(TreeCmd::SelectNested(top, p.clone(), add));
@@ -773,15 +778,13 @@ impl CadCraftApp {
             {
                 o.modeling = true;
             }
-            if ui
-                .small_button("+")
+            if super::theme::glyph(ui, super::theme::Glyph::Plus)
                 .on_hover_text("Expand All Children")
                 .clicked()
             {
                 super::panels::request_fold_all(ui.ctx(), true);
             }
-            if ui
-                .small_button("-")
+            if super::theme::glyph(ui, super::theme::Glyph::Minus)
                 .on_hover_text("Collapse All Children")
                 .clicked()
             {
@@ -813,7 +816,10 @@ impl CadCraftApp {
                 self.asm.search.clear();
             }
             if ui
-                .add_enabled(!self.asm.search.is_empty(), egui::Button::new("x"))
+                .add_enabled(
+                    !self.asm.search.is_empty(),
+                    super::theme::GlyphButton(super::theme::Glyph::Close),
+                )
                 .on_hover_text("Clear the search")
                 .clicked()
             {
@@ -955,7 +961,7 @@ impl CadCraftApp {
             if suppressed {
                 text = text.weak();
             } else if sick.is_some() {
-                text = text.color(Color32::from_rgb(235, 80, 70));
+                text = text.color(super::theme::tokens().error);
             }
             let r = ui.selectable_label(self.cons.selected == Some(id), text);
             let r = match &sick {
@@ -1010,9 +1016,9 @@ fn fold<'a>(
 fn visibility_button(ui: &mut egui::Ui, visible: bool) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
     let palette = if visible {
-        super::icons::Palette::ENABLED
+        super::icons::Palette::enabled()
     } else {
-        super::icons::Palette::DISABLED
+        super::icons::Palette::disabled()
     };
     super::icons::paint(ui.painter(), r, Icon::AnalysisVisibility, &palette);
     if !visible {

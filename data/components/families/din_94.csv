@@ -1,0 +1,6 @@
+# DIN 94: Split cotter pin. Nominal values in mm, typed for this library; compared with fasten.it (diameters).
+size,d,a,c,lengths
+2,1.8,2.5,3.6,12;16;20;30;40
+4,3.7,4,7.4,12;16;20;30;40
+5,4.6,4,9.2,12;16;20;30;40
+8,7.5,4,15,12;16;20;30;40

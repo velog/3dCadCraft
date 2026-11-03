@@ -354,7 +354,9 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
                                 fx.commits.push((field, t));
                                 done = true;
                             }
-                            done |= ui.small_button("x").on_hover_text("Close (Esc)").clicked();
+                            done |= super::theme::glyph(ui, super::theme::Glyph::Close)
+                                .on_hover_text("Close (Esc)")
+                                .clicked();
                         });
                     });
                 });
@@ -425,6 +427,13 @@ fn set_type(spec: &mut HoleSpec, ty: HoleType) {
     }
 }
 
+/// Is this preview message a problem? Not while nothing is picked yet: an empty
+/// message (no draft) or the request for the first centre, which the status bar
+/// shows anyway. A warning before any action reads as an error.
+fn is_warning(message: &str) -> bool {
+    !message.is_empty() && message != super::hole::HOLE_NO_CENTRES
+}
+
 impl CadCraftApp {
     /// The Hole command's panel.
     pub(super) fn hole_dialog(&mut self, ui: &mut egui::Ui) {
@@ -451,7 +460,7 @@ impl CadCraftApp {
             {
                 to_sketch = true;
             }
-            ui.label(">");
+            ui.label("›");
             let id = egui::Id::new("hole_crumb_rename");
             let mut editing: Option<String> = ui.data(|x| x.get_temp(id));
             match editing.as_mut() {
@@ -483,7 +492,7 @@ impl CadCraftApp {
                 None => x.remove::<String>(id),
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button("...", |ui| {
+                ui.menu_button("…", |ui| {
                     for (flag, text, tip) in [
                         (
                             &PRESELECT,
@@ -531,7 +540,7 @@ impl CadCraftApp {
                 }
                 if d.edit.is_none()
                     && d.count() > 0
-                    && ui.small_button("x").on_hover_text("Clear Selections").clicked()
+                    && super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("Clear Selections").clicked()
                 {
                     d.points.clear();
                     d.dims.clear();
@@ -562,8 +571,7 @@ impl CadCraftApp {
                         crate::part::HoleCenter::Concentric(_) => "concentric to an edge",
                         crate::part::HoleCenter::Axis(_) => "on a cylinder's axis",
                     });
-                    if ui
-                        .small_button("x")
+                    if super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Remove this centre")
                         .clicked()
                     {
@@ -589,8 +597,7 @@ impl CadCraftApp {
                 plabel(ui, &format!("New centre {}", k + 1));
                 ui.horizontal(|ui| {
                     ui.label("clicked on the face");
-                    if ui
-                        .small_button("x")
+                    if super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Remove this centre")
                         .clicked()
                     {
@@ -649,8 +656,7 @@ impl CadCraftApp {
                             "Follows dimension #{}; at OK its equation is that dimension's name",
                             src + 1
                         ));
-                        if ui
-                            .small_button("x")
+                        if super::theme::glyph(ui, super::theme::Glyph::Close)
                             .on_hover_text("Stop following (keep the value)")
                             .clicked()
                         {
@@ -860,7 +866,7 @@ impl CadCraftApp {
                 Termination::To(_) => 2,
             };
             let mut k = kind(&spec.termination);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.radio_value(&mut k, 0, "Distance");
                 ui.radio_value(&mut k, 1, "Through All");
                 ui.radio_value(&mut k, 2, "To");
@@ -918,8 +924,7 @@ impl CadCraftApp {
                     d.to_pick = false;
                 }
                 if d.def.direction.is_some()
-                    && ui
-                        .small_button("x")
+                    && super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Square to the face again")
                         .clicked()
                 {
@@ -1044,7 +1049,7 @@ impl CadCraftApp {
             .on_hover_text("The hole note a drawing writes (the symbols as text here)");
         // Invalid values in red (Inventor), e.g. a thread longer than the hole.
         if let Err(e) = spec.validate() {
-            ui.label(RichText::new(format!("Hole: {e}")).color(Color32::from_rgb(200, 30, 30)));
+            ui.label(RichText::new(format!("Hole: {e}")).color(super::theme::tokens().error));
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
@@ -1168,7 +1173,7 @@ impl CadCraftApp {
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(50));
             }
-            Err(e) => warning_box(ui, e),
+            Err(e) if is_warning(e) => warning_box(ui, e),
             _ => {}
         }
         ui.horizontal(|ui| {
@@ -1178,7 +1183,10 @@ impl CadCraftApp {
                 && ui.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals));
             let key_ok = super::keys::panel_ok_key(ui, ok);
             if (ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
                 || key_ok)
@@ -1394,5 +1402,17 @@ fn field_label(field: &str) -> &'static str {
         "offset" => "Offset",
         "length" => "Length",
         _ => "Value",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_warning;
+
+    #[test]
+    fn no_warning_before_the_first_centre() {
+        assert!(!is_warning(super::super::hole::HOLE_NO_CENTRES));
+        assert!(!is_warning(""));
+        assert!(is_warning("Hole: the centre is not on the part"));
     }
 }

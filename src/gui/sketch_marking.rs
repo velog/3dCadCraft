@@ -116,7 +116,7 @@ fn entry(ui: &mut egui::Ui, rect: Rect, id: &'static str, label: &str, icon: Ico
         egui::StrokeKind::Inside,
     );
     let icon_rect = Rect::from_min_size(rect.min + Vec2::new(4.0, 4.0), Vec2::splat(16.0));
-    icons::paint(painter, icon_rect, icon, &Palette::ENABLED);
+    icons::paint(painter, icon_rect, icon, &Palette::enabled());
     painter.text(
         rect.left_center() + Vec2::new(24.0, 0.0),
         egui::Align2::LEFT_CENTER,

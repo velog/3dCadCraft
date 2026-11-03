@@ -1261,7 +1261,7 @@ impl CadCraftApp {
                 )
                 .on_hover_text(summary);
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
+                    if ui.add(super::theme::ok_button("OK")).clicked() {
                         ok = true;
                     }
                     if ui.button("Cancel").clicked() {
@@ -1397,7 +1397,7 @@ impl CadCraftApp {
                         .on_hover_text("Units: g (off) or kg");
                 });
                 if stale {
-                    ui.colored_label(Color32::from_rgb(230, 140, 0), "Out of date — Update");
+                    ui.colored_label(super::theme::tokens().warning, "Out of date — Update");
                 }
                 let Some((_, result)) = &self.mat.physical else {
                     return;
@@ -1405,12 +1405,12 @@ impl CadCraftApp {
                 let p = match result {
                     Ok(p) => p,
                     Err(e) => {
-                        ui.colored_label(Color32::RED, e);
+                        ui.colored_label(super::theme::tokens().error, e);
                         return;
                     }
                 };
                 for w in &p.warnings {
-                    ui.colored_label(Color32::from_rgb(230, 140, 0), format!("Warning: {w}"));
+                    ui.colored_label(super::theme::tokens().warning, format!("Warning: {w}"));
                 }
                 ui.separator();
                 let what = if self.is_assembly() {

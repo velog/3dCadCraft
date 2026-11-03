@@ -752,12 +752,10 @@ impl CadCraftApp {
                             }
                             apply |=
                                 r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            apply |= ui
-                                .small_button("✔")
+                            apply |= super::theme::glyph(ui, super::theme::Glyph::Check)
                                 .on_hover_text("Apply (Enter)")
                                 .clicked();
-                            drop |= ui
-                                .small_button("x")
+                            drop |= super::theme::glyph(ui, super::theme::Glyph::Close)
                                 .on_hover_text("Keep the measured value (Esc)")
                                 .clicked();
                         });
@@ -813,7 +811,7 @@ impl CadCraftApp {
         finish: &mut bool,
         cancel: &mut bool,
     ) {
-        let palette = super::icons::Palette::ENABLED;
+        let palette = super::icons::Palette::enabled();
         egui::Area::new(egui::Id::new("drw_sketch_toolbar"))
             .order(egui::Order::Foreground)
             .fixed_pos(rect.left_top() + egui::vec2(10.0, 10.0))

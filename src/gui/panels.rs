@@ -73,16 +73,32 @@ enum BrowserCmd {
     CommandPick(super::combine_split::BodyPick),
 }
 
-const WARNING: Color32 = Color32::from_rgb(230, 140, 0);
+/// The colour of warning texts.
+fn warning_color() -> Color32 {
+    super::theme::tokens().warning
+}
 
 /// Time after a click on a selected row before it turns into a rename
 /// field (a second click sooner is a double-click: Edit).
 const SLOW_CLICK_S: f64 = 0.5;
 
 /// A 16 px browser icon before the next widget in a horizontal row.
+/// The width of a browser row's fold arrow and the gap after it: rows without
+/// children start their icon after it, so all icons of a level stand in one column.
+pub(super) const TREE_FOLD_COLUMN: f32 = 18.0;
+
+/// A control in the fold arrow's column (a visibility check box), the icon right after it.
+fn in_fold_column<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let gap = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = 0.0;
+    let r = add(ui);
+    ui.spacing_mut().item_spacing.x = gap;
+    r
+}
+
 pub(super) fn tree_icon(ui: &mut egui::Ui, icon: Icon) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-    super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::ENABLED);
+    super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::enabled());
 }
 
 /// The pending slow-click rename: (row, when it starts).
@@ -238,15 +254,13 @@ impl CadCraftApp {
             });
             if !self.is_assembly() {
                 ui.horizontal(|ui| {
-                    if ui
-                        .small_button("+")
+                    if super::theme::glyph(ui, super::theme::Glyph::Plus)
                         .on_hover_text("Expand All Children")
                         .clicked()
                     {
                         request_fold_all(ui.ctx(), true);
                     }
-                    if ui
-                        .small_button("-")
+                    if super::theme::glyph(ui, super::theme::Glyph::Minus)
                         .on_hover_text("Collapse All Children")
                         .clicked()
                     {
@@ -757,11 +771,12 @@ impl CadCraftApp {
         let n = part.features.len();
         let eop = part.eop_index();
         ui.horizontal(|ui| {
+            ui.add_space(TREE_FOLD_COLUMN);
             let (bar, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
             ui.painter().rect_filled(
                 egui::Rect::from_center_size(bar.center(), egui::vec2(12.0, 4.0)),
                 1.0,
-                Color32::from_rgb(200, 60, 60),
+                super::theme::tokens().error,
             );
             let text = RichText::new("End of Part").italics();
             let r = ui
@@ -851,7 +866,7 @@ impl CadCraftApp {
         };
         let mut text = RichText::new(label);
         if sick.is_some() {
-            text = text.color(WARNING);
+            text = text.color(warning_color());
         }
         if suppressed || rolled {
             text = text.color(ui.visuals().weak_text_color()).italics();
@@ -1051,7 +1066,7 @@ impl CadCraftApp {
             ui.close();
         }
         ui.separator();
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             cmds.push(BrowserCmd::DeleteFeature(k));
             ui.close();
         }
@@ -1114,13 +1129,16 @@ impl CadCraftApp {
             ui.horizontal(|ui| {
                 if let Feature::Work(w) = f {
                     let mut visible = w.visible;
-                    if ui
-                        .checkbox(&mut visible, "")
-                        .on_hover_text("Visibility")
-                        .changed()
-                    {
+                    let changed = in_fold_column(ui, |ui| {
+                        ui.checkbox(&mut visible, "")
+                            .on_hover_text("Visibility")
+                            .changed()
+                    });
+                    if changed {
                         cmds.push(BrowserCmd::FeatureVisible(k, visible));
                     }
+                } else {
+                    ui.add_space(TREE_FOLD_COLUMN);
                 }
                 if let Some(r) = self.feature_label(ui, k, icon, hover, selected, select, cmds) {
                     r.context_menu(|ui| self.feature_menu(ui, k, &used, cmds));
@@ -1156,11 +1174,12 @@ impl CadCraftApp {
         let target = RenameTarget::Sketch(ps.id.clone());
         ui.horizontal(|ui| {
             let mut visible = ps.visible;
-            if ui
-                .checkbox(&mut visible, "")
-                .on_hover_text("Visibility")
-                .changed()
-            {
+            let changed = in_fold_column(ui, |ui| {
+                ui.checkbox(&mut visible, "")
+                    .on_hover_text("Visibility")
+                    .changed()
+            });
+            if changed {
                 cmds.push(BrowserCmd::SetVisible(i, visible));
             }
             tree_icon(ui, Icon::Sketch);
@@ -1189,13 +1208,13 @@ impl CadCraftApp {
             if editing && selected {
                 // The state's colour was unreadable on the selection's; the
                 // status bar and Properties show it.
-                text = text.strong().color(Color32::WHITE);
+                text = text.strong().color(super::theme::tokens().text);
             } else if editing {
                 text = text.strong().color(self.sketch_color());
             } else if rolled {
                 text = text.color(ui.visuals().weak_text_color()).italics();
             } else if ps.health.is_some() {
-                text = text.color(WARNING);
+                text = text.color(warning_color());
             }
             let mut hover = match &ps.health {
                 Some(h) => format!("{}\nWarning: {h}", ps.placement.describe()),
@@ -1528,7 +1547,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             if let Some(n) = mesh {
                 ui.label(format!("{n} triangles"));
                 ui.colored_label(
-                    Color32::from_rgb(20, 150, 50),
+                    super::theme::tokens().ok,
                     if open {
                         "✔ open mesh body: view and measure"
                     } else {
@@ -1541,12 +1560,12 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 Ok(s) if open => {
                     ui.label(format!("V {}   E {}   F {}", s.vertices, s.edges, s.faces));
                     ui.colored_label(
-                        Color32::from_rgb(20, 150, 50),
+                        super::theme::tokens().ok,
                         "✔ surface body (open, not a solid)",
                     );
                 }
                 Ok(s) => {
-                    ui.colored_label(Color32::from_rgb(20, 150, 50), "✔ valid solid");
+                    ui.colored_label(super::theme::tokens().ok, "✔ valid solid");
                     // One per body: two with one label id were egui's red "widget ID" warning.
                     egui::CollapsingHeader::new("Details")
                         .id_salt(("body_details", k))
@@ -1563,7 +1582,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         });
                 }
                 Err(e) => {
-                    ui.colored_label(Color32::RED, format!("✘ {e}"));
+                    ui.colored_label(super::theme::tokens().error, format!("✘ {e}"));
                 }
             }
         }
@@ -1573,11 +1592,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
     pub(super) fn panel_header(&mut self, ui: &mut egui::Ui, icon: Icon, title: &str) {
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-            super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::ENABLED);
+            super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::enabled());
             ui.label(RichText::new(title).heading());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button("?")
+                if super::theme::glyph(ui, super::theme::Glyph::Help)
                     .on_hover_text("Help: the specification of this command (F1)")
                     .clicked()
                 {
@@ -1753,7 +1771,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             if ui
                 .add_enabled(
                     ready,
-                    egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)),
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
                 )
                 .on_hover_text("Create the feature (Enter, Ctrl+Enter)")
                 .clicked()
@@ -2013,7 +2031,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     .weak(),
             );
             ui.horizontal(|ui| {
-                if ui.button("OK").on_hover_text("Enter, Ctrl+Enter").clicked()
+                if ui
+                    .add(super::theme::ok_button("OK"))
+                    .on_hover_text("Enter, Ctrl+Enter")
+                    .clicked()
                     || super::keys::panel_ok_key(ui, true)
                 {
                     self.commit_edit_pattern();
@@ -2169,8 +2190,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                     self.hud.vals[k] = Some(v);
                                 }
                                 if self.hud.vals[k].is_some()
-                                    && ui
-                                        .small_button("x")
+                                    && super::theme::glyph(ui, super::theme::Glyph::Close)
                                         .on_hover_text("Follow the cursor again")
                                         .clicked()
                                 {
@@ -2283,7 +2303,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                     }
                                     if k == 1
                                         && d.dir[1].is_some()
-                                        && ui.small_button("x").on_hover_text("No direction 2").clicked()
+                                        && super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("No direction 2").clicked()
                                     {
                                         new_dir = Some((1, None));
                                     }
@@ -2438,7 +2458,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             if ui
                 .add_enabled(
                     ready,
-                    egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
+                    super::theme::ok_button("OK").min_size(egui::vec2(70.0, 22.0)),
                 )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
@@ -2725,7 +2745,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             }
         }
         ui.add_space(4.0);
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -2870,8 +2890,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                 }
                             }
                             if k > 0
-                                && ui
-                                    .small_button("x")
+                                && super::theme::glyph(ui, super::theme::Glyph::Close)
                                     .on_hover_text("Remove the set")
                                     .clicked()
                             {
@@ -2952,7 +2971,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                     .speed(0.1)
                                     .suffix(" mm"),
                             );
-                            if j != 0 && j + 1 != n && ui.small_button("x").clicked() {
+                            if j != 0
+                                && j + 1 != n
+                                && super::theme::glyph(ui, super::theme::Glyph::Close).clicked()
+                            {
                                 remove = Some(j);
                             }
                         });
@@ -3127,7 +3149,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)
@@ -3327,7 +3352,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Ctrl+Enter or Enter")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)
@@ -3698,7 +3726,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Ctrl+Enter; Enter when every input is there")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)
@@ -4014,7 +4045,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
-                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .add_enabled(
+                    ok,
+                    super::theme::ok_button("OK").min_size(egui::vec2(60.0, 22.0)),
+                )
                 .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
                 || super::keys::panel_ok_key(ui, ok)
@@ -4134,7 +4168,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -4197,7 +4231,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -4273,7 +4307,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -4404,7 +4438,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 }
             }
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
     }
@@ -4429,7 +4463,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             }
         });
         if let Some(h) = &ps.health {
-            ui.colored_label(WARNING, format!("Warning: {h}"));
+            ui.colored_label(warning_color(), format!("Warning: {h}"));
         }
         ui.horizontal(|ui| {
             if editing {
@@ -4591,9 +4625,9 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     let link = ps.link_of(r.target);
                     let row = ui.horizontal(|ui| {
                         if r.ok {
-                            ui.colored_label(Color32::from_rgb(60, 170, 80), "✔");
+                            ui.colored_label(super::theme::tokens().ok, "✔");
                         } else {
-                            ui.colored_label(Color32::from_rgb(230, 140, 0), "!")
+                            ui.colored_label(super::theme::tokens().warning, "!")
                                 .on_hover_text("The source is missing: the geometry is frozen");
                         }
                         let text = if link.is_some() && link == relinking {
@@ -4604,8 +4638,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         ui.label(text).on_hover_text(&r.source);
                         use super::project::RefAction;
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .small_button("x")
+                            if super::theme::glyph(ui, super::theme::Glyph::Close)
                                 .on_hover_text(
                                     "Delete the projected geometry and the constraints that use it",
                                 )
@@ -4669,21 +4702,24 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     });
                 }
                 Some(Err(e)) => {
-                    ui.colored_label(Color32::RED, e);
+                    ui.colored_label(super::theme::tokens().error, e);
                 }
                 None => {}
             }
             let sk = &self.part().sketches[i].sketch;
             for (n, (pid, _)) in sk.patterns().enumerate() {
                 if let Some(h) = sk.pattern_health(pid) {
-                    ui.colored_label(WARNING, format!("Warning: pattern {}: {h}", n + 1));
+                    ui.colored_label(warning_color(), format!("Warning: pattern {}: {h}", n + 1));
                 }
             }
             self.constraint_list(ui, i);
         }
 
         ui.separator();
-        if ui.button("Delete Sketch").clicked() {
+        if ui
+            .add(super::theme::danger_button("Delete Sketch"))
+            .clicked()
+        {
             self.delete_sketch(i);
         }
     }
@@ -4720,7 +4756,11 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     self.tools.selected.len(),
                     self.tools.selected_constraints.len()
                 ));
-                if ui.button("Delete").on_hover_text("Delete key").clicked() {
+                if ui
+                    .add(super::theme::danger_button("Delete"))
+                    .on_hover_text("Delete key")
+                    .clicked()
+                {
                     self.delete_selection();
                 }
             });
@@ -4740,8 +4780,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             .collect();
         for (id, c, driven, measured) in rows {
             ui.horizontal_wrapped(|ui| {
-                if ui
-                    .small_button("x")
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
                     .on_hover_text("Delete constraint")
                     .clicked()
                 {
@@ -4870,7 +4909,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 ui.label(format!("Mouse: {}", self.mouse.label()));
                 if let Some(note) = self.filter_override_note() {
                     ui.separator();
-                    ui.label(RichText::new(note).color(egui::Color32::from_rgb(200, 120, 20)));
+                    ui.label(RichText::new(note).color(super::theme::tokens().warning));
                 }
                 let mut bg = super::i18n::bulgarian();
                 if ui
@@ -4958,7 +4997,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         }
                         (Mode::PickPlane(PickPurpose::NewSketch), _) => {
                             ui.colored_label(
-                                WARNING,
+                                warning_color(),
                                 super::i18n::tr(
                                     "Select a planar face or an origin plane to sketch on (Esc cancels)",
                                 ),
@@ -4966,7 +5005,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         }
                         (Mode::PickPlane(PickPurpose::Primitive(k)), _) => {
                             ui.colored_label(
-                                WARNING,
+                                warning_color(),
                                 format!(
                                     "{}: select a planar face or an origin plane for its sketch (Esc cancels)",
                                     k.label()
@@ -4976,13 +5015,13 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         (Mode::PickPlane(PickPurpose::Redefine(i)), _) => {
                             let name = self.part().sketches.get(i).map_or("", |s| s.name.as_str());
                             ui.colored_label(
-                                WARNING,
+                                warning_color(),
                                 format!("Select the new plane for {name} (Esc cancels)"),
                             );
                         }
                         (Mode::Normal, Some(_)) if self.project_geometry => {
                             ui.colored_label(
-                                WARNING,
+                                warning_color(),
                                 super::i18n::tr(if self.relink.is_some() {
                                     "Replace Reference: click the new source (a point, curve or edge of the same kind; Esc cancels)"
                                 } else {
@@ -5141,7 +5180,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     ui.separator();
                     match &self.file_status {
                         Some(Err(e)) => {
-                            ui.colored_label(Color32::RED, e);
+                            ui.colored_label(super::theme::tokens().error, e);
                         }
                         Some(Ok(msg)) => {
                             ui.label(msg);
@@ -5188,12 +5227,15 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 let mut tab: &'static str =
                     ui.data(|d| d.get_temp(tab_id)).unwrap_or("General");
                 ui.horizontal(|ui| {
-                    for name in ["General", "Save", "Display", "Prompts", "Sketch", "Assembly"] {
+                    for name in ["General", "Colors", "Save", "Display", "Prompts", "Sketch", "Assembly"] {
                         ui.selectable_value(&mut tab, name, name);
                     }
                 });
                 ui.data_mut(|d| d.insert_temp(tab_id, tab));
                 ui.separator();
+                if tab == "Colors" {
+                    super::theme::colors_tab(ui);
+                }
                 if tab == "General" {
                 ui.label(RichText::new("Navigation").strong());
                 for preset in [MousePreset::Inventor, MousePreset::Classic] {
@@ -5558,7 +5600,7 @@ fn icon_choice<T: PartialEq + Copy>(
                 ui.painter(),
                 rect.shrink(4.0),
                 icon,
-                &super::icons::Palette::ENABLED,
+                &super::icons::Palette::enabled(),
             );
             if resp.on_hover_text(tip).clicked() && !on {
                 *value = v;
@@ -5571,14 +5613,16 @@ fn icon_choice<T: PartialEq + Copy>(
 
 /// Inventor's yellow warning box.
 pub(super) fn warning_box(ui: &mut egui::Ui, text: &str) {
+    let k = super::theme::tokens();
     egui::Frame::new()
-        .fill(Color32::from_rgb(255, 244, 200))
-        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(220, 170, 40)))
+        .fill(k.warn_box_fill)
+        .stroke(egui::Stroke::new(1.0, k.warn_box_line))
         .corner_radius(3.0)
         .inner_margin(6.0)
         .show(ui, |ui| {
-            ui.label(
-                RichText::new(format!("Warning: {text}")).color(Color32::from_rgb(110, 70, 0)),
+            ui.add(
+                egui::Label::new(RichText::new(format!("Warning: {text}")).color(k.warn_box_text))
+                    .wrap(),
             );
         });
 }
@@ -5970,7 +6014,7 @@ fn revolve_options(
                 ui.label(format!("{}", def.open.len())).on_hover_text(
                     "Click curves of the sketch that close no area to revolve them as a surface (a second click removes one)",
                 );
-                if !def.open.is_empty() && ui.small_button("x").on_hover_text("Clear").clicked() {
+                if !def.open.is_empty() && super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("Clear").clicked() {
                     def.open.clear();
                 }
             });
@@ -6019,7 +6063,11 @@ fn extrude_options(
             {
                 *pick = Some(slot);
             }
-            if current.is_some() && ui.small_button("x").on_hover_text("Clear").clicked() {
+            if current.is_some()
+                && super::theme::glyph(ui, super::theme::Glyph::Close)
+                    .on_hover_text("Clear")
+                    .clicked()
+            {
                 clear = true;
             }
         });
@@ -6225,10 +6273,10 @@ impl CadCraftApp {
                     );
                 }
                 if let Some(e) = &error {
-                    ui.label(RichText::new(e).color(WARNING));
+                    ui.label(RichText::new(e).color(warning_color()));
                 }
                 ui.horizontal(|ui| {
-                    apply |= ui.button("OK").clicked();
+                    apply |= ui.add(super::theme::ok_button("OK")).clicked();
                     close |= ui.button("Cancel").clicked();
                     clear |= ui
                         .button("Remove")
@@ -6379,7 +6427,7 @@ impl CadCraftApp {
                 ui.horizontal(|ui| {
                     ui.label("Search");
                     ui.add(egui::TextEdit::singleline(&mut search_text).desired_width(160.0).hint_text("name, equation, comment"));
-                    if !search_text.is_empty() && ui.small_button("x").clicked() {
+                    if !search_text.is_empty() && super::theme::glyph(ui, super::theme::Glyph::Close).clicked() {
                         search_text.clear();
                     }
                     ui.separator();
@@ -6396,7 +6444,7 @@ impl CadCraftApp {
                     let text = buf.entry(key.clone()).or_insert_with(|| current.to_owned());
                     let mut te = egui::TextEdit::singleline(text).desired_width(width * font);
                     if bad {
-                        te = te.text_color(Color32::from_rgb(230, 70, 60));
+                        te = te.text_color(super::theme::tokens().error);
                     }
                     let r = ui.add(te);
                     if !r.has_focus() && !r.lost_focus() && *text != current {
@@ -6523,7 +6571,7 @@ impl CadCraftApp {
                                 };
                                 if this != section {
                                     section = this;
-                                    ui.label(RichText::new(this).strong().color(Color32::from_rgb(120, 170, 240)));
+                                    ui.label(RichText::new(this).strong().color(super::theme::tokens().link));
                                     ui.end_row();
                                 }
                                 let (renamed, name_resp) = ui
@@ -6609,7 +6657,7 @@ impl CadCraftApp {
                                             if let Some(t) = typed {
                                                 edits.push(Edit::UnitSpec(i, t));
                                             }
-                                            ui.menu_button("...", |ui| {
+                                            ui.menu_button("…", |ui| {
                                                 for (kind, list) in crate::part::units::CATEGORIES {
                                                     ui.menu_button(*kind, |ui| {
                                                         for u in *list {
@@ -6720,7 +6768,7 @@ impl CadCraftApp {
                                     }
                                 }
                                 if matches!(r.owner, ParamOwner::User(_)) {
-                                    if ui.small_button("x").on_hover_text("Delete (only if unused)").clicked() {
+                                    if super::theme::glyph(ui, super::theme::Glyph::Close).on_hover_text("Delete (only if unused)").clicked() {
                                         edits.push(Edit::Delete(r.name.clone()));
                                     }
                                 } else {
@@ -6729,7 +6777,7 @@ impl CadCraftApp {
                                 ui.end_row();
                                 if let Some(e) = err {
                                     ui.label("");
-                                    ui.colored_label(Color32::from_rgb(230, 70, 60), format!("{}: {e}", r.name));
+                                    ui.colored_label(super::theme::tokens().error, format!("{}: {e}", r.name));
                                     ui.end_row();
                                 }
                             }
@@ -6790,7 +6838,7 @@ impl CadCraftApp {
                     ui.label("Values separated by ';' (each a value or an equation):");
                     ui.add(egui::TextEdit::singleline(&mut text).desired_width(320.0));
                     ui.horizontal(|ui| {
-                        if ui.button("OK").clicked() {
+                        if ui.add(super::theme::ok_button("OK")).clicked() {
                             let list: Vec<String> = text
                                 .split(';')
                                 .map(|v| v.trim().to_owned())

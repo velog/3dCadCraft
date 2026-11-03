@@ -71,6 +71,21 @@ pub enum Kind {
     Woodruff(Real, Real, Real),
     /// O-ring: inner diameter, section.
     ORing(Real, Real),
+    /// Screw with a domed head (pan, carriage): thread diameter, length, head
+    /// diameter, head height. The slot or square neck is not modelled.
+    RoundHeadScrew(Real, Real, Real, Real),
+    /// Screw with a flat cylindrical head (cheese): the same numbers.
+    FlatHeadScrew(Real, Real, Real, Real),
+    /// Square nut: thread diameter, across flats, height.
+    SquareNut(Real, Real, Real),
+    /// T-slot nut: thread diameter, neck width, foot width, foot height, total height.
+    TNut(Real, Real, Real, Real, Real),
+    /// Rectangular washer: hole, sides, thickness (a taper washer's slope is not modelled).
+    SquareWasher(Real, Real, Real, Real),
+    /// Disc spring: inner and outer diameter, thickness, cone height.
+    DiscSpring(Real, Real, Real, Real),
+    /// Countersunk rivet: diameter, length, head diameter, head height.
+    ConeRivet(Real, Real, Real, Real),
     /// Structural shape: family and size of the frame section table, length.
     Shape(&'static str, &'static str, Real),
 }
@@ -135,6 +150,86 @@ const SHAPE_LENGTH: Real = 1000.0;
 
 /// The family tables built into the program, by their id in `families.csv`.
 const TABLES: &[(&str, &str)] = &[
+    (
+        "din_557",
+        include_str!("../../data/components/families/din_557.csv"),
+    ),
+    (
+        "din_508",
+        include_str!("../../data/components/families/din_508.csv"),
+    ),
+    (
+        "din_434",
+        include_str!("../../data/components/families/din_434.csv"),
+    ),
+    (
+        "din_6319",
+        include_str!("../../data/components/families/din_6319.csv"),
+    ),
+    (
+        "din_6799",
+        include_str!("../../data/components/families/din_6799.csv"),
+    ),
+    (
+        "din_5406",
+        include_str!("../../data/components/families/din_5406.csv"),
+    ),
+    (
+        "din_938_stud",
+        include_str!("../../data/components/families/din_938_stud.csv"),
+    ),
+    (
+        "din_1444",
+        include_str!("../../data/components/families/din_1444.csv"),
+    ),
+    (
+        "din_1473",
+        include_str!("../../data/components/families/din_1473.csv"),
+    ),
+    (
+        "din_2093",
+        include_str!("../../data/components/families/din_2093.csv"),
+    ),
+    (
+        "din_603",
+        include_str!("../../data/components/families/din_603.csv"),
+    ),
+    (
+        "din_6797",
+        include_str!("../../data/components/families/din_6797.csv"),
+    ),
+    (
+        "din_661",
+        include_str!("../../data/components/families/din_661.csv"),
+    ),
+    (
+        "din_6886",
+        include_str!("../../data/components/families/din_6886.csv"),
+    ),
+    (
+        "din_84",
+        include_str!("../../data/components/families/din_84.csv"),
+    ),
+    (
+        "din_85",
+        include_str!("../../data/components/families/din_85.csv"),
+    ),
+    (
+        "din_929",
+        include_str!("../../data/components/families/din_929.csv"),
+    ),
+    (
+        "din_937",
+        include_str!("../../data/components/families/din_937.csv"),
+    ),
+    (
+        "din_94",
+        include_str!("../../data/components/families/din_94.csv"),
+    ),
+    (
+        "din_981",
+        include_str!("../../data/components/families/din_981.csv"),
+    ),
     (
         "ansi_b17_1",
         include_str!("../../data/components/families/ansi_b17_1.csv"),
@@ -580,7 +675,57 @@ fn row_members(
         }
         "bush" => per_length(&|l| Some(Kind::Washer(get("d")?, get("D")?, l))),
         "washer" => one((|| Some(Kind::Washer(get("d1")?, get("d2")?, get("h")?)))()),
-        "rivet" => per_length(&|l| Some(Kind::Rivet(get("d")?, l, get("dk")?, get("k")?))),
+        "rivet" | "clevis_pin" => {
+            per_length(&|l| Some(Kind::Rivet(get("d")?, l, get("dk")?, get("k")?)))
+        }
+        "pan_screw" | "carriage_bolt" => {
+            per_length(&|l| Some(Kind::RoundHeadScrew(get("d")?, l, get("dk")?, get("k")?)))
+        }
+        "cheese_screw" => {
+            per_length(&|l| Some(Kind::FlatHeadScrew(get("d")?, l, get("dk")?, get("k")?)))
+        }
+        "countersunk_rivet" => {
+            per_length(&|l| Some(Kind::ConeRivet(get("d")?, l, get("dk")?, get("k")?)))
+        }
+        "square_nut" => one((|| Some(Kind::SquareNut(get("d")?, get("s")?, get("m")?)))()),
+        "t_nut" => one((|| {
+            Some(Kind::TNut(
+                get("d")?,
+                get("a")?,
+                get("e")?,
+                get("k")?,
+                get("h")?,
+            ))
+        })()),
+        "taper_washer" => one((|| {
+            Some(Kind::SquareWasher(
+                get("d1")?,
+                get("a")?,
+                get("b")?,
+                get("h")?,
+            ))
+        })()),
+        "ball_washer" => one((|| Some(Kind::Washer(get("d1")?, get("d2")?, get("h")?)))()),
+        "e_clip" => one((|| {
+            Some(Kind::SplitRing(get("d1")?, get("d2")?, get("s")?, 30.0))
+        })()),
+        "tab_washer" => one((|| Some(Kind::Washer(get("d1")?, get("d2")?, get("s")?)))()),
+        "stud" => per_length(&|l| Some(Kind::Rod(get("d")?, l))),
+        "slotted_nut" | "weld_nut" => {
+            one((|| Some(Kind::HexNut(get("d")?, get("s")?, get("m")?)))())
+        }
+        "round_nut" => one((|| Some(Kind::Washer(get("d")?, get("dk")?, get("m")?)))()),
+        "tooth_washer" => one((|| Some(Kind::Washer(get("d1")?, get("d2")?, get("s")?)))()),
+        "disc_spring" => one((|| {
+            Some(Kind::DiscSpring(
+                get("d1")?,
+                get("d2")?,
+                get("t")?,
+                get("h0")?,
+            ))
+        })()),
+        "grooved_pin" | "cotter_pin" => per_length(&|l| Some(Kind::Pin(get("d")?, l))),
+        "taper_key" => per_length(&|l| Some(Kind::Key(get("b")?, get("h")?, l))),
         "pin" => per_length(&|l| Some(Kind::Pin(get("d")?, l))),
         "key" => per_length(&|l| Some(Kind::Key(get("b")?, get("h")?, l))),
         "circlip" => one((|| Some(Kind::Circlip(get("d1")?, get("d2")?, get("s")?)))()),
@@ -723,6 +868,11 @@ impl Sample {
             self.kind,
             Kind::Washer(..)
                 | Kind::Rivet(..)
+                | Kind::DiscSpring(..)
+                | Kind::SquareNut(..)
+                | Kind::TNut(..)
+                | Kind::SquareWasher(..)
+                | Kind::ConeRivet(..)
                 | Kind::Pin(..)
                 | Kind::Key(..)
                 | Kind::TaperPin(..)
@@ -757,6 +907,13 @@ impl Sample {
             Kind::HexNut(..) => "Hex nut",
             Kind::Washer(..) => "Plain washer",
             Kind::Rivet(..) => "Round head rivet",
+            Kind::RoundHeadScrew(..) => "Round head screw",
+            Kind::FlatHeadScrew(..) => "Cheese head screw",
+            Kind::DiscSpring(..) => "Disc spring",
+            Kind::SquareNut(..) => "Square nut",
+            Kind::TNut(..) => "T-slot nut",
+            Kind::SquareWasher(..) => "Square washer",
+            Kind::ConeRivet(..) => "Countersunk rivet",
             Kind::Pin(..) => "Cylindrical pin",
             Kind::Key(..) => "Parallel key",
             Kind::Circlip(..) => "Retaining ring",
@@ -836,6 +993,13 @@ fn standard_part(kind: Kind) -> Result<PartDocument, PartError> {
                 (d1 / 2.0, h),
             ]),
             Kind::Rivet(d, l, dk, k) => rivet(d, l, dk, k),
+            Kind::RoundHeadScrew(d, l, dk, k) => round_head_screw(d, l, dk, k),
+            Kind::FlatHeadScrew(d, l, dk, k) => flat_head_screw(d, l, dk, k),
+            Kind::DiscSpring(d1, d2, t, h0) => disc_spring(d1, d2, t, h0),
+            Kind::SquareNut(d, s, m) => square_nut(d, s, m),
+            Kind::TNut(d, a, e, k, h) => t_nut(d, a, e, k, h),
+            Kind::SquareWasher(d, a, b, h) => square_washer(d, a, b, h),
+            Kind::ConeRivet(d, l, dk, k) => cone_rivet(d, l, dk, k),
             Kind::Pin(d, l) => {
                 let (r, c) = (d / 2.0, d / 8.0);
                 ring(&[
@@ -1282,6 +1446,109 @@ fn hex_nut_shape(
 }
 
 /// Round head on the seat, plain shank below it.
+/// A rivet's shape with a thread on its shank.
+fn round_head_screw(d: Real, l: Real, dk: Real, k: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, false)?;
+    let d = spec.major;
+    let mut part = rivet(d, l, dk, k)?;
+    add_thread(
+        &mut part,
+        spec,
+        d / 2.0,
+        Point3::new(d / 2.0, 0.0, -l / 2.0),
+    )?;
+    Ok(part)
+}
+
+fn flat_head_screw(d: Real, l: Real, dk: Real, k: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, false)?;
+    let d = spec.major;
+    let (r, rk) = (d / 2.0, dk / 2.0);
+    let c = (d / 10.0).min(l / 4.0);
+    let mut part = ring(&[
+        (0.0, -l),
+        (r - c, -l),
+        (r, c - l),
+        (r, 0.0),
+        (rk, 0.0),
+        (rk, k),
+        (0.0, k),
+    ])?;
+    add_thread(&mut part, spec, r, Point3::new(r, 0.0, -l / 2.0))?;
+    Ok(part)
+}
+
+/// A rectangle centred on the origin with a round hole, along +Z.
+fn holed_block(a: Real, b: Real, d: Real, h: Real) -> Result<PartDocument, PartError> {
+    let (x, y) = (a / 2.0, b / 2.0);
+    let mut part = blank();
+    extrude(
+        &mut part,
+        vec![
+            Loop::Corners(vec![
+                (Point2::new(-x, -y), 0.0),
+                (Point2::new(x, -y), 0.0),
+                (Point2::new(x, y), 0.0),
+                (Point2::new(-x, y), 0.0),
+            ]),
+            Loop::Circle(Point2::new(0.0, 0.0), d / 2.0, true),
+        ],
+        Point2::new((x + d / 2.0) / 2.0, 0.0),
+        0.0,
+        h,
+        false,
+        Operation::NewSolid,
+    )?;
+    Ok(part)
+}
+
+fn square_nut(d: Real, s: Real, m: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, true)?;
+    holed_block(s, s, spec.major - spec.pitch, m)
+}
+
+fn square_washer(d: Real, a: Real, b: Real, h: Real) -> Result<PartDocument, PartError> {
+    holed_block(a, b, d, h)
+}
+
+/// The foot, wider, on the XY plane; the neck above it to `h`; a threaded hole
+/// through both. Two blocks joined: nothing tangent, each side apart.
+fn t_nut(d: Real, a: Real, e: Real, k: Real, h: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, true)?;
+    let bore = spec.major - spec.pitch;
+    let mut part = holed_block(e, e, bore, k)?;
+    let x = a / 2.0;
+    extrude(
+        &mut part,
+        vec![
+            Loop::Corners(vec![
+                (Point2::new(-x, -x), 0.0),
+                (Point2::new(x, -x), 0.0),
+                (Point2::new(x, x), 0.0),
+                (Point2::new(-x, x), 0.0),
+            ]),
+            Loop::Circle(Point2::new(0.0, 0.0), bore / 2.0, true),
+        ],
+        Point2::new((x + bore / 2.0) / 2.0, 0.0),
+        k,
+        h - k,
+        false,
+        Operation::Join,
+    )?;
+    Ok(part)
+}
+
+/// The cone of a disc spring, standing on its outer edge.
+fn disc_spring(d1: Real, d2: Real, t: Real, h0: Real) -> Result<PartDocument, PartError> {
+    let (r1, r2) = (d1 / 2.0, d2 / 2.0);
+    ring(&[(r2, 0.0), (r2, t), (r1, t + h0), (r1, h0)])
+}
+
+fn cone_rivet(d: Real, l: Real, dk: Real, k: Real) -> Result<PartDocument, PartError> {
+    let (r, rk) = (d / 2.0, dk / 2.0);
+    ring(&[(0.0, -l), (r, -l), (r, 0.0), (rk, k), (0.0, k)])
+}
+
 fn rivet(d: Real, l: Real, dk: Real, k: Real) -> Result<PartDocument, PartError> {
     let (r, rk) = (d / 2.0, dk / 2.0);
     // The sphere through the head's rim and top; its centre lies on the axis.
