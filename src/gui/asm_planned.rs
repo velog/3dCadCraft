@@ -141,6 +141,12 @@ pub enum AsmPlanned {
 }
 
 impl AsmPlanned {
+    /// Can it run while a positional representation other than `[Primary]` is
+    /// active? Only what does not change the structure (spec 3.9 §3.2).
+    pub fn reps_allow_in_position(self) -> bool {
+        matches!(self, AsmPlanned::Interference | AsmPlanned::FrameMemberInfo)
+    }
+
     #[cfg(test)]
     pub const ALL: [AsmPlanned; 52] = {
         use AsmPlanned::*;

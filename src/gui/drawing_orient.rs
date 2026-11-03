@@ -265,7 +265,7 @@ impl CadCraftApp {
         let lines = if orbiting {
             None
         } else {
-            self.view_lines(Some(ctx), model, &frame, None, flat)
+            self.view_lines(Some(ctx), model, &frame, None, flat, dlg.reps)
         };
         if dlg.edit.is_none()
             && dlg.auto_scale
@@ -291,7 +291,9 @@ impl CadCraftApp {
             }
             None => {
                 if dlg.orient.wire.is_none() && !flat {
-                    dlg.orient.wire = self.model_job(model, false).map(|j| Arc::new(j.model()));
+                    dlg.orient.wire = self
+                        .model_job(model, false, dlg.reps)
+                        .map(|j| Arc::new(j.model()));
                 }
                 match &dlg.orient.wire {
                     Some(w) => {
@@ -414,7 +416,9 @@ impl CadCraftApp {
                 };
                 dlg.orient.targets.push(at);
                 let pf = frame.projected(dir, projection);
-                if !orbiting && let Some(l) = self.view_lines(Some(ctx), model, &pf, None, flat) {
+                if !orbiting
+                    && let Some(l) = self.view_lines(Some(ctx), model, &pf, None, flat, dlg.reps)
+                {
                     self.draw_preview(painter, rect, l, at, scale, dlg.style);
                 }
                 let x = to(at) + Vec2::new(0.0, -14.0);

@@ -77,6 +77,8 @@ pub(super) struct AsmDrag {
 /// The assembly environment's UI state.
 #[derive(Default)]
 pub(super) struct AsmUi {
+    /// Representations: the Override window, the table, renaming (spec 3.9).
+    pub(super) reps: super::reps::RepsUi,
     /// Selected occurrences (ids).
     pub sel: Vec<u32>,
     /// The menu of a frame corner's glyph (frame, treatment, where; `true`
@@ -1810,6 +1812,9 @@ impl CadCraftApp {
 
     /// Deletes the occurrences `ids` (Delete key, context menu).
     pub(super) fn delete_occurrences(&mut self, ids: &[u32]) {
+        if self.reps_refuse_structure() {
+            return;
+        }
         if ids.is_empty() {
             return;
         }
@@ -2703,6 +2708,9 @@ impl CadCraftApp {
         } else if ui.button("Isolate").clicked() {
             self.isolate(Some(ids.to_vec()));
             ui.close();
+        }
+        if let [id] = ids {
+            self.override_menu(ui, super::reps::OverrideOf::Occurrence(*id));
         }
         if ui.button("Hide Others").clicked() {
             self.hide_others(ids);

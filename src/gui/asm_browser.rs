@@ -201,6 +201,9 @@ impl CadCraftApp {
         }
         self.asm_browser_bar(ui);
         ui.indent("asm_tree", |ui| {
+            if query.is_empty() {
+                self.reps_tree(ui);
+            }
             let all: Vec<u32> = all.into_iter().filter(|c| named(c)).collect();
             if !all.is_empty() {
                 fold(ui, "asm_relationships", true, |ui| {
@@ -296,6 +299,10 @@ impl CadCraftApp {
                     }
                     if !enabled {
                         text = text.italics();
+                    }
+                    // Overridden in the active positional representation.
+                    if this.occ_overridden(id) {
+                        text = text.strong();
                     }
                     let r = ui.selectable_label(this.asm.sel.contains(&id), text);
                     if opts.constraint_state {
@@ -485,6 +492,7 @@ impl CadCraftApp {
                 }
                 TreeCmd::EditConstraint(id) => self.edit_constraint(id),
                 TreeCmd::SuppressConstraint(id) => self.toggle_constraint_suppress(id),
+                TreeCmd::DeleteConstraint(_) if self.reps_refuse_structure() => {}
                 TreeCmd::DeleteConstraint(id) => self.delete_constraint(id),
                 TreeCmd::Drive(id) => self.open_drive(id),
             }
@@ -946,8 +954,13 @@ impl CadCraftApp {
                     .map_or("?".to_owned(), |n| n.name)
             }
         };
-        let label = format!("{} ({}, {})", c.name, between(&c.a), between(&c.b));
+        let mut label = format!("{} ({}, {})", c.name, between(&c.a), between(&c.b));
         let suppressed = c.suppressed;
+        // Overridden in the active positional representation: bold, with the value.
+        let overridden = self.rel_override_text(id);
+        if let Some(t) = &overridden {
+            label = format!("{label} {t}");
+        }
         let sick = self
             .cons
             .last
@@ -958,6 +971,9 @@ impl CadCraftApp {
         ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Coincident);
             let mut text = RichText::new(label);
+            if overridden.is_some() {
+                text = text.strong();
+            }
             if suppressed {
                 text = text.weak();
             } else if sick.is_some() {
@@ -992,6 +1008,7 @@ impl CadCraftApp {
                     cmds.push(TreeCmd::SuppressConstraint(id));
                     ui.close();
                 }
+                self.override_menu(ui, super::reps::OverrideOf::Relationship(id));
                 if ui.button("Delete").clicked() {
                     cmds.push(TreeCmd::DeleteConstraint(id));
                     ui.close();
@@ -1002,7 +1019,7 @@ impl CadCraftApp {
 }
 
 /// A node that folds open and shut (its state remembered by egui).
-fn fold<'a>(
+pub(super) fn fold<'a>(
     ui: &'a mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
     open: bool,

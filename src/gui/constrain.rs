@@ -168,7 +168,7 @@ impl CadCraftApp {
 
     /// Solves `a` as the active assembly would be (its references resolved
     /// in this document's components).
-    fn solve_copy(&self, a: &AssemblyDocument, drag: Option<&asm::Drag>) -> Solved {
+    pub(super) fn solve_copy(&self, a: &AssemblyDocument, drag: Option<&asm::Drag>) -> Solved {
         let local = |r: &GeomRef| self.asm_local_in(a, r);
         asm::solve(a, &local, drag)
     }

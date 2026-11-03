@@ -920,7 +920,9 @@ Finds the overlapping volumes between components, shows them in red and gives th
 - **Copy Components.**
 - **Make independent:** turns a linked document (Link) into a local copy. Internally it uses Append.
 
-## 3.9 Representations and model states — ⬜ · L
+## 3.9 Representations and model states — 🟡 (assemblies: View, Position, Model States in the browser; part model states, Spreadsheet, subassembly occurrences ⬜) · L
+
+**Specification:** [spec/3.9-representations.md](spec/3.9-representations.md)
 
 - **View representations:** visibility, colours, transparency.
 - **Positional representations:** different positions of the mechanism, e.g. "open" and "closed".

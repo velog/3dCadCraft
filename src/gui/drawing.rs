@@ -228,6 +228,8 @@ pub(super) struct ViewDialog {
     recovery: RecoveryOptions,
     /// Sheet Metal View (sheet metal parts).
     pub(super) sheet_metal: drw::SheetView,
+    /// An assembly's representations.
+    pub(super) reps: drw::ViewReps,
     /// The preview on the sheet: place, ViewCube, Custom View.
     pub(super) orient: super::drawing_orient::OrientUi,
 }
@@ -656,6 +658,7 @@ impl CadCraftApp {
             display: DisplayOptions::default(),
             recovery: RecoveryOptions::default(),
             sheet_metal: drw::SheetView::Folded,
+            reps: Default::default(),
             orient: Default::default(),
         });
         self.drw.tool = Some(DrwTool::Base);
@@ -697,6 +700,7 @@ impl CadCraftApp {
             display: v.display,
             recovery: v.recovery,
             sheet_metal: v.sheet_metal,
+            reps: v.reps,
             orient: Default::default(),
         });
         self.drw.tool = None;
@@ -874,8 +878,9 @@ impl CadCraftApp {
         frame: &ViewFrame,
         aligned: Option<Box<hlr::Aligned>>,
         flat: bool,
+        reps: drw::ViewReps,
     ) -> Option<Arc<ViewLines>> {
-        let sig = match self.assembly_signature(model) {
+        let sig = match self.assembly_signature(model, reps) {
             Some(s) => s,
             None => self.with_part(model, |p| p.body_signature())?,
         };
@@ -894,7 +899,7 @@ impl CadCraftApp {
             return Some(l.clone());
         }
         let Some(ctx) = ctx else {
-            let job = self.model_job(model, flat)?;
+            let job = self.model_job(model, flat, reps)?;
             let lines = Arc::new(hlr::view_lines_with(
                 &job.model(),
                 frame,
@@ -907,7 +912,7 @@ impl CadCraftApp {
             return Some(lines);
         };
         if self.drw.running.insert(key) {
-            let job = self.model_job(model, flat)?;
+            let job = self.model_job(model, flat, reps)?;
             let done = self.drw.done.clone();
             let ctx = ctx.clone();
             let frame = *frame;
@@ -951,7 +956,8 @@ impl CadCraftApp {
                 frame,
                 aligned,
                 flat,
-            } => self.view_lines(ctx, *model, frame, aligned.clone(), *flat),
+                reps,
+            } => self.view_lines(ctx, *model, frame, aligned.clone(), *flat, *reps),
             LinesJob::Detail { parent, fence } => done
                 .get(parent)
                 .map(|l| Arc::new(hlr::clip_fence(l, fence))),
@@ -1491,6 +1497,7 @@ impl CadCraftApp {
                 v.display = dlg.display;
                 v.recovery = dlg.recovery;
                 v.sheet_metal = dlg.sheet_metal;
+                v.reps = dlg.reps;
             }
             // Projected views added with the preview's triangles.
             let base = d.sheet()?.view(id)?.position;
@@ -1541,13 +1548,14 @@ impl CadCraftApp {
             self.drw.tool = Some(DrwTool::Projected(None));
             return;
         };
-        let Some((frame, model, projection, flat)) = self.drawing().and_then(|d| {
+        let Some((frame, model, projection, flat, reps)) = self.drawing().and_then(|d| {
             let s = d.sheet()?;
             Some((
                 d.frame_of(s, parent)?,
                 d.model_of(s, parent)?,
                 d.standard.projection,
                 d.flat_of(s, parent),
+                d.reps_of(s, parent),
             ))
         }) else {
             return;
@@ -1572,7 +1580,7 @@ impl CadCraftApp {
             [to(pv.position), to(pos)],
             Stroke::new(1.0, PREVIEW.gamma_multiply(0.6)),
         );
-        if let Some(lines) = self.view_lines(Some(ctx), model, &f, None, flat) {
+        if let Some(lines) = self.view_lines(Some(ctx), model, &f, None, flat, reps) {
             let v = ShownView {
                 id: 0,
                 lo: pos,
@@ -1844,6 +1852,7 @@ impl CadCraftApp {
             return;
         };
         let models = self.drawing_models();
+        let rep_lists = dlg.model.map(|m| self.rep_lists(m)).unwrap_or_default();
         // A sheet metal part offers the flat pattern.
         let sheet = dlg
             .model
@@ -1881,7 +1890,9 @@ impl CadCraftApp {
                 });
                 ui.separator();
                 match dlg.tab {
-                    DlgTab::Component => component_tab(ui, &mut dlg, &models, &mut browse, sheet),
+                    DlgTab::Component => {
+                        component_tab(ui, &mut dlg, &models, &mut browse, sheet, &rep_lists)
+                    }
                     DlgTab::Model => model_tab(ui),
                     DlgTab::Display => display_tab(ui, &mut dlg),
                     DlgTab::Recovery => recovery_tab(ui, &mut dlg),
@@ -1959,6 +1970,7 @@ impl CadCraftApp {
             v.recovery = dlg.recovery;
             if !dlg.projected {
                 v.sheet_metal = dlg.sheet_metal;
+                v.reps = dlg.reps;
             }
         });
         self.drw.dialog = None;
@@ -2711,6 +2723,7 @@ fn component_tab(
     models: &[(DocRef, String)],
     browse: &mut bool,
     sheet: bool,
+    lists: &[Vec<(u32, String)>; 3],
 ) {
     let why = "Planned (spec 4 §3.2)";
     ui.columns(2, |cols| {
@@ -2747,22 +2760,35 @@ fn component_tab(
         });
         ui.add_space(4.0);
         ui.label(RichText::new("Representation").strong());
-        ui.add_enabled_ui(false, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Model State");
-                egui::ComboBox::from_id_salt("drw_state")
-                    .selected_text("[Primary]")
-                    .show_ui(ui, |_| {});
-            });
-            ui.horizontal(|ui| {
-                ui.label("Design View");
-                egui::ComboBox::from_id_salt("drw_dv")
-                    .selected_text("Default")
-                    .show_ui(ui, |_| {});
-            });
+        ui.add_enabled_ui(lists.iter().any(|l| !l.is_empty()) && !d.projected, |ui| {
+            let row =
+                |ui: &mut egui::Ui, label: &str, list: &[(u32, String)], sel: &mut Option<u32>| {
+                    ui.horizontal(|ui| {
+                        ui.label(label);
+                        let shown = sel
+                            .and_then(|id| list.iter().find(|x| x.0 == id))
+                            .map_or("(active in the assembly)", |x| x.1.as_str())
+                            .to_owned();
+                        egui::ComboBox::from_id_salt(("drw_rep", label))
+                            .selected_text(shown)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(sel, None, "(active in the assembly)");
+                                for (id, n) in list {
+                                    ui.selectable_value(sel, Some(*id), n);
+                                }
+                            });
+                    });
+                };
+            row(ui, "Model State", &lists[2], &mut d.reps.state);
+            row(ui, "Design View", &lists[0], &mut d.reps.view);
+            row(ui, "Position", &lists[1], &mut d.reps.position);
         })
         .response
-        .on_disabled_hover_text("Model states and design views: planned (spec 4 §3.2)");
+        .on_disabled_hover_text(if d.projected {
+            "A projected view follows its base view"
+        } else {
+            "The model is not an assembly"
+        });
         planned_check(ui, "Camera View", why);
         planned_check(ui, "Include 3D Annotations", why);
         ui.add_space(4.0);

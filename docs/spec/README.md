@@ -98,6 +98,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [2.7-rib.md](2.7-rib.md) | Rib / Web: ribs and webs from open profiles, To Next / Finite, Draft, bosses, networks |
 | [5.3-coil.md](5.3-coil.md) | Coil: springs and helical grooves, three methods, Taper, closed ends, thread with Cut |
 | [3.1-assemblies.md](3.1-assemblies.md) | Assemblies: placing components, constraints (Mate, Flush, Angle, Tangent, Insert, Symmetry), joints; one solver for both; what is taken from SolidCraft; plan and cost |
+| [3.9-representations.md](3.9-representations.md) | View and positional representations, model states |
 | [3.10-top-down.md](3.10-top-down.md) | Top-down design: Create in place, Edit in place, cross-part references and Update, adaptivity, Derive, Make Part / Make Components, layouts and skeletons, assembly features, linked parameters; order of work T0–T10 |
 | [3.1a-subassemblies.md](3.1a-subassemblies.md) | Subassemblies: an assembly placed in an assembly (Rigid / Flexible), nested display and picking, relationships into nested parts, BOM levels, Interference, Demote / Promote |
 | [3.1b-motion-contact.md](3.1b-motion-contact.md) | Motion links, Contact Solver and sets, motion studies, exploded views, Mate of axes | 🟡 |

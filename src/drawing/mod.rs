@@ -552,6 +552,8 @@ pub enum LinesJob {
         aligned: Option<Box<hlr::Aligned>>,
         /// The flat pattern instead of the folded part.
         flat: bool,
+        /// The assembly's representations.
+        reps: ViewReps,
     },
     /// The parent's lines inside a circle.
     Detail {
@@ -652,6 +654,28 @@ pub struct RecoveryOptions {
     pub work_features: bool,
 }
 
+/// The representations an assembly's view stands in (spec 3.9): `None` follows
+/// the assembly's active one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ViewReps {
+    /// View representation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<u32>,
+    /// Positional representation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
+    /// Model state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<u32>,
+}
+
+impl ViewReps {
+    /// Follows the assembly in everything.
+    pub fn is_active(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// One view on a sheet.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DrawingView {
@@ -697,6 +721,10 @@ pub struct DrawingView {
     /// Break Out operations (spec 4.11; old builds draw the view whole).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub break_outs: Vec<BreakOut>,
+    /// The assembly's representations this base view shows (spec 3.9; the others
+    /// follow their base; old builds show the assembly as it was saved).
+    #[serde(default, skip_serializing_if = "ViewReps::is_active")]
+    pub reps: ViewReps,
 }
 
 /// A Break Out of a view (spec 4.11): inside a closed profile drawn on the
@@ -1129,6 +1157,7 @@ impl DrawingDocument {
             sheet_metal: SheetView::Folded,
             breaks: Vec::new(),
             break_outs: Vec::new(),
+            reps: ViewReps::default(),
         });
         Some(id)
     }
@@ -1156,6 +1185,7 @@ impl DrawingDocument {
             sheet_metal: SheetView::Folded,
             breaks: Vec::new(),
             break_outs: Vec::new(),
+            reps: ViewReps::default(),
         };
         align(&mut v.position, p.position, dir);
         self.sheet_mut()?.views.push(v);
@@ -1172,6 +1202,19 @@ impl DrawingDocument {
             }
         }
         None
+    }
+
+    /// The representations of view `id` (through its parents, from its base).
+    pub fn reps_of(&self, sheet: &Sheet, id: u32) -> ViewReps {
+        let mut v = sheet.view(id);
+        for _ in 0..64 {
+            match v {
+                Some(x) if matches!(x.kind, ViewKind::Base { .. }) => return x.reps,
+                Some(x) => v = x.parent().and_then(|p| sheet.view(p)),
+                None => break,
+            }
+        }
+        ViewReps::default()
     }
 
     /// Whether view `id` shows a flat pattern (through its parents).
@@ -1259,6 +1302,7 @@ impl DrawingDocument {
         let v = sheet.view(id)?;
         let model = self.model_of(sheet, id)?;
         let flat = self.flat_of(sheet, id);
+        let reps = self.reps_of(sheet, id);
         Some(match v.kind {
             ViewKind::Detail { parent, .. } => LinesJob::Detail {
                 parent,
@@ -1291,6 +1335,7 @@ impl DrawingDocument {
                         outs: Vec::new(),
                     })),
                     flat,
+                    reps,
                 }
             }
             _ => LinesJob::Model {
@@ -1298,6 +1343,7 @@ impl DrawingDocument {
                 frame: self.frame_of(sheet, id)?,
                 aligned: None,
                 flat,
+                reps,
             },
         })
     }
@@ -1361,6 +1407,7 @@ impl DrawingDocument {
             sheet_metal: SheetView::Folded,
             breaks: Vec::new(),
             break_outs: Vec::new(),
+            reps: ViewReps::default(),
         };
         self.sheet_mut()?.views.push(v);
         // Positions are kept to 0.1 mm (readable in Properties).

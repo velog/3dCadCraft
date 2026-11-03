@@ -162,6 +162,12 @@ pub enum AppCmd {
     ContactSolver,
     /// The Motion and Contact window on one of its tabs.
     Motion(super::motion::MotionTab),
+    /// A new view / positional representation or model state (spec 3.9).
+    NewRep(super::reps::RepKind),
+    /// The Model States table (spec 3.9).
+    StateTable,
+    /// Solves every positional representation (spec 3.9).
+    VerifyPositions,
     /// Return: from Edit in place back to the assembly.
     Return,
     /// Find in Browser: the selected component's row.
@@ -410,6 +416,7 @@ const A_POSITION: Place = Place::Ribbon("Assemble", "Position");
 const A_RELATIONSHIPS: Place = Place::Ribbon("Assemble", "Relationships");
 const A_PATTERN: Place = Place::Ribbon("Assemble", "Pattern");
 const A_MOTION: Place = Place::Ribbon("Assemble", "Motion");
+const A_REPS: Place = Place::Ribbon("Manage", "Representations");
 const A_PRODUCTIVITY: Place = Place::Ribbon("Assemble", "Productivity");
 const A_SIMPLIFY: Place = Place::Ribbon("Assemble", "Simplification");
 const I_INTERFERENCE: Place = Place::Ribbon("Inspect", "Interference");
@@ -1801,6 +1808,46 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("Components moved apart for show; the design keeps its places")
         .spec("3.1b-motion-contact.md"),
+    c("asm.rep_view", "New View Representation", "Ново изгледно представяне", Icon::RepView)
+        .short("View")
+        .run(Action::App(AppCmd::NewRep(super::reps::RepKind::View)))
+        .alias(&["DVR"])
+        .at(&[A_REPS])
+        .env(ASSEMBLY)
+        .tip("Stores what is seen: visibility, appearance, camera")
+        .spec("3.9-representations.md"),
+    c("asm.rep_position", "New Positional Representation", "Ново позиционно представяне", Icon::RepPosition)
+        .short("Position")
+        .run(Action::App(AppCmd::NewRep(super::reps::RepKind::Position)))
+        .alias(&["PRP"])
+        .at(&[A_REPS])
+        .env(ASSEMBLY)
+        .tip("Another position of the mechanism: relationship values, grounding and offsets overridden")
+        .spec("3.9-representations.md"),
+    c("asm.rep_state", "New Model State", "Ново състояние на модела", Icon::RepState)
+        .short("State")
+        .run(Action::App(AppCmd::NewRep(super::reps::RepKind::State)))
+        .alias(&["MDS"])
+        .at(&[A_REPS])
+        .env(ASSEMBLY)
+        .tip("A variant of the assembly with other components suppressed; the BOM follows")
+        .spec("3.9-representations.md"),
+    c("asm.rep_table", "Edit Model States Table", "Таблица на състоянията", Icon::RepTable)
+        .short("Table")
+        .run(Action::App(AppCmd::StateTable))
+        .alias(&["MSE"])
+        .at(&[A_REPS])
+        .env(ASSEMBLY)
+        .tip("Which components each model state suppresses")
+        .spec("3.9-representations.md"),
+    c("asm.rep_verify", "Verify Positions", "Проверка на позициите", Icon::RepVerify)
+        .short("Verify")
+        .run(Action::App(AppCmd::VerifyPositions))
+        .alias(&["VPR"])
+        .at(&[A_REPS])
+        .env(ASSEMBLY)
+        .tip("Solves every positional representation and says which ones fail")
+        .spec("3.9-representations.md"),
     c("asm.return_parent", "Return", "Връщане", Icon::Home)
         .run(Action::App(AppCmd::Return))
         .key("Ctrl+Equals")

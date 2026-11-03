@@ -508,5 +508,7 @@ takes the installed Inventor's keys and aliases.
 Files tab of the browser: point at or click a row for its picture, the arrows walk the rows, a double-click opens it, a drag into an assembly's view places it (a file is linked).
 In a sketch: Ctrl + right click = the constraints in a column at the cursor (Shift + right click: the same column above Selection). Shift + click with Horizontal / Vertical = the other one.
 
+Assembly › Representations: DVR New View Representation, PRP New Positional Representation, MDS New Model State, MSE Edit Model States Table, VPR Verify Positions.
+
 Assembly › Motion: CSO Contact Solver, CST Contact Sets, MLK Motion, MST Motion Study, EXV Exploded View. Tab Demote, Shift+Tab Promote, Ctrl+B
 Find in Browser, Ctrl+F browser search, Ctrl+= / Ctrl+- Return.

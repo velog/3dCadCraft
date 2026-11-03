@@ -2910,3 +2910,34 @@ fn break_out_to_sketch_cuts_along_the_line() {
     let text = serde_json::to_string(&out).unwrap();
     assert_eq!(serde_json::from_str::<BreakOut>(&text).unwrap(), out);
 }
+
+#[test]
+fn a_projected_view_follows_the_representations_of_its_base() {
+    let mut d = DrawingDocument::default();
+    let model = crate::document::DocRef::local(crate::document::DocumentId::new_random());
+    let base = d
+        .add_base_view(
+            model,
+            ViewOrientation::Front,
+            [100.0, 100.0],
+            1.0,
+            ViewStyle::default(),
+        )
+        .unwrap();
+    let reps = ViewReps {
+        view: Some(2),
+        position: Some(1),
+        state: None,
+    };
+    d.sheet_mut().unwrap().view_mut(base).unwrap().reps = reps;
+    let top = d.add_projected_view(base, [100.0, 200.0]).unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    assert_eq!(d.reps_of(&sheet, top), reps);
+    let LinesJob::Model { reps: got, .. } = d.lines_job(&sheet, top).unwrap() else {
+        panic!("a model job");
+    };
+    assert_eq!(got, reps);
+    // Saved only when chosen.
+    let v = sheet.view(top).unwrap();
+    assert!(!serde_json::to_string(v).unwrap().contains("reps"));
+}

@@ -389,6 +389,13 @@ pub struct AssemblyDocument {
     /// its bodies cuts. Older builds ignore it (no cuts shown).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub features: Option<crate::assembly::features::AsmFeatures>,
+    /// View and positional representations and model states (spec 3.9). Older
+    /// builds ignore them: the assembly opens as it was saved.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::assembly::reps::Representations::is_empty"
+    )]
+    pub reps: crate::assembly::reps::Representations,
 }
 
 /// The payload of a document.
@@ -697,6 +704,7 @@ mod tests {
 
     pub(crate) fn assembly_of(refs: &[DocRef]) -> DocumentData {
         DocumentData::Assembly(AssemblyDocument {
+            reps: Default::default(),
             folders: Vec::new(),
             motion: Default::default(),
             occurrences: refs
