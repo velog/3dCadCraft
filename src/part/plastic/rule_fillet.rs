@@ -158,7 +158,10 @@ fn source_faces(body: &BRep, faces: &[FaceRef]) -> Vec<FaceId> {
     out
 }
 
-/// Planar faces of the features `ids` lying in one plane with a face of something else.
+/// The planar faces a feature `ids` is flush with. The kernel joins coplanar faces under the older
+/// face's name, so such a face belongs to something else yet runs on over the feature: it meets the
+/// feature's faces at two or more convex edges, which a face merely touched by it does not. Faces
+/// of the feature lying in one plane with a face of something else count too.
 fn merged_faces(body: &BRep, ids: &[String]) -> Vec<FaceId> {
     use crate::kernel::Surface;
     let plane = |f: FaceId| match body.face(f).and_then(|x| body.surface(x.surface)) {
@@ -167,7 +170,8 @@ fn merged_faces(body: &BRep, ids: &[String]) -> Vec<FaceId> {
     };
     let mine = |f: FaceId| owner(body, f).is_some_and(|o| ids.contains(&o));
     let all: Vec<FaceId> = body.faces().map(|(f, _)| f).collect();
-    all.iter()
+    let mut out: Vec<FaceId> = all
+        .iter()
         .copied()
         .filter(|&f| {
             let Some(p) = plane(f).filter(|_| mine(f)) else {
@@ -181,7 +185,23 @@ fn merged_faces(body: &BRep, ids: &[String]) -> Vec<FaceId> {
                     })
             })
         })
-        .collect()
+        .collect();
+    for &g in &all {
+        if mine(g) || plane(g).is_none() {
+            continue;
+        }
+        let convex_with_feature = edges_of_face(body, g)
+            .into_iter()
+            .filter(|&e| {
+                body.edge_faces(e).iter().any(|&f| f != g && mine(f))
+                    && edge_convex(body, e) == Some(true)
+            })
+            .count();
+        if convex_with_feature >= 2 {
+            out.push(g);
+        }
+    }
+    out
 }
 
 /// Does the straight edge `e` leave `faces` along `axis`?

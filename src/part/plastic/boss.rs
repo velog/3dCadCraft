@@ -429,11 +429,10 @@ fn one(
     rays: &Rays,
     o: Point3,
     d: Vector3,
-    x: Vector3,
+    (x, y): (Vector3, Vector3),
     prefix: &str,
 ) -> Result<Tools, Fail> {
     let user = |m: &str| Fail::User(m.to_owned());
-    let y = d.cross(&x);
     let r0 = op.outer_radius();
     let tan_o = op.outer_draft.tan();
     // The wall under the axis, and how deep it lies round the outside.
@@ -528,10 +527,12 @@ pub(in crate::part) fn boss(
         .map_err(Fail::User)?;
     let rays = Rays::of(body, &op.solids);
     let d = op.direction(&rays, &pts, n).map_err(Fail::User)?;
+    // Angles count in the sketch, seen from its normal, whichever way the boss runs.
+    let frame = (x, n.cross(&x));
     let (mut posts, mut ribs, mut cut) = (Vec::new(), Vec::new(), Vec::new());
     for (k, p) in pts.iter().enumerate() {
         let start = *p - d * op.offset;
-        let t = one(op, &rays, start, d, x, &format!("{id}:{}", k + 1))?;
+        let t = one(op, &rays, start, d, frame, &format!("{id}:{}", k + 1))?;
         posts.push(t.post);
         ribs.push(t.ribs);
         cut.extend(t.cut);

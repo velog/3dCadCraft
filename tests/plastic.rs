@@ -4,15 +4,17 @@ use std::f64::consts::PI;
 
 use cadcraft3d::kernel::{Point3, Real};
 use cadcraft3d::part::blend::edge_ref;
+use cadcraft3d::part::placement::PointRef;
+use cadcraft3d::part::plastic::Centers;
 use cadcraft3d::part::plastic::boss::{
-    BossHead, BossKind, BossOp, BossRibs, BossThread, ThreadHole,
+    BossHead, BossKind, BossOp, BossRibs, BossThread, HeadStyle, ThreadHole,
 };
 use cadcraft3d::part::plastic::grill::{GrillCurves, GrillOp, flow_area, regions_of};
 use cadcraft3d::part::plastic::lip::{LipKind, LipOp};
-use cadcraft3d::part::plastic::rest::{RestExtent, RestOp, RestSide};
+use cadcraft3d::part::plastic::rest::{RestExtent, RestLanding, RestOp, RestSide};
 use cadcraft3d::part::plastic::rule_fillet::{FilletRule, RuleFilletOp, RuleRow, RuleSource};
 use cadcraft3d::part::plastic::snap_fit::{SnapFitOp, SnapHook, SnapKind, SnapLoop};
-use cadcraft3d::part::work::{LineRef, WorkPlaneDef};
+use cadcraft3d::part::work::{LineRef, WorkPlaneDef, WorkPointDef};
 use cadcraft3d::part::{
     BodyOp, BodyOpFeature, EdgeRef, ExtrudeFeature, FaceRef, OriginPlane, PartDocument, PlaneRef,
     ProfileRef, SketchOptions, SketchPlacement, WorkDef, WorkFeature,
@@ -1017,4 +1019,553 @@ fn every_feature_survives_a_save() {
     assert_eq!(got.len(), 2);
     close(got[0], v1, 1e-6, "part after load");
     close(got[1], v2, 1e-6, "lip after load");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Options that had no check of their own.
+
+/// A body of revolution from its section (radius, height): the polygon's Pappus integral.
+fn revolved(section: &[(Real, Real)]) -> Real {
+    let mut sum = 0.0;
+    for k in 0..section.len() {
+        let (a, b) = (section[k], section[(k + 1) % section.len()]);
+        sum += (a.0 * a.0 + a.0 * b.0 + b.0 * b.0) * (b.1 - a.1);
+    }
+    (sum * PI / 3.0).abs()
+}
+
+/// Midpoint rule: the integrals below have no neat closed form worth writing out.
+fn integral(from: Real, to: Real, f: impl Fn(Real) -> Real) -> Real {
+    const N: usize = 2000;
+    let h = (to - from) / N as Real;
+    (0..N)
+        .map(|k| f(from + h * (k as Real + 0.5)))
+        .sum::<Real>()
+        * h
+}
+
+fn inside(p: &PartDocument, x: Real, y: Real, z: Real) -> bool {
+    p.exact_bodies
+        .0
+        .iter()
+        .any(|s| cadcraft3d::kernel::exact::contains(s, Point3::new(x, y, z)))
+}
+
+#[test]
+fn head_boss_countersink() {
+    let mut p = wall();
+    let id = center_at(&mut p, 20.0);
+    let mut op = BossOp::new(id);
+    op.kind = BossKind::Head(BossHead {
+        style: HeadStyle::Countersink,
+        countersink: 90f64.to_radians(),
+        ..BossHead::default()
+    });
+    add(&mut p, BodyOp::Boss(op));
+    // Ø3 for 1.5, the 90° cone from Ø3 to Ø8 (2.5 high), the recess Ø8 through the wall.
+    let post = PI * 30.25 * 17.0;
+    let cut = revolved(&[
+        (0.0, 0.0),
+        (1.5, 0.0),
+        (1.5, 1.5),
+        (4.0, 4.0),
+        (4.0, 20.0),
+        (0.0, 20.0),
+    ]);
+    close(volume(&p), V0 + post - cut, 0.3, "countersink");
+}
+
+#[test]
+fn boss_drafts() {
+    let (out, inner) = (2f64.to_radians().tan(), 1f64.to_radians().tan());
+    // Thread: the post widens to the wall, the hole narrows to its floor.
+    let mut p = wall();
+    let id = center_at(&mut p, 20.0);
+    let mut op = BossOp::new(id);
+    op.outer_draft = 2f64.to_radians();
+    op.kind = BossKind::Thread(BossThread {
+        inner_draft: 1f64.to_radians(),
+        ..BossThread::default()
+    });
+    add(&mut p, BodyOp::Boss(op));
+    let post = revolved(&[
+        (0.0, 0.0),
+        (3.0, 0.0),
+        (3.0 + 17.0 * out, 17.0),
+        (0.0, 17.0),
+    ]);
+    let hole = revolved(&[
+        (0.0, 0.0),
+        (1.25 + 17.0 * inner, 0.0),
+        (1.25, 17.0),
+        (0.0, 17.0),
+    ]);
+    close(volume(&p), V0 + post - hole, 0.3, "thread drafts");
+    // Head: recess, shank and clamp ring each with its own draft.
+    let mut p = wall();
+    let id = center_at(&mut p, 20.0);
+    let mut op = BossOp::new(id);
+    let (a, b, c) = (1f64.to_radians(), 2f64.to_radians(), 10f64.to_radians());
+    op.kind = BossKind::Head(BossHead {
+        inner_draft: a,
+        shaft_draft: b,
+        clamp_draft: c,
+        ..BossHead::default()
+    });
+    add(&mut p, BodyOp::Boss(op));
+    let (s, top) = (1.5, 2.0);
+    let cut = revolved(&[
+        (0.0, 0.0),
+        (1.5 + top * b.tan(), 0.0),
+        (1.5, top),
+        (3.5 - 0.5 * c.tan(), top),
+        (3.5, s),
+        (4.0, s),
+        (4.0 + (20.0 - s) * a.tan(), 20.0),
+        (0.0, 20.0),
+    ]);
+    close(volume(&p), V0 + PI * 30.25 * 17.0 - cut, 0.3, "head drafts");
+}
+
+/// A boss's single rib at 30 degrees lies at +30 seen from the sketch's normal, whichever way the
+/// boss runs.
+#[test]
+fn boss_rib_angles_are_the_sketchs() {
+    // The sketch above the wall (boss down, against the normal) and below it (boss up, along it).
+    for z in [20.0, -17.0] {
+        let mut p = wall();
+        let id = center_at(&mut p, z);
+        let mut op = BossOp::new(id);
+        op.kind = BossKind::Thread(BossThread {
+            hole: ThreadHole::None,
+            ..BossThread::default()
+        });
+        op.ribs = Some(BossRibs {
+            count: 1,
+            shoulder: 5.0,
+            top_offset: 2.0,
+            start: 30f64.to_radians(),
+            ..BossRibs::default()
+        });
+        add(&mut p, BodyOp::Boss(op));
+        let at = |deg: Real| {
+            let a = deg.to_radians();
+            let h = if z > 0.0 { 10.0 } else { -7.0 };
+            inside(&p, 50.0 + 6.0 * a.cos(), 30.0 + 6.0 * a.sin(), h)
+        };
+        assert!(at(30.0), "z {z}: the rib at +30");
+        assert!(!at(-30.0), "z {z}: nothing at -30");
+    }
+    // Space Angle: 3 ribs share 90 degrees, 30 apart from the start.
+    let mut p = wall();
+    let id = center_at(&mut p, 20.0);
+    let mut op = BossOp::new(id);
+    op.kind = BossKind::Thread(BossThread {
+        hole: ThreadHole::None,
+        ..BossThread::default()
+    });
+    op.ribs = Some(BossRibs {
+        count: 3,
+        shoulder: 5.0,
+        top_offset: 2.0,
+        start: 10f64.to_radians(),
+        space: 90f64.to_radians(),
+        ..BossRibs::default()
+    });
+    add(&mut p, BodyOp::Boss(op));
+    let at = |deg: Real| {
+        let a = deg.to_radians();
+        inside(&p, 50.0 + 6.0 * a.cos(), 30.0 + 6.0 * a.sin(), 10.0)
+    };
+    for deg in [10.0, 40.0, 70.0] {
+        assert!(at(deg), "a rib at {deg}");
+    }
+    for deg in [100.0, 190.0, 280.0] {
+        assert!(!at(deg), "no rib at {deg}");
+    }
+}
+
+/// A rib with a draft and a flare: its section grows towards the wall (both by hand).
+#[test]
+fn boss_rib_draft_and_flare() {
+    let plain = {
+        let mut p = wall();
+        let id = center_at(&mut p, 20.0);
+        let mut op = BossOp::new(id);
+        op.kind = BossKind::Thread(BossThread {
+            hole: ThreadHole::None,
+            ..BossThread::default()
+        });
+        add(&mut p, BodyOp::Boss(op));
+        volume(&p)
+    };
+    let (dt, ft) = (1f64.to_radians().tan(), 5f64.to_radians().tan());
+    let mut p = wall();
+    let id = center_at(&mut p, 20.0);
+    let mut op = BossOp::new(id);
+    op.kind = BossKind::Thread(BossThread {
+        hole: ThreadHole::None,
+        ..BossThread::default()
+    });
+    op.ribs = Some(BossRibs {
+        count: 1,
+        shoulder: 3.0,
+        top_offset: 2.0,
+        draft: 1f64.to_radians(),
+        flare: 5f64.to_radians(),
+        ..BossRibs::default()
+    });
+    add(&mut p, BodyOp::Boss(op));
+    // At depth s below the rib's top: width 1 + 2 s tan(draft), reach 6 + s tan(flare), less the
+    // post's circle of radius 3.
+    let rib = integral(0.0, 15.0, |s| {
+        strip_outside(3.0, 1.0 + 2.0 * s * dt, 6.0 + s * ft)
+    });
+    close(volume(&p) - plain, rib, 0.1, "rib draft and flare");
+}
+
+#[test]
+fn boss_on_point() {
+    let mut p = wall();
+    let mut planes = Vec::new();
+    for (base, distance) in [
+        (OriginPlane::XY, 20.0),
+        (OriginPlane::XZ, -30.0),
+        (OriginPlane::YZ, 50.0),
+    ] {
+        let id = p
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(base),
+                distance,
+            })))
+            .unwrap_or_else(|e| panic!("{e}"));
+        planes.push(PlaneRef::Work(id));
+    }
+    let [a, b, c] = <[PlaneRef; 3]>::try_from(planes).unwrap_or_else(|_| panic!("three"));
+    let wp = p
+        .add_work(WorkFeature::new(WorkDef::Point(
+            WorkPointDef::ThreePlanes { planes: [a, b, c] },
+        )))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let mut op = BossOp::new("");
+    op.centers = Centers::Points {
+        points: vec![PointRef::Work(wp)],
+        direction: LineRef::Origin(2),
+    };
+    add(&mut p, BodyOp::Boss(op));
+    let (post, hole) = (PI * 9.0 * 17.0, PI * 1.5625 * 17.0);
+    close(volume(&p), V0 + post - hole, 0.2, "on point");
+    assert!(inside(&p, 52.0, 30.0, 10.0), "the post stands at the point");
+}
+
+/// A rest on the flat wall: a 20 x 20 outline, walls 1, sketch at `z`.
+fn rest_at(z: Real, edit: impl FnOnce(&mut RestOp, &mut PartDocument)) -> PartDocument {
+    let mut p = wall();
+    let i = plane_at(&mut p, z);
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(p2(40.0, 20.0), p2(60.0, 40.0))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let id = p.sketches[i].id.clone();
+    let mut op = RestOp::new(id, 1.0);
+    edit(&mut op, &mut p);
+    add(&mut p, BodyOp::Rest(op));
+    p
+}
+
+fn work_plane(p: &mut PartDocument, z: Real) -> PlaneRef {
+    let id = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: z,
+        })))
+        .unwrap_or_else(|e| panic!("{e}"));
+    PlaneRef::Work(id)
+}
+
+#[test]
+fn rest_landing_and_platform_options() {
+    let hole = V0 - 324.0 * 3.0;
+    // Landing Distance 2: its top at z 10, walls from z 9 down to the wall (6).
+    let p = rest_at(8.0, |op, _| op.landing = RestLanding::Distance(2.0));
+    close(
+        volume(&p),
+        hole + 400.0 + 76.0 * 6.0,
+        0.02,
+        "landing distance",
+    );
+    // The same landing on a plane at z 9, with offset 1 out of the body.
+    let p = rest_at(8.0, |op, p| {
+        op.landing = RestLanding::ToSurface(work_plane(p, 9.0), 1.0);
+    });
+    close(
+        volume(&p),
+        hole + 400.0 + 76.0 * 6.0,
+        0.02,
+        "landing to surface",
+    );
+    // Platform walls to a plane at z 5: 2 below the landing plate (z 7).
+    let p = rest_at(8.0, |op, p| {
+        op.extent = RestExtent::ToSurface(work_plane(p, 5.0), 0.0);
+    });
+    close(
+        volume(&p),
+        hole + 400.0 + 76.0 * 2.0,
+        0.02,
+        "platform to surface",
+    );
+    // Platform walls with a taper, stopped in the air: at distance a from the landing's top both
+    // outlines have grown by a tan, so the wall's section is 2 (38 + 4 a tan).
+    let t = 5f64.to_radians().tan();
+    let p = rest_at(8.0, |op, _| {
+        op.extent = RestExtent::Distance(3.0);
+        op.landing_taper = 5f64.to_radians();
+    });
+    let round_plate = integral(0.0, 1.0, |a| (20.0 + 2.0 * a * t).powi(2) - 400.0);
+    let below = integral(1.0, 3.0, |a| 2.0 * (38.0 + 4.0 * a * t));
+    close(
+        volume(&p),
+        hole + 400.0 + round_plate + below,
+        0.02,
+        "landing taper",
+    );
+}
+
+/// The slanted rest again, with both tapers, summed on a grid.
+#[test]
+fn rest_tapers_on_a_slanted_wall() {
+    let (tl, tc) = (3f64.to_radians().tan(), 4f64.to_radians().tan());
+    let mut p = slanted();
+    let v0 = volume(&p);
+    let (lo, hi) = p.body.bounding_box().unwrap_or_else(|| panic!("no box"));
+    let mid_y = (lo.y + hi.y) / 2.0;
+    let i = plane_at(&mut p, 16.0);
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(p2(40.0, mid_y - 10.0), p2(60.0, mid_y + 10.0))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let id = p.sketches[i].id.clone();
+    let mut op = RestOp::new(id, 1.0);
+    op.flip = true;
+    op.landing_taper = 3f64.to_radians();
+    op.clearance_taper = 4f64.to_radians();
+    add(&mut p, BodyOp::Rest(op));
+    let in_rect =
+        |x: Real, y: Real, half: Real| (x - 50.0).abs() < half && (y - mid_y).abs() < half;
+    let step = 0.1;
+    let mut change = 0.0;
+    let mut x = 36.05;
+    while x < 64.0 {
+        let mut y = mid_y - 14.0 + step / 2.0;
+        while y < mid_y + 14.0 {
+            let (w0, w1, mid) = (10.0 + 0.1 * x, 13.0 + 0.1 * x, 11.5 + 0.1 * x);
+            let mut z = 9.05;
+            while z < 27.0 {
+                let wall = (w0..w1).contains(&z);
+                let now = if z > 16.0 {
+                    let g = (z - 16.0) * tc;
+                    let open = in_rect(x, y, 9.0 + g);
+                    let ring = in_rect(x, y, 10.0 + g) && !open && z < mid;
+                    ring || (wall && !open)
+                } else {
+                    let g = (16.0 - z) * tl;
+                    let plate = z > 15.0 && in_rect(x, y, 10.0);
+                    let ring = z > mid && in_rect(x, y, 10.0 + g) && !in_rect(x, y, 9.0 + g);
+                    plate || ring || (wall && !in_rect(x, y, 9.0))
+                };
+                change += (now as i32 - wall as i32) as Real;
+                z += step;
+            }
+            y += step;
+        }
+        x += step;
+    }
+    let want = v0 + change * step * step * step;
+    close(volume(&p), want, want * 3e-3, "tapers");
+}
+
+#[test]
+fn rule_fillet_other_rules() {
+    let base = V0 + PI * 9.0 * 10.0;
+    let area = 1.0 - PI / 4.0;
+    let x = 1.0 - (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI));
+    let rim = 2.0 * PI * (2.0 + x) * area;
+    let foot = concave_ring(3.0, 1.0);
+    let op = |row| RuleFilletOp {
+        rows: vec![row],
+        exclude_faces: Vec::new(),
+        remove_merged: false,
+    };
+    let top = || FaceRef {
+        face: "Box1:Top".into(),
+        hint: [10.0, 10.0, 3.0],
+    };
+    // All Edges of the feature: its rim and its foot.
+    let (mut p, id) = post();
+    add(
+        &mut p,
+        BodyOp::RuleFillet(op(RuleRow::features(vec![id], FilletRule::AllEdges, 1.0))),
+    );
+    close(volume(&p), base + foot - rim, 0.1, "feature, all edges");
+    // Against Features: the post against the box: the foot.
+    let (mut p, id) = post();
+    add(
+        &mut p,
+        BodyOp::RuleFillet(op(RuleRow::features(
+            vec![id],
+            FilletRule::AgainstFeatures(vec!["Box1".into()]),
+            1.0,
+        ))),
+    );
+    close(volume(&p), base + foot, 0.1, "feature, against features");
+    // A face against features: the same foot.
+    let (mut p, id) = post();
+    add(
+        &mut p,
+        BodyOp::RuleFillet(op(RuleRow {
+            source: RuleSource::Faces(vec![top()]),
+            rule: FilletRule::AgainstFeatures(vec![id]),
+            radius: 1.0,
+            all_rounds: true,
+            all_fillets: true,
+        })),
+    );
+    close(volume(&p), base + foot, 0.1, "face, against features");
+    // A face's All Edges, concave only: the foot, not the plate's outline.
+    let (mut p, _) = post();
+    add(
+        &mut p,
+        BodyOp::RuleFillet(op(RuleRow {
+            source: RuleSource::Faces(vec![top()]),
+            rule: FilletRule::AllEdges,
+            radius: 1.0,
+            all_rounds: false,
+            all_fillets: true,
+        })),
+    );
+    close(volume(&p), base + foot, 0.1, "face, all edges");
+    // Excluded: the post's top keeps its rim.
+    let (mut p, id) = post();
+    let mut with_out = op(RuleRow::features(
+        vec![id.clone()],
+        FilletRule::AllEdges,
+        1.0,
+    ));
+    with_out.exclude_faces = p
+        .body
+        .faces()
+        .filter_map(|(_, f)| f.name.clone())
+        .filter(|n| n.starts_with(&format!("{id}:")) && n.ends_with(":End"))
+        .collect();
+    assert!(
+        !with_out.exclude_faces.is_empty(),
+        "the post's top has a name"
+    );
+    add(&mut p, BodyOp::RuleFillet(with_out));
+    close(volume(&p), base + foot, 0.1, "excluded top");
+}
+
+/// Remove Merged Faces: a block flush with the plate's side keeps that side's edges sharp.
+#[test]
+fn rule_fillet_remove_merged() {
+    let block = || {
+        let mut p = wall();
+        let i = plane_at(&mut p, 3.0);
+        let sk = &mut p.sketches[i].sketch;
+        sk.add_rectangle_two_point(p2(0.0, 20.0), p2(20.0, 40.0))
+            .unwrap_or_else(|e| panic!("{e}"));
+        let r: Vec<ProfileRef> = sk
+            .regions()
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut ex = ExtrudeFeature::new(r, 5.0);
+        ex.operation = cadcraft3d::part::Operation::Join;
+        let id = p.add_extrude(i, ex).unwrap_or_else(|e| panic!("{e}"));
+        (p, id)
+    };
+    // The block's top edge on the flush side: a point just under it. That side has become part of
+    // the plate's own face, so the edge counts as against the part.
+    let corner = (0.05, 30.0, 7.95);
+    let convex = |id: String| {
+        let mut row = RuleRow::features(vec![id], FilletRule::AgainstPart, 1.0);
+        row.all_fillets = false;
+        row
+    };
+    let (mut p, id) = block();
+    assert!(inside(&p, corner.0, corner.1, corner.2));
+    let v = volume(&p);
+    add(
+        &mut p,
+        BodyOp::RuleFillet(RuleFilletOp {
+            rows: vec![convex(id)],
+            exclude_faces: Vec::new(),
+            remove_merged: false,
+        }),
+    );
+    assert!(
+        !inside(&p, corner.0, corner.1, corner.2),
+        "rounded without the option"
+    );
+    assert!(volume(&p) < v, "material left");
+    // With it the only edges of that rule are gone.
+    let (mut p, id) = block();
+    add(
+        &mut p,
+        BodyOp::RuleFillet(RuleFilletOp {
+            rows: vec![convex(id)],
+            exclude_faces: Vec::new(),
+            remove_merged: true,
+        }),
+    );
+    close(volume(&p), v, 1e-6, "nothing to round");
+    // All Edges keeps the block's other edges.
+    let (mut p, id) = block();
+    add(
+        &mut p,
+        BodyOp::RuleFillet(RuleFilletOp {
+            rows: vec![RuleRow::features(vec![id], FilletRule::FreeEdges, 1.0)],
+            exclude_faces: Vec::new(),
+            remove_merged: true,
+        }),
+    );
+    assert!(
+        inside(&p, corner.0, corner.1, corner.2),
+        "the flush side stays sharp"
+    );
+    assert!(
+        !inside(&p, 19.95, 30.0, 7.95),
+        "the far top edge is rounded"
+    );
+}
+
+#[test]
+fn grill_draft() {
+    let t = 2f64.to_radians().tan();
+    // Boundary 40 x 20, wall 1, from 1 above the plate to 1 into it: outside grows, opening shrinks.
+    let mut p = wall();
+    let i = grill_sketch(&mut p);
+    let id = p.sketches[i].id.clone();
+    let rib_curves = lines(&mut p, i, &[((50.0, 15.0), (50.0, 45.0))]);
+    let mut op = GrillOp::new(id.clone());
+    op.outside_height = 1.0;
+    op.draft = 2f64.to_radians();
+    op.ribs = Some(GrillCurves {
+        sketch: id,
+        curves: rib_curves,
+        thickness: 1.0,
+        height: 2.0,
+        top_offset: 0.0,
+        bottom_offset: 0.0,
+    });
+    add(&mut p, BodyOp::Grill(op));
+    let hole = |s: Real| (38.0 - 2.0 * s * t) * (18.0 - 2.0 * s * t);
+    let above = integral(0.0, 1.0, |s| {
+        (40.0 + 2.0 * s * t) * (20.0 + 2.0 * s * t) - hole(s)
+    });
+    let within = integral(1.0, 2.0, |s| 684.0 - hole(s));
+    // The rib spans the opening at each level, and widens the same way.
+    let rib = integral(0.0, 2.0, |s| (1.0 + 2.0 * s * t) * (18.0 - 2.0 * s * t));
+    let want = V0 - 684.0 * 3.0 + above + within + rib;
+    close(volume(&p), want, 0.05, "grill draft");
 }

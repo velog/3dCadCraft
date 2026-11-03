@@ -414,7 +414,8 @@ pub(in crate::part) fn snap_fit(
     let rays = Rays::of(body, &op.solids);
     let b = if op.flip { -n } else { n };
     let turn = op.hook_arrow as Real * std::f64::consts::FRAC_PI_2;
-    let u = x * turn.cos() + b.cross(&x) * turn.sin();
+    // The arrows count in the sketch, so Flip leaves the hook facing the way it did.
+    let u = x * turn.cos() + n.cross(&x) * turn.sin();
     let mut tools = Vec::new();
     for (k, p) in pts.iter().enumerate() {
         let back = root(&rays, op, *p, b)?;
