@@ -826,6 +826,8 @@ surface lofts, a tube swept along a spline (Pappus). **Specification:** [spec/2.
 
 **Specification:** [spec/3.1-assemblies.md](spec/3.1-assemblies.md) (3.1–3.3)
 
+Also done: **Assemble** (the first selection moves to the second, the type follows from what was picked), **Mate** of vertices, relationship glyphs (**Show**, **Show Sick**, **Hide All**) and **Degrees of Freedom** as arrows and arcs in the view (§3.2a, §3.2b).
+
 **What it does.** Places parts and subassemblies in an assembly: from the same project, from a linked library (Link) or as a copy (Append). The first component is usually **grounded**.
 
 **How it works.** `Occurrence { id, name, component: DocRef, transform, grounded, visible }` in the file format; a part placed N times is stored once. Step A1 (2026-10-23, waiting for a visual check): File → New Assembly (its own file), Place (a file browser with a preview; part files are linked, named after the file), Place Grounded at Origin and 90° turns, the first component grounded, names `Part:k`, selection and prehighlight, Free Move / Free Rotate, Grounded / Visibility / Open / Delete, browser tree, Properties with position and rotation (`src/assembly.rs`, `src/gui/assembly.rs`).
@@ -883,6 +885,8 @@ Finds the overlapping volumes between components, shows them in red and gives th
 ## 3.6 Bill of materials (BOM) — 🟡 (first level; waiting for a visual check) · M
 
 **Specification:** [spec/3.6-bom.md](spec/3.6-bom.md)
+
+Also done: **Renumber Items**, typed item numbers (overrides) and **Static** quantities, kept with the assembly by part number.
 
 **What it does.** A list of the components with quantities.
 

@@ -2190,29 +2190,36 @@ pub static COMMANDS: &[Command] = &[
         .inv("Copy Components")
         .alias(&["CPC"])
         .at(&[A_PATTERN]),
-    ap("asm.assemble", "Assemble", "Сглобяване", Icon::AsmAssemble, Ap::Assemble)
+    c("asm.assemble", "Assemble", "Сглобяване", Icon::AsmAssemble)
+        .run(Action::AsmAssemble)
         .alias(&["ASM"])
-        .at(&[A_RELATIONSHIPS]),
+        .at(&[A_RELATIONSHIPS])
+        .env(ASSEMBLY)
+        .tip("Pick geometry of the component to move, then where it goes: it moves there and the relationship follows from what was picked")
+        .spec("3.1-assemblies.md"),
     c("asm.show_rel", "Show", "Показване на връзките", Icon::ShowRelations)
         .inv("Show Relationships")
         .alias(&["SHR"])
         .at(&[A_RELATIONSHIPS])
         .env(ASSEMBLY)
-        .tip("Shows the relationship glyphs of the chosen components")
-        .todo("3.2"),
+        .run(Action::AsmShowRel)
+        .tip("Shows the relationship glyphs of the selected components; with none selected, of those you click")
+        .spec("3.1-assemblies.md"),
     c("asm.show_sick", "Show Sick", "Показване на болните връзки", Icon::ShowSick)
         .alias(&["SSR"])
         .at(&[A_RELATIONSHIPS])
         .env(ASSEMBLY)
-        .tip("Shows the glyphs of the sick relationships")
-        .todo("3.2"),
+        .run(Action::AsmShowSick)
+        .tip("Shows the glyphs of the sick relationships, in red")
+        .spec("3.1-assemblies.md"),
     c("asm.hide_rel", "Hide All", "Скриване на връзките", Icon::HideRelations)
         .inv("Hide All Relationships")
         .alias(&["HAR"])
         .at(&[A_RELATIONSHIPS])
         .env(ASSEMBLY)
+        .run(Action::AsmHideRel)
         .tip("Hides every relationship glyph")
-        .todo("3.2"),
+        .spec("3.1-assemblies.md"),
     c("asm.features", "Assembly Features", "Елементи на сглобката", Icon::AsmFeatures)
         .run(Action::AsmFeatures)
         .alias(&["AF"])
@@ -2243,8 +2250,9 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["DOF"])
         .at(&[V_VIS])
         .env(ASSEMBLY)
-        .tip("Shows each free component's degrees of freedom as a glyph")
-        .todo("3.2"),
+        .run(Action::AsmDof)
+        .tip("Shows each free component's degrees of freedom: an arrow per slide, an arc per turn")
+        .spec("3.1-assemblies.md"),
     // Design tab (Design Accelerator)
     ap("design.bolted", "Bolted Connection", "Болтово съединение", Icon::Bolt, Ap::BoltedConnection)
         .short("Bolted")
@@ -2990,6 +2998,7 @@ pub fn repeats(action: Action) -> bool {
         | Action::AsmFreeMove
         | Action::AsmFreeRotate
         | Action::AsmConstrain
+        | Action::AsmAssemble
         | Action::AsmJoint
         | Action::AsmPlanned(_)
         | Action::Drawing(_) => true,

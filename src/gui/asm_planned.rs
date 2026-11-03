@@ -90,8 +90,6 @@ pub enum AsmPlanned {
     MakeLayout,
     Simplify,
     DerivedSubstitutes,
-    // Assemble › Relationships
-    Assemble,
     // Inspect › Interference
     Interference,
     // Manage › Author
@@ -148,7 +146,7 @@ impl AsmPlanned {
     }
 
     #[cfg(test)]
-    pub const ALL: [AsmPlanned; 52] = {
+    pub const ALL: [AsmPlanned; 51] = {
         use AsmPlanned::*;
         [
             PlaceFromLibrary,
@@ -162,7 +160,6 @@ impl AsmPlanned {
             MakeLayout,
             Simplify,
             DerivedSubstitutes,
-            Assemble,
             Interference,
             CreateAssemblyFamily,
             BoltedConnection,
@@ -221,7 +218,6 @@ impl AsmPlanned {
             MakeLayout => "Make Layout",
             Simplify => "Simplify",
             DerivedSubstitutes => "Create Derived Substitutes",
-            Assemble => "Assemble",
             Interference => "Analyze Interference",
             CreateAssemblyFamily => "Create Assembly Family",
             BoltedConnection => "Bolted Connection",
@@ -280,7 +276,6 @@ impl AsmPlanned {
             MakeLayout => Icon::MakeLayout,
             Simplify => Icon::Simplify,
             DerivedSubstitutes => Icon::Substitutes,
-            Assemble => Icon::AsmAssemble,
             Interference => Icon::Interference,
             CreateAssemblyFamily => Icon::CreateAssemblyFamily,
             BoltedConnection => Icon::Bolt,
@@ -335,7 +330,6 @@ impl AsmPlanned {
             Pattern | Mirror => "3.7",
             Copy | Replace => "3.8",
             Simplify | DerivedSubstitutes => "3.11",
-            Assemble => "3.2",
             Interference => "3.5",
             CreateAssemblyFamily => "5.7",
             InsertFrame | FrameChange | EndCap | Miter | CornerJoint | TrimExtend | Notch
@@ -372,9 +366,6 @@ impl AsmPlanned {
                 "A simplified part from the assembly: envelopes, fewer components and features."
             }
             DerivedSubstitutes => "A derived substitute part for each first-level subassembly.",
-            Assemble => {
-                "Pick a face or edge of the moving component, then one of the target: the relationship is inferred."
-            }
             Interference => "Finds the volumes where components overlap.",
             CreateAssemblyFamily => {
                 "A family table of the assembly: members, components, parameters."
@@ -805,26 +796,6 @@ impl AsmPlanned {
                     Radio("Naming", &["Suffix", "Prefix"], 0),
                     Text("Text", "_SUB"),
                     Combo("Template", &["Standard (mm).ccpart"], 0),
-                ],
-            )],
-            Assemble => &[Page(
-                "Assemble",
-                &[
-                    Sel(
-                        "moving",
-                        "Component",
-                        "select a face or edge of the component to move",
-                        GEOMETRY,
-                    ),
-                    Sel(
-                        "target",
-                        "Target",
-                        "select a face or edge of the target",
-                        GEOMETRY,
-                    ),
-                    Combo("Type", &["Inferred", "Mate", "Flush", "Insert", "Angle"], 0),
-                    Num("Offset", 0.0, " mm"),
-                    Check("Flip", false),
                 ],
             )],
             Interference => &[Page(

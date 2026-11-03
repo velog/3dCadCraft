@@ -364,6 +364,20 @@ pub fn is_axis_mate(kind: ConstraintKind, a: &Geom, b: &Geom) -> bool {
         && b.is_axis_like()
 }
 
+/// What `g`, the geometry of `r`, is to a relationship of `kind`: a point snapped on
+/// a face reads as a frame for joints, and as the point itself in a Mate or Flush
+/// (vertex to vertex, to an edge, to a plane).
+pub fn for_kind(kind: ConstraintKind, r: &GeomRef, g: Geom) -> Geom {
+    match (kind, r, g) {
+        (
+            ConstraintKind::Mate | ConstraintKind::Flush,
+            GeomRef::FacePoint { .. },
+            Geom::Frame { p, .. },
+        ) => Geom::Point { p },
+        (_, _, g) => g,
+    }
+}
+
 /// Where the solver cannot start: normals that a relationship wants opposed
 /// point the same way (or the other way round). The residual is at its largest
 /// there and has no slope, so no step turns the part. Gives a point of the
@@ -1034,6 +1048,15 @@ pub fn predict(kind: ConstraintKind, a: &Geom, b: &Geom) -> (ConstraintKind, Rea
             (Insert, na.dot(&(cb - ca)))
         }
         (k, _, _) => (k, 0.0),
+    }
+}
+
+/// What Assemble makes of a first selection (Inventor lists only the types that
+/// fit): a circular edge is an Insert, anything else a Mate.
+pub fn assemble_kind(first: &Geom) -> ConstraintKind {
+    match first {
+        Geom::Circle { .. } => ConstraintKind::Insert,
+        _ => ConstraintKind::Mate,
     }
 }
 

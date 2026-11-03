@@ -1106,6 +1106,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   round trip of `AssemblyDocument` passes (test through `Project::save` / `load`). `DocRef::variant` = which variant an occurrence places: read
   parts only through `with_part`, compare documents with `.base()`; `DocumentData::references` / `remap_references` see base references and
   keep the variant. A new row kind is a `RowKey` + a cell in `assembly_table` or `variants_table` + its case in `apply_set` / `set_variant_info`.
+- **A vertex in a Mate is a `GeomRef::FacePoint` read as a point** (`relation::for_kind`): a snapped point is a frame for joints, and `is_axis_like` is true of a frame, so read a Mate's ends through it. `Solved::sick` also lists what cannot be met (geometry found), not only lost geometry. Assemble moves its first selection by solving a copy with the target grounded, then adds an ordinary relationship with nothing left to do (`gui/constrain.rs::assemble_commit`). Glyphs and free motions: `gui/asm_relations.rs`, `Solved::free`. BOM item numbers and static quantities: `AssemblyDocument::bom` (`assembly::bom::BomEdits`), by part number.
 - **Assembly constraints (A2)**: data in `AssemblyDocument::constraints` (`assembly::relation`), solved by
   `assembly::solve` (6 unknowns per free component, turn about its own origin scaled by 50 mm, min-norm
   Levenberg, dragged component weighted). GUI changes go through `asm_try` (solve a copy, commit only when

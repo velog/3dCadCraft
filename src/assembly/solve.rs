@@ -48,6 +48,83 @@ pub struct Solved {
     /// Free degrees of freedom of each component that is not grounded
     /// (the others held where they are).
     pub dof: HashMap<u32, usize>,
+    /// The same as motions, for the degrees of freedom glyph (not while dragging).
+    pub free: HashMap<u32, Freedom>,
+}
+
+/// What a component can still do, the others held: its free moves and the axes of
+/// its free turns, unit vectors in assembly coordinates. A turn is measured whatever
+/// else moves with it (a part turning about a hole away from its own origin).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Freedom {
+    /// Directions it can slide along.
+    pub moves: Vec<Vector3>,
+    /// Axes it can turn about.
+    pub turns: Vec<Vector3>,
+}
+
+impl Freedom {
+    /// A component nothing holds.
+    pub fn all() -> Freedom {
+        let axes = vec![Vector3::x(), Vector3::y(), Vector3::z()];
+        Freedom {
+            moves: axes.clone(),
+            turns: axes,
+        }
+    }
+}
+
+/// The unit vectors spanning what `m`'s rows leave free (`m` with 3 or 6 columns).
+fn free_of(m: &DMatrix<Real>) -> Vec<DVector<Real>> {
+    let e = (m.transpose() * m).symmetric_eigen();
+    let top = e.eigenvalues.iter().cloned().fold(0.0, Real::max);
+    (0..m.ncols())
+        .filter(|&k| e.eigenvalues[k] <= 1e-10 * top.max(1e-18))
+        .map(|k| e.eigenvectors.column(k).into_owned())
+        .collect()
+}
+
+/// A tidy basis of the span of `v` (3-vectors): the assembly's axes where they lie
+/// in it, so a glyph's arrows do not lean by whatever an eigenvector came out as.
+fn tidy(v: &[Vector3]) -> Vec<Vector3> {
+    let mut out: Vec<Vector3> = Vec::new();
+    let project = |d: Vector3| v.iter().map(|b| b * b.dot(&d)).sum::<Vector3>();
+    let mut axes = [Vector3::x(), Vector3::y(), Vector3::z()].map(project);
+    axes.sort_by(|a, b| b.norm().total_cmp(&a.norm()));
+    for a in axes {
+        let rest = out.iter().fold(a, |x, u| x - u * u.dot(&x));
+        if out.len() < v.len()
+            && let Some(u) = rest.try_normalize(1e-6)
+        {
+            out.push(u);
+        }
+    }
+    out
+}
+
+/// The motions a component's rows `m` (6 columns: moves, then turns) leave free.
+fn freedom(m: &DMatrix<Real>) -> Freedom {
+    let vector = |c: &DVector<Real>, at: usize| Vector3::new(c[at], c[at + 1], c[at + 2]);
+    // A slide is a motion with no turn in it: what the first columns alone leave.
+    let moves: Vec<Vector3> = free_of(&m.columns(0, 3).into_owned())
+        .iter()
+        .map(|c| vector(c, 0))
+        .collect();
+    // Every free motion's turn; the slides have none.
+    let spin: Vec<Vector3> = free_of(m).iter().map(|c| vector(c, 3)).collect();
+    let mut cov = nalgebra::Matrix3::<Real>::zeros();
+    for w in &spin {
+        cov += w * w.transpose();
+    }
+    let e = cov.symmetric_eigen();
+    let turns: Vec<Vector3> = (0..3)
+        .filter(|&k| e.eigenvalues[k] > 1e-8)
+        .map(|k| e.eigenvectors.column(k).into_owned())
+        .collect();
+    Freedom {
+        moves: tidy(&moves),
+        turns: tidy(&turns),
+    }
 }
 
 /// A drag: the point `local` of component `occurrence` (its own
@@ -488,6 +565,8 @@ fn gather(
                 }
                 // A Mate of axes: frames, so the turn about them can be measured
                 // and locked.
+                let a = relation::for_kind(c.kind, &c.a, a);
+                let b = relation::for_kind(c.kind, &c.b, b);
                 let (a, b) = if c.kind.is_joint() || relation::is_axis_mate(c.kind, &a, &b) {
                     (a.as_frame(), b.as_frame())
                 } else {
@@ -654,20 +733,31 @@ pub fn solve(
             let rank = if r.is_empty() {
                 0
             } else {
-                let sv = m.svd(false, false).singular_values;
+                let sv = m.clone().svd(false, false).singular_values;
                 let top = sv.iter().cloned().fold(0.0, Real::max);
                 sv.iter().filter(|&&s| s > 1e-6 * top.max(1e-9)).count()
             };
             out.dof.insert(id, 6 - rank.min(6));
+            out.free.insert(id, freedom(&m));
         }
     }
     for o in &asm.occurrences {
         if !o.grounded && !out.dof.contains_key(&o.id) {
             out.dof.insert(o.id, 6);
+            out.free.insert(o.id, Freedom::all());
         }
     }
     for k in &cons {
+        let from = out.residuals.len();
         k.res(&place, &mut out.residuals);
+        // Geometry found but not reached (a part changed so that it cannot hold).
+        let off = out.residuals[from..]
+            .iter()
+            .fold(0.0, |m: Real, v| m.max(v.abs()));
+        if drag.is_none() && off > 1e-6 {
+            out.sick
+                .push((k.c.id, format!("it cannot be met, off by {off:.3}")));
+        }
     }
     out.transforms = blocks.iter().map(|id| (*id, at(&place, *id))).collect();
     out
@@ -1241,5 +1331,159 @@ mod tests {
             "the dragged one stays: {z2} {z2_after}"
         );
         assert!(moved1 > 9.0, "the other follows: {moved1}");
+    }
+
+    /// A box part's edge as a reference (`Box1:Top` and a side).
+    fn vertex(occurrence: u32, x: Real, y: Real, z: Real) -> GeomRef {
+        GeomRef::FacePoint {
+            sub: Vec::new(),
+            occurrence,
+            face: "Box1:Top".into(),
+            hint: [x, y, z],
+            at: relation::FaceSnap::Center,
+        }
+    }
+
+    /// A vertex mated to a vertex holds three moves and leaves three turns; on an
+    /// axis one move and three turns more; a Mate of planes the plane's motions.
+    #[test]
+    fn freedom_says_which_motions_are_left() {
+        let mut a = AssemblyDocument::default();
+        let r = DocRef::local(crate::document::DocumentId::new_random());
+        a.place(r, "A", Transform3::identity(), true);
+        a.place(
+            r,
+            "B",
+            Transform3::new(Vector3::new(30.0, 5.0, 2.0), Vector3::zeros()),
+            false,
+        );
+        let plain = |kind, ga: GeomRef, gb: GeomRef| Constraint {
+            id: 0,
+            name: String::new(),
+            kind,
+            a: ga,
+            b: gb,
+            value: 0.0,
+            expr: None,
+            aligned: false,
+            suppressed: false,
+            locked: false,
+            min: None,
+            max: None,
+            resting: false,
+            plane: None,
+        };
+        // The stand-in resolves a point snap as a joint origin, as the part does.
+        let local = |g: &GeomRef| match g {
+            GeomRef::FacePoint { hint, .. } => Ok(Geom::Frame {
+                p: Point3::from(*hint),
+                z: Vector3::z(),
+                x: Vector3::x(),
+            }),
+            GeomRef::Origin { item, .. } => Ok(item.geom()),
+            _ => Err("not here".to_owned()),
+        };
+        a.add_constraint(plain(
+            ConstraintKind::Mate,
+            vertex(1, 10.0, 0.0, 0.0),
+            vertex(2, 0.0, 0.0, 0.0),
+        ));
+        let s = solve(&a, &local, None);
+        assert!(s.converged && s.sick.is_empty(), "{s:?}");
+        let f = &s.free[&2];
+        assert_eq!((f.moves.len(), f.turns.len()), (0, 3), "{f:?}");
+        assert_eq!(s.dof[&2], 3);
+        // The two vertices came together, whatever the turn.
+        let (_, t) = s
+            .transforms
+            .iter()
+            .find(|(id, _)| *id == 2)
+            .copied()
+            .unwrap();
+        assert!((t * Point3::origin() - Point3::new(10.0, 0.0, 0.0)).norm() < 1e-6);
+
+        // Mate of planes: two slides in the plane, one turn about its normal.
+        let origin = |occurrence, item| GeomRef::Origin {
+            sub: Vec::new(),
+            occurrence,
+            item,
+        };
+        a.constraints.clear();
+        a.add_constraint(plain(
+            ConstraintKind::Mate,
+            origin(1, relation::OriginItem::XyPlane),
+            origin(2, relation::OriginItem::XyPlane),
+        ));
+        let s = solve(&a, &local, None);
+        let f = &s.free[&2];
+        assert_eq!((f.moves.len(), f.turns.len()), (2, 1), "{f:?}");
+        assert!(f.turns[0].cross(&Vector3::z()).norm() < 1e-4, "{f:?}");
+        for m in &f.moves {
+            assert!(m.z.abs() < 1e-4, "{f:?}");
+        }
+        // Axes on one line: a slide along it and a turn about it.
+        a.constraints.clear();
+        a.add_constraint(plain(
+            ConstraintKind::Mate,
+            origin(1, relation::OriginItem::ZAxis),
+            origin(2, relation::OriginItem::ZAxis),
+        ));
+        let s = solve(&a, &local, None);
+        let f = &s.free[&2];
+        assert_eq!((f.moves.len(), f.turns.len()), (1, 1), "{f:?}");
+        assert!(f.moves[0].cross(&Vector3::z()).norm() < 1e-4, "{f:?}");
+        assert!(f.turns[0].cross(&Vector3::z()).norm() < 1e-4, "{f:?}");
+        // Nothing holding it.
+        a.constraints.clear();
+        a.place(r, "C", Transform3::identity(), false);
+        a.add_constraint(plain(
+            ConstraintKind::Mate,
+            origin(1, relation::OriginItem::XyPlane),
+            origin(2, relation::OriginItem::XyPlane),
+        ));
+        assert_eq!(solve(&a, &local, None).free[&3], Freedom::all());
+    }
+
+    /// What cannot be met is sick, with its geometry found (Show Sick lists it).
+    #[test]
+    fn a_relationship_that_cannot_hold_is_sick() {
+        let mut a = AssemblyDocument::default();
+        let r = DocRef::local(crate::document::DocumentId::new_random());
+        a.place(r, "A", Transform3::identity(), true);
+        a.place(
+            r,
+            "B",
+            Transform3::new(Vector3::new(0.0, 0.0, 7.0), Vector3::zeros()),
+            true,
+        );
+        let plane = |occurrence| GeomRef::Origin {
+            sub: Vec::new(),
+            occurrence,
+            item: relation::OriginItem::XyPlane,
+        };
+        let id = a.add_constraint(Constraint {
+            id: 0,
+            name: String::new(),
+            kind: ConstraintKind::Flush,
+            a: plane(1),
+            b: plane(2),
+            value: 0.0,
+            expr: None,
+            aligned: false,
+            suppressed: false,
+            locked: false,
+            min: None,
+            max: None,
+            resting: false,
+            plane: None,
+        });
+        let local = |g: &GeomRef| match g {
+            GeomRef::Origin { item, .. } => Ok(item.geom()),
+            _ => Err("not here".to_owned()),
+        };
+        let s = solve(&a, &local, None);
+        assert!(!s.converged);
+        assert_eq!(s.sick.len(), 1);
+        assert_eq!(s.sick[0].0, id);
     }
 }

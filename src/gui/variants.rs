@@ -45,6 +45,8 @@ pub(super) struct VariantsUi {
     doc: Option<crate::document::DocumentId>,
     /// When a part's variants were last brought up to date (seconds).
     synced: f64,
+    /// Copy CSV was pressed this frame.
+    copied: bool,
 }
 
 /// What the window asks for, run after it is drawn.
@@ -113,6 +115,18 @@ impl CadCraftApp {
         if list.is_empty() {
             return;
         }
+        // A pattern's copy places what its source places.
+        if self.assembly().is_some_and(|a| a.is_element(id)) {
+            super::panels::plabel(ui, "Variant");
+            let shown = r
+                .variant
+                .and_then(|v| list.iter().find(|x| x.0 == v))
+                .map_or(crate::assembly::reps::PART_ACTIVE, |x| x.1.as_str());
+            ui.label(shown)
+                .on_hover_text("A pattern's copy takes the variant of its source");
+            ui.end_row();
+            return;
+        }
         super::panels::plabel(ui, "Variant");
         let shown = r
             .variant
@@ -143,6 +157,10 @@ impl CadCraftApp {
 
     /// The same in an occurrence's menu (rule 17).
     pub(super) fn occurrence_variant_menu(&mut self, ui: &mut egui::Ui, id: u32) {
+        // A pattern's copy places what its source places.
+        if self.assembly().is_some_and(|a| a.is_element(id)) {
+            return;
+        }
         let Some(r) = self
             .assembly()
             .and_then(|a| a.find(id))
@@ -346,16 +364,33 @@ impl CadCraftApp {
                 ui.separator();
                 bulk_bar(ui, &t, &mut ui_state, &mut asks);
                 csv_box(ui, &t, &mut ui_state, &mut asks, &mut self.file_status);
-                egui::ScrollArea::both()
-                    .id_salt("variants_scroll")
+                // The column heads stay in view while the rows scroll, and go sideways with them.
+                egui::ScrollArea::horizontal()
+                    .id_salt("variants_scroll_x")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         heading(ui, &t, &mut ui_state, &mut asks);
-                        for (title, rows) in &t.sections {
-                            section(ui, &t, title, rows, &mut ui_state, &mut asks, &table_rows);
-                        }
+                        egui::ScrollArea::vertical()
+                            .id_salt("variants_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for (title, rows) in &t.sections {
+                                    section(
+                                        ui,
+                                        &t,
+                                        title,
+                                        rows,
+                                        &mut ui_state,
+                                        &mut asks,
+                                        &table_rows,
+                                    );
+                                }
+                            });
                     });
             });
+        if std::mem::take(&mut ui_state.copied) {
+            self.file_status = Some(Ok("Variants: the table was copied as CSV".to_owned()));
+        }
         ui_state.open = open;
         self.asm.variants = ui_state;
         for a in asks {
@@ -590,6 +625,7 @@ fn toolbar(ui: &mut egui::Ui, t: &Table, st: &mut VariantsUi, asks: &mut Vec<Ask
             .clicked()
         {
             ui.ctx().copy_text(t.to_csv());
+            st.copied = true;
         }
         if ui
             .selectable_label(st.csv.is_some(), "Paste CSV...")

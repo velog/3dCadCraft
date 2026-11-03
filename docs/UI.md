@@ -255,7 +255,7 @@ row is a selection (it lights up in the view under the cursor). **Use the curren
 panel, remembered): on, the offset is the distance the components have now; off, they snap together at 0.
 **The whole assembly command set** ([spec/3.0](spec/3.0-assembly-commands.md), interface only — OK disabled): tabs
 Assemble (Component: Place from Library **PFL**, Change Size **CSZ**, Place Imported CAD Files **PIF**, Create **CRC**, Replace
-**RC** / **RA**; Relationships: Assemble **ASM**, Show **SHR**, Show Sick **SSR**, Hide All **HAR**; Pattern **PCO**,
+**RC** / **RA**; Relationships: Assemble **ASM** (pick on the component to move, then where it goes), Show **SHR** (glyphs: click selects, double click edits, right click for its commands), Show Sick **SSR**, Hide All **HAR**; Pattern **PCO**,
 Mirror **MIC**, Copy **CPC**; Productivity: Make Layout **MKL**, Create Derived Substitutes **CDS**; Simplify
 **SIM**), **Design** (Bolted Connection **BC**, Clevis / Secure / Radial Pin **CVP SCP RDP**, Insert Frame **IFR**,
 Insert End Cap **FEC**, Change **FCH**, Frame Member Info **FMN**, Miter **FMI**, Notch **FNO**, Corner Joint **FCJ**,
@@ -272,7 +272,7 @@ commands. A component's right-click menu offers Replace, Pattern, Mirror, Copy a
 
 The label column of Properties is wider or narrower by dragging its border. **Assemble › BOM**: the Bill of
 Materials (tabs Model Data / Structured / Parts Only, Part Number Row Merge, click a header to sort, Columns for
-custom Properties, edit Part Number / Stock Number / Description / BOM Structure of the file's own components,
+custom Properties, **Renumber Items...** (the rows checked, or all, from a start by an increment), a typed item number or quantity (Static, **Calculate** takes it back), edit Part Number / Stock Number / Description / BOM Structure of the file's own components,
 *Ref* per occurrence in Model Data, Export… to CSV). **C** = Constrain: the Place Constraint panel (Mate with Mate / Flush, Angle, Tangent with Inside / Outside,
 Insert with Opposed / Aligned, Symmetry with a third selection — the plane), click selection 1 then 2 in the view (an edge within a few pixels wins over its face;
 blue / violet / green under the cursor), Offset or Angle field, Show Preview, Predict Offset and Orientation;

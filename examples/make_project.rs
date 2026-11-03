@@ -74,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Stack",
         DocumentData::Assembly(cadcraft3d::document::AssemblyDocument {
             reps: Default::default(),
+            bom: Default::default(),
             folders: Vec::new(),
             motion: Default::default(),
             occurrences: vec![place("Plate:1", 0.0, true), place("Plate:2", 10.0, false)],

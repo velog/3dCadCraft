@@ -90,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Assembly",
         DocumentData::Assembly(AssemblyDocument {
             reps: Default::default(),
+            bom: Default::default(),
             folders: Vec::new(),
             motion: Default::default(),
             occurrences,

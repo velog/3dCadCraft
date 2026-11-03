@@ -40,6 +40,8 @@ pub(super) enum AsmTool {
     /// Smart Drop: a library family resized to the hole under the cursor
     /// (`AsmUi::smart` holds its state).
     SmartDrop,
+    /// Show: every click shows (or takes away) a component's relationships.
+    ShowRel,
 }
 
 impl AsmTool {
@@ -49,6 +51,7 @@ impl AsmTool {
             AsmTool::FreeMove => Action::AsmFreeMove,
             AsmTool::FreeRotate(_) => Action::AsmFreeRotate,
             AsmTool::SmartDrop => Action::AsmPlace,
+            AsmTool::ShowRel => Action::AsmShowRel,
         }
     }
 }
@@ -1582,6 +1585,11 @@ impl CadCraftApp {
                 };
             }
             Action::AsmConstrain => self.start_constrain(),
+            Action::AsmAssemble => self.start_assemble(),
+            Action::AsmShowRel => self.show_relationships(),
+            Action::AsmShowSick => self.show_sick_relationships(),
+            Action::AsmHideRel => self.hide_relationships(),
+            Action::AsmDof => self.cons.glyphs.dof = !self.cons.glyphs.dof,
             Action::AsmUpdate => self.update_assembly(),
             Action::AsmJoint => self.start_joint(),
             Action::AsmBom => self.open_bom(),
@@ -2070,7 +2078,16 @@ impl CadCraftApp {
         let corner_click = primary_click
             && self.asm.tool.is_none()
             && pointer.is_some_and(|p| self.frame_corner_click(p, rect));
-        if primary_click && !corner_click {
+        // A relationship's glyph takes the click (spec 3.1 §3.2b).
+        let glyph = pointer.and_then(|p| self.relation_glyph_at(p));
+        let glyph_click = primary_click
+            && !corner_click
+            && matches!(self.asm.tool, None | Some(AsmTool::ShowRel))
+            && glyph.is_some();
+        if glyph_click && let Some(id) = glyph {
+            self.relation_glyph_select(id);
+        }
+        if primary_click && !corner_click && !glyph_click {
             match self.asm.tool {
                 Some(AsmTool::Place(doc)) => {
                     if let Some(p) = pointer.and_then(|p| self.place_point(p, rect)) {
@@ -2078,6 +2095,11 @@ impl CadCraftApp {
                     }
                 }
                 Some(AsmTool::SmartDrop) => self.smart_drop_click(pointer, rect),
+                Some(AsmTool::ShowRel) => {
+                    if let Some((h, _)) = hit {
+                        self.show_relationships_of(h.occurrence, true);
+                    }
+                }
                 Some(AsmTool::FreeRotate(_)) => {
                     if let Some((h, _)) = hit {
                         self.asm.tool = Some(AsmTool::FreeRotate(Some(h.occurrence)));
@@ -2109,6 +2131,13 @@ impl CadCraftApp {
                     None => {}
                 },
             }
+        }
+        if response.double_clicked_by(PointerButton::Primary)
+            && !constraining
+            && let Some(id) = glyph
+        {
+            self.edit_constraint(id);
+            return;
         }
         if response.double_clicked_by(PointerButton::Primary)
             && self.asm.tool.is_none()
@@ -2162,6 +2191,8 @@ impl CadCraftApp {
             self.asm.drag = None;
             self.history.break_coalescing();
             busy = false;
+            // A drag's solves do not work out what stays free.
+            self.asm_refresh_status();
         }
 
         // --- navigation ---
@@ -2185,6 +2216,15 @@ impl CadCraftApp {
                 return;
             }
             if self.part_planned.is_some() && self.command_context_menu(ui) {
+                return;
+            }
+            if self.cons.draft.is_none()
+                && let Some(id) = self
+                    .asm
+                    .menu_at
+                    .and_then(|(p, _)| self.relation_glyph_at(p))
+            {
+                self.relation_glyph_menu(ui, id);
                 return;
             }
             if self.cons.draft.is_some() {
@@ -2263,6 +2303,8 @@ impl CadCraftApp {
         }
         let on_view = !on_cube && !modal;
         self.constrain_view(&painter, rect, pointer.filter(|_| on_view), constrain_click);
+        self.dof_glyphs(&painter, rect);
+        self.relation_glyphs(&painter, rect, pointer.filter(|_| on_view));
         if measuring || !self.measure.open {
             self.asm_measure_view(&painter, rect, pointer.filter(|_| on_view), measure_click);
         }
@@ -2530,6 +2572,7 @@ impl CadCraftApp {
             AsmTool::FreeMove => Some("Free Move".into()),
             AsmTool::FreeRotate(None) => Some("Free Rotate: click a component".into()),
             AsmTool::FreeRotate(Some(_)) => None,
+            AsmTool::ShowRel => Some("Show: click a component".into()),
         }
     }
 
@@ -2538,6 +2581,7 @@ impl CadCraftApp {
         match self.asm.tool {
             Some(AsmTool::SmartDrop) => self.drop_prompt(),
             Some(AsmTool::Place(_)) => "Place: click in the view to place an occurrence (on a component or the XY plane); right-click for OK, Place Grounded at Origin or a 90° turn; Esc ends".into(),
+            Some(AsmTool::ShowRel) => "Show: click components for their relationships, a glyph to select it; Esc ends".into(),
             Some(AsmTool::FreeMove) => "Free Move: drag a component in the view plane (grounded ones too); Esc ends".into(),
             Some(AsmTool::FreeRotate(None)) => "Free Rotate: click the component to turn; Esc ends".into(),
             Some(AsmTool::FreeRotate(Some(_))) => "Free Rotate: drag inside the circle to turn freely, on its rim to turn in the screen plane; click another component to switch; Esc ends".into(),
@@ -2628,6 +2672,7 @@ impl CadCraftApp {
         // Inventor's marking menu in an assembly.
         for (action, icon, label) in [
             (Action::AsmConstrain, Icon::Coincident, "Constrain"),
+            (Action::AsmAssemble, Icon::AsmAssemble, "Assemble"),
             (Action::AsmPlace, Icon::Place, "Place..."),
             (Action::AsmFreeMove, Icon::FreeMove, "Free Move"),
             (Action::AsmFreeRotate, Icon::FreeRotate, "Free Rotate"),
@@ -2782,6 +2827,17 @@ impl CadCraftApp {
         if ui.button("Joint...").clicked() {
             self.asm_apply(Action::AsmJoint);
             self.menu_first_pick(ids, true);
+            ui.close();
+        }
+        if ui.button("Assemble").clicked() {
+            self.asm_apply(Action::AsmAssemble);
+            self.menu_first_pick(ids, false);
+            ui.close();
+        }
+        if ui.button("Show Relationships").clicked() {
+            for &id in ids {
+                self.show_relationships_of(id, false);
+            }
             ui.close();
         }
         if ui.button("Measure").clicked() {

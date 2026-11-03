@@ -3,7 +3,9 @@
 //! occurrences and each component's Properties and BOM Structure; CSV
 //! export. GUI-free: the components are reached through a callback.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::{Deserialize, Serialize};
 
 use crate::assembly::tree;
 use crate::document::iprops::{BomStructure, IProperties};
@@ -39,6 +41,154 @@ pub struct ComponentInfo {
     pub assembly: Option<AssemblyDocument>,
 }
 
+/// Item numbers one view of the BOM keeps, by part number.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BomNumbers {
+    /// What Renumber gave them: plain numbers that stay when rows come and go.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub renumbered: BTreeMap<String, String>,
+    /// Typed by the user (an override, shown as one).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub typed: BTreeMap<String, String>,
+}
+
+impl BomNumbers {
+    fn is_empty(&self) -> bool {
+        self.renumbered.is_empty() && self.typed.is_empty()
+    }
+
+    fn of(&self, part_number: &str) -> Option<&String> {
+        self.typed
+            .get(part_number)
+            .or_else(|| self.renumbered.get(part_number))
+    }
+}
+
+/// What the user changed in an assembly's BOM (spec 3.6): everything else in it is
+/// computed. Rows are found by part number, as a parts list's overrides are.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BomEdits {
+    /// Item numbers of the Structured view.
+    #[serde(default, skip_serializing_if = "BomNumbers::is_empty")]
+    pub structured: BomNumbers,
+    /// Item numbers of the Parts Only view.
+    #[serde(default, skip_serializing_if = "BomNumbers::is_empty")]
+    pub parts_only: BomNumbers,
+    /// Static quantities, typed instead of the calculated ones.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub quantity: BTreeMap<String, u32>,
+}
+
+impl BomEdits {
+    /// Nothing changed by the user.
+    pub fn is_empty(&self) -> bool {
+        self.structured.is_empty() && self.parts_only.is_empty() && self.quantity.is_empty()
+    }
+
+    fn numbers(&mut self, view: BomView) -> &mut BomNumbers {
+        match view {
+            BomView::PartsOnly => &mut self.parts_only,
+            _ => &mut self.structured,
+        }
+    }
+
+    /// Item Renumber: `parts` (in the order shown) from `start` by `step`.
+    pub fn renumber(&mut self, view: BomView, parts: &[String], start: u32, step: u32) {
+        let n = self.numbers(view);
+        let mut value = start;
+        for p in parts {
+            n.typed.remove(p);
+            n.renumbered.insert(p.clone(), value.to_string());
+            value = value.saturating_add(step);
+        }
+    }
+
+    /// A typed item number; empty text takes the override away.
+    pub fn set_item(&mut self, view: BomView, part_number: &str, text: &str) {
+        let n = self.numbers(view);
+        if text.trim().is_empty() {
+            n.typed.remove(part_number);
+        } else {
+            n.typed
+                .insert(part_number.to_owned(), text.trim().to_owned());
+        }
+    }
+
+    /// Static Quantity (`Some`) or Calculate Quantity (`None`).
+    pub fn set_quantity(&mut self, part_number: &str, qty: Option<u32>) {
+        match qty {
+            Some(q) => {
+                self.quantity.insert(part_number.to_owned(), q);
+            }
+            None => {
+                self.quantity.remove(part_number);
+            }
+        }
+    }
+
+    /// A row's part number changed: what was kept for it goes along.
+    pub fn rename(&mut self, old: &str, new: &str) {
+        if old == new {
+            return;
+        }
+        fn carry<T>(m: &mut BTreeMap<String, T>, old: &str, new: &str) {
+            if let Some(v) = m.remove(old) {
+                m.insert(new.to_owned(), v);
+            }
+        }
+        for n in [&mut self.structured, &mut self.parts_only] {
+            carry(&mut n.renumbered, old, new);
+            carry(&mut n.typed, old, new);
+        }
+        carry(&mut self.quantity, old, new);
+    }
+}
+
+/// Item numbers of one level's rows: what is kept for them, and for the others the
+/// next numbers nobody has (so with nothing kept: 1, 2, 3...).
+fn number_rows(rows: &mut [BomRow], numbers: &BomNumbers, prefix: &str) {
+    let taken: BTreeSet<String> = rows
+        .iter()
+        .filter_map(|r| numbers.of(&r.part_number).cloned())
+        .collect();
+    let mut next = 0u32;
+    for r in rows {
+        r.item_typed = numbers.typed.contains_key(&r.part_number);
+        r.item = match numbers.of(&r.part_number) {
+            Some(kept) => format!("{prefix}{kept}"),
+            None => loop {
+                next += 1;
+                let text = next.to_string();
+                if !taken.contains(&text) {
+                    break format!("{prefix}{text}");
+                }
+            },
+        };
+    }
+}
+
+/// Static quantities in place of the calculated ones.
+fn static_quantities(rows: &mut [BomRow], edits: &BomEdits) {
+    for r in rows {
+        if let Some(q) = edits.quantity.get(&r.part_number) {
+            r.qty = *q;
+            r.qty_static = true;
+        }
+    }
+}
+
+/// The item numbers shown more than once among `rows` (a warning, not a refusal).
+pub fn duplicate_items(rows: &[BomRow]) -> BTreeSet<String> {
+    let mut seen = BTreeSet::new();
+    let mut twice = BTreeSet::new();
+    for r in rows {
+        if !seen.insert(r.item.clone()) {
+            twice.insert(r.item.clone());
+        }
+    }
+    twice
+}
+
 /// The BOM columns of a sheet metal part's flat pattern (Inventor's FLAT
 /// PATTERN EXTENTS LENGTH / WIDTH / AREA).
 pub const FLAT_COLUMNS: [&str; 3] = [
@@ -62,6 +212,10 @@ pub struct BomRow {
     pub structure: BomStructure,
     /// Quantity.
     pub qty: u32,
+    /// The quantity was typed (Static), not calculated.
+    pub qty_static: bool,
+    /// The item number was typed (an override).
+    pub item_typed: bool,
     /// Unit quantity ("Each").
     pub unit: String,
     /// Stock Number.
@@ -118,9 +272,8 @@ pub fn rows_in(
         }
         BomView::PartsOnly => {
             gather(asm, view, merge, info, None, &mut stack, &mut out);
-            for (k, r) in out.iter_mut().enumerate() {
-                r.item = (k + 1).to_string();
-            }
+            number_rows(&mut out, &asm.bom.parts_only, "");
+            static_quantities(&mut out, &asm.bom);
         }
     }
     out
@@ -149,8 +302,9 @@ fn structured(
         stack,
         &mut rows,
     );
-    for (k, mut r) in rows.into_iter().enumerate() {
-        r.item = format!("{prefix}{}", k + 1);
+    number_rows(&mut rows, &asm.bom.structured, prefix);
+    static_quantities(&mut rows, &asm.bom);
+    for mut r in rows {
         r.level = level;
         let sub = match (all, r.structure, r.components.first()) {
             (true, BomStructure::Normal, Some(&c)) if !stack.contains(&c) => {
@@ -247,6 +401,8 @@ fn gather(
             part_number,
             structure,
             qty: 1,
+            qty_static: false,
+            item_typed: false,
             unit: "Each".into(),
             stock_number: ci.props.get("stock_number").to_owned(),
             description: ci.props.get("description").to_owned(),
@@ -520,5 +676,119 @@ mod tests {
             list(rows(&top, BomView::PartsOnly, false, &info)),
             [row("1", "base", 1), row("2", "bracket", 2)]
         );
+    }
+
+    /// Renumber, typed item numbers and static quantities: kept with the assembly,
+    /// found by part number, in the views they were made in.
+    #[test]
+    fn item_numbers_and_static_quantities_stay() {
+        let (x, y, z) = (
+            DocRef::local(DocumentId::new_random()),
+            DocRef::local(DocumentId::new_random()),
+            DocRef::local(DocumentId::new_random()),
+        );
+        let mut a = AssemblyDocument::default();
+        a.place(x, "x", Transform3::identity(), true);
+        a.place(y, "y", Transform3::identity(), false);
+        a.place(y, "y", Transform3::identity(), false);
+        a.place(z, "z", Transform3::identity(), false);
+        let info = |r: DocRef| ComponentInfo {
+            file_name: if r == x {
+                "X"
+            } else if r == y {
+                "Y"
+            } else {
+                "Z"
+            }
+            .into(),
+            ..Default::default()
+        };
+        let items = |a: &AssemblyDocument, v| -> Vec<(String, String, u32)> {
+            rows(a, v, true, &info)
+                .into_iter()
+                .map(|r| (r.part_number, r.item, r.qty))
+                .collect()
+        };
+        let row = |p: &str, i: &str, q: u32| (p.to_owned(), i.to_owned(), q);
+        // Nothing kept: 1, 2, 3 in placement order.
+        assert_eq!(
+            items(&a, BomView::Structured),
+            [row("X", "1", 1), row("Y", "2", 2), row("Z", "3", 1)]
+        );
+        // Renumber in the order shown, from 10 by 5.
+        let order = ["Z".to_owned(), "X".to_owned(), "Y".to_owned()];
+        a.bom.renumber(BomView::Structured, &order, 10, 5);
+        assert_eq!(
+            items(&a, BomView::Structured),
+            [row("X", "15", 1), row("Y", "20", 2), row("Z", "10", 1)]
+        );
+        assert!(!rows(&a, BomView::Structured, true, &info)[0].item_typed);
+        // Another view keeps its own numbers.
+        assert_eq!(items(&a, BomView::PartsOnly)[0], row("X", "1", 1));
+        // A row that leaves does not move the others; a new one takes a free number.
+        a.occurrences[0].suppressed = true;
+        assert_eq!(items(&a, BomView::Structured)[0], row("Y", "20", 2));
+        a.occurrences[0].suppressed = false;
+        a.bom.structured.renumbered.remove("X");
+        assert_eq!(items(&a, BomView::Structured)[0], row("X", "1", 1));
+        // A typed number wins over Renumber's and is told apart; empty removes it.
+        a.bom.set_item(BomView::Structured, "Y", "A-7");
+        let got = rows(&a, BomView::Structured, true, &info);
+        assert_eq!((got[1].item.as_str(), got[1].item_typed), ("A-7", true));
+        a.bom.set_item(BomView::Structured, "Y", " ");
+        assert_eq!(items(&a, BomView::Structured)[1], row("Y", "20", 2));
+        // Numbers typed twice are reported.
+        a.bom.set_item(BomView::Structured, "X", "20");
+        assert!(duplicate_items(&rows(&a, BomView::Structured, true, &info)).contains("20"));
+        a.bom.set_item(BomView::Structured, "X", "");
+        // Static quantity, in both views; Calculate discards it. Model Data stays as
+        // modelled: one row per occurrence.
+        a.bom.set_quantity("Y", Some(9));
+        let got = rows(&a, BomView::Structured, true, &info);
+        assert_eq!((got[1].qty, got[1].qty_static), (9, true));
+        assert_eq!(items(&a, BomView::PartsOnly)[1].2, 9);
+        assert!(
+            rows(&a, BomView::ModelData, true, &info)
+                .iter()
+                .all(|r| r.qty == 1)
+        );
+        // A changed part number takes what was kept along.
+        a.bom.rename("Y", "Y2");
+        assert_eq!(a.bom.quantity.get("Y2"), Some(&9));
+        assert_eq!(
+            a.bom.structured.renumbered.get("Y2").map(String::as_str),
+            Some("20")
+        );
+        a.bom.set_quantity("Y2", None);
+        assert!(!a.bom.quantity.contains_key("Y2"));
+        // The file round trip, and an untouched BOM writes nothing.
+        let back: BomEdits = serde_json::from_str(&serde_json::to_string(&a.bom).unwrap()).unwrap();
+        assert_eq!(back, a.bom);
+        assert_eq!(serde_json::to_string(&BomEdits::default()).unwrap(), "{}");
+    }
+
+    /// A subassembly's own numbers show under its row, with its row's number before them.
+    #[test]
+    fn a_subassembly_keeps_its_own_numbers() {
+        let (part, sub) = (
+            DocRef::local(DocumentId::new_random()),
+            DocRef::local(DocumentId::new_random()),
+        );
+        let mut inner = AssemblyDocument::default();
+        inner.place(part, "p", Transform3::identity(), false);
+        inner
+            .bom
+            .renumber(BomView::Structured, &["P".to_owned()], 5, 1);
+        let mut top = AssemblyDocument::default();
+        top.place(sub, "s", Transform3::identity(), false);
+        top.bom.set_item(BomView::Structured, "S", "7");
+        let info = |r: DocRef| ComponentInfo {
+            file_name: if r == part { "P" } else { "S" }.into(),
+            assembly: (r == sub).then(|| inner.clone()),
+            ..Default::default()
+        };
+        let got = rows_in(&top, BomView::Structured, true, true, &info);
+        assert_eq!(got[0].item, "7");
+        assert_eq!(got[1].item, "7.5");
     }
 }

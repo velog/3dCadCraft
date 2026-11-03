@@ -68,6 +68,16 @@ pub enum Action {
     AsmFreeRotate,
     /// Assemble › Grounded: toggle on the selected occurrences.
     AsmGround,
+    /// Assemble › Assemble: the first selection moves to the second.
+    AsmAssemble,
+    /// Assemble › Show: relationship glyphs of components.
+    AsmShowRel,
+    /// Assemble › Show Sick: on or off.
+    AsmShowSick,
+    /// Assemble › Hide All.
+    AsmHideRel,
+    /// View › Degrees of Freedom: on or off.
+    AsmDof,
     /// Assemble › Constrain: Mate / Flush, Angle, Insert.
     AsmConstrain,
     /// Assemble › Update: reload the linked part files, solve again.
@@ -298,6 +308,10 @@ pub struct State {
     pub flat: bool,
     /// The assembly command that is open (shown pressed).
     pub asm_tool: Option<Action>,
+    /// Glyphs of relationships are shown for chosen components / the sick ones.
+    pub rel_sick: bool,
+    /// The free motions of the components are shown.
+    pub asm_dof: bool,
 }
 
 /// Ribbon tabs of the part environment.
@@ -1402,6 +1416,8 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 assembly,
                 drawing,
                 asm_tool: None,
+                rel_sick: false,
+                asm_dof: false,
                 flat: false,
             };
             for tab in Tab::ALL {
@@ -1828,9 +1844,12 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                 Action::CenterPoint => st.center_point,
                 Action::ToggleDof => st.show_dof,
                 Action::SmFlatPattern => st.flat,
-                Action::AsmFreeMove | Action::AsmFreeRotate | Action::AsmPlace => {
-                    st.asm_tool == Some(*action)
-                }
+                Action::AsmFreeMove
+                | Action::AsmFreeRotate
+                | Action::AsmPlace
+                | Action::AsmShowRel => st.asm_tool == Some(*action),
+                Action::AsmShowSick => st.rel_sick,
+                Action::AsmDof => st.asm_dof,
                 Action::Ui(UiCmd::CleanScreen) => st.clean,
                 Action::Ui(UiCmd::FullScreen) => st.full_screen,
                 _ => false,

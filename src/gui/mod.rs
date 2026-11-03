@@ -29,6 +29,7 @@ mod asm_create;
 mod asm_features;
 mod asm_pattern;
 mod asm_planned;
+mod asm_relations;
 mod asm_replace;
 mod asm_select;
 mod asm_select_modes;
@@ -4322,6 +4323,11 @@ impl CadCraftApp {
             | Action::AsmFreeMove
             | Action::AsmFreeRotate
             | Action::AsmGround
+            | Action::AsmAssemble
+            | Action::AsmShowRel
+            | Action::AsmShowSick
+            | Action::AsmHideRel
+            | Action::AsmDof
             | Action::AsmUpdate
             | Action::AsmJoint
             | Action::AsmBom

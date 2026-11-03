@@ -904,6 +904,8 @@ mod tests {
 
     fn row(item: &str, pn: &str, qty: u32, occ: &[u32]) -> BomRow {
         BomRow {
+            qty_static: false,
+            item_typed: false,
             item: item.into(),
             level: 0,
             part_number: pn.into(),

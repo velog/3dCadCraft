@@ -51,6 +51,9 @@ pub(super) struct ConstrainDraft {
     resting: bool,
     /// Symmetry: the plane (third selection).
     plane: Option<GeomRef>,
+    /// Assemble: the first selection's component moves to the second selection,
+    /// and the kind follows from what was picked.
+    assemble: bool,
 }
 
 impl ConstrainDraft {
@@ -72,6 +75,14 @@ impl ConstrainDraft {
             max: None,
             resting: false,
             plane: None,
+            assemble: false,
+        }
+    }
+
+    fn assemble() -> Self {
+        Self {
+            assemble: true,
+            ..Self::new()
         }
     }
 
@@ -110,6 +121,9 @@ impl ConstrainDraft {
     }
 
     fn command(&self) -> &'static str {
+        if self.assemble {
+            return "Assemble";
+        }
         match self.kind {
             ConstraintKind::Mate | ConstraintKind::Flush => "Mate",
             ConstraintKind::Angle => "Angle",
@@ -145,9 +159,24 @@ pub(super) struct ConstrainUi {
     locked: Option<(PickPart, crate::kernel::FaceId)>,
     /// Joint: the snap points of the face under the cursor (screen).
     snap_dots: Vec<Pos2>,
+    /// Relationship glyphs and free motions in the view.
+    pub glyphs: super::asm_relations::RelGlyphs,
+}
+
+/// `a` as Assemble solves it: the target stays and the moving component is free to go,
+/// grounded or not (Inventor: the first selection always moves to the second).
+fn hold_target(a: &mut AssemblyDocument, c: &Constraint) {
+    if let Some(o) = a.find_mut(c.b.occurrence()) {
+        o.grounded = true;
+    }
+    if let Some(o) = a.find_mut(c.a.occurrence()) {
+        o.grounded = false;
+    }
 }
 
 const PICK_PX: f32 = 7.0;
+/// A vertex wins over its edges this near (pixels).
+const VERTEX_PX: f32 = 6.0;
 
 /// A part the eye can pick faces and edges on: a top-level occurrence and
 /// the path to a part inside it (spec 3.1a; empty for a part placed
@@ -410,6 +439,37 @@ impl CadCraftApp {
         self.scene_dirty = true;
     }
 
+    /// Assemble › Assemble.
+    pub(super) fn start_assemble(&mut self) {
+        self.asm.tool = None;
+        self.cons.draft = Some(ConstrainDraft::assemble());
+        self.cons.preview = None;
+        self.constrain_takes_selection();
+    }
+
+    /// Assemble's relationship: placed first with the target held, so that it is the
+    /// first selection's component that moves; then an ordinary relationship, which
+    /// finds nothing left to do. When the target cannot be held the solve decides.
+    fn assemble_commit(&mut self, c: Constraint) -> Result<(), String> {
+        let mut held = self.assembly().ok_or("no assembly")?.clone();
+        hold_target(&mut held, &c);
+        held.add_constraint(c.clone());
+        let s = self.solve_copy(&held, None);
+        let moved = if s.converged {
+            s.transforms
+        } else {
+            Vec::new()
+        };
+        self.asm_try("Assemble", |a| {
+            for (id, t) in moved {
+                if let Some(o) = a.find_mut(id) {
+                    o.transform = t;
+                }
+            }
+            a.add_constraint(c);
+        })
+    }
+
     /// Assemble › Joint.
     pub(super) fn start_joint(&mut self) {
         self.asm.tool = None;
@@ -468,6 +528,7 @@ impl CadCraftApp {
                     };
                 }
             }),
+            None if d.assemble => self.assemble_commit(c),
             None => self.asm_try("Constrain", |a| {
                 a.add_constraint(c);
             }),
@@ -479,9 +540,13 @@ impl CadCraftApp {
                     self.cons.draft = None;
                 } else if let Some(x) = self.cons.draft.as_mut() {
                     // Apply: the next constraint of the same type.
-                    *x = ConstrainDraft {
-                        kind: x.kind,
-                        ..ConstrainDraft::new()
+                    *x = if x.assemble {
+                        ConstrainDraft::assemble()
+                    } else {
+                        ConstrainDraft {
+                            kind: x.kind,
+                            ..ConstrainDraft::new()
+                        }
                     };
                     self.history.break_coalescing();
                 }
@@ -655,6 +720,58 @@ impl CadCraftApp {
         })
     }
 
+    /// The vertex under the cursor, for a Mate: an end of a straight edge within a few
+    /// pixels, on the side the eye can see. It is held as a point of one of the edge's
+    /// planar faces (a corner of round faces only has none).
+    fn asm_vertex_under(&self, pos: Pos2, rect: Rect) -> Option<GeomRef> {
+        let parts = self.pick_parts();
+        let face = self.part_hit_in(&parts, pos, rect);
+        let (o, dir) = self.camera.ray(pos, rect)?;
+        let dir = dir.try_normalize(1e-12)?;
+        let mut best: Option<(f32, &PickPart, EdgeRef, bool, Point3)> = None;
+        let lists: Vec<_> = parts
+            .iter()
+            .filter_map(|p| Some((p, self.asm_edges(p.component)?)))
+            .collect();
+        for (part, edges) in &lists {
+            for (r, pts) in edges.iter() {
+                // A straight edge samples as its two ends (a circle's pieces do not count).
+                let [p0, p1] = pts[..] else {
+                    continue;
+                };
+                for (end, q) in [(false, p0), (true, p1)] {
+                    let w = part.place * q;
+                    let Some(s) = self.camera.project(&w, rect) else {
+                        continue;
+                    };
+                    let d = (s - pos).length();
+                    if d > VERTEX_PX || best.as_ref().is_some_and(|b| b.0 <= d) {
+                        continue;
+                    }
+                    let t = (w - o).dot(&dir);
+                    if face.as_ref().is_some_and(|h| h.2 + 0.02 * t.abs() < t) {
+                        continue;
+                    }
+                    best = Some((d, *part, r.clone(), end, q));
+                }
+            }
+        }
+        let (_, part, edge, end, q) = best?;
+        edge.faces.iter().find_map(|name| {
+            let g = GeomRef::FacePoint {
+                sub: part.sub.clone(),
+                occurrence: part.top,
+                face: name.clone(),
+                hint: [q.x, q.y, q.z],
+                at: relation::FaceSnap::EdgeEnd {
+                    edge: edge.clone(),
+                    end,
+                },
+            };
+            self.asm_local_geom(&g).is_ok().then_some(g)
+        })
+    }
+
     /// Every part faces and edges can be picked on: the shown, pickable
     /// first-level parts and the parts inside subassemblies.
     pub(super) fn pick_parts(&self) -> Vec<PickPart> {
@@ -735,6 +852,20 @@ impl CadCraftApp {
         let Some(d) = self.cons.draft.as_mut() else {
             return;
         };
+        // Assemble: the first selection says which types there are.
+        if d.assemble
+            && d.active == 0
+            && let Ok(x) = &geom
+        {
+            let kind = relation::assemble_kind(x);
+            if (kind == ConstraintKind::Insert) != (d.kind == ConstraintKind::Insert) {
+                d.b = None;
+            }
+            d.kind = kind;
+            d.predict = true;
+            d.typed = false;
+            d.aligned = false;
+        }
         if let Ok(x) = &geom
             && !relation::accepts(d.kind, x)
         {
@@ -788,7 +919,8 @@ impl CadCraftApp {
         if d.typed {
             return;
         }
-        let keep = self.constrain_current_offset;
+        // Assemble brings the component to the target: no distance is kept.
+        let keep = self.constrain_current_offset && !d.assemble;
         let (Some(a), Some(b)) = (&d.a, &d.b) else {
             return;
         };
@@ -797,7 +929,8 @@ impl CadCraftApp {
         };
         let world = |r: &GeomRef| -> Option<Geom> {
             let t = asm_doc.find(r.occurrence())?.transform;
-            Some(self.asm_local_geom(r).ok()?.moved(&t))
+            let g = self.asm_local_geom(r).ok()?.moved(&t);
+            Some(relation::for_kind(d.kind, r, g))
         };
         let (Some(ga), Some(gb)) = (world(a), world(b)) else {
             return;
@@ -846,6 +979,16 @@ impl CadCraftApp {
                 }
             }
             None => {
+                if d.assemble {
+                    let mut held = a.clone();
+                    hold_target(&mut held, &c);
+                    held.add_constraint(c.clone());
+                    let s = self.solve_copy(&held, None);
+                    if s.converged {
+                        self.cons.preview = Some(s.transforms.into_iter().collect());
+                        return;
+                    }
+                }
                 a.add_constraint(c);
             }
         }
@@ -876,8 +1019,17 @@ impl CadCraftApp {
         self.constrain_preview();
         let joint = self.cons.draft.as_ref().is_some_and(|d| d.kind.is_joint());
         self.cons.snap_dots.clear();
+        // A Mate also takes vertices (Inventor: points).
+        let vertices = self
+            .cons
+            .draft
+            .as_ref()
+            .is_some_and(|d| matches!(d.kind, ConstraintKind::Mate | ConstraintKind::Flush));
         self.cons.hover = match pointer {
             Some(p) if joint => self.joint_snap_under(p, rect, shift_down(painter)),
+            Some(p) if vertices => self
+                .asm_vertex_under(p, rect)
+                .or_else(|| self.geom_under(p, rect)),
             Some(p) => self.geom_under(p, rect),
             None => None,
         };
@@ -1144,9 +1296,14 @@ impl CadCraftApp {
             count: usize::from(count),
             color,
         };
+        let (first, second) = if d.assemble {
+            ("Component", "Target")
+        } else {
+            ("Selection 1", "Selection 2")
+        };
         let mut v = vec![
-            one("a", "Selection 1", d.a.is_some(), [64, 128, 242]),
-            one("b", "Selection 2", d.b.is_some(), [230, 120, 20]),
+            one("a", first, d.a.is_some(), [64, 128, 242]),
+            one("b", second, d.b.is_some(), [230, 120, 20]),
         ];
         if d.kind == ConstraintKind::Symmetry {
             v.push(one("plane", "Plane", d.plane.is_some(), [30, 160, 160]));
@@ -1170,6 +1327,19 @@ impl CadCraftApp {
 
     pub(super) fn constrain_prompt(&self) -> Option<String> {
         let d = self.cons.draft.as_ref()?;
+        if d.assemble {
+            return Some(if d.a.is_none() || d.active == 0 {
+                "Assemble: pick a face, an edge or a vertex of the component to move".into()
+            } else if d.b.is_none() {
+                if d.kind == ConstraintKind::Insert {
+                    "Assemble: pick the circular edge it goes to, on another component".into()
+                } else {
+                    "Assemble: pick where it goes, on another component".into()
+                }
+            } else {
+                "Assemble: choose the type and the offset, then OK or Apply (Esc cancels)".into()
+            });
+        }
         if d.kind.is_joint() {
             return Some(if d.a.is_none() || d.active == 0 {
                 "Joint: pick the first origin on a component: on a face its centre, an edge's midpoint or end, a circle's centre (white dots; hold Shift to keep that face), or an axis, or Origin / work geometry in the browser".into()
@@ -1219,7 +1389,9 @@ impl CadCraftApp {
         } else {
             "Place Constraint"
         };
-        let title = if d.kind.is_joint() {
+        let title = if d.assemble {
+            "Assemble"
+        } else if d.kind.is_joint() {
             if d.edit.is_some() {
                 "Edit Joint"
             } else {
@@ -1230,7 +1402,9 @@ impl CadCraftApp {
         };
         ui.label(RichText::new(title).strong());
         ui.separator();
-        if d.kind.is_joint() {
+        if d.assemble {
+            self.assemble_fields(ui, &mut d);
+        } else if d.kind.is_joint() {
             self.joint_fields(ui, &mut d);
         } else {
             self.constraint_fields(ui, &mut d);
@@ -1351,6 +1525,95 @@ impl CadCraftApp {
         }
     }
 
+    /// Are both selections of a Mate points (nothing for an offset to measure)?
+    fn both_points(&self, d: &ConstrainDraft) -> bool {
+        let point = |g: &Option<GeomRef>| {
+            g.as_ref().is_some_and(|r| {
+                self.asm_local_geom(r)
+                    .is_ok_and(|x| matches!(relation::for_kind(d.kind, r, x), Geom::Point { .. }))
+            })
+        };
+        point(&d.a) && point(&d.b)
+    }
+
+    /// Assemble's part of the panel: only the types what was picked allows.
+    fn assemble_fields(&mut self, ui: &mut egui::Ui, d: &mut ConstrainDraft) {
+        ui.label("Selections");
+        for (k, label, g) in [(0, "Component", &d.a), (1, "Target", &d.b)] {
+            let text = match g {
+                Some(g) => format!("{label}  {}", self.geom_label(g)),
+                None => format!("{label}  (pick)"),
+            };
+            if ui
+                .selectable_label(d.active == k, text)
+                .on_hover_text("Click, then pick in the view")
+                .clicked()
+            {
+                d.active = k;
+            }
+        }
+        ui.add_space(4.0);
+        ui.label("Type");
+        let geom = |g: &Option<GeomRef>| g.as_ref().and_then(|r| self.asm_local_geom(r).ok());
+        let planes = matches!(
+            (geom(&d.a), geom(&d.b)),
+            (Some(Geom::Plane { .. }), Some(Geom::Plane { .. }))
+        );
+        ui.horizontal_wrapped(|ui| {
+            if d.kind == ConstraintKind::Insert {
+                if ui.selectable_label(!d.aligned, "Insert Opposed").clicked() {
+                    d.aligned = false;
+                }
+                if ui.selectable_label(d.aligned, "Insert Aligned").clicked() {
+                    d.aligned = true;
+                }
+                return;
+            }
+            for (label, kind) in [
+                ("Mate", ConstraintKind::Mate),
+                ("Flush", ConstraintKind::Flush),
+            ] {
+                if ui.selectable_label(d.kind == kind, label).clicked() {
+                    if d.kind == ConstraintKind::Angle {
+                        d.value = 0.0;
+                    }
+                    d.kind = kind;
+                    d.predict = false;
+                }
+            }
+            if planes
+                && ui
+                    .selectable_label(d.kind == ConstraintKind::Angle, "Angle")
+                    .clicked()
+            {
+                d.kind = ConstraintKind::Angle;
+                d.predict = false;
+                d.typed = false;
+            }
+        });
+        ui.add_space(4.0);
+        let angle = d.kind == ConstraintKind::Angle;
+        let open =
+            !self.both_points(d) && !self.is_axis_mate_refs(d.kind, d.a.as_ref(), d.b.as_ref());
+        ui.add_enabled_ui(open, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(if angle { "Angle" } else { "Offset" });
+                let mut v = if angle { d.value.to_degrees() } else { d.value };
+                let before = v;
+                ui.add(
+                    ExprValue::new(&mut v)
+                        .suffix(if angle { "°" } else { " mm" })
+                        .equation(&mut d.expr)
+                        .cursor(if angle { "Angle" } else { "Offset" }),
+                );
+                if v != before {
+                    d.value = if angle { v.to_radians() } else { v };
+                    d.typed = true;
+                }
+            });
+        });
+    }
+
     /// The constraint's part of the panel (Mate / Angle / Insert).
     fn constraint_fields(&mut self, ui: &mut egui::Ui, d: &mut ConstrainDraft) {
         ui.label("Type");
@@ -1413,7 +1676,7 @@ impl CadCraftApp {
             }
         }
         let angle = d.kind == ConstraintKind::Angle || axes;
-        ui.add_enabled_ui(!axes || d.locked, |ui| {
+        ui.add_enabled_ui((!axes || d.locked) && !self.both_points(d), |ui| {
             ui.horizontal(|ui| {
                 ui.label(if angle { "Angle" } else { "Offset" });
                 let mut v = if angle { d.value.to_degrees() } else { d.value };
@@ -1693,7 +1956,11 @@ impl CadCraftApp {
             return false;
         };
         matches!((self.asm_local_geom(a), self.asm_local_geom(b)),
-            (Ok(x), Ok(y)) if relation::is_axis_mate(kind, &x, &y))
+        (Ok(x), Ok(y)) if relation::is_axis_mate(
+            kind,
+            &relation::for_kind(kind, a, x),
+            &relation::for_kind(kind, b, y),
+        ))
     }
 
     /// The turn about the axes of a Mate as the components stand.

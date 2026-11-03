@@ -5223,3 +5223,48 @@ fn library_flange_and_tee_build_directly() {
         assert!(ms < 150.0, "{}: {ms:.0} ms > 150 ms", s.designation());
     }
 }
+
+/// A solve works out each component's free motions (View > Degrees of Freedom).
+#[test]
+fn free_motions_stay_small_in_a_solve() {
+    use cadcraft3d::assembly::relation::{Constraint, ConstraintKind, GeomRef, OriginItem};
+    use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+    use cadcraft3d::kernel::Transform3;
+    let mut a = AssemblyDocument::default();
+    let r = DocRef::local(DocumentId::new_random());
+    let plane = |occurrence| GeomRef::Origin {
+        sub: Vec::new(),
+        occurrence,
+        item: OriginItem::XyPlane,
+    };
+    let base = a.place(r, "Base", Transform3::identity(), true);
+    for _ in 0..200 {
+        let o = a.place(r, "Block", Transform3::identity(), false);
+        a.add_constraint(Constraint {
+            id: 0,
+            name: String::new(),
+            kind: ConstraintKind::Flush,
+            a: plane(base),
+            b: plane(o),
+            value: 0.0,
+            expr: None,
+            aligned: false,
+            suppressed: false,
+            locked: false,
+            min: None,
+            max: None,
+            resting: false,
+            plane: None,
+        });
+    }
+    let local = |g: &GeomRef| match g {
+        GeomRef::Origin { item, .. } => Ok(item.geom()),
+        _ => Err("not here".to_owned()),
+    };
+    let ms = median_ms(5, || {
+        let s = cadcraft3d::assembly::solve(&a, &local, None);
+        assert_eq!(s.free.len(), 200);
+    });
+    println!("solve with free motions, 200 components: {ms:.2} ms");
+    assert!(ms < 200.0, "{ms:.2} ms > 200 ms");
+}

@@ -409,6 +409,13 @@ pub struct AssemblyDocument {
         skip_serializing_if = "crate::assembly::reps::Representations::is_empty"
     )]
     pub reps: crate::assembly::reps::Representations,
+    /// What the user changed in the BOM (spec 3.6): item numbers and static
+    /// quantities. Older builds ignore it (the numbers come out as calculated).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::assembly::bom::BomEdits::is_empty"
+    )]
+    pub bom: crate::assembly::bom::BomEdits,
 }
 
 /// The payload of a document.
@@ -723,6 +730,7 @@ mod tests {
     pub(crate) fn assembly_of(refs: &[DocRef]) -> DocumentData {
         DocumentData::Assembly(AssemblyDocument {
             reps: Default::default(),
+            bom: Default::default(),
             folders: Vec::new(),
             motion: Default::default(),
             occurrences: refs

@@ -1321,6 +1321,8 @@ impl CadCraftApp {
                 drawing: self.is_drawing(),
                 drawing_sketch: vsk.is_some(),
                 asm_tool: self.asm_tool_action(),
+                rel_sick: self.cons.glyphs.sick,
+                asm_dof: self.cons.glyphs.dof,
                 flat: self.sm.flat,
             };
             if !self.tab.shown_in(&state) {

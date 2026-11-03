@@ -3,7 +3,7 @@
 //! by a column, optional custom Property columns, editing the components'
 //! Part Number / Stock Number / Description / BOM Structure (components of
 //! this file; a linked part file is read only), the Reference override per
-//! occurrence, and Export to CSV.
+//! occurrence, Item Renumber, typed item numbers, Static Quantity and Export to CSV.
 
 use eframe::egui::{self, RichText};
 
@@ -22,6 +22,28 @@ pub(super) struct BomWin {
     sort: Option<(usize, bool)>,
     /// Custom Property columns shown.
     extra: Vec<String>,
+    /// Rows checked for Item Renumber (by part number).
+    picked: std::collections::BTreeSet<String>,
+    /// The Item Renumber row is open.
+    renumber: Option<RenumberUi>,
+    /// The item number being typed: part number and text (it applies when the field
+    /// is left: an emptied field would turn back into a number under the fingers).
+    typing: Option<(String, String)>,
+}
+
+/// The Item Renumber row.
+struct RenumberUi {
+    /// Selected Rows, else All Rows.
+    selected: bool,
+    start: crate::kernel::Real,
+    step: crate::kernel::Real,
+}
+
+/// What the window changes in the assembly's BOM.
+enum BomOp {
+    Item(String, String),
+    Quantity(String, Option<u32>),
+    Renumber(Vec<String>, u32, u32),
 }
 
 impl Default for BomWin {
@@ -32,6 +54,9 @@ impl Default for BomWin {
             all_levels: false,
             sort: None,
             extra: Vec::new(),
+            picked: Default::default(),
+            renumber: None,
+            typing: None,
         }
     }
 }
@@ -161,6 +186,8 @@ impl CadCraftApp {
         let mut structures: Vec<(DocRef, BomStructure)> = Vec::new();
         let mut overrides: Vec<(u32, bool)> = Vec::new();
         let mut open_props: Option<u32> = None;
+        let mut ops: Vec<BomOp> = Vec::new();
+        let twice = bom::duplicate_items(&rows);
         let win = egui::Window::new(format!("Bill of Materials [{}]", self.document_title()))
             .id(egui::Id::new("bom_window"))
             .open(&mut open)
@@ -181,6 +208,27 @@ impl CadCraftApp {
                 ui.separator();
                 if ui.button("Export...").on_hover_text("Save the view as a CSV file").clicked() {
                     export = true;
+                }
+                let can_number = w.view != BomView::ModelData;
+                if ui
+                    .add_enabled(can_number, egui::Button::new("Renumber Items..."))
+                    .on_hover_text("New item numbers in the order shown, from a start value by an increment")
+                    .on_disabled_hover_text("Model Data has no item numbers")
+                    .clicked()
+                {
+                    // The smallest number there is; selected rows when two or more are checked.
+                    let selected = w.picked.len() >= 2;
+                    let lowest = rows
+                        .iter()
+                        .filter(|r| r.level == 0 && (!selected || w.picked.contains(&r.part_number)))
+                        .filter_map(|r| r.item.parse::<u32>().ok())
+                        .min()
+                        .unwrap_or(1);
+                    w.renumber = Some(RenumberUi {
+                        selected,
+                        start: f64::from(lowest),
+                        step: 1.0,
+                    });
                 }
                 if !customs.is_empty() {
                     ui.menu_button("Columns", |ui| {
@@ -208,8 +256,44 @@ impl CadCraftApp {
                     ui.weak("Reference components are not listed; a Phantom subassembly's components move up a level.");
                 });
             }
-            ui.separator();
             let model = w.view == BomView::ModelData;
+            if model {
+                w.renumber = None;
+            }
+            let picked = w.picked.len();
+            let mut close_renumber = false;
+            if let Some(n) = w.renumber.as_mut() {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Item Renumber").strong());
+                    ui.add_enabled_ui(picked >= 2, |ui| {
+                        ui.radio_value(&mut n.selected, true, "Selected Rows");
+                    });
+                    ui.radio_value(&mut n.selected, false, "All Rows");
+                    ui.separator();
+                    ui.label("Start");
+                    ui.add(super::valuefield::ExprValue::new(&mut n.start).range(0.0..=1_000_000.0));
+                    ui.label("Increment");
+                    ui.add(super::valuefield::ExprValue::new(&mut n.step).range(1.0..=10_000.0));
+                    if ui.add(super::theme::ok_button("OK")).clicked() {
+                        let parts: Vec<String> = rows
+                            .iter()
+                            .filter(|r| r.level == 0)
+                            .filter(|r| !n.selected || w.picked.contains(&r.part_number))
+                            .map(|r| r.part_number.clone())
+                            .collect();
+                        ops.push(BomOp::Renumber(parts, n.start.round() as u32, n.step.round() as u32));
+                        close_renumber = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close_renumber = true;
+                    }
+                });
+            }
+            if close_renumber {
+                w.renumber = None;
+                w.picked.clear();
+            }
+            ui.separator();
             egui::ScrollArea::both().auto_shrink([false, true]).show(ui, |ui| {
                 egui::Grid::new("bom_grid").striped(true).num_columns(COLS.len() + w.extra.len() + 1).show(ui, |ui| {
                     if model {
@@ -251,8 +335,51 @@ impl CadCraftApp {
                                     overrides.push((id, reference));
                                 }
                             });
+                        } else if r.level > 0 {
+                            // Numbers of a subassembly's rows are its own.
+                            ui.label(format!("{}{}", "    ".repeat(r.level), r.item))
+                                .on_hover_text("Open the subassembly to change its numbers");
                         } else {
-                            ui.label(format!("{}{}", "    ".repeat(r.level), r.item));
+                            let pn = &r.part_number;
+                            ui.horizontal(|ui| {
+                                let mut on = w.picked.contains(pn);
+                                if ui.checkbox(&mut on, "").on_hover_text("Row for Item Renumber").changed() {
+                                    if on {
+                                        w.picked.insert(pn.clone());
+                                    } else {
+                                        w.picked.remove(pn);
+                                    }
+                                }
+                                let mut text = match &w.typing {
+                                    Some((p, t)) if p == pn => t.clone(),
+                                    _ => r.item.clone(),
+                                };
+                                let tokens = super::theme::tokens();
+                                let mut field = egui::TextEdit::singleline(&mut text).desired_width(60.0);
+                                // Overridden: blue. The same number twice: a yellow field.
+                                if r.item_typed {
+                                    field = field.text_color(tokens.link);
+                                }
+                                if twice.contains(&r.item) {
+                                    field = field.background_color(tokens.warn_box_fill);
+                                }
+                                let resp = ui.add(field).on_hover_text(if twice.contains(&r.item) {
+                                    "This item number is used twice"
+                                } else if r.item_typed {
+                                    "Typed: empty the field for the number it had"
+                                } else {
+                                    "Type an item number (an override)"
+                                });
+                                if resp.changed() {
+                                    w.typing = Some((pn.clone(), text.clone()));
+                                }
+                                if resp.lost_focus()
+                                    && w.typing.as_ref().is_some_and(|(p, _)| p == pn)
+                                {
+                                    ops.push(BomOp::Item(pn.clone(), text));
+                                    w.typing = None;
+                                }
+                            });
                         }
                         let mut cell = |ui: &mut egui::Ui, key: &'static str, value: &str| {
                             let mut v = value.to_owned();
@@ -293,7 +420,29 @@ impl CadCraftApp {
                             structures.push((d, s));
                         }
                         ui.label(&r.unit);
-                        ui.label(r.qty.to_string());
+                        if model || r.level > 0 {
+                            ui.label(r.qty.to_string());
+                        } else {
+                            // Typing makes it Static; Calculate takes the typed one away.
+                            ui.push_id(("bom_qty", ri), |ui| {
+                                ui.horizontal(|ui| {
+                                    let mut q = f64::from(r.qty);
+                                    let before = q;
+                                    ui.add(super::valuefield::ExprValue::new(&mut q).range(0.0..=1_000_000_000.0));
+                                    if q != before {
+                                        ops.push(BomOp::Quantity(r.part_number.clone(), Some(q.round() as u32)));
+                                    }
+                                    if r.qty_static
+                                        && ui
+                                            .small_button("Calculate")
+                                            .on_hover_text("Static Quantity: back to the calculated quantity")
+                                            .clicked()
+                                    {
+                                        ops.push(BomOp::Quantity(r.part_number.clone(), None));
+                                    }
+                                });
+                            });
+                        }
                         cell(ui, "stock_number", &r.stock_number);
                         cell(ui, "description", &r.description);
                         ui.label(&r.material);
@@ -309,10 +458,25 @@ impl CadCraftApp {
             }
         });
         // Changes to the components' Properties (one Undo step per edit).
-        if !edits.is_empty() || !structures.is_empty() || !overrides.is_empty() {
+        if !edits.is_empty() || !structures.is_empty() || !overrides.is_empty() || !ops.is_empty() {
             self.checkpoint("Bill of Materials");
+            let mut renamed: Vec<(String, String)> = Vec::new();
             for (d, key, v) in edits {
+                // A chosen variant's row: its own Properties (spec 3.9), which its
+                // part applies when that variant is placed.
+                if let Some(variant) = d.variant {
+                    let key_row = crate::part::variants::RowKey::Prop(key.to_owned());
+                    let cell = crate::part::variants::Cell::Text(v.clone());
+                    if let Some(doc) = self.project.document_mut(d.document)
+                        && let DocumentData::Part(p) = &mut doc.data
+                        && p.set_variant_info(variant, &key_row, &cell).is_ok()
+                    {
+                        p.variants_sync();
+                    }
+                    continue;
+                }
                 if let Some(doc) = self.project.document_mut(d.document) {
+                    let before = doc.properties.effective("part_number", &doc.name);
                     // An edited Part Number equal to the file name stays the default.
                     let v = if key == "part_number" && v == doc.name {
                         String::new()
@@ -320,6 +484,22 @@ impl CadCraftApp {
                         v
                     };
                     doc.properties.set(key, &v);
+                    renamed.push((before, doc.properties.effective("part_number", &doc.name)));
+                }
+            }
+            let view = w.view;
+            if let Some(a) = self.assembly_mut() {
+                for (old, new) in renamed {
+                    a.bom.rename(&old, &new);
+                }
+                for op in ops {
+                    match op {
+                        BomOp::Item(part, text) => a.bom.set_item(view, &part, &text),
+                        BomOp::Quantity(part, q) => a.bom.set_quantity(&part, q),
+                        BomOp::Renumber(parts, start, step) => {
+                            a.bom.renumber(view, &parts, start, step);
+                        }
+                    }
                 }
             }
             for (d, s) in structures {
