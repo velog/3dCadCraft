@@ -39,6 +39,8 @@ pub struct Family {
     pub standard: String,
     /// The user's published file; `None` = built in.
     pub file: Option<PathBuf>,
+    /// What its table was compared with (`data/components/SOURCES.md`); empty: not yet.
+    pub checked: String,
     /// The members.
     pub members: Vec<Entry>,
 }
@@ -61,6 +63,11 @@ pub fn user_dir(root: &Path) -> PathBuf {
 
 /// Folder of the generated members, skipped when families are listed.
 const MEMBERS: &str = ".members";
+
+/// Side of a family's picture, in pixels.
+pub const THUMBNAIL: u32 = 56;
+/// Folder of the pictures, a cache: deleting it only costs the time to draw them again.
+const THUMBNAILS: &str = ".thumbnails";
 
 impl Catalog {
     /// Lists the built-in samples and the families published under `root`.
@@ -85,6 +92,7 @@ impl Catalog {
                 Some(f) => f.members.push(entry),
                 None => c.families.push(Family {
                     category,
+                    checked: samples::checked_of(&name),
                     name,
                     standard,
                     file: None,
@@ -132,6 +140,7 @@ impl Catalog {
                             name,
                             standard: "Own".to_owned(),
                             file: Some(p),
+                            checked: String::new(),
                             members,
                         });
                     }
@@ -224,6 +233,66 @@ impl Catalog {
             }
         }
         out
+    }
+
+    /// A picture of a family's first member, `THUMBNAIL`² RGBA. Takes a build
+    /// the first time (call it off the interface's thread), then reads the
+    /// cache; a changed table or published file names another picture.
+    pub fn thumbnail(&self, family: usize) -> Result<Vec<u8>, String> {
+        let f = self.families.get(family).ok_or("no such family")?;
+        let m = f.members.first().ok_or("the family has no members")?;
+        let identity = match (&m.source, &f.file) {
+            (Source::Sample(s), _) => format!("{}|{:?}", s.designation(), s.kind),
+            (Source::Row(_), Some(file)) => {
+                let time = std::fs::metadata(file)
+                    .and_then(|d| d.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|t| t.as_secs())
+                    .unwrap_or_default();
+                format!("{}|{time}", file.display())
+            }
+            (Source::Row(_), None) => return Err("the family has no file".into()),
+        };
+        let path = self
+            .root
+            .join(THUMBNAILS)
+            .join(format!("{}.png", super::derived_id("thumbnail", &identity)));
+        if let Ok(bytes) = std::fs::read(&path)
+            && let Some((w, h, rgba)) = crate::part::thumbnail::decode_png(&bytes)
+            && (w, h) == (THUMBNAIL, THUMBNAIL)
+        {
+            return Ok(rgba);
+        }
+        let part = match (&m.source, &f.file) {
+            (Source::Sample(s), _) => s.part_at(Detail::Standard).map_err(|e| e.to_string())?,
+            (Source::Row(r), Some(file)) => {
+                let project = Project::load(file).map_err(|e| e.to_string())?;
+                let (template, props) = first_part(&project).ok_or("the file holds no part")?;
+                let table = template
+                    .family
+                    .as_ref()
+                    .ok_or("the file holds no family table")?;
+                table
+                    .member(template, props, *r)
+                    .map_err(|e| e.to_string())?
+                    .part
+            }
+            (Source::Row(_), None) => return Err("the family has no file".into()),
+        };
+        let mut scene = crate::part::thumbnail::Scene::default();
+        scene.add_part(&part, None);
+        let rgba =
+            crate::part::thumbnail::render(&scene, crate::part::thumbnail::iso_view(), THUMBNAIL)
+                .ok_or("the part has nothing to draw")?;
+        // The picture is only a cache: a folder that cannot be written costs time, nothing else.
+        if let Some(png) = crate::part::thumbnail::encode_png(&rgba, THUMBNAIL, THUMBNAIL) {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&path, png);
+        }
+        Ok(rgba)
     }
 
     /// The file of a member at the usual level, written now if it is missing.

@@ -287,3 +287,63 @@ fn an_inch_bolt_builds_with_its_unc_thread_and_a_file_name_without_slashes() {
     assert!((part.cosmetic_threads[0].pitch - 1.27).abs() < 1e-3);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn families_have_a_picture_and_it_comes_from_the_cache_the_second_time() {
+    let root = tmp("thumbnail");
+    let c = Catalog::load(&root);
+    let f = c
+        .families
+        .iter()
+        .position(|f| f.name == "ISO 4032")
+        .unwrap_or_else(|| panic!("no ISO 4032"));
+    let side = cadcraft3d::components::catalog::THUMBNAIL as usize;
+    let rgba = c.thumbnail(f).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(rgba.len(), side * side * 4);
+    assert!(
+        rgba.chunks(4).any(|p| p[3] > 0),
+        "the picture must show something"
+    );
+    let cached = std::fs::read_dir(root.join(".thumbnails"))
+        .unwrap_or_else(|e| panic!("{e}"))
+        .count();
+    assert_eq!(cached, 1);
+    assert_eq!(c.thumbnail(f).unwrap_or_else(|e| panic!("{e}")), rgba);
+    assert_eq!(
+        std::fs::read_dir(root.join(".thumbnails"))
+            .unwrap_or_else(|e| panic!("{e}"))
+            .count(),
+        1,
+        "the second call reads the same picture"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn sources_that_disagree_give_a_member_each() {
+    let c = Catalog::load(&tmp("both_values"));
+    let find = |family: &str, size: &str| {
+        c.families
+            .iter()
+            .find(|f| f.name == family)
+            .is_some_and(|f| f.members.iter().any(|m| m.size == size))
+    };
+    assert!(find("ISO 4032", "M6"));
+    assert!(find("ISO 4032", "M6 (m 5)"));
+    assert!(find("DIN 1587", "M10 (s 16)"));
+    assert!(find("Series R", "R6 (B 5.558)"));
+}
+
+#[test]
+fn a_family_tells_what_its_table_was_compared_with() {
+    let c = Catalog::load(&tmp("checked"));
+    let of = |name: &str| {
+        c.families
+            .iter()
+            .find(|f| f.name == name)
+            .map(|f| f.checked.clone())
+            .unwrap_or_else(|| panic!("no {name}"))
+    };
+    assert_eq!(of("Series 68"), "Koyo");
+    assert_eq!(of("Metric O-Ring"), "");
+}
