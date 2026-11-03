@@ -1218,6 +1218,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     docs,
                     storage,
                     styles,
+                    panel("Variants", vec![c("part.variant_new"), c("asm.rep_table")]),
                     panel(
                         "Author",
                         vec![

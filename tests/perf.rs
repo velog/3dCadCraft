@@ -4943,11 +4943,27 @@ fn representations_sync_within_a_frame() {
     }
     let mut reps = Representations::default();
     reps.new_view(&a);
-    reps.new_state(&a);
+    reps.new_variant(&a);
     reps.new_position(&mut a);
     let ms = median_ms(9, || {
         reps.sync(&a);
     });
     println!("representations sync, 2000 occurrences: {ms:.2} ms");
     assert!(ms < 4.0, "{ms:.2} ms > 4 ms");
+}
+
+/// Bringing a part's active variant up to date runs four times a second (rule 20).
+#[test]
+fn part_variants_sync_stays_small() {
+    use cadcraft3d::part::expr::Unit;
+    let mut p = PartDocument::with_box("Box1", [20.0, 10.0, 5.0]).unwrap();
+    for _ in 0..200 {
+        p.add_user_parameter(Unit::Mm);
+    }
+    p.new_variant();
+    let ms = median_ms(9, || {
+        p.variants_sync();
+    });
+    println!("part variants sync, 200 parameters: {ms:.2} ms");
+    assert!(ms < 20.0, "{ms:.2} ms > 20 ms");
 }

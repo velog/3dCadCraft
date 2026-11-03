@@ -69,6 +69,7 @@ pub mod surface_op;
 pub mod sweep;
 pub mod thumbnail;
 pub mod units;
+pub mod variants;
 pub mod work;
 
 use std::collections::HashMap;
@@ -962,6 +963,10 @@ pub struct PartDocument {
     /// The table of a part family (spec 5.7). A new field old builds ignore.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<family::FamilyTable>,
+    /// Variants of the part (spec 3.9; Inventor: Model States). Old builds
+    /// ignore them and build the variant that was active when saved.
+    #[serde(default, skip_serializing_if = "variants::PartVariants::is_empty")]
+    pub variants: variants::PartVariants,
     /// Named geometry for being placed (spec 6.3 §3.5). A new field old builds ignore.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connections: Vec<connection::Connection>,

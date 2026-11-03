@@ -2779,7 +2779,7 @@ fn component_tab(
                             });
                     });
                 };
-            row(ui, "Model State", &lists[2], &mut d.reps.state);
+            row(ui, "Variant", &lists[2], &mut d.reps.variant);
             row(ui, "Design View", &lists[0], &mut d.reps.view);
             row(ui, "Position", &lists[1], &mut d.reps.position);
         })

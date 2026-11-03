@@ -289,7 +289,7 @@ impl PartDocument {
     }
 
     /// The features `k` needs, directly or through others (ascending).
-    fn requirements(&self, k: usize) -> Vec<usize> {
+    pub(crate) fn requirements(&self, k: usize) -> Vec<usize> {
         let mut out: BTreeSet<usize> = BTreeSet::new();
         let mut todo = vec![k];
         while let Some(x) = todo.pop() {

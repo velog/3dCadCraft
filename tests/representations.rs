@@ -1,6 +1,6 @@
 //! Representations of an assembly (spec 3.9) with the real solver: a positional
 //! override moves the mechanism and [Primary] comes back, for five kinds of
-//! relationship; a model state changes the BOM; everything survives a save.
+//! relationship; a variant changes the BOM; everything survives a save.
 //! Geometry is given directly, a 20 mm cube with named faces.
 
 use cadcraft3d::assembly::bom::{BomView, ComponentInfo, rows};
@@ -321,13 +321,13 @@ fn a_model_state_changes_the_bom_and_primary_keeps_its_own() {
     };
     assert_eq!(qty(&a, "BOLT"), 2);
     let mut r = Representations::default();
-    let s = r.new_state(&a);
+    let s = r.new_variant(&a);
     a.find_mut(3).unwrap().suppressed = true;
     r.sync(&a);
     assert_eq!(qty(&a, "BOLT"), 1);
-    r.activate_state(PRIMARY, &mut a);
+    r.activate_variant(PRIMARY, &mut a);
     assert_eq!(qty(&a, "BOLT"), 2);
-    r.activate_state(s, &mut a);
+    r.activate_variant(s, &mut a);
     assert_eq!(qty(&a, "BOLT"), 1);
     assert_eq!(qty(&a, "PLATE"), 1);
 }
@@ -353,7 +353,7 @@ fn everything_survives_a_save_and_load() {
     let view = r.new_view(&a);
     a.find_mut(2).unwrap().transparent = true;
     r.sync(&a);
-    let state = r.new_state(&a);
+    let state = r.new_variant(&a);
     let position = r.new_position(&mut a);
     a.constraints[0].value = 12.0;
     r.sync(&a);
@@ -372,7 +372,7 @@ fn everything_survives_a_save_and_load() {
     assert_eq!(
         (
             b.reps.active_view,
-            b.reps.active_state,
+            b.reps.active_variant,
             b.reps.active_position
         ),
         (view, state, position)

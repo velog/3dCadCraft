@@ -283,6 +283,7 @@ impl CadCraftApp {
                             self.assembly_tree(ui, name);
                         } else {
                             self.part_tree(ui, name, &mut cmds);
+                            self.part_variants_folder(ui);
                         }
                     } else {
                         ui.horizontal(|ui| {

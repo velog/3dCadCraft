@@ -88,6 +88,8 @@ impl Envs {
     pub const ANY: Envs = Envs(3);
     /// Only in an assembly.
     pub const ASSEMBLY: Envs = Envs(4);
+    /// A part and an assembly.
+    pub const PART_ASSEMBLY: Envs = Envs(5);
     /// Only in a drawing.
     pub const DRAWING: Envs = Envs(8);
     /// The part, its sketches and drawings.
@@ -162,10 +164,12 @@ pub enum AppCmd {
     ContactSolver,
     /// The Motion and Contact window on one of its tabs.
     Motion(super::motion::MotionTab),
-    /// A new view / positional representation or model state (spec 3.9).
+    /// A new view / positional representation or variant (spec 3.9).
     NewRep(super::reps::RepKind),
-    /// The Model States table (spec 3.9).
+    /// The Variants window of a part or an assembly (spec 3.9).
     StateTable,
+    /// A new variant of the active part (spec 3.9).
+    NewVariant,
     /// Solves every positional representation (spec 3.9).
     VerifyPositions,
     /// Return: from Edit in place back to the assembly.
@@ -390,6 +394,7 @@ const M_SURFACE: Place = Place::Ribbon("3D Model", "Surface");
 const M_PLASTIC: Place = Place::Ribbon("3D Model", "Plastic Part");
 const M_FREEFORM: Place = Place::Ribbon("3D Model", "Freeform");
 const G_AUTHOR: Place = Place::Ribbon("Manage", "Author");
+const G_VARIANTS: Place = Place::Ribbon("Manage", "Variants");
 const G_INSERT: Place = Place::Ribbon("Manage", "Insert");
 const G_LAYOUT: Place = Place::Ribbon("Manage", "Layout");
 const E_BEGIN: Place = Place::Ribbon("Environments", "Begin");
@@ -1509,6 +1514,15 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["UPK"])
         .at(&[G_STORE])
         .tip("Unpack: every document of this file into its own file, linked back"),
+    c("part.variant_new", "New Variant", "Нов вариант", Icon::RepState)
+        .inv("Model States")
+        .short("Variant")
+        .run(Action::App(AppCmd::NewVariant))
+        .alias(&["VAR"])
+        .at(&[G_VARIANTS])
+        .env(Envs::PART)
+        .tip("A variant of the part: other features suppressed, other parameter values")
+        .spec("3.9-representations.md"),
     pp("manage.extract_ifeature", "Extract Feature Template", "Извличане на шаблон на елемент", Icon::ExtractFeatureTemplate, Pp::ExtractFeatureTemplate)
         .inv("Extract iFeature")
         .alias(&["XFT"])
@@ -1824,21 +1838,22 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("Another position of the mechanism: relationship values, grounding and offsets overridden")
         .spec("3.9-representations.md"),
-    c("asm.rep_state", "New Model State", "Ново състояние на модела", Icon::RepState)
-        .short("State")
-        .run(Action::App(AppCmd::NewRep(super::reps::RepKind::State)))
-        .alias(&["MDS"])
+    c("asm.rep_state", "New Variant", "Нов вариант", Icon::RepState)
+        .inv("Model States")
+        .short("Variant")
+        .run(Action::App(AppCmd::NewRep(super::reps::RepKind::Variant)))
+        .alias(&["VAR"])
         .at(&[A_REPS])
         .env(ASSEMBLY)
         .tip("A variant of the assembly with other components suppressed; the BOM follows")
         .spec("3.9-representations.md"),
-    c("asm.rep_table", "Edit Model States Table", "Таблица на състоянията", Icon::RepTable)
+    c("asm.rep_table", "Variants Table", "Таблица на вариантите", Icon::RepTable)
         .short("Table")
         .run(Action::App(AppCmd::StateTable))
-        .alias(&["MSE"])
-        .at(&[A_REPS])
-        .env(ASSEMBLY)
-        .tip("Which components each model state suppresses")
+        .alias(&["VTB"])
+        .at(&[A_REPS, G_VARIANTS])
+        .env(Envs::PART_ASSEMBLY)
+        .tip("Every variant side by side: suppress, compare, copy, correct")
         .spec("3.9-representations.md"),
     c("asm.rep_verify", "Verify Positions", "Проверка на позициите", Icon::RepVerify)
         .short("Verify")

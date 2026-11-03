@@ -135,6 +135,7 @@ mod theme;
 mod thicken;
 mod trim_preview;
 mod valuefield;
+mod variants;
 mod view_nav;
 mod view_style;
 mod viewcube;
@@ -4471,7 +4472,8 @@ impl CadCraftApp {
             AppCmd::ContactSolver => self.toggle_contact_solver(),
             AppCmd::Motion(t) => self.open_motion(t),
             AppCmd::NewRep(k) => self.new_representation(k),
-            AppCmd::StateTable => self.open_state_table(),
+            AppCmd::StateTable => self.open_variants(),
+            AppCmd::NewVariant => self.new_variant_cmd(),
             AppCmd::VerifyPositions => self.verify_positions(),
             AppCmd::FindInBrowser => {
                 self.asm.find_in_browser = self.asm.sel.first().copied();
@@ -8358,6 +8360,8 @@ impl eframe::App for CadCraftApp {
         self.change_size_window(&ctx);
         self.connections_window(&ctx);
         self.part_family_window(&ctx);
+        self.variants_window(&ctx);
+        self.part_variants_tick(ctx.input(|i| i.time));
         self.drawing_windows(&ctx);
         self.doc_settings_window(&ctx);
         self.iprops_window(&ctx);

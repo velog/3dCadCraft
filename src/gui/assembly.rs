@@ -79,6 +79,8 @@ pub(super) struct AsmDrag {
 pub(super) struct AsmUi {
     /// Representations: the Override window, the table, renaming (spec 3.9).
     pub(super) reps: super::reps::RepsUi,
+    /// The Variants window (parts and assemblies).
+    pub(super) variants: super::variants::VariantsUi,
     /// Selected occurrences (ids).
     pub sel: Vec<u32>,
     /// The menu of a frame corner's glyph (frame, treatment, where; `true`

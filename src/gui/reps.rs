@@ -1,6 +1,6 @@
 //! Representations in the assembly's browser (`docs/spec/3.9-representations.md`):
-//! the folders *Representations › View / Position* and *Model States*, their
-//! menus, the Override window and the Model States table. The logic is
+//! the folders *Representations › View / Position* and *Variants*, their
+//! menus, the Override window and the Variants table. The logic is
 //! `assembly::reps`; here are the Undo steps, the solves and the camera.
 
 use eframe::egui::{self, RichText};
@@ -19,8 +19,8 @@ pub enum RepKind {
     View,
     /// Positional representations.
     Position,
-    /// Model states.
-    State,
+    /// Model variants.
+    Variant,
 }
 
 impl RepKind {
@@ -28,7 +28,7 @@ impl RepKind {
         match self {
             RepKind::View => "View",
             RepKind::Position => "Position",
-            RepKind::State => "Model State",
+            RepKind::Variant => "Variant",
         }
     }
 }
@@ -60,10 +60,6 @@ pub(super) struct OverrideUi {
 #[derive(Clone, Debug, Default)]
 pub(super) struct RepsUi {
     over: Option<OverrideUi>,
-    /// The Model States table is open.
-    table: bool,
-    /// Show every component in the table, not only those that differ.
-    table_all: bool,
     /// Renaming: list, id, text, focus asked for.
     rename: Option<(RepKind, u32, String, bool)>,
 }
@@ -140,7 +136,7 @@ impl CadCraftApp {
         self.view_cube.animate(before, &mut self.camera);
     }
 
-    /// A change of position or model state: solved on a copy, nothing changes
+    /// A change of position or variant: solved on a copy, nothing changes
     /// when it does not solve (rule 5).
     fn reps_solved(
         &mut self,
@@ -160,9 +156,33 @@ impl CadCraftApp {
         self.run_rep(Cmd::New(kind));
     }
 
-    /// Ribbon: the Model States table.
-    pub(super) fn open_state_table(&mut self) {
-        self.run_rep(Cmd::Table);
+    /// The Variants window: activate.
+    pub(super) fn rep_activate(&mut self, kind: RepKind, id: u32) {
+        self.run_rep(Cmd::Activate(kind, id));
+    }
+
+    /// The Variants window: delete.
+    pub(super) fn rep_delete(&mut self, kind: RepKind, id: u32) {
+        self.run_rep(Cmd::Delete(kind, id));
+    }
+
+    /// The Variants window: Edit Scope.
+    pub(super) fn rep_toggle_scope(&mut self) {
+        self.run_rep(Cmd::Scope);
+    }
+
+    /// The Variants window: rename.
+    pub(super) fn rep_rename(&mut self, kind: RepKind, id: u32, new: &str) {
+        let own = self.assembly().and_then(|a| {
+            a.reps
+                .variants
+                .iter()
+                .find(|v| v.id == id)
+                .map(|v| v.name.clone())
+        });
+        if let Some(own) = own {
+            self.rename_rep(kind, id, &own, new.trim());
+        }
     }
 
     /// Ribbon: Verify.
@@ -192,9 +212,9 @@ impl CadCraftApp {
                     },
                 );
             }
-            Cmd::New(RepKind::State) => {
-                self.reps_solved("New Model State", RepKind::State, |r, a| {
-                    r.new_state(a);
+            Cmd::New(RepKind::Variant) => {
+                self.reps_solved("New Variant", RepKind::Variant, |r, a| {
+                    r.new_variant(a);
                 });
             }
             Cmd::Activate(RepKind::View, id) => {
@@ -226,9 +246,9 @@ impl CadCraftApp {
                     },
                 );
             }
-            Cmd::Activate(RepKind::State, id) => {
-                self.reps_solved("Activate Model State", RepKind::State, |r, a| {
-                    r.activate_state(id, a);
+            Cmd::Activate(RepKind::Variant, id) => {
+                self.reps_solved("Activate Variant", RepKind::Variant, |r, a| {
+                    r.activate_variant(id, a);
                 });
             }
             Cmd::Copy(RepKind::View, id) => {
@@ -247,7 +267,7 @@ impl CadCraftApp {
                     },
                 );
             }
-            Cmd::Copy(RepKind::State, _) => {}
+            Cmd::Copy(RepKind::Variant, _) => {}
             Cmd::Delete(kind, id) => {
                 self.edit_assembly("Delete Representation", |a| match kind {
                     RepKind::View => {
@@ -256,8 +276,8 @@ impl CadCraftApp {
                     RepKind::Position => {
                         a.reps.delete_position(id);
                     }
-                    RepKind::State => {
-                        a.reps.delete_state(id);
+                    RepKind::Variant => {
+                        a.reps.delete_variant(id);
                     }
                 });
             }
@@ -275,9 +295,9 @@ impl CadCraftApp {
                         .iter()
                         .find(|p| p.id == id)
                         .map(|p| p.name.clone()),
-                    RepKind::State => a
+                    RepKind::Variant => a
                         .reps
-                        .states
+                        .variants
                         .iter()
                         .find(|s| s.id == id)
                         .map(|s| s.name.clone()),
@@ -333,14 +353,12 @@ impl CadCraftApp {
                 }
             }),
             Cmd::ToState(id) => {
-                self.reps_solved("Copy to Model State", RepKind::State, |r, a| {
-                    r.view_to_state(id, a);
+                self.reps_solved("Copy to Variant", RepKind::Variant, |r, a| {
+                    r.view_to_variant(id, a);
                 });
             }
             Cmd::Verify => self.verify_now(),
-            Cmd::Table => {
-                self.asm.reps.table = true;
-            }
+            Cmd::Table => self.open_variants(),
             Cmd::Scope => self.edit_assembly("Toggle Edit Scope", |a| {
                 a.reps.factory_scope = !a.reps.factory_scope;
             }),
@@ -398,12 +416,12 @@ impl CadCraftApp {
                 .iter()
                 .map(|p| (p.id, p.name.clone(), p.id == r.active_position, false)),
         );
-        let states: Vec<Row> = if r.states.is_empty() {
+        let variants: Vec<Row> = if r.variants.is_empty() {
             vec![(PRIMARY, "Primary".into(), true, false)]
         } else {
-            r.states
+            r.variants
                 .iter()
-                .map(|s| (s.id, s.name.clone(), s.id == r.active_state, false))
+                .map(|s| (s.id, s.name.clone(), s.id == r.active_variant, false))
                 .collect()
         };
         let cameras: std::collections::HashMap<u32, (bool, bool)> = r
@@ -461,10 +479,10 @@ impl CadCraftApp {
         });
         super::asm_browser::fold(ui, "asm_model_states", false, |ui| {
             super::panels::tree_icon(ui, Icon::RepState);
-            let l = ui.label("Model States");
+            let l = ui.label("Variants");
             l.context_menu(|ui| {
-                if ui.button("New Model State").clicked() {
-                    cmds.push(Cmd::New(RepKind::State));
+                if ui.button("New Variant").clicked() {
+                    cmds.push(Cmd::New(RepKind::Variant));
                     ui.close();
                 }
                 if ui.button("Edit Table...").clicked() {
@@ -472,31 +490,27 @@ impl CadCraftApp {
                     ui.close();
                 }
             });
-            if ui
-                .small_button("+")
-                .on_hover_text("New Model State")
-                .clicked()
-            {
-                cmds.push(Cmd::New(RepKind::State));
+            if ui.small_button("+").on_hover_text("New Variant").clicked() {
+                cmds.push(Cmd::New(RepKind::Variant));
             }
         })
         .body(|ui| {
             let (t, tip) = if factory {
                 (
                     "Edit Scope: Factory",
-                    "Suppressions go to every model state; click for the active one only",
+                    "Suppressions go to every variant; click for the active one only",
                 )
             } else {
                 (
                     "Edit Scope: Member",
-                    "Suppressions go to the active model state only; click for all of them",
+                    "Suppressions go to the active variant only; click for all of them",
                 )
             };
             if ui.small_button(t).on_hover_text(tip).clicked() {
                 cmds.push(Cmd::Scope);
             }
-            for row in &states {
-                self.rep_row(ui, RepKind::State, row, None, &mut cmds);
+            for row in &variants {
+                self.rep_row(ui, RepKind::Variant, row, None, &mut cmds);
             }
         });
         for c in cmds {
@@ -563,7 +577,7 @@ impl CadCraftApp {
                     cmds.push(Cmd::Activate(kind, id));
                     ui.close();
                 }
-                if kind != RepKind::State
+                if kind != RepKind::Variant
                     && (id != PRIMARY || kind == RepKind::View)
                     && ui.button("Copy").clicked()
                 {
@@ -571,7 +585,7 @@ impl CadCraftApp {
                     ui.close();
                 }
                 if kind == RepKind::View {
-                    if ui.button("Copy to Model State").clicked() {
+                    if ui.button("Copy to Variant").clicked() {
                         cmds.push(Cmd::ToState(id));
                         ui.close();
                     }
@@ -622,7 +636,7 @@ impl CadCraftApp {
                         }
                     }
                 }
-                if kind == RepKind::State && ui.button("Edit Table...").clicked() {
+                if kind == RepKind::Variant && ui.button("Edit Table...").clicked() {
                     cmds.push(Cmd::Table);
                     ui.close();
                 }
@@ -657,9 +671,11 @@ impl CadCraftApp {
                 own,
                 a.reps.positions.iter().map(|p| p.name.as_str()),
             ),
-            RepKind::State => {
-                Representations::name_free(new, own, a.reps.states.iter().map(|s| s.name.as_str()))
-            }
+            RepKind::Variant => Representations::name_free(
+                new,
+                own,
+                a.reps.variants.iter().map(|s| s.name.as_str()),
+            ),
         });
         if !free {
             self.file_status = Some(Err(format!("{}: the name {new} is taken", kind.label())));
@@ -677,8 +693,8 @@ impl CadCraftApp {
                     p.name = new;
                 }
             }
-            RepKind::State => {
-                if let Some(s) = a.reps.states.iter_mut().find(|s| s.id == id) {
+            RepKind::Variant => {
+                if let Some(s) = a.reps.variants.iter_mut().find(|s| s.id == id) {
                     s.name = new;
                 }
             }
@@ -805,7 +821,7 @@ impl CadCraftApp {
         let r = self.asm_try("Override", move |a| {
             Self::with_reps(a, |r, a| {
                 let base = r.primary.clone();
-                let base_rel = r.active_state().map(|s| s.relationships.clone());
+                let base_rel = r.active_variant().map(|s| s.relationships.clone());
                 match u.of {
                     OverrideOf::Relationship(id) => {
                         let Some(c) = a.constraint_mut(id) else {
@@ -881,10 +897,9 @@ impl CadCraftApp {
         self.apply_override(&u);
     }
 
-    /// The Override window and the Model States table.
+    /// The Override window.
     pub(super) fn reps_windows(&mut self, ctx: &egui::Context) {
         self.override_window(ctx);
-        self.state_table_window(ctx);
     }
 
     fn override_window(&mut self, ctx: &egui::Context) {
@@ -972,119 +987,6 @@ impl CadCraftApp {
             return;
         }
         self.asm.reps.over = Some(u);
-    }
-
-    fn state_table_window(&mut self, ctx: &egui::Context) {
-        if !self.asm.reps.table {
-            return;
-        }
-        let Some(a) = self.assembly() else {
-            return;
-        };
-        let mut all = self.asm.reps.table_all;
-        // (id, name, one column per state)
-        type Col = (u32, String, Vec<bool>);
-        let states: Vec<(u32, String)> = if a.reps.states.is_empty() {
-            vec![(PRIMARY, "[Primary]".to_owned())]
-        } else {
-            a.reps
-                .states
-                .iter()
-                .map(|s| {
-                    let n = if s.id == PRIMARY {
-                        "[Primary]".to_owned()
-                    } else {
-                        s.name.clone()
-                    };
-                    (s.id, n)
-                })
-                .collect()
-        };
-        let active = a.reps.active_state;
-        let cols: Vec<Col> = a
-            .occurrences
-            .iter()
-            .map(|o| {
-                let cells = if a.reps.states.is_empty() {
-                    vec![o.suppressed]
-                } else {
-                    a.reps
-                        .states
-                        .iter()
-                        .map(|s| s.occurrences.contains(&o.id))
-                        .collect()
-                };
-                (o.id, o.name.clone(), cells)
-            })
-            .collect();
-        let shown: Vec<&Col> = cols
-            .iter()
-            .filter(|(_, _, c)| all || c.iter().any(|x| *x != c[0]))
-            .collect();
-        let mut toggle: Option<(u32, u32)> = None;
-        let mut open = true;
-        let win = egui::Window::new("Model States: Edit Table")
-            .id(egui::Id::new("reps_table"))
-            .open(&mut open)
-            .resizable(true)
-            .default_size([560.0, 300.0])
-            .min_height(200.0);
-        self.layout
-            .place("reps_table", ctx.content_rect(), true, win)
-            .show(ctx, |ui| {
-                ui.checkbox(&mut all, "Show every component")
-                    .on_hover_text("Off: only the components that differ between the model states");
-                ui.separator();
-                if shown.is_empty() {
-                    ui.weak("The model states do not differ yet.");
-                    return;
-                }
-                egui::ScrollArea::both()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        egui::Grid::new("reps_table_grid")
-                            .striped(true)
-                            .show(ui, |ui| {
-                                ui.strong("Model State");
-                                for (_, n, _) in &shown {
-                                    ui.strong(n.as_str())
-                                        .on_hover_text("Suppressed in the checked model states");
-                                }
-                                ui.end_row();
-                                for (k, (sid, name)) in states.iter().enumerate() {
-                                    if *sid == active {
-                                        ui.strong(format!("✔ {name}"));
-                                    } else {
-                                        ui.label(name);
-                                    }
-                                    for (oid, _, cells) in &shown {
-                                        let mut v = cells[k];
-                                        if ui.checkbox(&mut v, "").changed() {
-                                            toggle = Some((*sid, *oid));
-                                        }
-                                    }
-                                    ui.end_row();
-                                }
-                            });
-                    });
-            });
-        self.asm.reps.table_all = all;
-        if !open {
-            self.asm.reps.table = false;
-        }
-        if let Some((sid, oid)) = toggle {
-            self.reps_solved("Edit Model State Table", RepKind::State, |r, a| {
-                if sid == r.active_state {
-                    if let Some(o) = a.find_mut(oid) {
-                        o.suppressed = !o.suppressed;
-                    }
-                } else if let Some(s) = r.states.iter_mut().find(|s| s.id == sid)
-                    && !s.occurrences.remove(&oid)
-                {
-                    s.occurrences.insert(oid);
-                }
-            });
-        }
     }
 }
 

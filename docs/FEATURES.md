@@ -920,13 +920,13 @@ Finds the overlapping volumes between components, shows them in red and gives th
 - **Copy Components.**
 - **Make independent:** turns a linked document (Link) into a local copy. Internally it uses Append.
 
-## 3.9 Representations and model states — 🟡 (assemblies: View, Position, Model States in the browser; part model states, Spreadsheet, subassembly occurrences ⬜) · L
+## 3.9 Representations and variants — 🟡 (View, Position, Variants of assemblies and parts with the Variants window; placing a chosen variant, subassembly occurrences ⬜) · L
 
 **Specification:** [spec/3.9-representations.md](spec/3.9-representations.md)
 
 - **View representations:** visibility, colours, transparency.
 - **Positional representations:** different positions of the mechanism, e.g. "open" and "closed".
-- **Model States:** variants of the same document with different parameters or suppressed features and components, e.g. "short/long" or "simplified" configurations. In 3DCadCraft this is the common mechanism for **configurations** (see 5.7).
+- **Variants** (Inventor: Model States): versions of the same document with different parameters or suppressed features and components, e.g. "short/long" or "simplified" configurations. In 3DCadCraft this is the common mechanism for **configurations** (see 5.7).
 
 ## 3.10 Top-down design — 🟡 · L
 

@@ -2927,7 +2927,7 @@ fn a_projected_view_follows_the_representations_of_its_base() {
     let reps = ViewReps {
         view: Some(2),
         position: Some(1),
-        state: None,
+        variant: None,
     };
     d.sheet_mut().unwrap().view_mut(base).unwrap().reps = reps;
     let top = d.add_projected_view(base, [100.0, 200.0]).unwrap();

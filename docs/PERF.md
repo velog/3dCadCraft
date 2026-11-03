@@ -91,6 +91,8 @@ Target times for interactive work:
 | Make Components update: the component follows the master that grew (`assembly::make::update_derived`) | 400 ms | 60.8 ms release (2026-10-31, under load) |
 | Representations: the per-frame sync with 2000 occurrences (`assembly::reps::Representations::sync`) | 4 ms | 2.04 ms test profile (2026-11-03, quiet) |
 | Assembly features: a cabinet side cut by 32 shelf-pin tools, one occurrence's shown body (`assembly::features::cut`; tools apart joined by `join_apart` — 32 Booleans took 531 ms) | 300 ms | 226.6 ms release (2026-10-31, under load); 96 ms in the test profile on the kernel at d4eeedb (2026-11-03, the tools' boxes on every core; 335 ms before) |
+| Variants of a part: the sync with 200 parameters, four times a second (`PartDocument::variants_sync`) | 20 ms | 0.22 ms test profile (2026-11-03, quiet) |
+| Assembly features: a cabinet side cut by 32 shelf-pin tools, one occurrence's shown body (`assembly::features::cut`; tools apart joined by `join_apart` — 32 Booleans took 531 ms) | 300 ms | 226.6 ms release (2026-10-31, under load) |
 | Adaptive part during a drag: one drag step of a wall pulling a 100 mm plate 20 mm longer (`assembly::adapt::adapt_dragged`) | 30 ms | 2.6 ms release (2026-10-30) |
 | Project Geometry of another component's whole face: a 200 mm flange's top with 16 holes, every edge of its 17 loops (`assembly::context::face_outline` + `project_context_edges`) | 100 ms | 3.3 ms release (2026-10-30, under load) |
 | Adaptivity: a plate free in length mated to two walls 100 mm apart, size and place solved together (`assembly::adapt`, spec 3.10 T4) | 50 ms | 1.8 ms release (2026-10-29, under load) |

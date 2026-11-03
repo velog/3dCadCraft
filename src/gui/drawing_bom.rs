@@ -313,7 +313,9 @@ impl CadCraftApp {
         let asm = if reps.is_active() {
             asm
         } else {
-            composed = asm.reps.composed(asm, reps.view, reps.position, reps.state);
+            composed = asm
+                .reps
+                .composed(asm, reps.view, reps.position, reps.variant);
             &composed
         };
         Some(
@@ -369,7 +371,7 @@ impl CadCraftApp {
     }
 
     /// The representations of assembly `model` for the Drawing View dialog: views,
-    /// positions, model states (empty lists: not an assembly).
+    /// positions, variants (empty lists: not an assembly).
     pub(super) fn rep_lists(&self, model: DocRef) -> [Vec<(u32, String)>; 3] {
         let linked = self.linked();
         let Some(a) = crate::assembly::tree::assembly_of(&self.project, &linked, model) else {
@@ -394,7 +396,7 @@ impl CadCraftApp {
         let mut positions = vec![(crate::assembly::reps::PRIMARY, "[Primary]".to_owned())];
         positions.extend(r.positions.iter().map(|p| (p.id, p.name.clone())));
         let mut states: Vec<_> = r
-            .states
+            .variants
             .iter()
             .map(|s| (s.id, name(s.id, &s.name)))
             .collect();

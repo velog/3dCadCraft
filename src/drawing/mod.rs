@@ -664,9 +664,9 @@ pub struct ViewReps {
     /// Positional representation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<u32>,
-    /// Model state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state: Option<u32>,
+    /// Variant.
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "state")]
+    pub variant: Option<u32>,
 }
 
 impl ViewReps {

@@ -1,5 +1,5 @@
 //! Representations of an assembly (`docs/spec/3.9-representations.md`): View
-//! (what is seen), Position (where the mechanism stands) and Model States
+//! (what is seen), Position (where the mechanism stands) and Variants
 //! (what it consists of). Three independent lists; a change of one leaves the
 //! others alone. GUI-free.
 //!
@@ -135,9 +135,9 @@ pub struct PositionRep {
     pub poses: BTreeMap<u32, Transform3>,
 }
 
-/// A model state.
+/// A variant.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelState {
+pub struct Variant {
     /// Stable id ([`PRIMARY`] for `[Primary]`).
     pub id: u32,
     /// Its name.
@@ -186,13 +186,13 @@ pub struct Representations {
     /// `[Primary]`'s values.
     #[serde(default, skip_serializing_if = "is_default")]
     pub primary: PrimaryPosition,
-    /// Model states (`[Primary]` first, once there is another).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub states: Vec<ModelState>,
-    /// The active model state.
-    #[serde(default, skip_serializing_if = "is_primary")]
-    pub active_state: u32,
-    /// Edit Factory Scope: suppressions go to every model state.
+    /// Model variants (`[Primary]` first, once there is another).
+    #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "states")]
+    pub variants: Vec<Variant>,
+    /// The active variant.
+    #[serde(default, skip_serializing_if = "is_primary", alias = "active_state")]
+    pub active_variant: u32,
+    /// Edit Factory Scope: suppressions go to every variant.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub factory_scope: bool,
     /// The highest occurrence id seen, to recognise a new one.
@@ -228,7 +228,7 @@ fn next_name<'a>(base: &str, names: impl Iterator<Item = &'a str>) -> String {
 impl Representations {
     /// Only `[Primary]` entries.
     pub fn is_empty(&self) -> bool {
-        self.views.is_empty() && self.positions.is_empty() && self.states.is_empty()
+        self.views.is_empty() && self.positions.is_empty() && self.variants.is_empty()
     }
 
     fn view_of(a: &AssemblyDocument) -> BTreeMap<u32, OccDisplay> {
@@ -248,7 +248,7 @@ impl Representations {
             .collect()
     }
 
-    fn state_of(a: &AssemblyDocument) -> (BTreeSet<u32>, BTreeSet<u32>) {
+    fn variant_of(a: &AssemblyDocument) -> (BTreeSet<u32>, BTreeSet<u32>) {
         (
             a.occurrences
                 .iter()
@@ -282,9 +282,9 @@ impl Representations {
         self.positions.iter().find(|p| p.id == self.active_position)
     }
 
-    /// The active model state.
-    pub fn active_state(&self) -> Option<&ModelState> {
-        self.states.iter().find(|s| s.id == self.active_state)
+    /// The active variant.
+    pub fn active_variant(&self) -> Option<&Variant> {
+        self.variants.iter().find(|s| s.id == self.active_variant)
     }
 
     /// `[Primary]` is the active positional representation.
@@ -300,8 +300,8 @@ impl Representations {
         self.positions.iter().map(|p| p.id).max().unwrap_or(0) + 1
     }
 
-    fn next_state_id(&self) -> u32 {
-        self.states.iter().map(|s| s.id).max().unwrap_or(0) + 1
+    fn next_variant_id(&self) -> u32 {
+        self.variants.iter().map(|s| s.id).max().unwrap_or(0) + 1
     }
 
     /// The view list comes to life: a locked `[Primary]` (everything shown, no
@@ -328,11 +328,11 @@ impl Representations {
         }
     }
 
-    /// The same for the model states.
-    fn ensure_states(&mut self, a: &AssemblyDocument) {
-        if self.states.is_empty() {
-            let (occurrences, relationships) = Self::state_of(a);
-            self.states.push(ModelState {
+    /// The same for the model variants.
+    fn ensure_variants(&mut self, a: &AssemblyDocument) {
+        if self.variants.is_empty() {
+            let (occurrences, relationships) = Self::variant_of(a);
+            self.variants.push(Variant {
                 id: PRIMARY,
                 name: "Primary".into(),
                 occurrences,
@@ -364,7 +364,7 @@ impl Representations {
             p.poses.retain(|id, _| occ_ok(id));
             changed |= n != p.relationships.len() + p.occurrences.len() + p.poses.len();
         }
-        for s in &mut self.states {
+        for s in &mut self.variants {
             let n = s.occurrences.len() + s.relationships.len();
             s.occurrences.retain(occ_ok);
             s.relationships.retain(rel_ok);
@@ -393,7 +393,7 @@ impl Representations {
         } else {
             let primary = self.primary.clone();
             let base_suppressed = self
-                .active_state()
+                .active_variant()
                 .map(|s| s.relationships.clone())
                 .unwrap_or_default();
             let active = self.active_position;
@@ -430,12 +430,12 @@ impl Representations {
         }
         // Model state: occurrences always; relationships unless a position
         // other than [Primary] takes them as overrides.
-        if !self.states.is_empty() {
-            let (occ_now, rel_now) = Self::state_of(a);
+        if !self.variants.is_empty() {
+            let (occ_now, rel_now) = Self::variant_of(a);
             let primary_position = self.active_position == PRIMARY;
             let factory = self.factory_scope;
-            let active = self.active_state;
-            let before = self.states.iter().find(|s| s.id == active).cloned();
+            let active = self.active_variant;
+            let before = self.variants.iter().find(|s| s.id == active).cloned();
             if let Some(old) = before {
                 let rel_now = if primary_position {
                     rel_now
@@ -444,7 +444,7 @@ impl Representations {
                 };
                 if old.occurrences != occ_now || old.relationships != rel_now {
                     changed = true;
-                    for s in &mut self.states {
+                    for s in &mut self.variants {
                         if s.id == active {
                             s.occurrences = occ_now.clone();
                             s.relationships = rel_now.clone();
@@ -458,7 +458,7 @@ impl Representations {
             // Added in Member Scope: only the active state has it.
             if fresh && !factory {
                 for o in a.occurrences.iter().filter(|o| o.id > self.known) {
-                    for s in self.states.iter_mut().filter(|s| s.id != active) {
+                    for s in self.variants.iter_mut().filter(|s| s.id != active) {
                         changed |= s.occurrences.insert(o.id);
                     }
                 }
@@ -477,7 +477,7 @@ impl Representations {
         if let Some(v) = self.active_view() {
             apply_view(v, a);
         }
-        let state = self.active_state();
+        let state = self.active_variant();
         if let Some(s) = state {
             for o in &mut a.occurrences {
                 o.suppressed = s.occurrences.contains(&o.id);
@@ -591,9 +591,9 @@ impl Representations {
         n != self.views.len()
     }
 
-    /// Copy to Model State: a new active state in which the components hidden
+    /// Copy to Variant: a new active state in which the components hidden
     /// in that view are suppressed; returns its id.
-    pub fn view_to_state(&mut self, from: u32, a: &mut AssemblyDocument) -> Option<u32> {
+    pub fn view_to_variant(&mut self, from: u32, a: &mut AssemblyDocument) -> Option<u32> {
         self.sync(a);
         self.ensure_views(a);
         let v = self.views.iter().find(|v| v.id == from)?;
@@ -603,8 +603,8 @@ impl Representations {
             .filter(|o| v.display.get(&o.id).is_some_and(|d| !d.visible))
             .map(|o| o.id)
             .collect();
-        let id = self.new_state(a);
-        if let Some(s) = self.states.iter_mut().find(|s| s.id == id) {
+        let id = self.new_variant(a);
+        if let Some(s) = self.variants.iter_mut().find(|s| s.id == id) {
             s.occurrences.extend(hidden);
         }
         self.compose(a);
@@ -615,9 +615,9 @@ impl Representations {
     /// copy of `[Primary]`, so it holds no overrides.
     pub fn new_position(&mut self, a: &mut AssemblyDocument) -> u32 {
         self.sync(a);
-        // A relationship's own suppression lives in the model states: an
+        // A relationship's own suppression lives in the model variants: an
         // override is what differs from it.
-        self.ensure_states(a);
+        self.ensure_variants(a);
         if self.positions.is_empty() {
             self.primary = Self::primary_of(a);
         }
@@ -670,44 +670,58 @@ impl Representations {
         n != self.positions.len()
     }
 
-    /// New model state from the present suppressions: active; returns its id.
-    pub fn new_state(&mut self, a: &AssemblyDocument) -> u32 {
+    /// New variant from the present suppressions: active; returns its id.
+    pub fn new_variant(&mut self, a: &AssemblyDocument) -> u32 {
         self.sync(a);
-        self.ensure_states(a);
-        let id = self.next_state_id();
-        let name = next_name("Model State", self.states.iter().map(|s| s.name.as_str()));
-        let (occurrences, relationships) = Self::state_of(a);
-        self.states.push(ModelState {
+        self.ensure_variants(a);
+        let id = self.next_variant_id();
+        let name = next_name("Variant", self.variants.iter().map(|s| s.name.as_str()));
+        let (occurrences, relationships) = Self::variant_of(a);
+        self.variants.push(Variant {
             id,
             name,
             occurrences,
             relationships,
         });
-        self.active_state = id;
+        self.active_variant = id;
         self.known = self.known.max(a.next_id() - 1);
         id
     }
 
-    /// Activates a model state; the caller solves.
-    pub fn activate_state(&mut self, id: u32, a: &mut AssemblyDocument) -> bool {
+    /// A copy of variant `from`, active; the caller solves.
+    pub fn duplicate_variant(&mut self, from: u32, a: &mut AssemblyDocument) -> Option<u32> {
         self.sync(a);
-        self.ensure_states(a);
-        if !self.states.iter().any(|s| s.id == id) {
+        self.ensure_variants(a);
+        let mut v = self.variants.iter().find(|v| v.id == from)?.clone();
+        v.id = self.next_variant_id();
+        v.name = next_name(&v.name, self.variants.iter().map(|v| v.name.as_str()));
+        let id = v.id;
+        self.variants.push(v);
+        self.active_variant = id;
+        self.compose(a);
+        Some(id)
+    }
+
+    /// Activates a variant; the caller solves.
+    pub fn activate_variant(&mut self, id: u32, a: &mut AssemblyDocument) -> bool {
+        self.sync(a);
+        self.ensure_variants(a);
+        if !self.variants.iter().any(|s| s.id == id) {
             return false;
         }
-        self.active_state = id;
+        self.active_variant = id;
         self.compose(a);
         true
     }
 
-    /// Deletes a model state (not `[Primary]`, not the active one; every scope).
-    pub fn delete_state(&mut self, id: u32) -> bool {
-        if id == PRIMARY || id == self.active_state {
+    /// Deletes a variant (not `[Primary]`, not the active one; every scope).
+    pub fn delete_variant(&mut self, id: u32) -> bool {
+        if id == PRIMARY || id == self.active_variant {
             return false;
         }
-        let n = self.states.len();
-        self.states.retain(|s| s.id != id);
-        n != self.states.len()
+        let n = self.variants.len();
+        self.variants.retain(|s| s.id != id);
+        n != self.variants.len()
     }
 
     /// Is `name` free among the given names (case-insensitive), ignoring the
@@ -740,8 +754,8 @@ impl Representations {
         {
             r.active_position = p;
         }
-        if let Some(s) = state.filter(|s| r.states.iter().any(|x| x.id == *s)) {
-            r.active_state = s;
+        if let Some(s) = state.filter(|s| r.variants.iter().any(|x| x.id == *s)) {
+            r.active_variant = s;
         }
         r.compose(&mut out);
         out
@@ -980,30 +994,30 @@ mod tests {
     fn model_states_member_and_factory_scope() {
         let mut a = asm();
         let mut r = take(&mut a);
-        let s1 = r.new_state(&a);
+        let s1 = r.new_variant(&a);
         a.find_mut(2).unwrap().suppressed = true;
         r.sync(&a);
-        assert!(r.activate_state(PRIMARY, &mut a));
+        assert!(r.activate_variant(PRIMARY, &mut a));
         assert!(!a.find(2).unwrap().suppressed);
         // Factory Scope: one suppress reaches every state.
         r.factory_scope = true;
         a.find_mut(3).unwrap().suppressed = true;
         r.sync(&a);
-        assert!(r.activate_state(s1, &mut a));
+        assert!(r.activate_variant(s1, &mut a));
         assert!(a.find(2).unwrap().suppressed && a.find(3).unwrap().suppressed);
-        assert!(!r.delete_state(PRIMARY));
-        assert!(!r.delete_state(s1));
+        assert!(!r.delete_variant(PRIMARY));
+        assert!(!r.delete_variant(s1));
     }
 
     #[test]
     fn a_component_added_in_member_scope_is_suppressed_elsewhere() {
         let mut a = asm();
         let mut r = take(&mut a);
-        r.new_state(&a);
+        r.new_variant(&a);
         let id = a.place(comp(), "D", Transform3::identity(), false);
         r.sync(&a);
         assert!(!a.find(id).unwrap().suppressed);
-        r.activate_state(PRIMARY, &mut a);
+        r.activate_variant(PRIMARY, &mut a);
         assert!(a.find(id).unwrap().suppressed);
     }
 
@@ -1013,7 +1027,7 @@ mod tests {
         let mut r = take(&mut a);
         let v = r.new_view(&a);
         a.find_mut(2).unwrap().visible = false;
-        let s = r.new_state(&a);
+        let s = r.new_variant(&a);
         a.find_mut(3).unwrap().suppressed = true;
         let p = r.new_position(&mut a);
         a.constraints[0].value = 7.0;
@@ -1029,10 +1043,10 @@ mod tests {
         assert_eq!(a.constraints[0].value, 7.0);
         // Changing the state leaves view and position.
         r.activate_view(v, &mut a);
-        r.activate_state(PRIMARY, &mut a);
+        r.activate_variant(PRIMARY, &mut a);
         assert!(!a.find(2).unwrap().visible && !a.find(3).unwrap().suppressed);
         assert_eq!(a.constraints[0].value, 7.0);
-        assert_eq!(r.active_state, PRIMARY);
+        assert_eq!(r.active_variant, PRIMARY);
         assert_eq!(s, 1);
     }
 
@@ -1040,12 +1054,12 @@ mod tests {
     fn a_position_relationship_suppress_is_an_override_not_a_state_change() {
         let mut a = asm();
         let mut r = take(&mut a);
-        r.new_state(&a);
+        r.new_variant(&a);
         r.new_position(&mut a);
         a.constraints[0].suppressed = true;
         r.sync(&a);
         assert_eq!(r.positions[0].relationships[&1].suppressed, Some(true));
-        assert!(r.active_state().unwrap().relationships.is_empty());
+        assert!(r.active_variant().unwrap().relationships.is_empty());
     }
 
     #[test]
@@ -1053,7 +1067,7 @@ mod tests {
         let mut a = asm();
         let mut r = take(&mut a);
         r.new_view(&a);
-        r.new_state(&a);
+        r.new_variant(&a);
         r.new_position(&mut a);
         a.constraints[0].value = 9.0;
         r.sync(&a);
@@ -1065,13 +1079,13 @@ mod tests {
     }
 
     #[test]
-    fn view_to_state_suppresses_the_hidden() {
+    fn view_to_variant_suppresses_the_hidden() {
         let mut a = asm();
         let mut r = take(&mut a);
         let v = r.new_view(&a);
         a.find_mut(2).unwrap().visible = false;
-        let s = r.view_to_state(v, &mut a).unwrap();
-        assert_eq!(r.active_state, s);
+        let s = r.view_to_variant(v, &mut a).unwrap();
+        assert_eq!(r.active_variant, s);
         assert!(a.find(2).unwrap().suppressed);
         assert!(!a.find(3).unwrap().suppressed);
     }
@@ -1098,7 +1112,7 @@ mod tests {
     #[test]
     fn names_count_up_and_stay_unique() {
         assert_eq!(next_name("View", ["View1", "View3"].into_iter()), "View4");
-        assert_eq!(next_name("Model State", [].into_iter()), "Model State1");
+        assert_eq!(next_name("Variant", [].into_iter()), "Variant1");
         assert!(Representations::name_free(
             "Open",
             "x",
@@ -1129,7 +1143,7 @@ mod tests {
         let mut a = asm();
         let mut r = take(&mut a);
         r.new_view(&a);
-        r.new_state(&a);
+        r.new_variant(&a);
         r.new_position(&mut a);
         a.reps = r;
         let text = serde_json::to_string(&a).unwrap();
