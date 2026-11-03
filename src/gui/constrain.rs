@@ -127,6 +127,8 @@ pub(super) struct ConstrainUi {
     pub draft: Option<ConstrainDraft>,
     /// The constraint selected in the browser.
     pub selected: Option<u32>,
+    /// Further constraints selected with Ctrl / Shift (Suppress and Delete take them all).
+    pub more: Vec<u32>,
     /// The last solve (sick constraints, degrees of freedom).
     pub last: Solved,
     /// Placements shown instead of the real ones (the draft's preview).
@@ -382,6 +384,30 @@ impl CadCraftApp {
         self.asm.tool = None;
         self.cons.draft = Some(ConstrainDraft::new());
         self.cons.preview = None;
+        self.constrain_takes_selection();
+    }
+
+    /// The faces and edges selected before the command are its first inputs, in the order they
+    /// were picked (rule 17); what remains selected is left alone.
+    fn constrain_takes_selection(&mut self) {
+        let picks: Vec<GeomRef> = self
+            .asm
+            .sub
+            .iter()
+            .filter_map(|s| match s {
+                super::asm_select::AsmSub::Geom(g) => Some(g.clone()),
+                _ => None,
+            })
+            .take(2)
+            .collect();
+        if picks.is_empty() {
+            return;
+        }
+        for g in picks {
+            self.constrain_pick(g);
+        }
+        self.asm.sub.clear();
+        self.scene_dirty = true;
     }
 
     /// Assemble › Joint.
@@ -389,6 +415,7 @@ impl CadCraftApp {
         self.asm.tool = None;
         self.cons.draft = Some(ConstrainDraft::joint());
         self.cons.preview = None;
+        self.constrain_takes_selection();
     }
 
     /// Edit of constraint `id` in the panel.
@@ -1626,6 +1653,14 @@ impl CadCraftApp {
         if self.cons.selected == Some(id) {
             self.cons.selected = None;
         }
+        self.cons.more.retain(|x| *x != id);
+    }
+
+    /// What a command on constraint `id` works on: the whole selection when `id` is in it.
+    pub(super) fn constraints_with(&self, id: u32) -> Vec<u32> {
+        let mut all: Vec<u32> = self.cons.selected.into_iter().collect();
+        all.extend(&self.cons.more);
+        if all.contains(&id) { all } else { vec![id] }
     }
 
     /// Properties of the constraint selected in the browser; `false` when

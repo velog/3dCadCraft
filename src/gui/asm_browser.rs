@@ -92,6 +92,8 @@ enum FolderCmd {
 
 enum TreeCmd {
     Select(u32, bool),
+    /// Shift: every first-level component from the last one selected to this one.
+    SelectRange(u32),
     /// A feature row (occurrence, feature id), Ctrl adds.
     SelectFeature(u32, String, bool),
     /// Open the part with feature `k` selected.
@@ -108,7 +110,8 @@ enum TreeCmd {
     /// Edit in place the part at a path below a top occurrence.
     Edit(u32, Vec<u32>),
     Pick(GeomRef),
-    SelectConstraint(u32),
+    /// A relationship; `true`: added to the others selected (Ctrl / Shift).
+    SelectConstraint(u32, bool),
     EditConstraint(u32),
     SuppressConstraint(u32),
     DeleteConstraint(u32),
@@ -322,8 +325,12 @@ impl CadCraftApp {
                         r
                     };
                     if r.clicked() {
-                        let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
-                        cmds.push(TreeCmd::Select(id, add));
+                        let (ctrl, shift) = ui.input(|i| (i.modifiers.command, i.modifiers.shift));
+                        cmds.push(if shift {
+                            TreeCmd::SelectRange(id)
+                        } else {
+                            TreeCmd::Select(id, ctrl)
+                        });
                     }
                     if r.double_clicked() {
                         cmds.push(TreeCmd::Edit(id, Vec::new()));
@@ -436,6 +443,17 @@ impl CadCraftApp {
         });
         for c in cmds {
             match c {
+                TreeCmd::SelectRange(id) => {
+                    let order: Vec<u32> = occs.iter().map(|o| o.0).collect();
+                    let at = |x: u32| order.iter().position(|&i| i == x);
+                    self.asm.sel = match (self.asm.sel.last().copied().and_then(at), at(id)) {
+                        (Some(a), Some(z)) => order[a.min(z)..=a.max(z)].to_vec(),
+                        _ => vec![id],
+                    };
+                    self.asm.sub.clear();
+                    self.cons.selected = None;
+                    self.cons.more.clear();
+                }
                 TreeCmd::Select(id, add) => {
                     if add {
                         if let Some(k) = self.asm.sel.iter().position(|&i| i == id) {
@@ -486,14 +504,31 @@ impl CadCraftApp {
                         ));
                     }
                 }
-                TreeCmd::SelectConstraint(id) => {
-                    self.cons.selected = Some(id);
+                TreeCmd::SelectConstraint(id, add) => {
+                    if !add || self.cons.selected.is_none() {
+                        self.cons.selected = Some(id);
+                        self.cons.more.clear();
+                    } else if self.cons.selected == Some(id) {
+                        self.cons.selected = self.cons.more.pop();
+                    } else if let Some(k) = self.cons.more.iter().position(|x| *x == id) {
+                        self.cons.more.remove(k);
+                    } else {
+                        self.cons.more.push(id);
+                    }
                     self.asm.sel.clear();
                 }
                 TreeCmd::EditConstraint(id) => self.edit_constraint(id),
-                TreeCmd::SuppressConstraint(id) => self.toggle_constraint_suppress(id),
+                TreeCmd::SuppressConstraint(id) => {
+                    for c in self.constraints_with(id) {
+                        self.toggle_constraint_suppress(c);
+                    }
+                }
                 TreeCmd::DeleteConstraint(_) if self.reps_refuse_structure() => {}
-                TreeCmd::DeleteConstraint(id) => self.delete_constraint(id),
+                TreeCmd::DeleteConstraint(id) => {
+                    for c in self.constraints_with(id) {
+                        self.delete_constraint(c);
+                    }
+                }
                 TreeCmd::Drive(id) => self.open_drive(id),
             }
         }
@@ -979,13 +1014,15 @@ impl CadCraftApp {
             } else if sick.is_some() {
                 text = text.color(super::theme::tokens().error);
             }
-            let r = ui.selectable_label(self.cons.selected == Some(id), text);
+            let picked = self.cons.selected == Some(id) || self.cons.more.contains(&id);
+            let r = ui.selectable_label(picked, text);
             let r = match &sick {
                 Some(e) => r.on_hover_text(format!("Sick: {e}")),
                 None => r,
             };
             if r.clicked() {
-                cmds.push(TreeCmd::SelectConstraint(id));
+                let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+                cmds.push(TreeCmd::SelectConstraint(id, add));
             }
             if r.double_clicked() {
                 cmds.push(TreeCmd::EditConstraint(id));

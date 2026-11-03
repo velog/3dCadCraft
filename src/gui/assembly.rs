@@ -1995,7 +1995,9 @@ impl CadCraftApp {
                 if ids.is_empty()
                     && let Some(c) = self.cons.selected
                 {
-                    self.delete_constraint(c);
+                    for k in self.constraints_with(c) {
+                        self.delete_constraint(k);
+                    }
                 }
             }
         }
@@ -2094,11 +2096,13 @@ impl CadCraftApp {
                         self.asm.sel = vec![h.occurrence];
                         self.asm.sub.clear();
                         self.cons.selected = None;
+                        self.cons.more.clear();
                     }
                     None if !ctrl => {
                         self.asm.sel.clear();
                         self.asm.sub.clear();
                         self.cons.selected = None;
+                        self.cons.more.clear();
                     }
                     None => {}
                 },
@@ -2129,8 +2133,24 @@ impl CadCraftApp {
             && let Some(press) = ui.input(|i| i.pointer.press_origin())
         {
             self.asm.drag = self.start_drag(press, rect, circle);
+            // From empty space: a selection box (window or crossing, as in a part).
+            if self.asm.drag.is_none()
+                && self.asm.tool.is_none()
+                && !measuring
+                && !planned
+                && self.mouse == super::MousePreset::Inventor
+                && !ui.input(|i| {
+                    i.key_down(egui::Key::F2)
+                        || i.key_down(egui::Key::F3)
+                        || i.key_down(egui::Key::F4)
+                })
+                && self.asm_pick(press, rect).is_none()
+            {
+                self.box_select = Some(press);
+            }
         }
-        let mut busy = self.asm.drag.is_some();
+        self.asm_box_gesture(ui, response, rect);
+        let mut busy = self.asm.drag.is_some() || self.box_select.is_some();
         if let (Some(d), Some(now)) = (self.asm.drag, response.interact_pointer_pos())
             && response.dragged_by(PointerButton::Primary)
         {
@@ -2618,6 +2638,103 @@ impl CadCraftApp {
             self.fit_view();
             ui.close();
         }
+    }
+
+    /// The selection box while it is dragged, and what it takes when it ends: components fully
+    /// inside it (dragged to the right) or touched by it (to the left). Shift adds, Ctrl toggles.
+    fn asm_box_gesture(&mut self, ui: &egui::Ui, response: &egui::Response, rect: Rect) {
+        let Some(a) = self.box_select else {
+            return;
+        };
+        let Some(b) = ui.input(|i| i.pointer.interact_pos()) else {
+            return;
+        };
+        let window = b.x >= a.x;
+        let color = if window {
+            Color32::from_rgb(60, 130, 230)
+        } else {
+            Color32::from_rgb(60, 180, 90)
+        };
+        let shown = Rect::from_two_pos(a, b);
+        // Above the view's picture, which is painted after this.
+        let painter = ui
+            .ctx()
+            .layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("asm_box"),
+            ))
+            .with_clip_rect(rect);
+        painter.rect_filled(shown, 0.0, color.gamma_multiply(0.15));
+        painter.rect_stroke(
+            shown,
+            0.0,
+            Stroke::new(1.0, color),
+            egui::StrokeKind::Inside,
+        );
+        if !response.drag_stopped() {
+            return;
+        }
+        self.box_select = None;
+        if a.distance(b) <= 3.0 {
+            return;
+        }
+        let Some(doc) = self.assembly() else {
+            return;
+        };
+        let ids: Vec<u32> = doc
+            .occurrences
+            .iter()
+            .filter(|o| o.pickable())
+            .map(|o| o.id)
+            .collect();
+        let mut items: Vec<(u32, [f32; 4])> = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some((lo, hi)) = self.asm_box(id) else {
+                continue;
+            };
+            let mut r = [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ];
+            for k in 0..8 {
+                let q = Point3::new(
+                    if k & 1 == 0 { lo.x } else { hi.x },
+                    if k & 2 == 0 { lo.y } else { hi.y },
+                    if k & 4 == 0 { lo.z } else { hi.z },
+                );
+                if let Some(p) = self.camera.project(&q, rect) {
+                    r = [r[0].min(p.x), r[1].min(p.y), r[2].max(p.x), r[3].max(p.y)];
+                }
+            }
+            if r[0] <= r[2] {
+                items.push((id, r));
+            }
+        }
+        let got = asm::select::in_screen_box(&items, [a.x, a.y], [b.x, b.y]);
+        let (add, toggle) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
+        if toggle {
+            for id in got {
+                match self.asm.sel.iter().position(|&x| x == id) {
+                    Some(k) => {
+                        self.asm.sel.remove(k);
+                    }
+                    None => self.asm.sel.push(id),
+                }
+            }
+        } else if add {
+            for id in got {
+                if !self.asm.sel.contains(&id) {
+                    self.asm.sel.push(id);
+                }
+            }
+        } else {
+            self.asm.sel = got;
+        }
+        self.asm.sub.clear();
+        self.cons.selected = None;
+        self.cons.more.clear();
     }
 
     /// Grounded / Visibility / Open / Delete for occurrences (view and

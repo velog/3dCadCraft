@@ -255,9 +255,40 @@ pub fn internal(seen: &HashMap<u32, f64>, percent: f64) -> Vec<u32> {
     v
 }
 
+/// The items (id, screen rectangle `[x0, y0, x1, y1]`) a selection box from `a` to `b` takes:
+/// dragged to the right only those fully inside it (window), to the left all it touches
+/// (crossing).
+pub fn in_screen_box(items: &[(u32, [f32; 4])], a: [f32; 2], b: [f32; 2]) -> Vec<u32> {
+    let (x0, x1) = (a[0].min(b[0]), a[0].max(b[0]));
+    let (y0, y1) = (a[1].min(b[1]), a[1].max(b[1]));
+    let window = b[0] >= a[0];
+    items
+        .iter()
+        .filter(|(_, r)| {
+            if window {
+                r[0] >= x0 && r[2] <= x1 && r[1] >= y0 && r[3] <= y1
+            } else {
+                r[0] <= x1 && r[2] >= x0 && r[1] <= y1 && r[3] >= y0
+            }
+        })
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_screen_box_takes_whole_items_to_the_right_and_touched_ones_to_the_left() {
+        let items = [(1, [10.0, 10.0, 20.0, 20.0]), (2, [15.0, 15.0, 60.0, 60.0])];
+        // To the right: only what is fully inside.
+        assert_eq!(in_screen_box(&items, [0.0, 0.0], [30.0, 30.0]), [1]);
+        // To the left, the same rectangle: what it touches.
+        assert_eq!(in_screen_box(&items, [30.0, 0.0], [0.0, 30.0]), [1, 2]);
+        // Nothing there.
+        assert!(in_screen_box(&items, [100.0, 100.0], [90.0, 90.0]).is_empty());
+    }
 
     fn cb(id: u32, x: Real, s: Real) -> CompBox {
         CompBox {
