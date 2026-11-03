@@ -315,3 +315,5 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
   profile (alone, without other compilations), budget 4000 ms. The most expensive are truck's
   Booleans with the sphere; speed-up: one Boolean instead of two for the cut-off (the half-space
   directly as a Cut).
+
+2026-11-03, Component Library, Full level: `library_full_details_within_budget`, every row with a detail and every tapered or spherical roller bearing as a new member, worst 319 ms (Series 222 22210) against the 500 ms of spec 6.3 §6.6. A carriage bolt's neck as a Join took up to 16 s, as one stepped body 66 ms; a slot through a dome 4-5 s, through a cone and a flat 0.4 s.

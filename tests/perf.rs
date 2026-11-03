@@ -5268,3 +5268,31 @@ fn free_motions_stay_small_in_a_solve() {
     println!("solve with free motions, 200 components: {ms:.2} ms");
     assert!(ms < 200.0, "{ms:.2} ms > 200 ms");
 }
+
+/// The Full level's details and shaped rollers, each row a new member: within a new member's budget (spec 6.3 §6.6).
+#[test]
+fn library_full_details_within_budget() {
+    use cadcraft3d::components::samples::{Detail, all};
+    let mut worst = (0.0_f64, String::new());
+    for s in all() {
+        let shaped = s.bearing_style().is_some_and(|b| {
+            use cadcraft3d::components::icon::BearingStyle as B;
+            matches!(b, B::Tapered | B::TwoBarrels)
+        });
+        if s.finish.is_none() && !shaped {
+            continue;
+        }
+        // The fastest of two: the first may meet another process's burst.
+        let mut best = f64::MAX;
+        for _ in 0..2 {
+            let at = std::time::Instant::now();
+            s.part_at(Detail::Full).unwrap();
+            best = best.min(at.elapsed().as_secs_f64() * 1000.0);
+        }
+        if best > worst.0 {
+            worst = (best, format!("{} {}", s.family, s.size));
+        }
+    }
+    eprintln!("slowest Full member: {:.0} ms, {}", worst.0, worst.1);
+    assert!(worst.0 < 500.0, "{}: {:.0} ms > 500 ms", worst.1, worst.0);
+}
