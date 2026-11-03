@@ -34,7 +34,7 @@ The look of everything around the view has one source. New panels take colours f
 
 | Item | Requirement | Status |
 |---|---|---|
-| Interface theme | dark panels (ribbon, browser, properties, status bar); a light, neutral view background so the model and the sketch stand out | ✅ |
+| Interface theme | dark panels (ribbon, browser, properties, status bar); a light, neutral view background (a soft vertical gradient) so the model and the sketch stand out | ✅ |
 | Body | blue-grey metal, smooth lighting, dark edges | ✅ |
 | Reversed (inner) faces | **red**. This is a visible sign of an orientation bug, never a normal state | ✅ |
 | Sketch grid | fine lines in the sketch plane, with a red X axis and a green Y axis; a triad at the origin | ✅ |

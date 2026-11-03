@@ -824,7 +824,8 @@ fn constraint_labels(sketch: &Sketch, c: &Constraint) -> Vec<(Point2, String)> {
 }
 
 /// Fill of the closed regions of the edited sketch.
-pub const REGION_FILL: Color32 = Color32::from_rgba_premultiplied(24, 56, 92, 40);
+// Quiet on a shaded face: it only says "this is closed".
+pub const REGION_FILL: Color32 = Color32::from_rgba_premultiplied(10, 26, 46, 28);
 /// Fill of regions offered as an Extrude profile, and of the chosen ones.
 pub const PROFILE_FILL: Color32 = Color32::from_rgba_premultiplied(30, 60, 30, 50);
 pub const PROFILE_CHOSEN: Color32 = Color32::from_rgba_premultiplied(30, 110, 30, 120);
