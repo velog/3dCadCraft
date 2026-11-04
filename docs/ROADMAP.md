@@ -552,9 +552,11 @@ What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, s
 The pin moved to SolidCraft `8f67c7f` on solidcore. The branch builds, GUI included; it is not ready
 for main. Open:
 
-- **Old files:** `tests/compat` shows changed face names (a periodic face replaces the sectors of a
-  revolved or swept wall, corner patches of blends renamed) and volumes up to 0.07 % off. Merging
-  needs a decision and a name migration (rule 6); never by editing the expectations.
+- **Old files:** in `tests/compat` 34 files differ from their records, 37 have changed face names
+  and 18 another face count (a periodic face replaces the sectors of a revolved or swept wall,
+  corner patches of blends renamed). Solids are up to 0.07 % off in volume; two surface bodies'
+  signed volumes differ outright (Freeform turned inside out, a loft between edges 0 against
+  -1333). Merging needs a decision and a name migration (rule 6); never by editing the expectations.
 - **Accepted where it must refuse:** a fillet larger than the face builds (`combos`,
   `part::blend`), Delete Face accepts what it refused. A chamfer wider than its rounds removes the
   wrong volume (`blend_direction`), and a saved fastener reads back with another volume
