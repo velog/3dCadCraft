@@ -13,8 +13,8 @@ use super::super::compat::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use solidcraft_doc::sheet as sd;
 use solidcore_record::{Loop2, Plane as SPlane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_doc::sheet as sd;
 
 use super::{ExactSolid, RuleValues, SheetModel, named_solid, rule_of};
 use crate::kernel::{BRep, Curve, EdgeId, FaceId, Loop, Point3, Real, Sense, Surface, Vector3};

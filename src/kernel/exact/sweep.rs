@@ -58,9 +58,16 @@ impl PathPiece {
 }
 
 /// A non-rational B-spline as Bézier spans: one per non-empty knot interval.
-pub fn spline_spans(degree: usize, knots: &[Real], ctrl: &[Point3]) -> Result<Vec<Vec<Point3>>, String> {
+pub fn spline_spans(
+    degree: usize,
+    knots: &[Real],
+    ctrl: &[Point3],
+) -> Result<Vec<Vec<Point3>>, String> {
     let bad = |e: String| format!("a spline path: {e}");
-    let h: Vec<sg::bspline::HPoint> = ctrl.iter().map(|p| sg::bspline::HPoint::weighted(v3(p), 1.0)).collect();
+    let h: Vec<sg::bspline::HPoint> = ctrl
+        .iter()
+        .map(|p| sg::bspline::HPoint::weighted(v3(p), 1.0))
+        .collect();
     let (Some(&lo), Some(&hi)) = (knots.get(degree), knots.get(ctrl.len())) else {
         return Err(bad("the knots do not match the control points".into()));
     };
@@ -70,7 +77,8 @@ pub fn spline_spans(degree: usize, knots: &[Real], ctrl: &[Point3]) -> Result<Ve
     cuts.dedup();
     cuts.windows(2)
         .map(|w| {
-            let (_, piece) = sg::bspline::segment(degree, knots, &h, w[0], w[1]).map_err(|e| bad(e.to_string()))?;
+            let (_, piece) = sg::bspline::segment(degree, knots, &h, w[0], w[1])
+                .map_err(|e| bad(e.to_string()))?;
             piece
                 .iter()
                 .map(|p| {
@@ -103,9 +111,12 @@ fn exact_segs(path: &[PathPiece]) -> Result<Option<Vec<sk::PathSeg>>, String> {
             PathPiece::Points(_) => return Ok(None),
             PathPiece::Spline { spans, .. } => {
                 for s in spans {
-                    let ctrl: Vec<sg::bspline::HPoint> =
-                        s.iter().map(|q| sg::bspline::HPoint::weighted(v3(q), 1.0)).collect();
-                    let span = sk::SpaceBezier::new(&ctrl).ok_or("a spline path: a span is not finite")?;
+                    let ctrl: Vec<sg::bspline::HPoint> = s
+                        .iter()
+                        .map(|q| sg::bspline::HPoint::weighted(v3(q), 1.0))
+                        .collect();
+                    let span =
+                        sk::SpaceBezier::new(&ctrl).ok_or("a spline path: a span is not finite")?;
                     segs.push(sk::PathSeg::Bezier(span));
                 }
             }

@@ -119,7 +119,8 @@ fn sketch_piece(plane: &Plane, c: &ProfileCurve) -> PathPiece {
             let spans = crate::kernel::BSplineCurve::sketch_spline(ctrl, knots)
                 .ok()
                 .and_then(|b| {
-                    crate::kernel::exact::spline_spans(b.degree(), b.knots(), b.control_points()).ok()
+                    crate::kernel::exact::spline_spans(b.degree(), b.knots(), b.control_points())
+                        .ok()
                 });
             match spans {
                 Some(mut spans) => {

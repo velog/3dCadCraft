@@ -403,7 +403,11 @@ pub fn axial_stack(
         builders::axial_stack(&input, first, closed, &drills)
     })
     .map_err(|e| format!("this part cannot be built ({e})"))?;
-    let face_names = named_roles(&roles, &names.iter().map(String::as_str).collect::<Vec<_>>(), prefix);
+    let face_names = named_roles(
+        &roles,
+        &names.iter().map(String::as_str).collect::<Vec<_>>(),
+        prefix,
+    );
     Ok(ExactSolid {
         name: Some(prefix.to_owned()),
         body,
@@ -426,8 +430,10 @@ pub fn pipe_tee(radius: Real, bore: Real, c: Real, prefix: &str) -> Result<Exact
         "HighEnd",
         "BranchEnd",
     ];
-    let (body, roles) = guarded("tee", || builders::pipe_tee(radius, bore, c, [0, 1, 2, 3, 4, 5, 6]))
-        .map_err(|e| format!("this part cannot be built ({e})"))?;
+    let (body, roles) = guarded("tee", || {
+        builders::pipe_tee(radius, bore, c, [0, 1, 2, 3, 4, 5, 6])
+    })
+    .map_err(|e| format!("this part cannot be built ({e})"))?;
     let face_names = named_roles(&roles, &ROLES, prefix);
     Ok(ExactSolid {
         name: Some(prefix.to_owned()),
@@ -442,7 +448,10 @@ pub fn pipe_tee(radius: Real, bore: Real, c: Real, prefix: &str) -> Result<Exact
 fn named_roles(roles: &[Option<usize>], names: &[&str], prefix: &str) -> Vec<Option<String>> {
     roles
         .iter()
-        .map(|r| r.and_then(|r| names.get(r)).map(|n| format!("{prefix}:{n}")))
+        .map(|r| {
+            r.and_then(|r| names.get(r))
+                .map(|n| format!("{prefix}:{n}"))
+        })
         .collect()
 }
 
@@ -5635,8 +5644,7 @@ mod sweep;
 mod thicken;
 pub use delete_face::{delete_faces, delete_shell};
 pub use sweep::{
-    spline_spans,
     Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_surface, loft_to_point,
-    path_points, sweep, sweep_surface,
+    path_points, spline_spans, sweep, sweep_surface,
 };
 pub use thicken::{face_sheet, offset_sheet, offset_solid, thicken_faces, thicken_sheet};

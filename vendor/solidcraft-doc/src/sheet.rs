@@ -1612,6 +1612,7 @@ impl SheetBody {
 
     /// Where a bend's centre line starts and ends, along the bend from `p`: between the middles
     /// of the bend's two ends (a torn end is askew), or where a curved edge crosses it.
+    #[allow(dead_code)] // kept close to upstream
     fn centre_line(&self, f: &SheetFlange) -> (f64, f64) {
         if let Some(lp) = &f.zone_shape {
             let mut at = Vec::new();

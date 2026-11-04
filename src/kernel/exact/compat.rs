@@ -1,7 +1,6 @@
 //! What the kernel's move to solidcore changed, in one place: where the plain types live now,
-//! methods the old `Body` had, and our own operations that were written on truck and wait for a
-//! solidcore version. Those report a refusal, which reaches the user as the feature's health
-//! (rule 5); `docs/KERNEL_API.md` lists them.
+//! methods the old `Body` had, and our own operations rebuilt on solidcore (`vendor/README.md`,
+//! "solidcore probe").
 
 /// `solidcraft_geom` plus the plain data that moved to `solidcore_record`.
 pub mod sg {
@@ -14,17 +13,19 @@ pub mod sk {
     use super::sg::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
     pub use solidcraft_kernel::*;
 
-    fn not_ported<T>(what: &str) -> Result<T> {
-        Err(KernelError::Invalid(format!("{what}: not available on the solidcore kernel yet")))
-    }
-
     /// All faces' surfaces.
     pub fn face_surfaces(b: &Body) -> Vec<Option<FaceSurface>> {
         (0..b.face_count()).map(|f| face_surface(b, f)).collect()
     }
 
     /// `extrude_tapered` with the kernel's default corners.
-    pub fn extrude_tapered(p: &Plane, r: &Region2, len: f64, sign: f64, taper: f64) -> Result<Body> {
+    pub fn extrude_tapered(
+        p: &Plane,
+        r: &Region2,
+        len: f64,
+        sign: f64,
+        taper: f64,
+    ) -> Result<Body> {
         solidcraft_kernel::extrude_tapered(p, r, len, sign, taper, DraftCorner::default())
     }
 
@@ -36,10 +37,9 @@ pub mod sk {
     /// A B-rep of planar triangles sewn into a closed solid.
     pub fn polyhedron_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
         let at = |i: u32| {
-            positions
-                .get(i as usize)
-                .copied()
-                .ok_or_else(|| KernelError::Invalid("polyhedron triangle index out of range".into()))
+            positions.get(i as usize).copied().ok_or_else(|| {
+                KernelError::Invalid("polyhedron triangle index out of range".into())
+            })
         };
         let mut faces = Vec::with_capacity(triangles.len());
         for t in triangles {
@@ -80,14 +80,17 @@ pub mod sk {
     pub fn loft_matched_ring(sections: &[(Plane, Loop2)]) -> Result<Body> {
         let n = sections.len();
         if n < 4 {
-            return Err(KernelError::Invalid("a closed loft needs four sections".into()));
+            return Err(KernelError::Invalid(
+                "a closed loft needs four sections".into(),
+            ));
         }
         let half = n / 2;
         let a = loft(&sections[..=half])?;
         let mut rest: Vec<(Plane, Loop2)> = sections[half..].to_vec();
         rest.extend(sections.first().cloned());
         let b = loft(&rest)?;
-        boolean(&a, &b, BoolOp::Union)?.ok_or_else(|| KernelError::Failed("closed loft: nothing joined".into()))
+        boolean(&a, &b, BoolOp::Union)?
+            .ok_or_else(|| KernelError::Failed("closed loft: nothing joined".into()))
     }
 
     /// Equal chamfers of whole loops: the kernel's chamfer takes them.
@@ -105,12 +108,17 @@ pub mod sk {
             let on = |l: &Body| matches!(l.classify_point(p), Ok(PointClass::OnBoundary));
             let mut rest: Vec<Body> = lumps.iter().filter(|l| !on(l)).cloned().collect();
             if rest.len() + 1 != lumps.len() {
-                return Err(KernelError::Failed("Delete Face: the lump of the face was not found".into()));
+                return Err(KernelError::Failed(
+                    "Delete Face: the lump of the face was not found".into(),
+                ));
             }
             if rest.len() == 1 {
-                return rest.pop().ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()));
+                return rest
+                    .pop()
+                    .ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()));
             }
-            return join_apart(&rest)?.ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()));
+            return join_apart(&rest)?
+                .ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()));
         }
         // A void: its faces copied, stitched into the solid that fills it, joined to the body.
         let record = b.record();
@@ -119,7 +127,9 @@ pub mod sk {
             .shells
             .iter()
             .find_map(|s| match s {
-                solidcore_record::brep::Shell::Faces { faces, .. } if faces.iter().any(|f| f.face == index) => {
+                solidcore_record::brep::Shell::Faces { faces, .. }
+                    if faces.iter().any(|f| f.face == index) =>
+                {
                     Some(faces.iter().map(|f| f.face).collect())
                 }
                 _ => None,
@@ -136,11 +146,14 @@ pub mod sk {
             })
             .collect();
         if at.len() != faces.len() {
-            return Err(KernelError::Failed("Delete Face: a face of the void has no triangles".into()));
+            return Err(KernelError::Failed(
+                "Delete Face: a face of the void has no triangles".into(),
+            ));
         }
         let sheet = copy_faces(b, &at)?;
         let fill = stitch(&[&sheet], 1e-3)?;
-        boolean(b, &fill, BoolOp::Union)?.ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()))
+        boolean(b, &fill, BoolOp::Union)?
+            .ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()))
     }
 
     pub fn thicken_with_tolerance(b: &Body, t: f64, sym: bool, _tolerance: f64) -> Result<Body> {
@@ -148,19 +161,39 @@ pub mod sk {
     }
 
     #[derive(Clone, Copy, Debug)]
-    pub struct AxialCone { pub radius: f64, pub slope: f64, pub number: usize }
-    #[derive(Clone, Debug)]
-    pub enum AxialShape {
-        Turned { segs: Vec<Seg2>, numbers: Vec<usize> },
-        Prism { corners: Vec<Vec2>, z0: f64, z1: f64, numbers: Vec<usize>, start_cone: Option<AxialCone>, end_cone: Option<AxialCone> },
+    pub struct AxialCone {
+        pub radius: f64,
+        pub slope: f64,
+        pub number: usize,
     }
     #[derive(Clone, Debug)]
-    pub struct AxialRun { pub shape: AxialShape, pub after: Option<usize> }
+    pub enum AxialShape {
+        Turned {
+            segs: Vec<Seg2>,
+            numbers: Vec<usize>,
+        },
+        Prism {
+            corners: Vec<Vec2>,
+            z0: f64,
+            z1: f64,
+            numbers: Vec<usize>,
+            start_cone: Option<AxialCone>,
+            end_cone: Option<AxialCone>,
+        },
+    }
+    #[derive(Clone, Debug)]
+    pub struct AxialRun {
+        pub shape: AxialShape,
+        pub after: Option<usize>,
+    }
     #[derive(Clone, Copy, Debug)]
-    pub struct AxialDrill { pub center: Vec2, pub radius: f64, pub z0: f64, pub z1: f64, pub number: usize }
-    #[derive(Clone, Copy, Debug)]
-    pub struct TeeNumbers { pub run: usize, pub branch: usize, pub run_bore: usize, pub branch_bore: usize, pub low_end: usize, pub high_end: usize, pub branch_end: usize }
-
+    pub struct AxialDrill {
+        pub center: Vec2,
+        pub radius: f64,
+        pub z0: f64,
+        pub z1: f64,
+        pub number: usize,
+    }
 }
 
 /// Traits the plain types' geometry moved to, and the old `Body`'s methods.
@@ -199,9 +232,12 @@ impl BodyCompat for Body {
                     solidcore_record::brep::Loop::Edges { edges } => {
                         let u = edges.first()?;
                         let e = r.edges.get(u.edge as usize)?;
-                        r.vertices.get(e.vertices[usize::from(!u.forward)] as usize)?
+                        r.vertices
+                            .get(e.vertices[usize::from(!u.forward)] as usize)?
                     }
-                    solidcore_record::brep::Loop::Vertex { vertex } => r.vertices.get(*vertex as usize)?,
+                    solidcore_record::brep::Loop::Vertex { vertex } => {
+                        r.vertices.get(*vertex as usize)?
+                    }
                 };
                 Some(sg::Vec3::new(v.point[0], v.point[1], v.point[2]))
             })

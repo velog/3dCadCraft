@@ -764,7 +764,11 @@ fn edges_without_a_mesh_are_those_of_the_mesh() {
         ("cut round", cut),
     ] {
         for tol in [0.1, 0.01] {
-            let (mesh, edges) = (body.mesh(&solidcraft_kernel::MeshTolerance::chord(tol)).unwrap(), body.edges(tol).unwrap());
+            let (mesh, edges) = (
+                body.mesh(&solidcraft_kernel::MeshTolerance::chord(tol))
+                    .unwrap(),
+                body.edges(tol).unwrap(),
+            );
             assert_eq!(mesh.edges.len(), edges.len(), "{name}");
             for (m, e) in mesh.edges.iter().zip(&edges) {
                 assert_eq!(m.len(), e.points.len(), "{name}");
@@ -799,7 +803,12 @@ fn imported_and_stitched_solids_stay_outward_through_blends() {
             .pop()
             .unwrap()
     };
-    let volume = |b: &Body| b.mesh(&solidcraft_kernel::MeshTolerance::chord(0.01)).unwrap().measure().volume;
+    let volume = |b: &Body| {
+        b.mesh(&solidcraft_kernel::MeshTolerance::chord(0.01))
+            .unwrap()
+            .measure()
+            .volume
+    };
     let imported = |b: &Body| {
         let text = step_export(&[b], "test").unwrap();
         step_import(&text).unwrap().bodies.remove(0).body

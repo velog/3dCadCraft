@@ -983,8 +983,14 @@ pub fn convert(
     let picks: Vec<_> = bends.iter().map(v3).collect();
     let m = crate::diagnostics::crash::guard(|| {
         let values = |_: Option<f64>| Ok(rule_of(rv));
-        const IDENTITY: [[f64; 4]; 4] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
-        sd::convert_body(&mb, "rule", &values, v3(&face), &picks, &IDENTITY).map_err(|e| e.to_string())
+        const IDENTITY: [[f64; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        sd::convert_body(&mb, "rule", &values, v3(&face), &picks, &IDENTITY)
+            .map_err(|e| e.to_string())
     })
     .map_err(|_| "Convert to Sheet Metal: internal error in the sheet metal model".to_owned())??;
     let (mut m, _notes) = m;
@@ -1061,9 +1067,16 @@ pub fn flanges_model(
     let spans: Vec<(Real, Real)> = edges.iter().map(|e| e.offsets).collect();
     let n0 = next.flanges.len();
     let notes = crate::diagnostics::crash::guard(|| {
-        next.add_flanges_spans(&each, &spans, radius, position.key(), flip, sd::ReliefOverride::default())
-            .map(|(_, n)| n)
-            .map_err(|e| e.to_string())
+        next.add_flanges_spans(
+            &each,
+            &spans,
+            radius,
+            position.key(),
+            flip,
+            sd::ReliefOverride::default(),
+        )
+        .map(|(_, n)| n)
+        .map_err(|e| e.to_string())
     })
     .map_err(|_| "Flange: internal error in the sheet metal model".to_owned())??;
     for (k, f) in next.flanges.iter_mut().enumerate().skip(n0) {
@@ -1131,8 +1144,15 @@ pub fn can_flange(m: &SheetModel, at: Point3) -> bool {
         from: sd::HeightFrom::default(),
     };
     guarded_bool(|| {
-        next.add_flanges_spans(&[edge], &[], r, "inside", false, sd::ReliefOverride::default())
-            .is_ok()
+        next.add_flanges_spans(
+            &[edge],
+            &[],
+            r,
+            "inside",
+            false,
+            sd::ReliefOverride::default(),
+        )
+        .is_ok()
     })
 }
 

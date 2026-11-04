@@ -547,6 +547,25 @@ What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, s
 
 ## Next big step: catch up with SolidCraft (2026-10-31)
 
+### solidcore probe (branch `solidcore-probe`, not merged)
+
+The pin moved to SolidCraft `8f67c7f` on solidcore. The branch builds, GUI included; it is not ready
+for main. Open:
+
+- **Old files:** `tests/compat` shows changed face names (a periodic face replaces the sectors of a
+  revolved or swept wall, corner patches of blends renamed) and volumes up to 0.07 % off. Merging
+  needs a decision and a name migration (rule 6); never by editing the expectations.
+- **Accepted where it must refuse:** a fillet larger than the face builds (`combos`,
+  `part::blend`), Delete Face accepts what it refused. A chamfer wider than its rounds removes the
+  wrong volume (`blend_direction`), and a saved fastener reads back with another volume
+  (`component_axial`).
+- **Refused:** Thicken of surfaces reaching the axis, Shell of fully rounded bodies, blends of
+  chains with tangent neighbours (oracle 33), `ISO 4162` and similar fasteners (Boolean check), a
+  tangent patch over walls.
+- **Speed:** library flange 7 s against 150 ms, `perf_drawing` over 20 minutes.
+- **Tests that assumed truck's topology** (`sectors`, the hole's arcs): to be rewritten once the
+  names are decided.
+
 Our pin (`4687e3b`, 2026-10-14) is ~2500 commits behind SolidCraft's main (licence still MIT OR
 Apache-2.0; its kernel speed work moved to solidcore). In this order:
 

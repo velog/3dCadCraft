@@ -10,8 +10,8 @@
 use super::super::compat::prelude::*;
 use std::sync::Arc;
 
-use solidcraft_doc::sheet as sd;
 use solidcore_record::{Loop2, Plane as SPlane, Region2, Vec2, Vec3};
+use solidcraft_doc::sheet as sd;
 use solidcraft_kernel::history::FaceOrigin;
 
 use super::{BendLine, ExactSolid, RuleValues, SheetModel, rule_of};

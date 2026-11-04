@@ -218,6 +218,8 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 
+- **Branch `solidcore-probe`:** the kernel is SolidCraft `8f67c7f` on solidcore (`kernel/exact/compat.rs`, `vendor/README.md`), and notes below about truck describe main. Open items: `docs/ROADMAP.md`, "solidcore probe". A dense point path is a polyline with mitres there: give the kernel a spline's Bézier spans (`PathPiece::Spline`).
+
 - **The boundary's contract is `docs/KERNEL_API.md`** (every operation, the naming history it must
   give, the truck workarounds to drop with another kernel). SolidCraft paused its truck kernel work
   (its #3992) for solidcore (a Rust port of NVIDIA's SMLib); keep the boundary clean for that.

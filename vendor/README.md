@@ -1,5 +1,21 @@
 # Vendored crates
 
+## solidcore probe (branch `solidcore-probe`, not on main)
+
+This branch pins `solidcraft-kernel` and `solidcraft-doc` at SolidCraft `8f67c7f` and adds
+`solidcore-record`; `vendor/truck-*` is gone. The commit in the section below and its rows of
+changes describe main's truck-based copy: rows were carried over only where they still apply.
+Additions of this branch:
+
+| File | Change | Why |
+|---|---|---|
+| `solidcraft-kernel/src/bridge_edges.rs` (new; `ChainLine`, `of`, `stations` in `bridge.rs` made `pub(crate)`) | Loft between surface edges: boundaries cut into sides, one `bridge` per pair, stitched. G0 across, or tangent to a section's surface | upstream has no bridge between picked edges; our truck version did not port |
+| `solidcraft-doc/src/sheet.rs` `centre_line` | `#[allow(dead_code)]` | unused on this pin |
+
+Not rebuilt yet: `loft_matched` is the kernel's `loft` (it pairs sections itself, so twists and map
+points differ), `thicken_with_tolerance` ignores the tolerance, `chamfer_loops` is plain `chamfer`.
+`docs/ROADMAP.md`, "solidcore probe", lists the open failures.
+
 ## `solidcraft-kernel`
 
 SolidCraft's kernel crate (https://github.com/tangency-labs/solidcraft),
