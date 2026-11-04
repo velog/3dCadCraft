@@ -19,6 +19,7 @@ use compat::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub(crate) mod builders;
 mod compat;
 pub(crate) use compat::{BodyCompat, sg, sk};
 use solidcraft_kernel::history::{FaceOrigin, History};
@@ -176,11 +177,19 @@ pub fn prism_between(
             ]
         })
         .collect();
-    let body = guarded("prism", || sk::prism_between(&input))
+    let (body, roles) = guarded("prism", || builders::prism_between(&input))
         .map_err(|e| format!("this member cannot be built ({e})"))?;
     let n: usize = loops.iter().map(|l| l.0.len()).sum();
-    let names: Vec<String> = (0..n).map(|k| k.to_string()).collect();
-    let face_names = names_from(&body, &[], &sweep::side_names(&names, prefix));
+    let face_names = roles
+        .iter()
+        .map(|r| {
+            r.map(|r| match r {
+                r if r < n => format!("{prefix}:Side:{r}"),
+                r if r == n => format!("{prefix}:Start"),
+                _ => format!("{prefix}:End"),
+            })
+        })
+        .collect();
     Ok(ExactSolid {
         name: Some(prefix.to_owned()),
         body,
@@ -390,14 +399,11 @@ pub fn axial_stack(
             number: number(&h.role, &mut names),
         })
         .collect();
-    let body = guarded("stepped body", || {
-        sk::axial_stack_drilled(&input, first, closed, &drills)
+    let (body, roles) = guarded("stepped body", || {
+        builders::axial_stack(&input, first, closed, &drills)
     })
     .map_err(|e| format!("this part cannot be built ({e})"))?;
-    let face_names = names_from(&body, &[], &|o| match o {
-        FaceOrigin::Profile { segment } => names.get(*segment).map(|n| format!("{prefix}:{n}")),
-        _ => None,
-    });
+    let face_names = named_roles(&roles, &names.iter().map(String::as_str).collect::<Vec<_>>(), prefix);
     Ok(ExactSolid {
         name: Some(prefix.to_owned()),
         body,
@@ -420,21 +426,9 @@ pub fn pipe_tee(radius: Real, bore: Real, c: Real, prefix: &str) -> Result<Exact
         "HighEnd",
         "BranchEnd",
     ];
-    let numbers = sk::TeeNumbers {
-        run: 0,
-        branch: 1,
-        run_bore: 2,
-        branch_bore: 3,
-        low_end: 4,
-        high_end: 5,
-        branch_end: 6,
-    };
-    let body = guarded("tee", || sk::pipe_tee(radius, bore, c, numbers))
+    let (body, roles) = guarded("tee", || builders::pipe_tee(radius, bore, c, [0, 1, 2, 3, 4, 5, 6]))
         .map_err(|e| format!("this part cannot be built ({e})"))?;
-    let face_names = names_from(&body, &[], &|o| match o {
-        FaceOrigin::Profile { segment } => ROLES.get(*segment).map(|n| format!("{prefix}:{n}")),
-        _ => None,
-    });
+    let face_names = named_roles(&roles, &ROLES, prefix);
     Ok(ExactSolid {
         name: Some(prefix.to_owned()),
         body,
@@ -442,6 +436,14 @@ pub fn pipe_tee(radius: Real, bore: Real, c: Real, prefix: &str) -> Result<Exact
         profiles: Vec::new(),
         sheet: false,
     })
+}
+
+/// A face's name from its role.
+fn named_roles(roles: &[Option<usize>], names: &[&str], prefix: &str) -> Vec<Option<String>> {
+    roles
+        .iter()
+        .map(|r| r.and_then(|r| names.get(r)).map(|n| format!("{prefix}:{n}")))
+        .collect()
 }
 
 /// A ball (`length` 0) or a roller along Z from `at`, a body of its own named `name`; every face
@@ -538,14 +540,11 @@ pub fn pipe_bend(
     prefix: &str,
 ) -> Result<ExactSolid, String> {
     const ROLES: [&str; 4] = ["Outside", "Bore", "StartEnd", "FarEnd"];
-    let body = guarded("bend", || {
-        sk::pipe_bend(radius, bore, bend, angle, [0, 1, 2, 3])
+    let (body, roles) = guarded("bend", || {
+        builders::pipe_bend(radius, bore, bend, angle, [0, 1, 2, 3])
     })
     .map_err(|e| format!("this part cannot be built ({e})"))?;
-    let face_names = names_from(&body, &[], &|o| match o {
-        FaceOrigin::Profile { segment } => ROLES.get(*segment).map(|n| format!("{prefix}:{n}")),
-        _ => None,
-    });
+    let face_names = named_roles(&roles, &ROLES, prefix);
     Ok(ExactSolid {
         name: Some(prefix.to_owned()),
         body,

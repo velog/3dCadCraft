@@ -54,16 +54,55 @@ pub mod sk {
         sew(&faces)
     }
 
-    pub fn prism_between(_: &[[(Plane, Loop2); 2]]) -> Result<Body> { not_ported("prism between planes") }
-    pub fn loft_matched(_: &[(Plane, Loop2)]) -> Result<Body> { not_ported("matched loft") }
-    pub fn loft_matched_ring(_: &[(Plane, Loop2)]) -> Result<Body> { not_ported("closed matched loft") }
     pub fn bridge_edges_tangent(_: &Body, _: &[Vec3], _: &Body, _: &[Vec3], _: [Option<f64>; 2]) -> Result<Body> { not_ported("bridge between edges") }
-    pub fn patch_edges_tangent(_: &Body, _: &[Vec3], _: Option<f64>) -> Result<Body> { not_ported("tangent patch") }
-    pub fn bspline_sheet(_: &[Vec<Vec3>]) -> Result<Body> { not_ported("B-spline sheet") }
-    pub fn bspline_tube(_: &[Vec<Vec3>]) -> Result<Body> { not_ported("B-spline tube") }
-    pub fn delete_shell(_: &Body, _: usize) -> Result<Body> { not_ported("delete shell") }
+    pub fn patch_edges_tangent(b: &Body, at: &[Vec3], tangent: Option<f64>) -> Result<Body> {
+        match tangent {
+            None => patch_edges(b, at),
+            Some(_) => not_ported("tangent patch"),
+        }
+    }
+
+    /// A loft through matched sections (the kernel pairs them itself now).
+    pub fn loft_matched(sections: &[(Plane, Loop2)]) -> Result<Body> {
+        loft(sections)
+    }
+
+    /// A closed loop of sections: two lofts joined at their end sections.
+    pub fn loft_matched_ring(sections: &[(Plane, Loop2)]) -> Result<Body> {
+        let n = sections.len();
+        if n < 4 {
+            return Err(KernelError::Invalid("a closed loft needs four sections".into()));
+        }
+        let half = n / 2;
+        let a = loft(&sections[..=half])?;
+        let mut rest: Vec<(Plane, Loop2)> = sections[half..].to_vec();
+        rest.extend(sections.first().cloned());
+        let b = loft(&rest)?;
+        boolean(&a, &b, BoolOp::Union)?.ok_or_else(|| KernelError::Failed("closed loft: nothing joined".into()))
+    }
+
+    /// Equal chamfers of whole loops: the kernel's chamfer takes them.
+    pub fn chamfer_loops(b: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
+        chamfer(b, edges, distance)
+    }
+
+    /// The shell of `b` holding face `face` taken out, when it is a lump of its own.
+    pub fn delete_shell(b: &Body, face: usize) -> Result<Body> {
+        let lumps = b.lumps()?;
+        if lumps.len() < 2 {
+            return not_ported("delete a void");
+        }
+        let Some(Some(p)) = super::BodyCompat::face_corners(b).get(face).copied() else {
+            return Err(KernelError::Invalid("Delete Face: no such face".into()));
+        };
+        let on = |l: &Body| matches!(l.classify_point(p), Ok(PointClass::OnBoundary));
+        let rest: Vec<Body> = lumps.iter().filter(|l| !on(l)).cloned().collect();
+        if rest.len() + 1 != lumps.len() {
+            return Err(KernelError::Failed("Delete Face: the lump of the face was not found".into()));
+        }
+        join_apart(&rest)?.ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()))
+    }
     pub fn thicken_with_tolerance(b: &Body, t: f64, sym: bool, _tolerance: f64) -> Result<Body> { thicken(b, t, sym) }
-    pub fn chamfer_loops(_: &Body, _: &[Vec3], _: f64) -> Result<Body> { not_ported("chamfer of loops") }
 
     #[derive(Clone, Copy, Debug)]
     pub struct AxialCone { pub radius: f64, pub slope: f64, pub number: usize }
@@ -79,10 +118,6 @@ pub mod sk {
     #[derive(Clone, Copy, Debug)]
     pub struct TeeNumbers { pub run: usize, pub branch: usize, pub run_bore: usize, pub branch_bore: usize, pub low_end: usize, pub high_end: usize, pub branch_end: usize }
 
-    pub fn axial_stack(r: &[AxialRun], c: Option<usize>, closed: bool) -> Result<Body> { axial_stack_drilled(r, c, closed, &[]) }
-    pub fn axial_stack_drilled(_: &[AxialRun], _: Option<usize>, _: bool, _: &[AxialDrill]) -> Result<Body> { not_ported("axial stack") }
-    pub fn pipe_bend(_: f64, _: f64, _: f64, _: f64, _: [usize; 4]) -> Result<Body> { not_ported("pipe bend") }
-    pub fn pipe_tee(_: f64, _: f64, _: f64, _: TeeNumbers) -> Result<Body> { not_ported("pipe tee") }
 }
 
 /// Traits the plain types' geometry moved to, and the old `Body`'s methods.

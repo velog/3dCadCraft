@@ -1,27 +1,27 @@
-# SolidCraft's kernel crate (https://github.com/tangency-labs/solidcraft, commit
-# d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516, MIT OR Apache-2.0) with our speed fixes for large
-# patterns; see vendor/README.md and ATTRIBUTION.md. The workspace inheritance of the original
-# manifest is spelled out here (same versions and features as its workspace).
 [package]
 name = "solidcraft-kernel"
-description = "SolidCraft B-rep kernel boundary: solids, extrude/revolve/booleans/fillets, tessellation, measures and STEP, behind our own API (implemented with truck)"
-version = "0.9.0"
+description = "SolidCraft B-rep kernel boundary: solids, extrude/revolve/booleans/fillets, meshes, measures and STEP, behind our own API (implemented with solidcore)"
+version = "0.40.0-rc.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+
 [dependencies]
-solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-smlib = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-step = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 log = "0.4"
-truck-modeling = "0.6"
-truck-shapeops = { version = "0.4", default-features = false }
-truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation", "analyzers"] }
-truck-stepio = { version = "0.3", default-features = false }
-truck-topology = "0.6"
 spade = { version = "2.15", default-features = false, features = ["std"] }
 web-time = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon = "1.12"
+
+[dev-dependencies]
+solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8", features = ["enabled"] }
+proptest = { version = "1", default-features = false, features = ["std"] }

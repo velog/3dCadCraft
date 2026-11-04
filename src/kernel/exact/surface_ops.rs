@@ -114,7 +114,7 @@ pub fn patch_region(plane: &Plane, prof: &ExactProfile, name: &str) -> Result<Ex
 /// new surface body `name` (one face `<name>:Face`).
 pub fn freeform_sheet(net: &[Vec<Point3>], name: &str) -> Result<ExactSolid, String> {
     let net: Vec<Vec<_>> = net.iter().map(|r| r.iter().map(v3).collect()).collect();
-    let body = guarded("freeform", || sk::bspline_sheet(&net))?;
+    let body = guarded("freeform", || super::builders::bspline_sheet(&net, false))?;
     Ok(named(
         body,
         &[],
@@ -128,7 +128,7 @@ pub fn freeform_sheet(net: &[Vec<Point3>], name: &str) -> Result<ExactSolid, Str
 /// around): a new surface body `name` (faces `<name>:Face`).
 pub fn freeform_tube(net: &[Vec<Point3>], name: &str) -> Result<ExactSolid, String> {
     let net: Vec<Vec<_>> = net.iter().map(|r| r.iter().map(v3).collect()).collect();
-    let body = guarded("freeform", || sk::bspline_tube(&net))?;
+    let body = guarded("freeform", || super::builders::bspline_sheet(&net, true))?;
     Ok(named(
         body,
         &[],
