@@ -70,9 +70,15 @@ fn clockwise_circle(center: Vec2, radius: f64) -> Loop2 {
     }
 }
 
+/// Whether a prism run walked from `z0` to `z1` along a chain of this sense is a pocket in the
+/// material (a socket), not a head.
+fn prism_is_inside(z0: f64, z1: f64, ccw: bool) -> bool {
+    (z1 > z0) != ccw
+}
+
 /// The meridian of `runs` in (radius, z): a closed chain with the role of each segment. A prism
 /// run stands as a wall outside its corners; [`axial_stack`] cuts its flats out of it.
-fn meridian(runs: &[AxialRun], first_cap: Option<usize>, closed: bool) -> Result<Vec<(Seg2, Option<usize>)>> {
+fn meridian(runs: &[AxialRun], first_cap: Option<usize>, closed: bool, ccw: bool) -> Result<Vec<(Seg2, Option<usize>)>> {
     let mut chain: Vec<(Seg2, Option<usize>)> = Vec::new();
     fn push(chain: &mut Vec<(Seg2, Option<usize>)>, a: Vec2, b: Vec2, n: Option<usize>) {
         if a.dist(b) > 1e-9 {
@@ -92,20 +98,22 @@ fn meridian(runs: &[AxialRun], first_cap: Option<usize>, closed: bool) -> Result
             }
             AxialShape::Prism { corners, z0, z1, start_cone, end_cone, .. } => {
                 let rc = corners.iter().map(|c| c.len()).fold(0.0, f64::max);
-                let wall = rc * 1.05;
                 let d = (z1 - z0).signum();
+                // Walking up a counter-clockwise chain the material is towards the axis (a head);
+                // walking down it is outside (a socket), and the wall stands inside the flats.
+                let wall = if prism_is_inside(*z0, *z1, ccw) { rc * (TAU / 2.0 / corners.len() as f64).cos() * 0.9 } else { rc * 1.05 };
                 let mut list = Vec::new();
                 let (mut a, mut w0) = (Vec2::new(wall, *z0), None);
                 if let Some(c) = start_cone {
                     a = Vec2::new(c.radius, *z0);
-                    let p = Vec2::new(wall, z0 + d * c.slope * (wall - c.radius));
+                    let p = Vec2::new(wall, z0 + d * c.slope * (wall - c.radius).abs());
                     push(&mut list, a, p, Some(c.number));
                     w0 = Some(p);
                 }
                 let (mut b, mut w1) = (Vec2::new(wall, *z1), None);
                 if let Some(c) = end_cone {
                     b = Vec2::new(c.radius, *z1);
-                    w1 = Some((Vec2::new(wall, z1 - d * c.slope * (wall - c.radius)), c.number));
+                    w1 = Some((Vec2::new(wall, z1 - d * c.slope * (wall - c.radius).abs()), c.number));
                 }
                 push(&mut list, w0.unwrap_or(a), w1.map_or(b, |w| w.0), None);
                 if let Some((p, n)) = w1 {
@@ -137,9 +145,12 @@ fn meridian(runs: &[AxialRun], first_cap: Option<usize>, closed: bool) -> Result
 
 /// The body of `runs` about Z, with the role of each face.
 pub fn axial_stack(runs: &[AxialRun], first_cap: Option<usize>, closed: bool, drills: &[AxialDrill]) -> Result<(Body, Numbers)> {
-    let mut chain = meridian(runs, first_cap, closed)?;
+    // The sense comes from a first walk; it decides which side of each prism its wall stands on.
+    let trial = meridian(runs, first_cap, closed, true)?;
+    let ccw = Loop2 { segs: trial.iter().map(|c| c.0).collect() }.signed_area() > 0.0;
+    let mut chain = meridian(runs, first_cap, closed, ccw)?;
     let mut outer = Loop2 { segs: chain.iter().map(|c| c.0).collect() };
-    if outer.signed_area() < 0.0 {
+    if !ccw {
         outer = outer.ccw();
         chain.reverse();
     }
@@ -151,7 +162,10 @@ pub fn axial_stack(runs: &[AxialRun], first_cap: Option<usize>, closed: bool, dr
         _ => None,
     });
     let mut part = (body, roles);
+    let mut before = first_cap;
     for run in runs {
+        let (below, above) = (before, run.after);
+        before = run.after;
         let AxialShape::Prism { corners, z0, z1, numbers, .. } = &run.shape else {
             continue;
         };
@@ -160,15 +174,31 @@ pub fn axial_stack(runs: &[AxialRun], first_cap: Option<usize>, closed: bool, dr
             return invalid("a prism run needs a role per side");
         }
         let rc = corners.iter().map(|c| c.len()).fold(0.0, f64::max);
-        // The ring taken off the wall: a circle round it, the polygon clockwise as its hole.
-        let hole: Vec<Seg2> = (0..n).rev().map(|i| line(corners[(i + 1) % n], corners[i])).collect();
-        let sides: Vec<usize> = (0..n).rev().map(|i| numbers[i]).collect();
-        let round = Loop2::circle(Vec2::ZERO, rc * 1.2);
-        let skip = round.segs.len();
-        let ring = Region2 { outer: round, holes: vec![Loop2 { segs: hole }] };
+        let inside = prism_is_inside(*z0, *z1, ccw);
+        // What comes off the wall: outside a head a ring with the polygon as its hole; in a socket
+        // the polygon with a hole inside the wall.
+        let (ring, sides, skip) = if inside {
+            let flats = rc * (TAU / 2.0 / n as f64).cos();
+            let segs: Vec<Seg2> = (0..n).map(|i| line(corners[i], corners[(i + 1) % n])).collect();
+            (Region2 { outer: Loop2 { segs }, holes: vec![clockwise_circle(Vec2::ZERO, flats * 0.8)] }, numbers[..n].to_vec(), 0)
+        } else {
+            let hole: Vec<Seg2> = (0..n).rev().map(|i| line(corners[(i + 1) % n], corners[i])).collect();
+            let round = Loop2::circle(Vec2::ZERO, rc * 1.2);
+            let skip = round.segs.len();
+            (Region2 { outer: round, holes: vec![Loop2 { segs: hole }] }, (0..n).rev().map(|i| numbers[i]).collect(), skip)
+        };
         let tool = one(k::extrude(&Plane::XY, &[ring], z0.min(*z1), z0.max(*z1))?)?;
+        // A cap lies on the planar face at that end of the run.
+        let (low, high) = if z0 < z1 { (below, above) } else { (above, below) };
         let tool_roles = swept(&tool, |o| match o {
             FaceOrigin::Profile { segment } => segment.checked_sub(skip).and_then(|s| sides.get(s)).copied(),
+            FaceOrigin::Cap { end } => {
+                if *end {
+                    high
+                } else {
+                    low
+                }
+            }
             _ => None,
         });
         part = boolean((&part.0, &part.1), (&tool, &tool_roles), BoolOp::Cut)?;
