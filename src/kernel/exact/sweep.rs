@@ -36,8 +36,15 @@ pub enum PathPiece {
         /// Signed angle (radians).
         angle: Real,
     },
-    /// A polyline (a spline or another curve followed by its points).
+    /// A polyline (a curve the kernel only gets as points).
     Points(Vec<Point3>),
+    /// A spline: its Bézier spans for the kernel, its points for what follows a path by points.
+    Spline {
+        /// Points along the curve.
+        points: Vec<Point3>,
+        /// Each span's control points, in the direction of travel.
+        spans: Vec<Vec<Point3>>,
+    },
 }
 
 impl PathPiece {
@@ -45,9 +52,66 @@ impl PathPiece {
     pub fn start(&self) -> Option<Point3> {
         match self {
             PathPiece::Line { a, .. } | PathPiece::Arc { a, .. } => Some(*a),
-            PathPiece::Points(p) => p.first().copied(),
+            PathPiece::Points(p) | PathPiece::Spline { points: p, .. } => p.first().copied(),
         }
     }
+}
+
+/// A non-rational B-spline as Bézier spans: one per non-empty knot interval.
+pub fn spline_spans(degree: usize, knots: &[Real], ctrl: &[Point3]) -> Result<Vec<Vec<Point3>>, String> {
+    let bad = |e: String| format!("a spline path: {e}");
+    let h: Vec<sg::bspline::HPoint> = ctrl.iter().map(|p| sg::bspline::HPoint::weighted(v3(p), 1.0)).collect();
+    let (Some(&lo), Some(&hi)) = (knots.get(degree), knots.get(ctrl.len())) else {
+        return Err(bad("the knots do not match the control points".into()));
+    };
+    let mut cuts: Vec<Real> = vec![lo];
+    cuts.extend(knots.iter().copied().filter(|k| *k > lo && *k < hi));
+    cuts.push(hi);
+    cuts.dedup();
+    cuts.windows(2)
+        .map(|w| {
+            let (_, piece) = sg::bspline::segment(degree, knots, &h, w[0], w[1]).map_err(|e| bad(e.to_string()))?;
+            piece
+                .iter()
+                .map(|p| {
+                    p.project()
+                        .map(|q| Point3::new(q.x, q.y, q.z))
+                        .ok_or_else(|| bad("a span does not evaluate".into()))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The path as the kernel's exact segments; `None` when a piece is only points.
+fn exact_segs(path: &[PathPiece]) -> Result<Option<Vec<sk::PathSeg>>, String> {
+    let mut segs = Vec::new();
+    for p in path {
+        match p {
+            PathPiece::Line { a, b } => segs.push(sk::PathSeg::Line { a: v3(a), b: v3(b) }),
+            PathPiece::Arc {
+                a,
+                center,
+                axis,
+                angle,
+            } => segs.push(sk::PathSeg::Arc {
+                a: v3(a),
+                center: v3(center),
+                axis: d3(axis),
+                angle: *angle,
+            }),
+            PathPiece::Points(_) => return Ok(None),
+            PathPiece::Spline { spans, .. } => {
+                for s in spans {
+                    let ctrl: Vec<sg::bspline::HPoint> =
+                        s.iter().map(|q| sg::bspline::HPoint::weighted(v3(q), 1.0)).collect();
+                    let span = sk::SpaceBezier::new(&ctrl).ok_or("a spline path: a span is not finite")?;
+                    segs.push(sk::PathSeg::Bezier(span));
+                }
+            }
+        }
+    }
+    Ok(Some(segs))
 }
 
 /// A placed copy of a profile: sketch coordinates `(u, v)` go to
@@ -112,26 +176,7 @@ pub fn sweep(
     if path.is_empty() {
         return Err("the path is empty".into());
     }
-    let exact = path.iter().all(|p| !matches!(p, PathPiece::Points(_)));
-    let body = if exact {
-        let segs: Vec<sk::PathSeg> = path
-            .iter()
-            .filter_map(|p| match p {
-                PathPiece::Line { a, b } => Some(sk::PathSeg::Line { a: v3(a), b: v3(b) }),
-                PathPiece::Arc {
-                    a,
-                    center,
-                    axis,
-                    angle,
-                } => Some(sk::PathSeg::Arc {
-                    a: v3(a),
-                    center: v3(center),
-                    axis: d3(axis),
-                    angle: *angle,
-                }),
-                PathPiece::Points(_) => None,
-            })
-            .collect();
+    let body = if let Some(segs) = exact_segs(path)? {
         guarded("sweep", || sk::sweep(&pl, &prof.region, &segs))?
     } else {
         let pts = path_points(path);
@@ -163,26 +208,7 @@ pub fn sweep_surface(
         .chain(prof.region.holes.iter())
         .map(|l| l.segs.clone())
         .collect();
-    let exact = path.iter().all(|p| !matches!(p, PathPiece::Points(_)));
-    let body = if exact {
-        let segs: Vec<sk::PathSeg> = path
-            .iter()
-            .filter_map(|p| match p {
-                PathPiece::Line { a, b } => Some(sk::PathSeg::Line { a: v3(a), b: v3(b) }),
-                PathPiece::Arc {
-                    a,
-                    center,
-                    axis,
-                    angle,
-                } => Some(sk::PathSeg::Arc {
-                    a: v3(a),
-                    center: v3(center),
-                    axis: d3(axis),
-                    angle: *angle,
-                }),
-                PathPiece::Points(_) => None,
-            })
-            .collect();
+    let body = if let Some(segs) = exact_segs(path)? {
         guarded("surface sweep", || sk::sweep_sheet(&pl, &chains, &segs))?
     } else {
         let pts = path_points(path);
@@ -397,7 +423,9 @@ pub fn path_points(path: &[PathPiece]) -> Vec<sg::Vec3> {
                     push(v3(&(center + rot * (a - center))));
                 }
             }
-            PathPiece::Points(p) => p.iter().for_each(|q| push(v3(q))),
+            PathPiece::Points(p) | PathPiece::Spline { points: p, .. } => {
+                p.iter().for_each(|q| push(v3(q)))
+            }
         }
     }
     pts

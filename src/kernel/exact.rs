@@ -5627,6 +5627,7 @@ mod sweep;
 mod thicken;
 pub use delete_face::{delete_faces, delete_shell};
 pub use sweep::{
+    spline_spans,
     Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_surface, loft_to_point,
     path_points, sweep, sweep_surface,
 };

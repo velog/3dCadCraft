@@ -209,7 +209,7 @@ fn path_pieces(op: &LipOp, body: &BRep, plane: &Plane) -> Result<(Vec<Piece>, bo
                     sweep: *angle * axis.dot(&n).signum(),
                 });
             }
-            PathPiece::Points(pts) => {
+            PathPiece::Points(pts) | PathPiece::Spline { points: pts, .. } => {
                 for w in pts.windows(2) {
                     if !(flat(&w[0]) && flat(&w[1])) {
                         return Err(user("the path must lie in the rim's plane".into()));

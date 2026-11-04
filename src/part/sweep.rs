@@ -109,8 +109,31 @@ fn sketch_piece(plane: &Plane, c: &ProfileCurve) -> PathPiece {
             axis: plane.normal.into_inner(),
             angle: *sweep,
         },
-        ProfileCurve::Spline { .. } => {
-            PathPiece::Points(c.sample(1e-3).into_iter().map(w).collect())
+        ProfileCurve::Spline {
+            points,
+            reversed,
+            knots,
+        } => {
+            let samples: Vec<Point3> = c.sample(1e-3).into_iter().map(w).collect();
+            let ctrl: Vec<Point3> = points.iter().map(|p| w(*p)).collect();
+            let spans = crate::kernel::BSplineCurve::sketch_spline(ctrl, knots)
+                .ok()
+                .and_then(|b| {
+                    crate::kernel::exact::spline_spans(b.degree(), b.knots(), b.control_points()).ok()
+                });
+            match spans {
+                Some(mut spans) => {
+                    if *reversed {
+                        spans.reverse();
+                        spans.iter_mut().for_each(|s| s.reverse());
+                    }
+                    PathPiece::Spline {
+                        points: samples,
+                        spans,
+                    }
+                }
+                None => PathPiece::Points(samples),
+            }
         }
     }
 }
@@ -201,7 +224,7 @@ fn ends(p: &PathPiece) -> (Point3, Point3) {
             axis,
             angle,
         } => (*a, rotate(*a, *center, *axis, *angle)),
-        PathPiece::Points(v) => (
+        PathPiece::Points(v) | PathPiece::Spline { points: v, .. } => (
             v.first().copied().unwrap_or_else(Point3::origin),
             v.last().copied().unwrap_or_else(Point3::origin),
         ),
@@ -228,6 +251,14 @@ fn reversed(p: &PathPiece) -> PathPiece {
             angle: -angle,
         },
         PathPiece::Points(v) => PathPiece::Points(v.iter().rev().copied().collect()),
+        PathPiece::Spline { points, spans } => PathPiece::Spline {
+            points: points.iter().rev().copied().collect(),
+            spans: spans
+                .iter()
+                .rev()
+                .map(|s| s.iter().rev().copied().collect())
+                .collect(),
+        },
     }
 }
 
@@ -237,7 +268,9 @@ fn piece_len(p: &PathPiece) -> Real {
         PathPiece::Arc {
             a, center, angle, ..
         } => (a - center).norm() * angle.abs(),
-        PathPiece::Points(v) => v.windows(2).map(|w| (w[1] - w[0]).norm()).sum(),
+        PathPiece::Points(v) | PathPiece::Spline { points: v, .. } => {
+            v.windows(2).map(|w| (w[1] - w[0]).norm()).sum()
+        }
     }
 }
 
@@ -262,7 +295,7 @@ fn piece_eval(p: &PathPiece, s: Real) -> (Point3, Vector3) {
             let tan = (k.cross(&(q - center)) * angle.signum()).normalize();
             (q, tan)
         }
-        PathPiece::Points(v) => {
+        PathPiece::Points(v) | PathPiece::Spline { points: v, .. } => {
             let mut acc = 0.0;
             for w in v.windows(2) {
                 let l = (w[1] - w[0]).norm();
