@@ -3997,7 +3997,15 @@ fn unreachable_line() -> Line {
 /// The circle through all of `pts` (within 1e-6 relative), if there is one.
 fn circle_through(pts: &[Point3]) -> Option<Circle> {
     let n = pts.len();
-    let (a, b, c) = (pts[0], pts[n / 3], pts[2 * n / 3]);
+    // An open arc through its own ends: a circle through inner samples accepted up to the
+    // tolerance below can miss an end by more than the vertex check allows (the kernel's short
+    // rims are a few samples of a curve a hair off the circle).
+    let open = (pts[n - 1] - pts[0]).norm() > 1e-6;
+    let (a, b, c) = if open {
+        (pts[0], pts[n / 2], pts[n - 1])
+    } else {
+        (pts[0], pts[n / 3], pts[2 * n / 3])
+    };
     let (ab, ac) = (b - a, c - a);
     let nrm = ab.cross(&ac);
     if nrm.norm() < 1e-12 {
