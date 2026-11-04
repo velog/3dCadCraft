@@ -110,14 +110,14 @@ struct Sample {
 /// A chain of edges measured by arclength through a fine polyline on it, so that a station is read
 /// on the edge's own curve, not on a chord. A chain that closes ends back on its first point. Each
 /// edge's curve is walked the way the chain runs along it.
-struct ChainLine {
+pub(crate) struct ChainLine {
     curves: Vec<(CurveEval, [f64; 2])>,
     samples: Vec<Sample>,
     closed: bool,
 }
 
 impl ChainLine {
-    fn of(body: &Body, chain: &Chain) -> Result<ChainLine> {
+    pub(crate) fn of(body: &Body, chain: &Chain) -> Result<ChainLine> {
         /// Samples per edge used for the length table.
         const PER_EDGE: usize = 64;
         let r = body.record();
@@ -181,7 +181,7 @@ impl ChainLine {
     /// `count` stations evenly along the chain, from arclength `start` (a closed chain's seam; an
     /// open chain always runs end to end), forwards or backwards. A closed chain's last station is
     /// back on its first.
-    fn stations(&self, count: usize, start: f64, backwards: bool) -> Result<Vec<(Vec3, usize)>> {
+    pub(crate) fn stations(&self, count: usize, start: f64, backwards: bool) -> Result<Vec<(Vec3, usize)>> {
         let total = self.length();
         let start = if self.closed {
             start

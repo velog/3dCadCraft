@@ -54,11 +54,20 @@ pub mod sk {
         sew(&faces)
     }
 
-    pub fn bridge_edges_tangent(_: &Body, _: &[Vec3], _: &Body, _: &[Vec3], _: [Option<f64>; 2]) -> Result<Body> { not_ported("bridge between edges") }
+    /// The patch of a closed loop, tangent to the faces round it with `tangent`'s weight (a fuller
+    /// middle above 1, a flatter one below).
     pub fn patch_edges_tangent(b: &Body, at: &[Vec3], tangent: Option<f64>) -> Result<Body> {
         match tangent {
             None => patch_edges(b, at),
-            Some(_) => not_ported("tangent patch"),
+            Some(w) => patch_edges_with(
+                b,
+                at,
+                &PatchSpec {
+                    continuity: Continuity::G1,
+                    crown: (w - 1.0).clamp(-0.9, 3.0),
+                    ..PatchSpec::default()
+                },
+            ),
         }
     }
 

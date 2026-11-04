@@ -24,6 +24,7 @@ mod boolean_record;
 mod boundary;
 mod boundary_network;
 mod bridge;
+mod bridge_edges;
 mod build;
 #[cfg(test)]
 mod chamfer_sides_curved_tests;
@@ -168,6 +169,7 @@ pub use body::{
 };
 pub use boundary::{Boundary, boundary_patch};
 pub use boundary_network::{BoundaryCurve, CurveSource, MAX_CHAIN_CURVES, MAX_EDGE_PICKS, boundary_join, boundary_surface};
+pub use bridge_edges::bridge_edges_tangent;
 pub use bridge::{Frame, blend_between, bridge, chain, chain_closes, frames, frames_across, sample_grid};
 pub use build::{
     PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, extrude_whole_sides, loft, loft_regions,
