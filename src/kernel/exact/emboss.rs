@@ -1,5 +1,7 @@
 //! The tool of a profile wrapped onto a cylinder (`docs/spec/2.17-emboss.md`).
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use super::*;
 
 /// A ring sector about the line through `origin` along `axis`: radii `r0..r1`, heights `z0..z1`

@@ -4,6 +4,8 @@
 //! Faces that come from an operand keep its names (the kernel's history); new faces are named
 //! `<prefix>:<role>` (`Stitch1:Face`, `Patch1:Patch`).
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use super::{ExactProfile, ExactSolid, Plane, Point3, Real, guarded, names_from, plane_of, sk, v3};
 
 /// `body` with names: faces traced back to `operands` keep theirs, the rest are `new_face`.

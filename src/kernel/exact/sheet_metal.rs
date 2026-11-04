@@ -4,6 +4,8 @@
 //! hanging off panel edges, each a bend zone BA = θ·(R + K·T) and a panel —
 //! and folded to a solid on demand. No SolidCraft type leaves this module.
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use std::sync::Arc;
 
 use solidcraft_doc::sheet as sd;
@@ -116,6 +118,7 @@ fn rule_of(rv: &RuleValues) -> sd::RuleValues {
         bend_radius: rv.bend_radius,
         relief_width: rv.relief_width,
         relief_depth: rv.relief_depth,
+        angle_display: sd::AngleDisplay::Bend,
         corner_relief: rv.corner_relief,
         corner_relief_shape: match rv.corner_shape {
             CornerShape::Notch => sd::ReliefShape::Notch,
@@ -202,8 +205,8 @@ pub fn face(
         .map(|(id, a, b)| {
             (
                 id.clone(),
-                solidcraft_geom::Vec2::new(a[0], a[1]),
-                solidcraft_geom::Vec2::new(b[0], b[1]),
+                solidcore_record::Vec2::new(a[0], a[1]),
+                solidcore_record::Vec2::new(b[0], b[1]),
             )
         })
         .collect();
@@ -491,7 +494,7 @@ pub fn contour(
     let pl = plane_of(plane)?;
     let pts: Vec<_> = pts
         .iter()
-        .map(|p| solidcraft_geom::Vec2::new(p[0], p[1]))
+        .map(|p| solidcore_record::Vec2::new(p[0], p[1]))
         .collect();
     let mut m = guarded_sheet("Contour Flange", || {
         sd::contour_flange_span(
@@ -867,11 +870,11 @@ pub enum FlatSeg {
 /// The flat pattern's material as closed loops of [`FlatSeg`]s (outer loops
 /// counter-clockwise, cut-outs clockwise): what DXF writes.
 pub fn flat_profile(m: &SheetModel) -> Result<Vec<Vec<FlatSeg>>, String> {
-    use solidcraft_geom::Seg2;
+    use solidcore_record::Seg2;
     let regions = m.0.flat_regions().map_err(|e| e.to_string())?;
     let tol = (m.0.t * 0.01).max(1e-3);
-    let xy = |p: solidcraft_geom::Vec2| [p.x, p.y];
-    let conv = |lp: &solidcraft_geom::Loop2| -> Vec<FlatSeg> {
+    let xy = |p: solidcore_record::Vec2| [p.x, p.y];
+    let conv = |lp: &solidcore_record::Loop2| -> Vec<FlatSeg> {
         // A loop of arcs of one circle turning a whole turn is a circle.
         let mut circle = None;
         let mut turn = 0.0;
@@ -979,10 +982,12 @@ pub fn convert(
     let mb = solidcraft_doc::ModelBody::new(prefix.to_owned(), solid.body.clone(), 0);
     let picks: Vec<_> = bends.iter().map(v3).collect();
     let m = crate::diagnostics::crash::guard(|| {
-        sd::convert_body(&mb, "rule", &rule_of(rv), v3(&face), &picks).map_err(|e| e.to_string())
+        let values = |_: Option<f64>| Ok(rule_of(rv));
+        const IDENTITY: [[f64; 4]; 4] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        sd::convert_body(&mb, "rule", &values, v3(&face), &picks, &IDENTITY).map_err(|e| e.to_string())
     })
     .map_err(|_| "Convert to Sheet Metal: internal error in the sheet metal model".to_owned())??;
-    let mut m = m;
+    let (mut m, _notes) = m;
     // Edge names: the fixed face's straight edges `E<k>` (the base's
     // outline in order), the panels across the bends `<prefix>.<k>` — so
     // flanges on the converted sheet store names, as on a Face.
@@ -1050,12 +1055,13 @@ pub fn flanges_model(
             pick: v3(&e.at),
             height: e.height,
             angle: e.angle,
+            from: sd::HeightFrom::default(),
         })
         .collect();
     let spans: Vec<(Real, Real)> = edges.iter().map(|e| e.offsets).collect();
     let n0 = next.flanges.len();
     let notes = crate::diagnostics::crash::guard(|| {
-        next.add_flanges_spans(&each, &spans, radius, position.key(), flip)
+        next.add_flanges_spans(&each, &spans, radius, position.key(), flip, sd::ReliefOverride::default())
             .map(|(_, n)| n)
             .map_err(|e| e.to_string())
     })
@@ -1122,9 +1128,10 @@ pub fn can_flange(m: &SheetModel, at: Point3) -> bool {
         pick: v3(&at),
         height: r + t + t.max(0.1),
         angle: std::f64::consts::FRAC_PI_2,
+        from: sd::HeightFrom::default(),
     };
     guarded_bool(|| {
-        next.add_flanges_spans(&[edge], &[], r, "inside", false)
+        next.add_flanges_spans(&[edge], &[], r, "inside", false, sd::ReliefOverride::default())
             .is_ok()
     })
 }
@@ -1144,19 +1151,19 @@ fn guarded_bool(f: impl FnOnce() -> bool) -> bool {
 /// at `z = T`.
 pub fn flat_point(m: &SheetModel, p: [Real; 2], z: Real) -> Point3 {
     let f = &m.0.frame;
-    p3(f.to_world(solidcraft_geom::Vec2::new(p[0], p[1])) + f.normal() * z)
+    p3(f.to_world(solidcore_record::Vec2::new(p[0], p[1])) + f.normal() * z)
 }
 
 /// [`flat_point`] with the flat pattern laid rigidly where flange `panel`'s
 /// panel is (its region of the flat on the folded panel; `None`: the base).
 pub fn flat_point_on(m: &SheetModel, panel: Option<usize>, p: [Real; 2], z: Real) -> Point3 {
-    let q = solidcraft_geom::Vec3::new(p[0], p[1], z);
+    let q = solidcore_record::Vec3::new(p[0], p[1], z);
     let q = match panel {
         Some(i) => solidcraft_doc::apply_point(&m.0.fold(i), q),
         None => q,
     };
     let f = &m.0.frame;
-    p3(f.to_world(solidcraft_geom::Vec2::new(q.x, q.y)) + f.normal() * q.z)
+    p3(f.to_world(solidcore_record::Vec2::new(q.x, q.y)) + f.normal() * q.z)
 }
 
 /// How many flange panels the sheet has (indices for [`flat_point_on`]).
@@ -1166,7 +1173,7 @@ pub fn panel_count(m: &SheetModel) -> usize {
 
 /// The flat pattern's area (outlines minus cut-outs), mm².
 pub fn flat_area(m: &SheetModel) -> Result<Real, String> {
-    let area = |l: &[solidcraft_geom::Vec2]| -> Real {
+    let area = |l: &[solidcore_record::Vec2]| -> Real {
         let n = l.len();
         ((0..n)
             .map(|i| {

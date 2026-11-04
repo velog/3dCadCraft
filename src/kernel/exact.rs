@@ -14,11 +14,13 @@
 //! and vertices are named after the faces they bound (a box keeps its corner
 //! codes, `Box1:V111`, `Box1:E000-100`).
 
+#[allow(unused_imports)]
+use compat::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use solidcraft_geom as sg;
-use solidcraft_kernel as sk;
+mod compat;
+pub(crate) use compat::{BodyCompat, sg, sk};
 use solidcraft_kernel::history::{FaceOrigin, History};
 
 use super::extrude::Segment2;

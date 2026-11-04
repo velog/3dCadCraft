@@ -17,11 +17,44 @@ pub struct Progress {
     total: AtomicUsize,
     /// The feature the evaluation waits at until cancelled ([`Progress::hold_at`]).
     hold: AtomicUsize,
+    /// Long work inside one feature (reading a large STEP file): its step and how far it is.
+    work_stage: std::sync::Mutex<&'static str>,
+    work_done: AtomicUsize,
+    work_total: AtomicUsize,
+    /// The item a command works through one at a time (the linked design Update Links reads
+    /// again): its name, its place and how many there are ([`item`]).
+    item: std::sync::Mutex<Option<(String, usize, usize)>>,
+    /// A window wants the model as far as it is built, to show while the rest is ([`Progress::want_partial`]).
+    partial_wanted: AtomicBool,
+    /// The latest such model and when it was offered.
+    partial: std::sync::Mutex<(Option<Partial>, Option<web_time::Instant>)>,
 }
+
+/// The model as far as an evaluation has built it, placed in the world as the design places it.
+#[derive(Clone, Debug)]
+pub struct Partial {
+    /// Features evaluated.
+    pub features: usize,
+    pub world: Arc<crate::ModelState>,
+}
+
+/// How often an evaluation offers the model built so far.
+const PARTIAL_EVERY: std::time::Duration = std::time::Duration::from_millis(1500);
 
 impl Default for Progress {
     fn default() -> Self {
-        Progress { cancelled: AtomicBool::new(false), done: AtomicUsize::new(0), total: AtomicUsize::new(0), hold: AtomicUsize::new(usize::MAX) }
+        Progress {
+            cancelled: AtomicBool::new(false),
+            done: AtomicUsize::new(0),
+            total: AtomicUsize::new(0),
+            hold: AtomicUsize::new(usize::MAX),
+            work_stage: std::sync::Mutex::new(""),
+            work_done: AtomicUsize::new(0),
+            work_total: AtomicUsize::new(0),
+            item: std::sync::Mutex::new(None),
+            partial_wanted: AtomicBool::new(false),
+            partial: std::sync::Mutex::new((None, None)),
+        }
     }
 }
 
@@ -42,6 +75,54 @@ impl Progress {
     pub fn features(&self) -> (usize, usize) {
         (self.done.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed))
     }
+    /// Ask the watched evaluation to offer the model as far as it is built, now and then.
+    pub fn want_partial(&self) {
+        self.partial_wanted.store(true, Ordering::Relaxed);
+    }
+    /// The model as far as it was built when last offered, once (`None` until there is a newer one).
+    pub fn take_partial(&self) -> Option<Partial> {
+        self.partial.lock().ok().and_then(|mut p| p.0.take())
+    }
+    /// Long work inside a feature, such as reading a large STEP file: (step, done, total);
+    /// `None` while there is none to show.
+    pub fn work(&self) -> Option<(&'static str, usize, usize)> {
+        let total = self.work_total.load(Ordering::Relaxed);
+        let stage = self.work_stage.lock().map(|s| *s).unwrap_or("");
+        (total > 0 && !stage.is_empty()).then(|| (stage, self.work_done.load(Ordering::Relaxed).min(total), total))
+    }
+    /// The item being worked on, as [`item`] reported it: (name, index from 0, count).
+    pub fn item(&self) -> Option<(String, usize, usize)> {
+        self.item.lock().ok().and_then(|i| i.clone())
+    }
+}
+
+/// Tell a watcher which item a command is on (`name`, `index` from 0 of `count`), such as the
+/// linked design Update Links reads again; `None` once it is past them. Nothing happens unless
+/// the work is watched ([`watch`]).
+pub fn item(current: Option<(&str, usize, usize)>) {
+    CURRENT.with(|c| {
+        if let Some(cur) = c.borrow().as_ref()
+            && let Ok(mut i) = cur.progress.item.lock()
+        {
+            *i = current.map(|(name, index, count)| (name.to_string(), index.min(count), count));
+        }
+    });
+}
+
+/// The kernel's long work (STEP import) reports to the same progress and stops on Cancel.
+struct KernelWatch(Arc<Progress>);
+
+impl solidcraft_kernel::watch::Watch for KernelWatch {
+    fn cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+    fn progress(&self, stage: &'static str, done: usize, total: usize) {
+        if let Ok(mut s) = self.0.work_stage.lock() {
+            *s = stage;
+        }
+        self.0.work_total.store(total, Ordering::Relaxed);
+        self.0.work_done.store(done, Ordering::Relaxed);
+    }
 }
 
 struct Current {
@@ -56,6 +137,7 @@ thread_local! {
 
 /// Run `f` with `progress` watching every evaluation it makes on this thread.
 pub fn watch<R>(progress: Arc<Progress>, f: impl FnOnce() -> R) -> R {
+    let kernel = Arc::new(KernelWatch(progress.clone()));
     let previous = CURRENT.with(|c| c.replace(Some(Current { progress, depth: 0 })));
     struct Restore(Option<Option<Current>>);
     impl Drop for Restore {
@@ -66,7 +148,7 @@ pub fn watch<R>(progress: Arc<Progress>, f: impl FnOnce() -> R) -> R {
         }
     }
     let _restore = Restore(Some(previous));
-    f()
+    solidcraft_kernel::watch::watching(kernel, f)
 }
 
 /// Entered at the start of an evaluation; the guard leaves it.
@@ -91,6 +173,13 @@ pub(crate) fn begin(total: usize) -> Evaluation {
 }
 
 impl Evaluation {
+    /// Whether the watcher asked to stop. A feature cut short then (a STEP import that stopped
+    /// part way) failed only because of it: its result must not be kept for the same inputs, as
+    /// the evaluation cache is shared with the model a preview was copied from (#7167).
+    pub(crate) fn cancelled(&self) -> bool {
+        CURRENT.with(|c| c.borrow().as_ref().is_some_and(|cur| cur.progress.is_cancelled()))
+    }
+
     /// Feature `index` is next. True when the watcher asked to stop: skip it.
     pub(crate) fn step(&self, index: usize) -> bool {
         CURRENT.with(|c| {
@@ -107,6 +196,38 @@ impl Evaluation {
             }
             cur.progress.is_cancelled()
         })
+    }
+}
+
+impl Evaluation {
+    /// The outer evaluation has built the model up to feature `features`: a watcher that wants
+    /// partial models gets it, placed by `doc`, at most every [`PARTIAL_EVERY`] (the first one
+    /// after one interval, so a design that opens quickly offers none).
+    pub(crate) fn offer(&self, features: usize, doc: &crate::Document, state: &Arc<crate::ModelState>) {
+        if !self.outer {
+            return;
+        }
+        let progress = CURRENT.with(|c| c.borrow().as_ref().map(|cur| cur.progress.clone()));
+        let Some(progress) = progress.filter(|p| p.partial_wanted.load(Ordering::Relaxed) && !p.is_cancelled()) else { return };
+        let now = web_time::Instant::now();
+        let due = match progress.partial.lock() {
+            Ok(mut p) => match p.1 {
+                None => {
+                    p.1 = Some(now);
+                    false
+                }
+                Some(last) => now.duration_since(last) >= PARTIAL_EVERY,
+            },
+            Err(_) => false,
+        };
+        if !due {
+            return;
+        }
+        // A world that cannot be placed is shown with the evaluation's own error, at its end.
+        let Ok(world) = crate::world_state(doc, state).map(Arc::new) else { return };
+        if let Ok(mut p) = progress.partial.lock() {
+            *p = (Some(Partial { features, world }), Some(web_time::Instant::now()));
+        }
     }
 }
 
@@ -148,5 +269,61 @@ mod tests {
         });
         assert_eq!(p.features(), (5, 5));
         assert!(!begin(1).step(0), "the watch ends with its scope");
+    }
+
+    /// The item a command is on reaches its watcher, and only a watcher.
+    #[test]
+    fn items_go_to_the_watcher() {
+        item(Some(("unwatched", 0, 1)));
+        let p = Arc::new(Progress::default());
+        assert_eq!(p.item(), None);
+        watch(p.clone(), || {
+            item(Some(("plate", 1, 3)));
+            assert_eq!(p.item(), Some(("plate".to_string(), 1, 3)));
+            item(None);
+        });
+        assert_eq!(p.item(), None, "cleared once past the items");
+        item(Some(("after", 0, 1)));
+        assert_eq!(p.item(), None, "the watch ends with its scope");
+    }
+
+    /// A watcher that asks for partial models gets the model built so far, placed, now and then;
+    /// one that doesn't ask, or an unwatched evaluation, never pays for it.
+    #[test]
+    fn partial_models_go_only_to_a_watcher_that_wants_them() {
+        let mut doc = crate::Document::new("partial");
+        let block = crate::FeatureKind::Box {
+            corner: crate::point_expr(solidcore_record::Vec3::ZERO),
+            length: "2 mm".into(),
+            width: "3 mm".into(),
+            height: "4 mm".into(),
+            operation: crate::Operation::NewBody,
+        };
+        doc.add_feature(block, Some("Block")).unwrap();
+        let mut model = crate::Model::default();
+        model.evaluate(&doc);
+        let state = model.state();
+        let offer = |p: &Arc<Progress>| {
+            watch(p.clone(), || {
+                let e = begin(1);
+                e.offer(1, &doc, &state);
+            })
+        };
+        let p = Arc::new(Progress::default());
+        offer(&p);
+        assert!(p.take_partial().is_none(), "not asked for");
+        p.want_partial();
+        offer(&p);
+        assert!(p.take_partial().is_none(), "nothing in the first interval: a quick open offers none");
+        if let Ok(mut g) = p.partial.lock() {
+            g.1 = web_time::Instant::now().checked_sub(PARTIAL_EVERY * 2);
+        }
+        offer(&p);
+        let partial = p.take_partial().unwrap();
+        assert_eq!(partial.features, 1);
+        assert_eq!(partial.world.bodies.len(), 1);
+        assert!(p.take_partial().is_none(), "taken once");
+        offer(&p);
+        assert!(p.take_partial().is_none(), "not again within the interval");
     }
 }

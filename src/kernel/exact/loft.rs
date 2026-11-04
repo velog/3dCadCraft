@@ -25,6 +25,8 @@
 //!    affine plus a smooth correction), set square to the centre line, or
 //!    scaled to the area law of an Area Loft.
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use std::sync::OnceLock;
 
 use nalgebra::{Matrix2, Matrix3, Rotation3, SMatrix, Vector2};

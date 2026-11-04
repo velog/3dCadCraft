@@ -8,6 +8,8 @@
 //! Face names: `<prefix>:Side:<segment>` (from the kernel's history, like a
 //! solid extrusion's walls).
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use super::{
     ExactOp, ExactSolid, FaceOrigin, Plane, Point3, Real, Vector3, guarded, names_from, p3,
     plane_of, seg2, sg, sk, union_apart,

@@ -4,7 +4,9 @@
 //! angle times the neutral radius (Inventor's Unrolled Length), so the
 //! profile's bends stay bend lines of the flat.
 
-use solidcraft_geom::{Region2, Vec2};
+#[allow(unused_imports)]
+use super::super::compat::prelude::*;
+use solidcore_record::{Region2, Vec2};
 
 use super::recognize::{plane_of as face_plane, region_of};
 use super::{ExactSolid, RuleValues, SheetModel, contour};

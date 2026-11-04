@@ -8,11 +8,13 @@
 //! volume; else the body is no sheet of constant thickness, or has features
 //! the walk does not know yet.
 
+#[allow(unused_imports)]
+use super::super::compat::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use solidcraft_doc::sheet as sd;
-use solidcraft_geom::{Loop2, Plane as SPlane, Region2, Seg2, Vec2, Vec3};
+use solidcore_record::{Loop2, Plane as SPlane, Region2, Seg2, Vec2, Vec3};
 
 use super::{ExactSolid, RuleValues, SheetModel, named_solid, rule_of};
 use crate::kernel::{BRep, Curve, EdgeId, FaceId, Loop, Point3, Real, Sense, Surface, Vector3};
@@ -688,6 +690,8 @@ pub fn recognize(
                 tear: (false, false),
                 mitre: (Vec::new(), Vec::new()),
                 shape: None,
+                exact: None,
+                zone_shape: None,
                 tag: format!("{prefix}.{}", sheet.flanges.len() + 1),
             });
             let k = sheet.flanges.len() - 1;

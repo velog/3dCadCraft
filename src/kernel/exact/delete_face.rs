@@ -6,6 +6,8 @@
 //! Every face left keeps its name (the kernel's history maps it to the
 //! face it came from); Delete Face makes no new faces.
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use super::{ExactSolid, guarded, names_from, sk};
 
 fn named(s: &ExactSolid, body: sk::Body, sheet: bool) -> ExactSolid {

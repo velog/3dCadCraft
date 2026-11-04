@@ -8,6 +8,8 @@
 //! `<prefix>:Start`, `<prefix>:End`; a loft's later sections name their sides
 //! `<prefix>:Side:s<k>.<segment>`.
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use super::{
     ExactProfile, ExactSolid, FaceOrigin, Plane, Point3, Real, Vector3, d3, guarded, names_from,
     plane_of, sg, sk, v3, w3,

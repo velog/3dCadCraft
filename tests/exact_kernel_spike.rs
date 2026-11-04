@@ -6,7 +6,7 @@
 use std::f64::consts::PI;
 use std::time::Instant;
 
-use solidcraft_geom::Vec3;
+use solidcore_record::Vec3;
 use solidcraft_kernel as k;
 
 #[test]

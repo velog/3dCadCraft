@@ -7,6 +7,8 @@
 //! face's name, its moved copy is `<prefix>:Offset:<face>`, a wall along a
 //! free edge `<prefix>:Wall:<edge index>`.
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use super::{ExactSolid, FaceOrigin, Real, guarded, names_from, sk, v3};
 
 /// How far an offset's fitted faces may stray from the true offset (mm).

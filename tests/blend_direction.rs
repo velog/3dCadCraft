@@ -734,7 +734,7 @@ fn an_inclined_cut_is_an_exact_ellipse() {
 /// and direction, bit for bit, as those of the mesh.
 #[test]
 fn edges_without_a_mesh_are_those_of_the_mesh() {
-    use solidcraft_geom::{Loop2, Plane, Region2, Vec2, Vec3};
+    use solidcore_record::{Loop2, Plane, Region2, Vec2, Vec3};
     use solidcraft_kernel::{BoolOp, boolean, extrude, fillet};
     let disc = |r: f64, z0: f64, z1: f64| {
         let region = Region2 {
@@ -764,7 +764,7 @@ fn edges_without_a_mesh_are_those_of_the_mesh() {
         ("cut round", cut),
     ] {
         for tol in [0.1, 0.01] {
-            let (mesh, edges) = (body.tessellate(tol).unwrap(), body.edges(tol).unwrap());
+            let (mesh, edges) = (body.mesh(&solidcraft_kernel::MeshTolerance::chord(tol)).unwrap(), body.edges(tol).unwrap());
             assert_eq!(mesh.edges.len(), edges.len(), "{name}");
             for (m, e) in mesh.edges.iter().zip(&edges) {
                 assert_eq!(m.len(), e.points.len(), "{name}");
@@ -782,7 +782,7 @@ fn edges_without_a_mesh_are_those_of_the_mesh() {
 /// file or were stitched from surfaces must still end up facing out, which a later Cut relies on.
 #[test]
 fn imported_and_stitched_solids_stay_outward_through_blends() {
-    use solidcraft_geom::{Loop2, Plane, Region2, Vec2, Vec3};
+    use solidcore_record::{Loop2, Plane, Region2, Vec2, Vec3};
     use solidcraft_kernel::{
         Body, BoolOp, boolean, chamfer, copy_faces, extrude, fillet, step_export, step_import,
         stitch, union_apart,
@@ -799,7 +799,7 @@ fn imported_and_stitched_solids_stay_outward_through_blends() {
             .pop()
             .unwrap()
     };
-    let volume = |b: &Body| b.tessellate(0.01).unwrap().measure().volume;
+    let volume = |b: &Body| b.mesh(&solidcraft_kernel::MeshTolerance::chord(0.01)).unwrap().measure().volume;
     let imported = |b: &Body| {
         let text = step_export(&[b], "test").unwrap();
         step_import(&text).unwrap().bodies.remove(0).body

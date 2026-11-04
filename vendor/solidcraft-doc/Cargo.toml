@@ -1,30 +1,21 @@
-# SolidCraft's document crate (https://github.com/tangency-labs/solidcraft, commit
-# d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516, MIT OR Apache-2.0) with our sheet metal additions;
-# see vendor/README.md and ATTRIBUTION.md. The workspace inheritance of the original manifest is
-# spelled out here (same versions and features as its workspace).
 [package]
 name = "solidcraft-doc"
 description = "SolidCraft document model: parameters and expressions, sketches and features on a parametric timeline, incremental evaluation"
-version = "0.9.0"
+version = "0.40.0-rc.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-dbg_macro = "warn"
-todo = "warn"
-too_many_arguments = "allow"
-type_complexity = "allow"
-neg_cmp_op_on_partial_ord = "allow"
 
 [dependencies]
-solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
-solidcraft-sketch = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
-solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-sketch = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-render = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-derive = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 thiserror = "2"
 log = "0.4"
 sha2 = "0.10"

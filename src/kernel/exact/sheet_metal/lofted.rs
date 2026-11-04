@@ -6,10 +6,12 @@
 //! surface (lengths kept), opened at the seam of closed profiles. Press Brake
 //! output keeps the facets' edges as bend lines of the flat.
 
+#[allow(unused_imports)]
+use super::super::compat::prelude::*;
 use std::sync::Arc;
 
 use solidcraft_doc::sheet as sd;
-use solidcraft_geom::{Loop2, Plane as SPlane, Region2, Vec2, Vec3};
+use solidcore_record::{Loop2, Plane as SPlane, Region2, Vec2, Vec3};
 use solidcraft_kernel::history::FaceOrigin;
 
 use super::{BendLine, ExactSolid, RuleValues, SheetModel, rule_of};
@@ -278,7 +280,7 @@ pub fn lofted_flange(
         }
     }
     let body = super::super::guarded("lofted flange", || {
-        solidcraft_kernel::polyhedron_body(&positions, &tri_idx)
+        super::super::sk::polyhedron_body(&positions, &tri_idx)
     })?;
     let faces = body.face_count();
     let mut face_names: Vec<Option<String>> = match body.history() {
@@ -301,7 +303,17 @@ pub fn lofted_flange(
                 })
             })
             .collect(),
-        None => Vec::new(),
+        // Sewn: the faces come in the triangles' order.
+        None => groups
+            .iter()
+            .map(|g| {
+                Some(if press_brake {
+                    format!("{prefix}:{g}")
+                } else {
+                    format!("{prefix}:Smooth:{g}")
+                })
+            })
+            .collect(),
     };
     face_names.resize(faces, None);
     let solid = ExactSolid {

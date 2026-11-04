@@ -13,6 +13,8 @@
 //! helical walls took seconds per turn. Only the material inside the coil's
 //! annular zone is faceted; the rest of the body stays exact.
 
+#[allow(unused_imports)]
+use super::compat::prelude::*;
 use super::{
     ExactOp, ExactProfile, ExactSolid, FaceOrigin, Point3, Real, Vector3, boolean, d3, guarded,
     lumps, names_from, revolved_tool, sg, sk, v3,
