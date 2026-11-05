@@ -216,6 +216,10 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     distance, Flip Direction in the same menu. A new command gets this by having a `Flow` (`command_ui::Cmd`, or a
     branch of `step_flow`) and by its numbers going through `field_row` or `ExprValue::cursor(label)`.
 
+22. **Compiled files are deleted after use** (owner's rule, 2026-11-05): when the work that needed a build is
+    reported, its `debug`, `release` and `doc` folders go (`cargo clean --profile dev`, `--release`, `--doc`), wherever the target
+    directory is. Screenshots, logs and saved files next to them stay. Never while a build or another session uses that directory.
+
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 
 - **Branch `solidcore-probe`:** the kernel is SolidCraft `8f67c7f` on solidcore (`kernel/exact/compat.rs`, `vendor/README.md`), and notes below about truck describe main. Open items: `docs/ROADMAP.md`, "solidcore probe". A dense point path is a polyline with mitres there: give the kernel a spline's Bézier spans (`PathPiece::Spline`).
