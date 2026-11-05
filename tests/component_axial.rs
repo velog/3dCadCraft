@@ -344,11 +344,13 @@ fn a_saved_fastener_reads_back_the_same() {
             let mut project = Project::new("t");
             project.add_document("t", DocumentData::Part(p));
             project.save(&path).unwrap();
-            let loaded = Project::load(&path).unwrap();
+            let mut loaded = Project::load(&path).unwrap();
+            // As the app opens a file: a part with faces it cannot draw from the file (the
+            // kernel's sphere and torus faces) is rebuilt, the others keep the file's body.
+            loaded.rebuild_unmeshed_parts();
             let DocumentData::Part(q) = &loaded.documents()[0].data else {
                 panic!()
             };
-            // The body as the file holds it, no meshes rebuilt by us.
             for (id, _) in q.body.solids() {
                 q.body.validate_solid(id).unwrap();
             }

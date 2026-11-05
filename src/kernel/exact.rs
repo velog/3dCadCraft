@@ -1810,39 +1810,63 @@ fn face_samples(s: &ExactSolid) -> Result<Vec<Option<Point3>>, String> {
     Ok(best.into_iter().map(|b| b.map(|(_, p)| p)).collect())
 }
 
-/// A point in the middle of every face of `s` (kernel face order): the centre
-/// of the triangle nearest the face's own centroid. A name decided by where a
-/// point lies needs this: the largest triangle of a mesh can lie along an edge,
-/// where a point of a bend is also within reach of the panel it hangs off.
+/// The point of a triangle nearest `p`.
+fn nearest_on_triangle(p: Point3, a: Point3, b: Point3, c: Point3) -> Point3 {
+    let segment = |x: Point3, y: Point3| {
+        let d = y - x;
+        x + d * ((p - x).dot(&d) / d.norm_squared().max(1e-30)).clamp(0.0, 1.0)
+    };
+    let (ab, ac) = (b - a, c - a);
+    let n = ab.cross(&ac);
+    let area = n.norm_squared();
+    if area > 1e-30 {
+        let q = p - n * ((p - a).dot(&n) / area);
+        let w = ab.cross(&(q - a)).dot(&n) / area;
+        let v = (q - a).cross(&ac).dot(&n) / area;
+        if v >= 0.0 && w >= 0.0 && v + w <= 1.0 {
+            return q;
+        }
+    }
+    [segment(a, b), segment(b, c), segment(c, a)]
+        .into_iter()
+        .min_by(|x, y| (x - p).norm().total_cmp(&(y - p).norm()))
+        .unwrap_or(a)
+}
+
+/// A point in the middle of every face of `s` (kernel face order): where its
+/// mesh comes nearest the face's centroid. A name decided by where a point lies
+/// needs this: the centre of a triangle can lie along an edge, where a point of
+/// a wall is within reach of the face beside it.
 pub(crate) fn face_middles(s: &ExactSolid) -> Result<Vec<Option<Point3>>, String> {
     let tol = (s.body.size() * 1e-4).max(1e-4);
     let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
     let n = s.face_names.len().max(s.body.face_count());
     let mut sum = vec![(0.0, Point3::origin().coords); n];
-    let centres: Vec<Option<(usize, Point3)>> = mesh
-        .triangles
-        .iter()
-        .zip(&mesh.tri_face)
-        .map(|(t, &f)| {
-            let [a, b, c] = mesh.tri(t)?;
-            let (a, b, c) = (p3(a), p3(b), p3(c));
-            let area = (b - a).cross(&(c - a)).norm();
-            let centre = (a.coords + b.coords + c.coords) / 3.0;
-            let slot = sum.get_mut(f as usize)?;
-            slot.0 += area;
-            slot.1 += centre * area;
-            Some((f as usize, Point3::from(centre)))
-        })
-        .collect();
+    let mut tris: Vec<(usize, [Point3; 3])> = Vec::with_capacity(mesh.triangles.len());
+    for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        let Some([a, b, c]) = mesh.tri(t) else {
+            continue;
+        };
+        let (a, b, c) = (p3(a), p3(b), p3(c));
+        let Some(slot) = sum.get_mut(f as usize) else {
+            continue;
+        };
+        let area = (b - a).cross(&(c - a)).norm();
+        slot.0 += area;
+        slot.1 += (a.coords + b.coords + c.coords) * (area / 3.0);
+        tris.push((f as usize, [a, b, c]));
+    }
     let mut best: Vec<Option<(Real, Point3)>> = vec![None; n];
-    for (f, c) in centres.into_iter().flatten() {
+    for (f, [a, b, c]) in tris {
         let (area, moment) = sum[f];
         if area <= 0.0 {
             continue;
         }
-        let d = (c.coords - moment / area).norm();
+        let centroid = Point3::from(moment / area);
+        let q = nearest_on_triangle(centroid, a, b, c);
+        let d = (q - centroid).norm();
         if best[f].is_none_or(|(x, _)| d < x) {
-            best[f] = Some((d, c));
+            best[f] = Some((d, q));
         }
     }
     Ok(best.into_iter().map(|b| b.map(|(_, p)| p)).collect())
