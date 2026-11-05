@@ -550,7 +550,7 @@ What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, s
 ### solidcore probe (branch `solidcore-probe`, not merged)
 
 The pin moved to SolidCraft `8f67c7f` on solidcore. The branch builds, GUI included; it is not ready
-for main. Last full run without GUI (2026-11-05): 1421 passed, 40 failed, `perf_drawing` over its
+for main. Last full run without GUI (2026-11-05): 1431 passed, 31 failed, `perf_drawing` over its
 15 minute limit. Checked in the running app by opening saved files only: Emboss on a cylinder, a twisted
 loft, half an egg thickened, the r62 file; no Rebuild All, no command driven through its panel. Old project files are test data (owner,
 2026-11-05), so `tests/compat` records follow the new names and face counts, with no migration;
@@ -559,12 +559,13 @@ true volume. Open:
 
 - **Old files:** r9's Shell fails in SMLib's fillet of the rounded corners (status 1005), the only
   entry not re-recorded.
-- **Wrong or doubtful results:** oracle 33 and 36 (blends, volume off, no error), a loft between whole
-  surfaces, ISO 10642 M3x25 is 0.6 % off on the display mesh.
+- **Doubtful:** Physical Properties integrate the display mesh, 0.6 % low on an M3 screw (the geometry
+  is within 0.01 %); a cylinder's drawing view has gaps of 0.05-0.09 mm in its rim near the corners;
+  Stitch at 0.001 mm leaves a loft between whole surfaces open (the old kernel closed it; 0.01 mm closes).
 - **Refused:** Shell of non-convex bodies with rounds no larger than the wall (convex ones get a cavity
   of moved planes, `plane_cavity`; the box lid of `project_box_lip` is still refused), a Parallel sweep whose path ends along the section's
   plane (SMLib's check), lofts through stations, Thicken of 300 degrees of an egg, of a symmetric
-  closed egg, of a swept tube and of lofted surfaces, exits of inclined holes, tangent and guided patches, stitching within a gap.
+  closed egg, of a swept tube and of lofted surfaces, exits of inclined holes, tangent and guided patches.
 - **Speed:** library flange 7 s against 150 ms, `perf`, `pattern_scale` and `matrix` over budget,
   `perf_drawing` over 15 minutes.
 

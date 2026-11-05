@@ -103,12 +103,36 @@ pub fn trim_keep(body: &Body, tool: &SplitTool, keep: TrimKeep) -> Result<Body> 
 fn face_sides(body: &Body, side: &ToolSide) -> Result<Vec<f64>> {
     let (sm, order) = crate::native::smlib_body_ordered(body)?;
     let order = order.ok_or_else(|| KernelError::Failed("trim: SMLib numbers the pieces' faces differently from their record".into()))?;
-    let points = sm.face_points().map_err(|e| KernelError::smlib("SMLib trim: a point inside each piece", e))?;
+    // SMLib finds no inside point of some pieces (status 1001, a piece of a spline face): the
+    // triangle farthest from the tool then says.
+    let Ok(points) = sm.face_points() else {
+        return mesh_sides(body, side);
+    };
     let mut sides = vec![f64::NAN; points.len()];
     for (i, p) in points.iter().enumerate() {
         let face = if order.faces.is_empty() { i } else { order.faces.get(i).copied().unwrap_or(usize::MAX) };
         let slot = sides.get_mut(face).ok_or_else(|| KernelError::Failed("trim: a piece's face lies outside the body".into()))?;
         *slot = side.at(Vec3::new(p[0], p[1], p[2]));
+    }
+    if sides.iter().any(|x| !x.is_finite()) {
+        return Err(KernelError::Failed("trim: the side of a piece can't be told".into()));
+    }
+    Ok(sides)
+}
+
+/// [`face_sides`] read off the mesh: each face's side at the triangle centre farthest from the tool.
+fn mesh_sides(body: &Body, side: &ToolSide) -> Result<Vec<f64>> {
+    let m = body.mesh(&crate::MeshTolerance::chord(body.size() * 2e-3))?;
+    let mut sides = vec![f64::NAN; body.face_count()];
+    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
+        let Some([a, b, c]) = m.tri(t) else { continue };
+        let x = side.at((a + b + c) / 3.0);
+        if let Some(slot) = sides.get_mut(*f as usize)
+            && x.is_finite()
+            && (slot.is_nan() || x.abs() > slot.abs())
+        {
+            *slot = x;
+        }
     }
     if sides.iter().any(|x| !x.is_finite()) {
         return Err(KernelError::Failed("trim: the side of a piece can't be told".into()));

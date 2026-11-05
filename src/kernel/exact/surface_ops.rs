@@ -38,7 +38,9 @@ pub fn stitch(
     name: &str,
 ) -> Result<ExactSolid, String> {
     let bodies: Vec<&sk::Body> = parts.iter().map(|p| &p.body).collect();
-    let body = guarded("stitch", || sk::stitch(&bodies, tol))?;
+    // Edges within the tolerance but not on each other's surface carry the gap: try without first.
+    let body = guarded("stitch", || sk::stitch(&bodies, tol))
+        .or_else(|_| guarded("stitch", || sk::stitch_within_gap(&bodies, tol)))?;
     let sheet = keep_surface || body.is_surface();
     Ok(named(
         body,

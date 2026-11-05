@@ -854,9 +854,15 @@ impl ExtrudeFeature {
                     if up <= 1e-9 && down <= 1e-9 {
                         return Err("Through All: there is no body on either side".into());
                     }
-                    // A side without material still gets a sliver of depth,
-                    // so the levels stay ordered.
-                    let tiny = 1e-6 * (up + down);
+                    // A side without material still gets some depth, so the levels stay ordered:
+                    // a sliver, except that a Cut's tool ends well in the air (a cap 2e-5 off the
+                    // face left SMLib no closed solid).
+                    let share = if matches!(self.operation, super::boolean::Operation::Cut) {
+                        1e-2
+                    } else {
+                        1e-6
+                    };
+                    let tiny = share * (up + down);
                     return Ok(plain(two(up.max(tiny), down.max(tiny), tb)));
                 }
                 let f = far(sign);

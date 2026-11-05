@@ -76,12 +76,39 @@ fn near(v: Real, want: Real, what: &str) {
 
 /// Exact kernel, nothing sick, every closed body valid.
 fn healthy(p: &PartDocument) {
-    assert!(p.exact, "built with the faceted kernel");
+    assert!(
+        p.exact,
+        "built with the faceted kernel: {:?}",
+        p.exact_failure
+    );
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
     for (s, sol) in p.body.solids() {
         if !sol.open {
             p.body.validate_solid(s).unwrap();
         }
+    }
+}
+
+/// Through All on both sides from the plate's own bottom plane: the tool's lower cap stands in
+/// the air, wherever the hole is (a cap a hair below the face failed in the kernel and rebuilt
+/// the whole part faceted).
+#[test]
+fn a_symmetric_through_cut_from_a_face_plane_stays_exact() {
+    for (x, y) in [
+        (8.0, 10.0),
+        (40.0, 15.0),
+        (50.0, 15.0),
+        (75.0, 15.0),
+        (60.0, 12.0),
+    ] {
+        let mut p = plate(W, D, H);
+        holes(&mut p, &[(x, y)], 5.0, &[]);
+        healthy(&p);
+        near(
+            vol(&p, A),
+            (W * D - PI * 25.0) * H,
+            "the plate with its hole",
+        );
     }
 }
 

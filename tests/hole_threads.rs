@@ -315,21 +315,22 @@ fn session_replay_differs_only_where_a_sketch_was_being_edited() {
     // session kept the old body until Rebuild All, the replay regenerates
     // every state. Journals now mark such states (`in_sketch`) and the
     // replay does not compare them; this old journal has no mark, so the
-    // differences are exactly those states (and state 8, whose hole now
-    // has 9 faces instead of 12: no point in the air, the same volume).
+    // differences are exactly those states and the ones whose cylinders the journal recorded in
+    // pieces (3, 4, 6, 8, 21): one whole face now, on a finer mesh (the recorded volumes are at
+    // most 0.07 % lower, inscribed).
     let steps = replay::replay(Path::new(SESSION)).unwrap();
     let differ: Vec<u64> = steps
         .iter()
         .filter(|s| s.differs())
         .map(|s| s.seq)
         .collect();
-    assert_eq!(differ, vec![8, 9, 10, 11, 12], "{steps:#?}");
+    assert_eq!(differ, vec![3, 4, 6, 8, 9, 10, 11, 12, 21], "{steps:#?}");
     let hole = steps.iter().find(|s| s.seq == 8).unwrap();
     let (a, b) = (
         hole.recorded.as_ref().unwrap(),
         hole.replayed.as_ref().unwrap(),
     );
-    assert!((a.volume - b.volume).abs() < 1e-6 * a.volume);
+    assert!((a.volume - b.volume).abs() < 5e-6 * a.volume);
     for s in &steps {
         assert!(s.error.is_none(), "{s:?}");
     }
@@ -353,5 +354,5 @@ fn session_replay_differs_only_where_a_sketch_was_being_edited() {
         .filter(|s| s.differs())
         .map(|s| s.seq)
         .collect();
-    assert_eq!(differ, vec![8]);
+    assert_eq!(differ, vec![3, 4, 6, 8, 21]);
 }

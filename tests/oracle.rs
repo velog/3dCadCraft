@@ -699,6 +699,84 @@ fn edge_points(f: &Value) -> Result<Vec<Point3>, String> {
         .collect()
 }
 
+/// `pts` (points on edges of `b`) and a point on each edge tangentially connected to them: a
+/// recipe's `tangent_chain`, which the kernel does not do by itself.
+fn tangent_chain_points(b: &ExactSolid, pts: &[Point3]) -> Result<Vec<Point3>, String> {
+    let brep = exact::to_brep(std::slice::from_ref(b))?;
+    let opts = cadcraft3d::kernel::TessellationOptions::default();
+    let edges: Vec<_> = brep
+        .edges()
+        .filter_map(|(id, e)| {
+            let line = brep.sample_edge(id, &opts).ok()?;
+            (line.len() >= 2).then_some((e.start, e.end, line))
+        })
+        .collect();
+    let on_segment = |q: &Point3, a: &Point3, c: &Point3| {
+        let d = c - a;
+        let t = ((q - a).dot(&d) / d.norm_squared().max(1e-18)).clamp(0.0, 1.0);
+        (a + d * t - q).norm()
+    };
+    let nearest = |q: &Point3| {
+        (0..edges.len()).min_by(|x, y| {
+            let dist = |k: &usize| {
+                edges[*k]
+                    .2
+                    .windows(2)
+                    .map(|w| on_segment(q, &w[0], &w[1]))
+                    .fold(Real::MAX, Real::min)
+            };
+            dist(x).total_cmp(&dist(y))
+        })
+    };
+    // Direction of edge `k` leaving vertex `v`.
+    let leaving = |k: usize, v| {
+        let (start, _, line) = &edges[k];
+        let n = line.len();
+        let d = if *start == v {
+            line[1] - line[0]
+        } else {
+            line[n - 2] - line[n - 1]
+        };
+        d.try_normalize(1e-12)
+    };
+    let mut chain: Vec<usize> = Vec::new();
+    let mut queue: Vec<usize> = pts.iter().filter_map(&nearest).collect();
+    while let Some(k) = queue.pop() {
+        if chain.contains(&k) {
+            continue;
+        }
+        chain.push(k);
+        for v in [edges[k].0, edges[k].1] {
+            let Some(out) = leaving(k, v) else { continue };
+            for o in (0..edges.len()).filter(|o| *o != k) {
+                if (edges[o].0 == v || edges[o].1 == v)
+                    && leaving(o, v)
+                        .is_some_and(|d| d.dot(&-out) > (12.0 as Real).to_radians().cos())
+                {
+                    queue.push(o);
+                }
+            }
+        }
+    }
+    // Half way along each edge, measured along its samples.
+    Ok(chain
+        .into_iter()
+        .map(|k| {
+            let line = &edges[k].2;
+            let total: Real = line.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+            let mut left = total / 2.0;
+            for w in line.windows(2) {
+                let l = (w[1] - w[0]).norm();
+                if left <= l {
+                    return w[0] + (w[1] - w[0]) * (left / l.max(1e-18));
+                }
+                left -= l;
+            }
+            line[line.len() - 1]
+        })
+        .collect())
+}
+
 fn blend(ctx: &mut Ctx, f: &Value, chamfer: bool) -> Result<(), String> {
     let pts = edge_points(f)?;
     let mut by_body: HashMap<usize, Vec<Point3>> = HashMap::new();
@@ -708,6 +786,11 @@ fn blend(ctx: &mut Ctx, f: &Value, chamfer: bool) -> Result<(), String> {
     let name = f["name"].as_str().unwrap_or("Blend").to_owned();
     for (i, pts) in by_body {
         let b = &ctx.bodies[i].1;
+        let pts = if f["tangent_chain"].as_bool() == Some(true) {
+            tangent_chain_points(b, &pts)?
+        } else {
+            pts
+        };
         let r = if chamfer {
             exact::chamfer(
                 b,

@@ -72,7 +72,15 @@ fn check(s: &Sample, p: &PartDocument, t: &Tally) {
     let m = props(p);
     let size = t.v.cbrt();
     let name = s.designation();
-    close(&format!("{name} volume"), m.volume, t.v, size);
+    // The display triangles are coarse on a small screw (0.6 % low at M3): the volume on a fine
+    // mesh is the geometry's.
+    let fine = p.exact_bodies.0[0].volume_at(2e-4).unwrap();
+    assert!(
+        (fine - t.v).abs() <= t.v * 5e-4,
+        "{name} volume: {fine} vs {}",
+        t.v
+    );
+    close(&format!("{name} display volume"), m.volume, t.v, size / 2.0);
     close(&format!("{name} area"), m.area, t.a, size);
     let z = t.mz / t.v;
     assert!(

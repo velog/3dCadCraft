@@ -203,7 +203,9 @@ fn loft_between_two_whole_surfaces() {
         &mut q,
         BodyOp::Stitch(StitchOp {
             surfaces: vec!["Extrusion2".into(), "Extrusion4".into(), "Loft1".into()],
-            tolerance: 0.001,
+            // As the loft's own Output Solid: at 0.001 mm some edge pairs stay free (SMLib's trim
+            // edges and the bridge's rows differ more), so it stays a surface.
+            tolerance: 0.01,
             keep_surface: false,
         }),
     );
@@ -214,8 +216,9 @@ fn loft_between_two_whole_surfaces() {
     p.add_loft(def).unwrap();
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
     let v = solid_volume(&p);
-    // Between the surfaces: about 35 mm high over about 28 000 mm².
-    assert!(v > 850_000.0 && v < 1_000_000.0, "{v}");
+    // Between the surfaces: about 35 mm high over about 28 000 mm²; the kernel before solidcore
+    // gave 933 876. A Trim that lost a third of the upper surface once gave 839 400.
+    assert!((v - 933_876.0).abs() < 0.001 * 933_876.0, "{v}");
     close(stitched, v, 1e-6);
     assert!(
         p.exact_bodies
@@ -368,7 +371,9 @@ fn patch_of_a_hole_in_a_wavy_surface() {
             });
         }
     }
-    assert_eq!(hole.len(), 4, "the hole's arcs");
+    // Four arcs, one split where the surface's own faces meet.
+    let arcs = hole.len();
+    assert!(arcs >= 4, "the hole's arcs: {arcs}");
     // Tangent (G1) on a round hole is refused for now (a four-sided patch bends at its corners
     // there), and nothing changes.
     {
@@ -413,7 +418,7 @@ fn patch_of_a_hole_in_a_wavy_surface() {
     let added = sheet_area(&p) - before;
     assert!(added > 4_000.0 && added < 9_000.0, "patch area {added}");
     // Stitched into the holed surface, the patch closes the hole: one surface, whose free
-    // edges are the outer rim only (the 4 arcs of the hole are shared now).
+    // edges are the outer rim only (the arcs of the hole are shared now).
     let free = |p: &PartDocument| {
         p.body
             .edges()
@@ -440,8 +445,8 @@ fn patch_of_a_hole_in_a_wavy_surface() {
     assert!(st.is_open(), "the outer rim stays open");
     assert_eq!(
         free(&p),
-        n - 8,
-        "the hole's 4 arcs are no longer free edges"
+        n - 2 * arcs,
+        "the hole's arcs are no longer free edges"
     );
     // It took 7 s while the conversion asked the kernel whether points lie inside a surface.
     // (Skipped like the other budgets on a busy machine: ~1.5 s alone.)

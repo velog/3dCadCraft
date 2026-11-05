@@ -1187,6 +1187,21 @@ pub(super) fn trim(
             let keep_side = side(&kept).ok_or_else(fail)?;
             let s = &sheets[i];
             let size = s.size().max(1.0);
+            // Only when no face really crosses the tool: else whole faces would go in place of a
+            // cut, with no word (a third of a surface did).
+            let shown = exact::to_brep(std::slice::from_ref(s)).map_err(|_| fail())?;
+            for (_, f) in shown.faces() {
+                let Some(m) = f.mesh.as_ref() else { continue };
+                let (mut above, mut below) = (false, false);
+                for q in &m.positions {
+                    let x = side(q).ok_or_else(fail)?;
+                    above |= x > 1e-3 * size;
+                    below |= x < -1e-3 * size;
+                }
+                if above && below {
+                    return Err(fail());
+                }
+            }
             let mut gone = Vec::new();
             for f in 0..surface_ops::face_count(s) {
                 let q = exact::face_point(s, f).ok_or_else(fail)?;

@@ -528,10 +528,22 @@ impl super::PartDocument {
             .filter(|l| matches!(l.source, LinkSource::Context { .. }))
             .flat_map(|l| l.points.iter().copied())
             .collect();
+        // A whole circle's radius is held by its link, not by a point.
+        let ps = &self.sketches[i];
+        let circles: Vec<crate::sketch::EntityId> = ps
+            .links
+            .iter()
+            .filter(|l| matches!(l.source, LinkSource::Context { .. }))
+            .filter_map(|l| l.curve)
+            .filter(|c| ps.sketch.is_radius_fixed(*c))
+            .collect();
         let n = self.break_sketch_context(i)?;
         let sk = &mut self.sketches[i].sketch;
         for p in points {
             let _ = sk.set_fixed(p, true);
+        }
+        for c in circles {
+            let _ = sk.set_radius_fixed(c, true);
         }
         Ok(n)
     }

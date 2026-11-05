@@ -34,7 +34,7 @@ const GAP_SAMPLES: usize = 16;
 /// #6: face; #59: edge, under 1000 times the body's; #82: vertex). An edge sewn across a gap
 /// carries that gap; the body's tolerance is not raised to cover it, so these may fail on sewn
 /// items, as they already fail on an import's edges that lie off their faces by more.
-const TOLERANCE_BOUND_TESTS: [u32; 4] = [5, 6, 59, 82];
+pub(crate) const TOLERANCE_BOUND_TESTS: [u32; 4] = [5, 6, 59, 82];
 
 /// What a repair may do.
 #[derive(Clone, Copy, Debug, PartialEq)]

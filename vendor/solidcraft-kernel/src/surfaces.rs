@@ -762,6 +762,27 @@ pub(crate) fn stitch_no_worse(bodies: &[&Body], tol: f64, exempt: &[u32]) -> Res
     Ok(body.with_checked_history(h, &record::counts(bodies)))
 }
 
+/// [`stitch`] that also closes gaps up to `tol`, the user's Maximum Gap: an edge sewn across a gap
+/// carries that gap as its own tolerance, which SMLib's check takes for a fault. Every other test
+/// must come out no worse than the bodies' own records. (3DCadCraft addition.)
+pub fn stitch_within_gap(bodies: &[&Body], tol: f64) -> Result<Body> {
+    if bodies.is_empty() {
+        return Err(invalid("nothing to stitch"));
+    }
+    for b in bodies {
+        b.require_brep("stitch")?;
+    }
+    if !(tol.is_finite() && tol > 0.0) {
+        return Err(invalid("a stitch tolerance must be positive"));
+    }
+    let records: Vec<&Brep> = bodies.iter().map(|b| b.record()).collect();
+    let (parts, offsets) = Parts::joined(&records)?;
+    let c = without_t_junctions(parts.canonical()?, &offsets, tol)?;
+    let (body, h) = imp::stitched_within_gap(&c.brep, tol)?;
+    let h = h.and_then(|h| carried(&h, &c, &offsets, bodies.len(), |operand, face| FaceOrigin::Face { operand, face }));
+    Ok(body.with_checked_history(h, &record::counts(bodies)))
+}
+
 /// A surface body thickened into a solid: offset along the faces' normals by `thickness`
 /// (negative: against them), or by half each way when `symmetric`, by SMLib's thicken
 /// ([`crate::offset_backend::thicken`]).
@@ -1294,6 +1315,26 @@ mod imp {
                 return Err(failed(format!("SMLib stitch: SMLib's check finds the sewn part worse ({now} failed tests, {was} before): {check}")));
             }
             Ok(())
+        })
+    }
+
+    /// The record `r` sewn at `tol`, every fault of SMLib's check a gap no wider than `tol`.
+    pub(super) fn stitched_within_gap(r: &Brep, tol: f64) -> Result<(Body, Option<History>)> {
+        stitched_with(r, tol, |_, sewn| {
+            let check = sewn.check(CheckLevel::All).map_err(sm("stitch"))?;
+            let text = check.to_string();
+            let within = |line: &str| -> bool {
+                if crate::repair::TOLERANCE_BOUND_TESTS.iter().any(|t| line.contains(&format!("Test #{t} "))) {
+                    return true;
+                }
+                let offset = line.split_once("offset=").and_then(|(_, v)| v.split(',').next()).and_then(|v| v.trim().parse::<f64>().ok());
+                line.contains(" Gap") && offset.is_some_and(|o| o <= tol)
+            };
+            if text.lines().filter(|l| l.contains("Test #")).all(within) {
+                Ok(())
+            } else {
+                Err(failed(format!("SMLib stitch: SMLib's check refuses the result: {check}")))
+            }
         })
     }
 

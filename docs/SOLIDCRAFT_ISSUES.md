@@ -230,6 +230,10 @@ cause is known and the owner has agreed to the report.
   two empty ones" (a box shelled closed, 2 mm wall, joined with the stitched copy of its void's faces).
   Ours: `Body::without_void` takes the shell out of the record.
 
+- **`smlib_brep_face_points` gives status 1001 on a piece of a spline face** (`topology::face::p2`): the
+  first Trim of `tests/data/surface_test3_owner.3dcadcraft` (still to be reduced to a small case). Ours:
+  `surface_trim.rs` `mesh_sides`.
+
 ## Tests we should add on our side
 1. A cut ending exactly in the plane of a face or along a fillet's tangent edge: face count, no zero-thickness faces (#2963, #2591).
 2. Through All from a sketch in the plane of a face: nothing behind the plane changes (#423).
