@@ -2143,9 +2143,9 @@ pub fn shell_with(
             None => format!("{prefix}:Inner:{face}"),
         }
     };
-    // Inside with faces to remove: the kernel's own shell (convex bodies
-    // and walls of any kind); the general way below if it gives up.
-    let first = if side == ShellSide::Inside && !open.is_empty() && !rounded {
+    // Inside: the kernel's own shell (convex bodies and walls of any kind, closed or with faces
+    // to remove); the general way below if it gives up.
+    let first = if side == ShellSide::Inside && !rounded {
         match guarded("shell", || sk::shell(&s.body, &open_pts, thickness)) {
             Ok(body) => {
                 let face_names = names_from(&body, &[s], &|o| match o {
@@ -2176,8 +2176,22 @@ pub fn shell_with(
             // kernel refuses the rim (SolidCraft #342). Inventor still makes
             // it: a closed cavity, the opening cut as a prism of the face.
             // The general path below only spent 7 s failing here.
-            Err(e) if e.contains("rim would have no thickness") => {
+            Err(e) if !open.is_empty() && e.contains("rim would have no thickness") => {
                 return shell_with_openings(s, open, thickness, prefix).map_err(|_| e);
+            }
+            // Rounds no larger than the wall: their offsets vanish and SMLib refuses the input.
+            // Inside them the cavity's corners are sharp.
+            Err(e) if e.contains("SM_ERR_INVALID_INPUT") => {
+                let cut = plane_cavity(s, thickness, open, &inner_name)
+                    .and_then(|cavity| boolean(s, &cavity, ExactOp::Cut))
+                    .and_then(|r| r.ok_or_else(|| "the shell removed everything".to_string()));
+                return match cut {
+                    Ok(r) => Ok(r),
+                    Err(_) if !open.is_empty() => {
+                        shell_with_openings(s, open, thickness, prefix).map_err(|_| e)
+                    }
+                    Err(_) => Err(e),
+                };
             }
             Err(e) => Some(e),
         }
@@ -2263,6 +2277,95 @@ pub fn shell_with(
         boolean(&outer, &cavity, ExactOp::Cut)?.ok_or_else(|| "the shell removed everything".into())
     };
     general().map_err(|e| first.unwrap_or(e))
+}
+
+/// The cavity of a convex body whose curved faces are rounds no larger than the wall: the region
+/// behind every planar face moved in by `thickness`, running out through the faces `open`. Refused
+/// when a corner of it comes nearer the body's skin than the wall (a curved face that is more than
+/// a round), or the body is not convex.
+fn plane_cavity(
+    s: &ExactSolid,
+    thickness: Real,
+    open: &[usize],
+    inner_name: &dyn Fn(usize) -> String,
+) -> Result<ExactSolid, String> {
+    let size = s.body.size().max(1e-9);
+    let eps = size * 1e-6 + 1e-7;
+    let mesh = guarded("tessellate", || s.body.tessellate((size * 1e-4).max(1e-4)))?;
+    let infos = guarded("faces", || s.body.faces(1e-3))?;
+    let planes: Vec<(usize, Point3, Vector3)> = infos
+        .iter()
+        .filter_map(|f| f.plane_normal.map(|n| (f.index, p3(f.centroid), w3(n))))
+        .collect();
+    for (_, p, n) in &planes {
+        if mesh.positions.iter().any(|q| (p3(*q) - p).dot(n) > eps) {
+            return Err("not supported yet: the cavity of a body that is not convex".into());
+        }
+    }
+    let (lo, hi) = bounds(s).ok_or("the body has no size")?;
+    let past = Vector3::repeat(thickness + 1.0);
+    let (lo, hi) = (lo - past, hi + past);
+    let mut body = guarded("box", || sk::box_solid(v3(&lo), v3(&hi)))?;
+    let beyond_opening = |q: &Point3| {
+        planes
+            .iter()
+            .any(|(f, p, n)| open.contains(f) && (q - p).dot(n) > -eps)
+    };
+    let closes = planes.iter().filter(|(f, _, _)| !open.contains(f));
+    for (_, p, n) in closes {
+        let origin = p - n * thickness;
+        let plane = plane_of(&Plane::from_normal(origin, *n).map_err(|e| e.to_string())?)?;
+        let parts = guarded("split", || sk::split_by_plane(&body, &plane))?;
+        let behind = |b: &sk::Body| -> Result<bool, String> {
+            let m = guarded("tessellate", || b.tessellate((size * 1e-3).max(1e-3)))?;
+            Ok(m.positions.iter().all(|q| (p3(*q) - origin).dot(n) <= eps))
+        };
+        let mut kept = None;
+        for part in parts {
+            if behind(&part)? {
+                kept = Some(part);
+            }
+        }
+        body = kept.ok_or("the walls leave no room inside the body")?;
+    }
+    let corners = guarded("tessellate", || body.tessellate((size * 1e-3).max(1e-3)))?;
+    for q in &corners.positions {
+        if beyond_opening(&p3(*q)) {
+            continue;
+        }
+        if !guarded("contains", || Ok(s.body.contains(*q)))? {
+            return Err("not supported yet: a cavity reaching past a curved face".into());
+        }
+        let near = mesh
+            .triangles
+            .iter()
+            .filter_map(|t| mesh.tri(t))
+            .map(|[x, y, z]| sg::compare::closest_on_triangle(*q, x, y, z).dist(*q))
+            .fold(Real::INFINITY, Real::min);
+        // The mesh lies inside its rounds by up to its chord tolerance.
+        if near < thickness - eps - 2.0 * (size * 1e-4).max(1e-4) {
+            return Err("not supported yet: a cavity nearer a curved face than the wall".into());
+        }
+    }
+    let tol = (size * 1e-3).max(1e-4);
+    let walls = guarded("faces", || body.faces(tol))?;
+    let face_names = walls
+        .iter()
+        .map(|w| {
+            let at = p3(w.centroid);
+            planes
+                .iter()
+                .find(|(_, p, n)| ((at - p).dot(n) + thickness).abs() < eps * 10.0)
+                .map(|(f, _, _)| inner_name(*f))
+        })
+        .collect();
+    Ok(ExactSolid {
+        sheet: false,
+        name: s.name.clone(),
+        body,
+        face_names,
+        profiles: Vec::new(),
+    })
 }
 
 /// Rounds the sharp edges of `s` that are convex (`convex`) or concave by

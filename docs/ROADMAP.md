@@ -550,8 +550,9 @@ What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, s
 ### solidcore probe (branch `solidcore-probe`, not merged)
 
 The pin moved to SolidCraft `8f67c7f` on solidcore. The branch builds, GUI included; it is not ready
-for main. Last full run without GUI (2026-11-05): 1408 passed, 53 failed, `perf_drawing` over its
-15 minute limit; nothing checked in the running app yet. Old project files are test data (owner,
+for main. Last full run without GUI (2026-11-05): 1411 passed, 50 failed, `perf_drawing` over its
+15 minute limit. Checked in the running app by opening saved files only: Emboss on a cylinder, a twisted
+loft, half an egg thickened, the r62 file; no Rebuild All, no command driven through its panel. Old project files are test data (owner,
 2026-11-05), so `tests/compat` records follow the new names and face counts, with no migration;
 volumes on a fine mesh stay within 0.002 % of the old ones except the r14 spring, now closer to its
 true volume. Open:
@@ -562,7 +563,8 @@ true volume. Open:
   with cone tips, whose result nobody has checked.
 - **Wrong or doubtful results:** a loft between whole surfaces and a tangent loft between edges
   differ in volume (12.5 against 11.48), ISO 10642 M3x25 is 0.6 % off, a trim loses its rim's corners.
-- **Refused:** Shell of fully rounded bodies, a Parallel sweep whose path ends along the section's
+- **Refused:** Shell of non-convex bodies with rounds no larger than the wall (convex ones get a cavity
+  of moved planes, `plane_cavity`; the box lid of `project_box_lip` is still refused), a Parallel sweep whose path ends along the section's
   plane (SMLib's check), lofts through stations, Thicken of 300 degrees of an egg, of a symmetric
   closed egg, of a swept tube and of lofted surfaces, exits of inclined holes, `ISO 4162` and similar
   fasteners (Boolean check), tangent and guided patches, stitching within a gap.
