@@ -293,3 +293,42 @@ fn nothing_selected_is_refused() {
     let e = copy(&mut p, CopyObjectOp::default()).unwrap_err();
     assert!(e.contains("select the faces or bodies"), "{e}");
 }
+
+/// Every face of a rounded body copied into a solid: the sheet of its faces is sewn shut.
+#[test]
+fn every_face_of_a_rounded_box_copies_into_a_solid() {
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let top: Vec<_> = p
+        .body
+        .edges()
+        .filter(|(e, _)| {
+            p.body
+                .sample_edge(*e, &Default::default())
+                .is_ok_and(|q| q.iter().all(|c| (c.z - 20.0).abs() < 1e-6))
+        })
+        .map(|(e, _)| e)
+        .collect();
+    let chain: Vec<_> = top
+        .into_iter()
+        .filter_map(|e| cadcraft3d::part::blend::edge_ref(&p.body, e))
+        .collect();
+    p.add_blend(BlendFeature::fillet(chain, 3.0)).unwrap();
+    let v = p.exact_bodies.0[0].volume_at(1e-3).unwrap();
+    let faces: Vec<_> = p
+        .body
+        .faces()
+        .filter_map(|(f, _)| cadcraft3d::part::shell::face_ref(&p.body, f, None))
+        .collect();
+    let op = CopyObjectOp {
+        faces,
+        output: CopyOutput::Solid,
+        ..Default::default()
+    };
+    p.add_body_op(BodyOpFeature::new(BodyOp::CopyObject(op)))
+        .unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    let copy = p.exact_bodies.0.iter().last().unwrap();
+    assert!(!copy.is_open(), "the copy closes");
+    let w = copy.volume_at(1e-3).unwrap();
+    assert!((w - v).abs() < 1e-3 * v, "{w} vs {v}");
+}

@@ -363,21 +363,61 @@ pub fn axial_stack(
         });
         part = boolean((&part.0, &part.1), (&tool, &tool_roles), BoolOp::Cut)?;
     }
-    for d in drills {
+    // Drills of one size and depth (a flange's bolt circle): one tool, moved to each place, in one
+    // cut. Each drill alone took a tool of its own with a fine mesh and a Boolean.
+    let mut left: Vec<&AxialDrill> = drills.iter().collect();
+    while let Some(d) = left.first().copied() {
+        let same = |o: &&AxialDrill| o.radius == d.radius && o.z0 == d.z0 && o.z1 == d.z1;
+        let group: Vec<&AxialDrill> = left.iter().copied().filter(|o| same(o)).collect();
+        left.retain(|o| !same(o));
         let disc = Region2 {
             outer: Loop2::circle(d.center, d.radius),
             holes: Vec::new(),
         };
-        let tool = one(k::extrude(
+        let first = one(k::extrude(
             &Plane::XY,
             &[disc],
             d.z0.min(d.z1),
             d.z0.max(d.z1),
         )?)?;
-        let tool_roles = swept(&tool, |o| {
-            matches!(o, FaceOrigin::Profile { .. }).then_some(d.number)
+        // The wall takes its drill's own role, the caps none.
+        let is_wall = swept(&first, |o| {
+            matches!(o, FaceOrigin::Profile { .. }).then_some(0)
         });
-        part = boolean((&part.0, &part.1), (&tool, &tool_roles), BoolOp::Cut)?;
+        let moved = |o: &AxialDrill| {
+            k::transform(
+                &first,
+                Vec3::new(o.center.x - d.center.x, o.center.y - d.center.y, 0.0),
+                Vec3::ZERO,
+                Vec3::Z,
+                0.0,
+            )
+        };
+        let apart = group.iter().enumerate().all(|(i, a)| {
+            group.iter().skip(i + 1).all(|b| {
+                (a.center.x - b.center.x).hypot(a.center.y - b.center.y) > 2.0 * d.radius * 1.001
+            })
+        });
+        if group.len() < 2 || !apart {
+            for o in &group {
+                let tool = moved(o)?;
+                let roles: Numbers = is_wall.iter().map(|w| w.map(|_| o.number)).collect();
+                part = boolean((&part.0, &part.1), (&tool, &roles), BoolOp::Cut)?;
+            }
+            continue;
+        }
+        let copies = group.iter().map(|o| moved(o)).collect::<Result<Vec<_>>>()?;
+        let tool = k::join_apart(&copies)?
+            .ok_or_else(|| KernelError::Failed("the drills could not be joined".into()))?;
+        let roles = swept(&tool, |o| match o {
+            FaceOrigin::Face { operand, face } => is_wall
+                .get(*face)
+                .copied()
+                .flatten()
+                .and(group.get(*operand).map(|g| g.number)),
+            _ => None,
+        });
+        part = boolean((&part.0, &part.1), (&tool, &roles), BoolOp::Cut)?;
     }
     Ok(part)
 }

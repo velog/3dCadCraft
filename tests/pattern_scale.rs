@@ -113,15 +113,15 @@ fn chord_slack(k: usize, r: Real, h: Real) -> Real {
     k as Real * 2.0 * PI * r * CHORD * h
 }
 
-/// n × n through holes r1 on a 5n plate 3 thick: 6 + 2n² faces (each hole
-/// wall in two halves).
+/// n × n through holes r1 on a 5n plate 3 thick: 6 + n² faces (each hole
+/// wall one face).
 fn holes(n: u32) {
     let side = 5.0 * n as Real;
     let mut p = plate_with(side, 3.0, 2.5, 2.5, 1.0, None);
     let id = p.add_pattern(grid(n, 5.0)).unwrap();
     let k = (n * n) as usize;
     let expect = side * side * 3.0 - k as Real * PI * 3.0;
-    verify(&p, &id, k, 6 + 2 * k, expect, chord_slack(k, 1.0, 3.0));
+    verify(&p, &id, k, 6 + k, expect, chord_slack(k, 1.0, 3.0));
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn pattern_of_10000_holes() {
 }
 
 /// `n` holes r0.4 at 1.2 mm on a ring about Z (a disc 10 wider, 3 thick;
-/// its rim in two halves, so 4 + 2n faces):
+/// its rim one face, so 3 + n faces):
 /// the copies' boxes, turned, touch; their oriented boxes do not.
 fn ring(n: u32) {
     let ring = (n as Real * 1.2 / (2.0 * PI)).max(180.0);
@@ -189,7 +189,7 @@ fn ring(n: u32) {
     let expect = PI * disc * disc * 3.0 - k as Real * PI * 0.16 * 3.0;
     // The disc's rim is meshed as a polygon too.
     let slack = chord_slack(k, 0.4, 3.0) + chord_slack(1, disc, 3.0);
-    verify(&p, &id, k, 4 + 2 * k, expect, slack);
+    verify(&p, &id, k, 3 + k, expect, slack);
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn circular_pattern_of_5000_holes() {
 }
 
 /// n × n bosses r1.5 × 2 joined on a 5n plate 3 thick (one Join of all
-/// copies at once): 6 + 3n² faces (each boss: two wall halves and a top).
+/// copies at once): 6 + 2n² faces (each boss: a wall and a top).
 fn bosses(n: u32) {
     let side = 5.0 * n as Real;
     let mut p = plate_with(side, 3.0, 2.5, 2.5, 1.5, Some(2.0));
@@ -213,7 +213,7 @@ fn bosses(n: u32) {
     let expect = side * side * 3.0 + k as Real * PI * 2.25 * 2.0;
     let faces = p.body.faces().count();
     verify(&p, &id, k, faces, expect, chord_slack(k, 1.5, 2.0));
-    assert_eq!(faces, 6 + 3 * k);
+    assert_eq!(faces, 6 + 2 * k);
 }
 
 #[test]

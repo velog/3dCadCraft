@@ -2504,11 +2504,9 @@ fn speed_budgets() {
                     .into_iter()
                     .filter_map(|e| p.body.sample_edge(e, &o).ok())
                     .count();
-                // Every hole's edges: its two circles (2 arcs each); the
-                // seams between the wall's kernel pieces are not drawn
-                // since `kernel::smooth` (they were 2 more per hole).
+                // Every hole's edges: its two circles, one edge each.
                 assert!(
-                    p.exact && lines >= 4 * (n * n) as usize - 4,
+                    p.exact && lines >= 2 * (n * n) as usize - 2,
                     "{lines} lines"
                 );
             }),

@@ -212,7 +212,9 @@ fn contiguous(
 /// Several bodies sewn into one where they meet (side by side elsewhere); `solid`: it must
 /// close a volume.
 fn sewn(parts: &[ExactSolid], name: &str, solid: bool) -> Result<ExactSolid, Fail> {
-    if let [one] = parts {
+    if let [one] = parts
+        && (!solid || one.closes())
+    {
         return one.clone().flagged(!solid).map_err(User);
     }
     let refs: Vec<&ExactSolid> = parts.iter().collect();
@@ -340,11 +342,26 @@ pub(super) fn copy_object(
                 }
                 CopyOutput::Composite | CopyOutput::Solid => {
                     let solid = op.output == CopyOutput::Solid;
-                    let parts: Vec<ExactSolid> = by_body
-                        .iter()
-                        .map(|(i, faces)| sheet(*i, faces))
-                        .collect::<Result<_, _>>()?;
-                    made.push(named(sewn(&parts, id, solid)?, id));
+                    // Every face of a closed body: the body itself (sewing its faces again can
+                    // leave edges apart, and takes longer).
+                    if let [(i, faces)] = by_body.as_slice()
+                        && solid
+                        && all[*i].closes()
+                        && faces.len() == surface_ops::face_count(&all[*i])
+                    {
+                        let identity = nalgebra::Matrix4::<Real>::identity();
+                        let s = exact::transformed(&all[*i], &identity, id, Some(id))
+                            .map_err(kernel)?
+                            .flagged(false)
+                            .map_err(User)?;
+                        made.push(named(s, id));
+                    } else {
+                        let parts: Vec<ExactSolid> = by_body
+                            .iter()
+                            .map(|(i, faces)| sheet(*i, faces))
+                            .collect::<Result<_, _>>()?;
+                        made.push(named(sewn(&parts, id, solid)?, id));
+                    }
                 }
             }
             if op.delete_original {

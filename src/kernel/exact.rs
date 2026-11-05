@@ -399,8 +399,18 @@ pub fn axial_stack(
             number: number(&h.role, &mut names),
         })
         .collect();
+    // One check, of the finished body: the steps have no other way to go if one is refused, and
+    // a flange's 20 bolt holes checked each cost 2 s.
     let (body, roles) = guarded("stepped body", || {
-        builders::axial_stack(&input, first, closed, &drills)
+        let (made, left) =
+            solidcraft_kernel::validating(solidcraft_kernel::Validation::EachFeature, || {
+                builders::axial_stack(&input, first, closed, &drills)
+            });
+        let made = made?;
+        if left {
+            solidcraft_kernel::check_kept(&made.0)?;
+        }
+        Ok(made)
     })
     .map_err(|e| format!("this part cannot be built ({e})"))?;
     let face_names = named_roles(
