@@ -1453,6 +1453,36 @@ impl Body {
         self.parts(&(0..regions.len()).map(|k| vec![k]).collect::<Vec<_>>())
     }
 
+    /// The body with the void bounded by record shell `shell` filled with material: the shell
+    /// leaves the record, nothing else changes. A void holding material of its own is refused.
+    /// The faces left carry their history over `[self]`. (3DCadCraft addition: Delete Face.)
+    pub fn without_void(&self, shell: u32) -> Result<Body> {
+        self.require_brep("Delete Face")?;
+        let mut record = (*self.record).clone();
+        let is_it = |r: &brep::Region| r.void && r.shells.first() == Some(&shell);
+        match record.regions.iter().find(|r| is_it(r)) {
+            None => return Err(KernelError::Invalid("that shell bounds no void".into())),
+            Some(v) if v.shells.len() > 1 => return Err(KernelError::Invalid("the void holds a lump of its own: delete that first".into())),
+            Some(_) => {}
+        }
+        record.regions.retain(|r| !is_it(r));
+        for r in &mut record.regions {
+            r.shells.retain(|s| *s != shell);
+        }
+        let counts = [(self.face_count(), self.edge_count())];
+        if self.face_sources.as_ref().is_some_and(|all| all.len() != self.face_count()) {
+            return Err(KernelError::Invalid("lumps: face source table does not match the body".into()));
+        }
+        let part = record.canonical().map_err(|e| KernelError::Failed(format!("void: {e}")))?;
+        let sources = self
+            .face_sources
+            .as_ref()
+            .map(|all| std::sync::Arc::new(part.faces.iter().map(|&f| all.get(f as usize).cloned().flatten()).collect::<Vec<_>>()));
+        let history = crate::history::of_part(&part, &counts);
+        let filled = Body::from_record(part.brep)?.with_face_sources(sources).inherit_regularization_protection(self);
+        Ok(filled.with_checked_history(Some(history), &counts))
+    }
+
     /// How the body's lumps meet (positions as in [`Body::lumps`]): each pair that shares a face,
     /// an edge or a vertex, with the most it shares, read from the record. Pairs not listed are
     /// apart. Empty for a mesh body or a body in one piece.

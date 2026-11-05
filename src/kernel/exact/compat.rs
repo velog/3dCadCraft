@@ -95,60 +95,50 @@ pub mod sk {
 
     /// The shell of `b` holding face `face` taken out: a lump goes, a void fills with material.
     pub fn delete_shell(b: &Body, face: usize) -> Result<Body> {
-        let lumps = b.lumps()?;
-        if lumps.len() > 1 {
-            let Some(Some(p)) = super::BodyCompat::face_corners(b).get(face).copied() else {
-                return Err(KernelError::Invalid("Delete Face: no such face".into()));
-            };
-            let on = |l: &Body| matches!(l.classify_point(p), Ok(PointClass::OnBoundary));
-            let mut rest: Vec<Body> = lumps.iter().filter(|l| !on(l)).cloned().collect();
-            if rest.len() + 1 != lumps.len() {
-                return Err(KernelError::Failed(
-                    "Delete Face: the lump of the face was not found".into(),
-                ));
-            }
-            if rest.len() == 1 {
-                return rest
-                    .pop()
-                    .ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()));
-            }
-            return join_apart(&rest)?
-                .ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()));
-        }
-        // A void: its faces copied, stitched into the solid that fills it, joined to the body.
         let record = b.record();
         let index = face as u32;
-        let faces: Vec<u32> = record
+        let shell = record
             .shells
             .iter()
-            .find_map(|s| match s {
-                solidcore_record::brep::Shell::Faces { faces, .. }
-                    if faces.iter().any(|f| f.face == index) =>
-                {
-                    Some(faces.iter().map(|f| f.face).collect())
+            .position(|s| match s {
+                solidcore_record::brep::Shell::Faces { faces, .. } => {
+                    faces.iter().any(|f| f.face == index)
                 }
-                _ => None,
+                _ => false,
             })
-            .ok_or_else(|| KernelError::Invalid("Delete Face: the face is in no shell".into()))?;
-        let mesh = b.mesh(&MeshTolerance::chord(b.size() * 1e-2))?;
-        let at: Vec<Vec3> = faces
+            .ok_or_else(|| KernelError::Invalid("Delete Face: the face is in no shell".into()))?
+            as u32;
+        if record
+            .regions
             .iter()
-            .filter_map(|f| {
-                let t = mesh.tri_face.iter().position(|x| *x == *f)?;
-                let [i, j, k] = *mesh.triangles.get(t)?;
-                let at = |v: u32| mesh.positions.get(v as usize).copied();
-                Some((at(i)? + at(j)? + at(k)?) * (1.0 / 3.0))
-            })
-            .collect();
-        if at.len() != faces.len() {
+            .any(|r| r.void && r.shells.first() == Some(&shell))
+        {
+            return b.without_void(shell);
+        }
+        let lumps = b.lumps()?;
+        if lumps.len() < 2 {
+            return Err(KernelError::Invalid(if b.shell_count() < 2 {
+                "the body has one lump and no void: deleting it would leave nothing".into()
+            } else {
+                "the face is on the outside of a body of one lump: pick a face of the void".into()
+            }));
+        }
+        let Some(Some(p)) = super::BodyCompat::face_corners(b).get(face).copied() else {
+            return Err(KernelError::Invalid("Delete Face: no such face".into()));
+        };
+        let on = |l: &Body| matches!(l.classify_point(p), Ok(PointClass::OnBoundary));
+        let mut rest: Vec<Body> = lumps.iter().filter(|l| !on(l)).cloned().collect();
+        if rest.len() + 1 != lumps.len() {
             return Err(KernelError::Failed(
-                "Delete Face: a face of the void has no triangles".into(),
+                "Delete Face: the lump of the face was not found".into(),
             ));
         }
-        let sheet = copy_faces(b, &at)?;
-        let fill = stitch(&[&sheet], 1e-3)?;
-        boolean(b, &fill, BoolOp::Union)?
-            .ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()))
+        if rest.len() == 1 {
+            return rest
+                .pop()
+                .ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()));
+        }
+        join_apart(&rest)?.ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()))
     }
 
     pub fn thicken_with_tolerance(b: &Body, t: f64, sym: bool, _tolerance: f64) -> Result<Body> {

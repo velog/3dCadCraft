@@ -240,15 +240,76 @@ fn open_egg_pieces_thicken() {
     }
 }
 
+/// Distance from `q` to the nearest of `tris`.
+fn distance_to(tris: &[[Point3; 3]], q: &Point3) -> Real {
+    tris.iter()
+        .map(|[a, b, c]| {
+            let (u, v) = (b - a, c - a);
+            let n = u.cross(&v);
+            let nn = n.norm_squared();
+            let w = q - a;
+            if nn > 1e-18 {
+                let g = u.cross(&w).dot(&n) / nn;
+                let be = w.cross(&v).dot(&n) / nn;
+                if g >= 0.0 && be >= 0.0 && g + be <= 1.0 {
+                    return n.dot(&w).abs() / nn.sqrt();
+                }
+            }
+            let seg = |s: &Point3, e: &Point3| {
+                let d = e - s;
+                let t = ((q - s).dot(&d) / d.norm_squared().max(1e-18)).clamp(0.0, 1.0);
+                (s + d * t - q).norm()
+            };
+            seg(a, b).min(seg(b, c)).min(seg(c, a))
+        })
+        .fold(Real::MAX, Real::min)
+}
+
 #[test]
-fn a_tipped_egg_is_refused_and_changes_nothing() {
-    // Natural spline ends meet the axis at an angle: cone tips at the poles,
-    // whose offset is no smooth face. Refused, with nothing added.
+fn a_tipped_egg_thickens_to_a_true_offset() {
+    // Natural spline ends meet the axis at an angle: cone tips at the poles. The wall is built
+    // (the kernel before solidcore refused it), so every point of the result must lie on the
+    // egg or one wall away from it, the tips included; the bands allow for the display chords.
     let mut p = revolved(None, Output::Surface, egg_profile(false));
-    let before = p.features.len();
-    let e = thicken_quilt(&mut p, 1.5, ThickenDirection::Direction1).unwrap_err();
-    assert!(e.contains("sharp in places") || e.contains("fitted"), "{e}");
-    assert_eq!(p.features.len(), before);
+    let egg: Vec<[Point3; 3]> = p
+        .exact_bodies
+        .0
+        .iter()
+        .filter_map(|s| s.triangles().ok())
+        .flatten()
+        .collect();
+    thicken_quilt(&mut p, 1.5, ThickenDirection::Direction1).unwrap();
+    healthy(&p);
+    let (mut inner, mut outer) = (0, 0);
+    for s in p.exact_bodies.0.iter().filter(|s| !s.is_open()) {
+        for q in s.triangles().unwrap().iter().flatten() {
+            let d = distance_to(&egg, q);
+            if d < 0.1 {
+                inner += 1;
+            } else {
+                assert!((d - 1.5).abs() < 0.1, "{d} from the egg at {q:?}");
+                outer += 1;
+            }
+        }
+    }
+    assert!(
+        inner > 0 && outer > 0,
+        "walls: {inner} inner, {outer} outer"
+    );
+    let z: Vec<Real> = p
+        .exact_bodies
+        .0
+        .iter()
+        .filter(|s| !s.is_open())
+        .flat_map(|s| s.triangles().unwrap())
+        .flatten()
+        .map(|q| q.z)
+        .collect();
+    let (lo, hi) = z
+        .iter()
+        .fold((Real::MAX, Real::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+    near(lo, -21.5, 1e-3, "below the bottom tip");
+    near(hi, 27.5, 1e-3, "above the top tip");
 }
 
 #[test]

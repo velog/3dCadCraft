@@ -215,6 +215,21 @@ the app had to be restarted. Each one should become a case of ours (list below, 
     end edges, a Ø25 hole through both layers → 68 319 mm³.
   - `solid.fillet` on sheet metal is dropped after a refold; perforations affect only the flat / DXF.
 
+## Candidates for solidcore (found on branch `solidcore-probe`, not yet reported)
+
+Each has a local way round, so nothing here blocks us; each goes upstream as a small case, once a root
+cause is known and the owner has agreed to the report.
+
+- **A Cut whose tool ends flush on a planar face is refused by SMLib's own check.** Revolve about Z the
+  section (0, 0), (5.7, 0), (5.7, 1.4), (4.244, 1.4), (4.244, 5.6), (0, 5.6), and cut a ring extruded from
+  z = 1.4 to 5.6: outer circle r = 4.85, inner circle r = 3 (or a hexagon of corner radius 4.0415). Result:
+  `SmBrep::Test #98 Pointer: Edgeuses share same region`, 2 failures with the circle, 12 with the hexagon.
+  The same ring from z = 1.401 is accepted, and so is an Intersect or a Union flush on that plane. Ours:
+  `axial_stack` intersects flanged heads (ISO 4161, ISO 4162).
+- **A Union with a solid exactly filling a void stops at export**: "a face between two material regions or
+  two empty ones" (a box shelled closed, 2 mm wall, joined with the stitched copy of its void's faces).
+  Ours: `Body::without_void` takes the shell out of the record.
+
 ## Tests we should add on our side
 1. A cut ending exactly in the plane of a face or along a fillet's tangent edge: face count, no zero-thickness faces (#2963, #2591).
 2. Through All from a sketch in the plane of a face: nothing behind the plane changes (#423).

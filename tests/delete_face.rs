@@ -195,6 +195,24 @@ fn refusals_change_nothing() {
     assert!(e.contains("curved"), "{e}");
     assert_eq!(q.features.len(), before);
     near(solid_volume(&q), v, "unchanged after a refusal");
+    // A face on the outside of a hollow body is no void.
+    let mut h = plain_box();
+    h.add_shell(ShellFeature::new(2.0)).unwrap();
+    let before = h.features.len();
+    let v = solid_volume(&h);
+    let e = delete(
+        &mut h,
+        vec![FaceRef {
+            face: "Box1:Top".into(),
+            hint: [40.0, 30.0, 20.0],
+        }],
+        DeleteSelect::LumpOrVoid,
+        false,
+    )
+    .unwrap_err();
+    assert!(e.contains("outside"), "{e}");
+    assert_eq!(h.features.len(), before);
+    near(solid_volume(&h), v, "the hollow box stays");
 }
 
 #[test]

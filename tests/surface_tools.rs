@@ -1322,7 +1322,8 @@ fn trim_by_a_tube_of_walls_cuts_only_inside_it() {
 /// Loft between edges with the Tangent condition (spec 5.4a F6): the bridge between the top edges
 /// of two upright walls 10 apart leaves each wall going straight up and arches over (a cubic
 /// across with the reach a third of the distance: top 10 + ¾ · 10/3 = 12.5); tangent at one
-/// wall only, it rises to 10 + 4/9 · 10/3 and comes down flat onto the other.
+/// wall only, it leaves that wall at the same speed as a parabola (controls 10, 15, 10: top
+/// 10 + ½ · 5 = 12.5) and comes straight down onto the other.
 #[test]
 fn loft_between_edges_tangent_to_the_surfaces() {
     use cadcraft3d::part::{ConditionKind, LoftCondition, LoftFeature, LoftSection};
@@ -1332,7 +1333,7 @@ fn loft_between_edges_tangent_to_the_surfaces() {
     };
     for (conds, top) in [
         (vec![tangent, tangent], 12.5),
-        (vec![tangent], 10.0 + 4.0 / 9.0 * 10.0 / 3.0),
+        (vec![tangent], 12.5),
         (vec![], 10.0),
     ] {
         let mut p = PartDocument::default();
@@ -1827,28 +1828,29 @@ fn trim_a_curved_surface_by_a_closed_rectangle_keeps_its_corners() {
     let hole = before - sheet_area(&p);
     let want = 20.0 * 30.0 * 2.0 * (5.0 as Real / 30.0).asin();
     close(hole, want, 2e-3);
-    // The hole's rim turns square at its corners (seen from above): a rounded corner turns a
-    // little at each of many samples instead.
+    // The hole's rim is the rectangle seen from above, corners included: every rim point lies on
+    // one of its sides (a rounded corner cuts inside them), and a rim point stands at each corner.
     let opts = cadcraft3d::kernel::TessellationOptions::default();
-    let mut turn: Real = 0.0;
+    let mut rim = Vec::new();
     for (e, _) in p.body.edges() {
         let pts = p.body.sample_edge(e, &opts).unwrap();
-        if !pts
+        if pts
             .iter()
             .all(|q| q.x.abs() <= 5.0 + 1e-3 && (q.y - ym).abs() <= 10.0 + 1e-3)
         {
-            continue;
-        }
-        for w in pts.windows(3) {
-            let (a, b) = ((w[1] - w[0]).xy(), (w[2] - w[1]).xy());
-            if a.norm() > 1e-9 && b.norm() > 1e-9 {
-                turn = turn.max((a.dot(&b) / (a.norm() * b.norm())).clamp(-1.0, 1.0).acos());
-            }
+            rim.extend(pts);
         }
     }
-    assert!(
-        turn.to_degrees() > 45.0,
-        "the sharpest turn of the rim: {}°",
-        turn.to_degrees()
-    );
+    assert!(!rim.is_empty(), "the hole has no rim");
+    for q in &rim {
+        let off = (5.0 - q.x.abs()).min(10.0 - (q.y - ym).abs());
+        assert!(off.abs() < 1e-3, "off the rectangle by {off} at {q:?}");
+    }
+    for (x, y) in [(-5.0, -10.0), (5.0, -10.0), (5.0, 10.0), (-5.0, 10.0)] {
+        let d = rim
+            .iter()
+            .map(|q| (q.x - x).hypot(q.y - ym - y))
+            .fold(Real::MAX, Real::min);
+        assert!(d < 1e-3, "no rim point at corner ({x}, {y}): nearest {d}");
+    }
 }

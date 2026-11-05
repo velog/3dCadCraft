@@ -242,6 +242,73 @@ pub fn axial_stack(
         }
         let rc = corners.iter().map(|c| c.len()).fold(0.0, f64::max);
         let inside = prism_is_inside(*z0, *z1, ccw);
+        let (zl, zh) = (z0.min(*z1), z0.max(*z1));
+        // A head standing on a planar step wider than it (a flange): a ring ending flush on that
+        // step leaves SMLib a result its check refuses, so what stays is intersected instead.
+        let wall = rc * 1.05;
+        let steps_at = |z: f64| {
+            chain.iter().any(|c| {
+                let (a, b) = (c.0.start(), c.0.end());
+                (a.y - z).abs() < 1e-9
+                    && (b.y - z).abs() < 1e-9
+                    && a.x.max(b.x) > wall * (1.0 + 1e-9)
+            })
+        };
+        if !inside && (steps_at(zl) || steps_at(zh)) {
+            let (low, high) = if z0 < z1 {
+                (below, above)
+            } else {
+                (above, below)
+            };
+            let segs: Vec<Seg2> = (0..n)
+                .map(|i| line(corners[i], corners[(i + 1) % n]))
+                .collect();
+            let head = one(k::extrude(
+                &Plane::XY,
+                &[Region2 {
+                    outer: Loop2 { segs },
+                    holes: Vec::new(),
+                }],
+                zl,
+                zh,
+            )?)?;
+            let head_roles = swept(&head, |o| match o {
+                FaceOrigin::Profile { segment } => numbers.get(*segment).copied(),
+                FaceOrigin::Cap { end } => {
+                    if *end {
+                        high
+                    } else {
+                        low
+                    }
+                }
+                _ => None,
+            });
+            let points: Vec<Vec2> = chain
+                .iter()
+                .flat_map(|c| [c.0.start(), c.0.end()])
+                .collect();
+            let reach = points.iter().map(|p| p.x).fold(rc, f64::max) * 1.2;
+            let bottom = points.iter().map(|p| p.y).fold(zl, f64::min);
+            let top = points.iter().map(|p| p.y).fold(zh, f64::max);
+            let mut keep = (head, head_roles);
+            for (from, to) in [(bottom - 1.0, zl), (zh, top + 1.0)] {
+                if (from < bottom && bottom < zl) || (to > top && top > zh) {
+                    let disc = one(k::extrude(
+                        &Plane::XY,
+                        &[Region2 {
+                            outer: Loop2::circle(Vec2::ZERO, reach),
+                            holes: Vec::new(),
+                        }],
+                        from,
+                        to,
+                    )?)?;
+                    let none = vec![None; disc.face_count()];
+                    keep = boolean((&keep.0, &keep.1), (&disc, &none), BoolOp::Union)?;
+                }
+            }
+            part = boolean((&part.0, &part.1), (&keep.0, &keep.1), BoolOp::Intersect)?;
+            continue;
+        }
         // What comes off the wall: outside a head a ring with the polygon as its hole; in a socket
         // the polygon with a hole inside the wall.
         let (ring, sides, skip) = if inside {
