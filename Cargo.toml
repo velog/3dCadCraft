@@ -40,12 +40,12 @@ slotmap = { version = "1.1", features = ["serde"] }
 
 # Exact B-rep kernel: SolidCraft's kernel crate (MIT OR Apache-2.0, built on
 # truck, Apache-2.0), pinned to a reviewed commit. See ATTRIBUTION.md.
-solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
-solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
 solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
 # Sheet metal (5.6): SolidCraft's sheet body model (flat pattern, bends, flanges),
 # reached only through `kernel::exact::sheet_metal`. See ATTRIBUTION.md.
-solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
 
 # --- Serialization (file format + JSON-RPC/MCP payloads) -------------------
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -110,3 +110,4 @@ codegen-units = 1
 [patch."https://github.com/tangency-labs/solidcraft"]
 solidcraft-doc = { path = "vendor/solidcraft-doc" }
 solidcraft-kernel = { path = "vendor/solidcraft-kernel" }
+solidcraft-smlib = { path = "vendor/solidcraft-smlib" }

@@ -237,6 +237,7 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
 - `solidcraft-kernel` is patched (`[patch]` in `Cargo.toml`) to `vendor/solidcraft-kernel`: the
   pinned commit plus our speed fixes, each listed in `vendor/README.md` and proposed upstream in
   `docs/SOLIDCRAFT_ISSUES.md`. Change it only there, with a README row; drop it when upstream has them.
+  `vendor/solidcraft-smlib` is SolidCraft's SMLib layer adapted to the newer solidcore we pin (SolidCraft is behind it): drop it when SolidCraft moves. `solidcore-record` stays on an older commit, because `solidcraft-geom` needs its types.
 - Anything adapted from another project gets a row in `ATTRIBUTION.md`. Never read or copy
   GPL/LGPL code (OpenCASCADE, FreeCAD, SolveSpace…); never take data from commercial CAD.
 - No `unwrap`/`expect`/`panic`/`unreachable!`/`todo!` in non-test code — enforced by `#![deny(...)]` in `src/lib.rs` (`clippy.toml` allows them in tests); only `gui/demos.rs` has a reasoned allow. Tests use `panic!` instead of `unreachable!` (clippy has no in-tests exemption for it).

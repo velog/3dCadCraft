@@ -1,0 +1,19 @@
+[package]
+name = "solidcraft-smlib"
+description = "SolidCraft: the B-rep kernel, solidcore (tangency-labs/solidcore, the Rust port of NVIDIA's SMLib, Apache-2.0), behind our boundary; vendored to follow solidcore's main"
+version = "0.40.0-rc.2"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
+solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "31eea8e7eb68c553034c82bc6ea0da339254859a" }
+log = "0.4"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+
+[dev-dependencies]
+solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda", features = ["enabled"] }
+flate2 = "1.1"

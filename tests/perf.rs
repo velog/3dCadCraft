@@ -258,6 +258,8 @@ impl<'a> Rows<'a> {
     /// A case; its usage is the median run's (from [`median_ms`]).
     fn push(&mut self, (case, budget, ms): (&'a str, f64, f64)) {
         let usage = LAST.lock().ok().and_then(|mut u| u.take());
+        // As it goes: a case that never ends is the one after the last line (`--nocapture`).
+        eprintln!("{case}: {ms:.1} ms (budget {budget:.0})");
         self.0.push((case, budget, ms, usage));
     }
 }

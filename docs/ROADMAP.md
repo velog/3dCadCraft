@@ -549,9 +549,10 @@ What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, s
 
 ### solidcore probe (branch `solidcore-probe`, not merged)
 
-The pin moved to SolidCraft `8f67c7f` on solidcore. The branch builds, GUI included; it is not ready
-for main. Last full run without GUI (2026-11-05): 1431 passed, 31 failed, `perf_drawing` over its
-15 minute limit. Checked in the running app: saved files opened (Emboss on a cylinder, a twisted loft, half an egg
+The pin moved to SolidCraft `c7dcab1` on solidcore `31eea8e`; SolidCraft itself is still on an older
+solidcore, so its `solidcraft-smlib` layer is adapted in `vendor/solidcraft-smlib` until it moves. The
+branch builds, GUI included; it is not ready for main. Last full run without GUI (2026-11-05): 1433
+passed, 19 failed, no new failures; `perf` and `perf_drawing` over their 15 minute limit. Checked in the running app: saved files opened (Emboss on a cylinder, a twisted loft, half an egg
 thickened, the r62 file), Rebuild All of the owner's surface file, and one command driven through its
 panel (a symmetric Through All Cut); other commands not yet. Old project files are test data (owner,
 2026-11-05), so `tests/compat` records follow the new names and face counts, with no migration;
@@ -565,10 +566,11 @@ true volume. Open:
   Stitch at 0.001 mm leaves a loft between whole surfaces open (the old kernel closed it; 0.01 mm closes).
 - **Refused:** Shell of non-convex bodies with rounds no larger than the wall (convex ones get a cavity
   of moved planes, `plane_cavity`; the box lid of `project_box_lip` is still refused), a Parallel sweep whose path ends along the section's
-  plane (SMLib's check), lofts through stations, Thicken of 300 degrees of an egg, of a symmetric
-  closed egg, of a swept tube and of lofted surfaces, exits of inclined holes, tangent and guided patches.
-- **Speed:** library flange 7 s against 150 ms, `perf`, `pattern_scale` and `matrix` over budget,
-  `perf_drawing` over 15 minutes.
+  plane (SMLib's check), lofts through stations, Thicken of a symmetric closed egg, of a swept tube and
+  of lofted surfaces, an inclined hole's exit on a side wall, tangent and guided patches.
+- **Speed:** `perf` over 15 minutes (`speed_budgets`), `perf_drawing` over 15 minutes; a variable radius
+  fillet on a box edge is right but takes 164 s; library parts near their budgets (DN600 285-621 ms
+  against 150 ms); `matrix`'s 36 hole cases 6-7 s against 5 s.
 
 Our pin (`4687e3b`, 2026-10-14) is ~2500 commits behind SolidCraft's main (licence still MIT OR
 Apache-2.0; its kernel speed work moved to solidcore). In this order:

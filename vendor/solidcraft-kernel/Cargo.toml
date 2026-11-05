@@ -8,10 +8,10 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
-solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
-solidcraft-smlib = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
-solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
-solidcraft-step = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+solidcraft-smlib = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+solidcraft-step = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
@@ -23,5 +23,5 @@ web-time = "1"
 rayon = "1.12"
 
 [dev-dependencies]
-solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "8f67c7fb95ea9c013a3c4c0c7b09693beca7aca8", features = ["enabled"] }
+solidcraft-profile = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda", features = ["enabled"] }
 proptest = { version = "1", default-features = false, features = ["std"] }

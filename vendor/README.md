@@ -16,6 +16,7 @@ Additions of this branch:
 | `solidcraft-kernel/src/body.rs` `Body::without_void` | a void's shell taken out of the record; the faces left keep their history | Delete Face fills a void with no Boolean: SMLib's Union with a solid exactly filling a void stops at export ("a face between two material regions or two empty ones") |
 | `solidcraft-kernel/src/surface_trim.rs` `mesh_sides` | a piece's side read off its mesh when SMLib finds no point inside it | SMLib's `face_points` gives status 1001 on a piece of a spline face; Trim failed there |
 | `solidcraft-kernel/src/surfaces.rs` `stitch_within_gap` (`repair.rs` `TOLERANCE_BOUND_TESTS` made `pub(crate)`) | Stitch closes gaps up to the user's Maximum Gap, with the check Repair Part already uses | SMLib's plain check refuses an edge sewn across a gap |
+| `solidcraft-smlib` (whole crate, from SolidCraft `c7dcab1`) | follows solidcore's main (`31eea8e`, 1245 commits past SolidCraft's pin): retired flags removed, offset errors by `ErrorKind`, `extended_by_distance` in place of the fitted extension solve | solidcore's speed work (`87ec64f`, `2afb4f9`: the check) and fixes reach us before SolidCraft moves its pin; drop the crate when it has |
 | `solidcraft-kernel/src/offset_backend.rs` `thicken` | a closed sheet goes through SMLib's `shell` with no opening | SMLib's thicken takes open sheets only (spheres and eggs were refused) |
 
 Not rebuilt yet: `thicken_with_tolerance` ignores the tolerance, `chamfer_loops` is plain `chamfer`.
