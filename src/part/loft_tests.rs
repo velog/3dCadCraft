@@ -133,14 +133,18 @@ fn square_to_circle() {
         });
         loft_of(&mut p, &[a, b], |_| {}).unwrap();
         healthy(&p);
-        // Below the larger end prism, and a little below
-        // the average of the end areas (the middle section of a ruled
-        // transition is smaller than the average).
+        // Between two convex sections a loft stays inside their convex hull, whose section at t
+        // is (1 - t) square + t circle (Minkowski): area (1 - t)^2 a0 + t^2 a1 + 2 t (1 - t) m,
+        // with m = r * 4w / 2. How close it comes depends on how the sections are paired.
         let (a0, a1) = (w * w, std::f64::consts::PI * r * r);
         let v = volume(&p);
         assert!(v < a0.max(a1) * h, "{v}");
+        let hull = (a0 + a1 + 2.0 * r * w) / 3.0 * h;
         let mid = (a0 + a1) / 2.0 * h;
-        assert!(v < mid && v > 0.85 * mid, "{v} vs {mid}");
+        assert!(
+            v < hull && v > 0.85 * mid,
+            "{v} vs hull {hull}, middle {mid}"
+        );
     }
 }
 

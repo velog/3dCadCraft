@@ -991,6 +991,21 @@ pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
     loft_with_rails(sections, &[], RailFit::Scale)
 }
 
+/// A loft keeping the caller's pairing: segment `i` of every section goes to segment `i` of the
+/// next, so a twist the caller asked for stays (the plain [`loft`] matches corners by direction,
+/// which undoes it). The sections must run the same way round and have the same segment count.
+pub fn loft_matched(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    let _span = solidcraft_profile::span("kernel", "loft_matched");
+    let count = sections.first().map_or(0, |(_, l)| l.segs.len());
+    if sections.len() < 2 || count == 0 || sections.iter().any(|(_, l)| l.segs.len() != count) {
+        return Err(KernelError::Invalid("matched loft sections need equal segment counts".into()));
+    }
+    let numbered = numbered::number_loops(sections.iter().map(|(_, l)| l));
+    let pieces: Vec<(Plane, Vec<crate::smlib_sweeps::Piece>)> =
+        sections.iter().zip(&numbered).map(|((p, _), l)| (*p, crate::smlib_sweeps::pieces([l]))).collect();
+    crate::smlib_sweeps::loft(&pieces, 0)
+}
+
 /// [`loft`] following one or two guide rails (polylines from the first section to the last,
 /// through every section's curve; see [`crate::loft_rails`]), `fit` saying how they reshape the
 /// sections between. Without rails, the plain loft.

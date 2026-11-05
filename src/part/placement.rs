@@ -351,7 +351,11 @@ impl SketchPlacement {
                 if in_plane.norm() < 1e-9 * dir.norm().max(1.0) {
                     return Err(PlacementError::AxisAlongNormal(name.clone()));
                 }
-                (in_plane.normalize(), self.axis_is_x)
+                // The way an edge runs is the kernel's choice: its natural direction is the one
+                // whose largest component is positive, so a saved sketch never turns round.
+                let largest = in_plane.iamax();
+                let sense = if in_plane[largest] < 0.0 { -1.0 } else { 1.0 };
+                (in_plane.normalize() * sense, self.axis_is_x)
             }
         };
         if !self.natural_direction {

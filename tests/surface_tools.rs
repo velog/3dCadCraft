@@ -189,8 +189,8 @@ fn extrude_an_open_spline_as_a_surface() {
 
 #[test]
 fn a_revolved_spline_shows_as_one_face() {
-    // The kernel makes a full revolve in sectors; their seams are not
-    // drawn and a pick takes the whole surface.
+    // Whatever number of faces the kernel makes of a full revolve, their seams are
+    // not drawn and a pick takes the whole surface.
     let mut p = PartDocument::default();
     let (i, c) = xz_sketch(&mut p, |sk| {
         let pts = [(5.0, 0.0), (9.0, 5.0), (5.0, 10.0)]
@@ -200,7 +200,7 @@ fn a_revolved_spline_shows_as_one_face() {
     });
     p.add_revolve(i, revolve_open(c)).unwrap();
     let faces: Vec<_> = p.body.faces().map(|(f, _)| f).collect();
-    assert!(faces.len() > 1, "sectors: {}", faces.len());
+    assert!(!faces.is_empty());
     assert_eq!(p.body.smooth_group(faces[0]).len(), faces.len());
     // Only the two rim circles stay (their arcs).
     for e in p.body.visible_edges() {

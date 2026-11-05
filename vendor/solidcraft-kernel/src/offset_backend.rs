@@ -135,7 +135,13 @@ pub(crate) fn thicken(b: &Body, thickness: f64, symmetric: bool) -> Result<Body>
     if !(thickness.is_finite() && thickness.abs() > 1e-9) {
         return Err(KernelError::Invalid("thickness must be non-zero".into()));
     }
-    let (r, h) = run("thicken", b, Some(thickness.abs()), |s| s.thicken(thickness, symmetric))?;
+    // SMLib's thicken takes open sheets only; a closed one (a sphere, an egg) is the hollow its
+    // shell makes with no opening, from the surface moved half way back when symmetric.
+    let (r, h) = run("thicken", b, Some(thickness.abs()), |s| match s.thicken(thickness, symmetric) {
+        Err(SmError::Argument) if symmetric => s.offset_sheet(-0.5 * thickness)?.shell(&[], pick_tolerance(b), thickness),
+        Err(SmError::Argument) => s.shell(&[], pick_tolerance(b), thickness),
+        other => other,
+    })?;
     let step = if symmetric { thickness.abs() / 2.0 } else { thickness.abs() };
     // The walls first, while the sheet's edges still carry their tags on both copies.
     let h = h.map(with_edge_walls).and_then(|h| with_offsets(&r, b, h, step));

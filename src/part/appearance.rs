@@ -758,16 +758,39 @@ mod tests {
         assert!(face_hint(&part.body, end).unwrap()[2] > 44.0);
     }
 
-    /// Two pieces of one name (the boss's cylinder is two half faces): the
+    /// Two pieces of one name (a groove across the top divides it): the
     /// hint picks the piece; Clear of that piece leaves the other.
     #[test]
     fn face_pieces_are_told_apart_by_the_hint() {
         let lib = materials::builtin();
-        let mut part = boss();
+        let mut part = PartDocument::with_box("Box1", [80.0, 60.0, 20.0]).unwrap();
+        let opts = SketchOptions {
+            auto_reference_edges: false,
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = part
+            .create_sketch(
+                SketchPlacement {
+                    plane: PlaneRef::Face("Box1:Top".into()),
+                    ..Default::default()
+                },
+                &opts,
+            )
+            .unwrap();
+        let sk = &mut part.sketches[i].sketch;
+        sk.add_rectangle_two_point(Point2::new(38.0, -5.0), Point2::new(42.0, 65.0))
+            .unwrap();
+        let r = sk.regions();
+        let pr = ProfileRef::of(&r[0], r[0].interior_point());
+        let mut e = ExtrudeFeature::new(vec![pr], 2.0);
+        e.operation = Operation::Cut;
+        e.direction = crate::part::ExtentDirection::Flipped;
+        part.add_extrude(i, e).unwrap();
         let pieces: Vec<FaceId> = part
             .body
             .faces()
-            .filter(|(_, f)| f.name.as_deref() == Some("Extrusion1:Side:1v1:0"))
+            .filter(|(_, f)| f.name.as_deref() == Some("Box1:Top"))
             .map(|(id, _)| id)
             .collect();
         assert_eq!(pieces.len(), 2);
@@ -776,7 +799,7 @@ mod tests {
             .map(|&f| face_hint(&part.body, f).unwrap())
             .collect();
         let at = |i: usize| LookTarget::Face {
-            face: "Extrusion1:Side:1v1:0".into(),
+            face: "Box1:Top".into(),
             hint: hints[i],
         };
         part.set_appearance(&at(0), Some("ABS - Red"), lib).unwrap();

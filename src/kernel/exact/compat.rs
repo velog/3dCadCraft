@@ -71,11 +71,6 @@ pub mod sk {
         }
     }
 
-    /// A loft through matched sections (the kernel pairs them itself now).
-    pub fn loft_matched(sections: &[(Plane, Loop2)]) -> Result<Body> {
-        loft(sections)
-    }
-
     /// A closed loop of sections: two lofts joined at their end sections.
     pub fn loft_matched_ring(sections: &[(Plane, Loop2)]) -> Result<Body> {
         let n = sections.len();
@@ -85,10 +80,10 @@ pub mod sk {
             ));
         }
         let half = n / 2;
-        let a = loft(&sections[..=half])?;
+        let a = loft_matched(&sections[..=half])?;
         let mut rest: Vec<(Plane, Loop2)> = sections[half..].to_vec();
         rest.extend(sections.first().cloned());
-        let b = loft(&rest)?;
+        let b = loft_matched(&rest)?;
         boolean(&a, &b, BoolOp::Union)?
             .ok_or_else(|| KernelError::Failed("closed loft: nothing joined".into()))
     }

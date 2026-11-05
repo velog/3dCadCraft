@@ -2308,7 +2308,8 @@ fn unfold_and_refold_chosen_bends() {
     let ba = std::f64::consts::FRAC_PI_2 * (r + k * t);
     let bend = std::f64::consts::FRAC_PI_4 * ((r + t) * (r + t) - r * r) * 60.0;
     let want = v0 - bend + ba * t * 60.0;
-    assert!((volume(&p) - want).abs() < 1e-3, "{} vs {want}", volume(&p));
+    // Both volumes are measured on display triangles: the bend's chords leave ~0.01 mm3.
+    assert!((volume(&p) - want).abs() < 0.02, "{} vs {want}", volume(&p));
     // Flat to the right now (past x = 100 by about the flange), still up on the left.
     assert!(u1.x > b1.x + 20.0, "{u1:?}");
     assert!(

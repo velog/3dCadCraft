@@ -550,23 +550,24 @@ What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, s
 ### solidcore probe (branch `solidcore-probe`, not merged)
 
 The pin moved to SolidCraft `8f67c7f` on solidcore. The branch builds, GUI included; it is not ready
-for main. Open:
+for main. Last full run without GUI (2026-11-05): 1408 passed, 53 failed, `perf_drawing` over its
+15 minute limit; nothing checked in the running app yet. Old project files are test data (owner,
+2026-11-05), so `tests/compat` records follow the new names and face counts, with no migration;
+volumes on a fine mesh stay within 0.002 % of the old ones except the r14 spring, now closer to its
+true volume. Open:
 
-- **Old files:** in `tests/compat` 34 files differ from their records, 37 have changed face names
-  and 18 another face count (a periodic face replaces the sectors of a revolved or swept wall,
-  corner patches of blends renamed). Solids are up to 0.07 % off in volume; two surface bodies'
-  signed volumes differ outright (Freeform turned inside out, a loft between edges 0 against
-  -1333). Merging needs a decision and a name migration (rule 6); never by editing the expectations.
-- **Accepted where it must refuse:** a fillet larger than the face builds (`combos`,
-  `part::blend`), Delete Face accepts what it refused. A chamfer wider than its rounds removes the
-  wrong volume (`blend_direction`), and a saved fastener reads back with another volume
-  (`component_axial`).
-- **Refused:** Thicken of surfaces reaching the axis, Shell of fully rounded bodies, blends of
-  chains with tangent neighbours (oracle 33), `ISO 4162` and similar fasteners (Boolean check), a
-  tangent patch over walls.
-- **Speed:** library flange 7 s against 150 ms, `perf_drawing` over 20 minutes.
-- **Tests that assumed truck's topology** (`sectors`, the hole's arcs): to be rewritten once the
-  names are decided.
+- **Old files:** r9's Shell fails in SMLib's fillet of the rounded corners (status 1005), the only
+  entry not re-recorded.
+- **Accepted where it must refuse:** Delete Face accepts what it refused; Thicken builds a closed egg
+  with cone tips, whose result nobody has checked.
+- **Wrong or doubtful results:** a loft between whole surfaces and a tangent loft between edges
+  differ in volume (12.5 against 11.48), ISO 10642 M3x25 is 0.6 % off, a trim loses its rim's corners.
+- **Refused:** Shell of fully rounded bodies, a Parallel sweep whose path ends along the section's
+  plane (SMLib's check), lofts through stations, Thicken of 300 degrees of an egg, of a symmetric
+  closed egg, of a swept tube and of lofted surfaces, exits of inclined holes, `ISO 4162` and similar
+  fasteners (Boolean check), tangent and guided patches, stitching within a gap.
+- **Speed:** library flange 7 s against 150 ms, `perf`, `pattern_scale` and `matrix` over budget,
+  `perf_drawing` over 15 minutes.
 
 Our pin (`4687e3b`, 2026-10-14) is ~2500 commits behind SolidCraft's main (licence still MIT OR
 Apache-2.0; its kernel speed work moved to solidcore). In this order:

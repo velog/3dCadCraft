@@ -507,11 +507,18 @@ pub(super) fn emboss(
                 .map_err(Fail::User)?;
             let slab =
                 exact::thicken_sheet(&sheet, thick, false, None, &prefix).map_err(Fail::User)?;
+            // A whole cylinder or sphere is one face, so the slab also has a far wall: the
+            // prism ends past the near wall, or the profile would stand out on both sides.
+            let sign = op.directions()[0];
+            let along = levels.iter().map(|l| l * sign);
+            let nearest = along.clone().fold(Real::INFINITY, Real::min);
+            let deepest = along.fold(Real::NEG_INFINITY, Real::max);
+            let inner = if engrave { op.depth + air } else { air };
             let prism = exact::extrude(
                 &sketch.plane,
                 &prof,
-                -reach * 2.0,
-                reach * 2.0,
+                (nearest - op.depth - air - reach) * sign,
+                (deepest + inner + op.depth) * sign,
                 0.0,
                 &prefix,
             )

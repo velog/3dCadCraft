@@ -11,9 +11,11 @@ Additions of this branch:
 |---|---|---|
 | `solidcraft-kernel/src/bridge_edges.rs` (new; `ChainLine`, `of`, `stations` in `bridge.rs` made `pub(crate)`) | Loft between surface edges: boundaries cut into sides, one `bridge` per pair, stitched. G0 across, or tangent to a section's surface | upstream has no bridge between picked edges; our truck version did not port |
 | `solidcraft-doc/src/sheet.rs` `centre_line` | `#[allow(dead_code)]` | unused on this pin |
+| `solidcraft-kernel/src/blend.rs` `face_extent`, `fillet_fits`, `chamfer_fits` | a round or chamfer reaching past the planar face it lies on is refused before SMLib | SMLib built them with the wrong volume; a refusal sends the blend on to `loop_blend` |
+| `solidcraft-kernel/src/build.rs` `loft_matched` | a loft keeping the caller's segment pairing | the kernel's `loft` matches corners by direction, which undid a twist and Map Points (volume 50 % off) |
+| `solidcraft-kernel/src/offset_backend.rs` `thicken` | a closed sheet goes through SMLib's `shell` with no opening | SMLib's thicken takes open sheets only (spheres and eggs were refused) |
 
-Not rebuilt yet: `loft_matched` is the kernel's `loft` (it pairs sections itself, so twists and map
-points differ), `thicken_with_tolerance` ignores the tolerance, `chamfer_loops` is plain `chamfer`.
+Not rebuilt yet: `thicken_with_tolerance` ignores the tolerance, `chamfer_loops` is plain `chamfer`.
 `docs/ROADMAP.md`, "solidcore probe", lists the open failures.
 
 ## `solidcraft-kernel`

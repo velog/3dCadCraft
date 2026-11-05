@@ -50,7 +50,7 @@ fn volumes(part: &PartDocument) -> Vec<(String, Real)> {
             (
                 b.name.clone().unwrap_or_default(),
                 // A fine mesh (curved sections: the default one is ~1e-4 off).
-                b.volume_at(1e-3).unwrap_or(0.0),
+                b.volume_at(2e-4).unwrap_or(0.0),
             )
         })
         .collect()

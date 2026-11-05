@@ -140,6 +140,13 @@ pub fn revolve_sheet(
             angle * sense,
         )
     })?;
+    // SMLib's open sheet faces the axis, where the closed sheet of a full turn is a solid's skin
+    // facing away: turned, so Thicken's direction means the same on a part of a turn as on the whole.
+    let body = if body.is_surface() {
+        guarded("surface revolve", || sk::reverse_faces(&body, &[]))?
+    } else {
+        body
+    };
     Ok(named_sheet(body, &names, prefix))
 }
 
