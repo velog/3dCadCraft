@@ -36,7 +36,7 @@ fn volume(p: &PartDocument) -> Real {
         .0
         .iter()
         .filter(|s| !s.is_open())
-        .filter_map(|s| s.volume_at(1e-3))
+        .filter_map(|s| s.volume_at(2e-4))
         .sum()
 }
 

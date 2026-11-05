@@ -1810,6 +1810,44 @@ fn face_samples(s: &ExactSolid) -> Result<Vec<Option<Point3>>, String> {
     Ok(best.into_iter().map(|b| b.map(|(_, p)| p)).collect())
 }
 
+/// A point in the middle of every face of `s` (kernel face order): the centre
+/// of the triangle nearest the face's own centroid. A name decided by where a
+/// point lies needs this: the largest triangle of a mesh can lie along an edge,
+/// where a point of a bend is also within reach of the panel it hangs off.
+pub(crate) fn face_middles(s: &ExactSolid) -> Result<Vec<Option<Point3>>, String> {
+    let tol = (s.body.size() * 1e-4).max(1e-4);
+    let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
+    let n = s.face_names.len().max(s.body.face_count());
+    let mut sum = vec![(0.0, Point3::origin().coords); n];
+    let centres: Vec<Option<(usize, Point3)>> = mesh
+        .triangles
+        .iter()
+        .zip(&mesh.tri_face)
+        .map(|(t, &f)| {
+            let [a, b, c] = mesh.tri(t)?;
+            let (a, b, c) = (p3(a), p3(b), p3(c));
+            let area = (b - a).cross(&(c - a)).norm();
+            let centre = (a.coords + b.coords + c.coords) / 3.0;
+            let slot = sum.get_mut(f as usize)?;
+            slot.0 += area;
+            slot.1 += centre * area;
+            Some((f as usize, Point3::from(centre)))
+        })
+        .collect();
+    let mut best: Vec<Option<(Real, Point3)>> = vec![None; n];
+    for (f, c) in centres.into_iter().flatten() {
+        let (area, moment) = sum[f];
+        if area <= 0.0 {
+            continue;
+        }
+        let d = (c.coords - moment / area).norm();
+        if best[f].is_none_or(|(x, _)| d < x) {
+            best[f] = Some((d, c));
+        }
+    }
+    Ok(best.into_iter().map(|b| b.map(|(_, p)| p)).collect())
+}
+
 /// The faces of `s` named `name`, nearest to `hint` first (a face a later
 /// Boolean split in pieces keeps its name on each piece; the sectors of a
 /// full revolve share one name). Nearest = the distance from `hint` to the

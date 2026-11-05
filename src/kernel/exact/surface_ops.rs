@@ -66,7 +66,11 @@ pub fn bridge_edges(
     let pa: Vec<_> = at_a.iter().map(v3).collect();
     let pb: Vec<_> = at_b.iter().map(v3).collect();
     let body = guarded("bridge", || {
-        sk::bridge_edges_tangent(&a.body, &pa, &b.body, &pb, weights)
+        // Its normal as the program's bridges have always had it (Thicken's side reads it).
+        sk::reverse_faces(
+            &sk::bridge_edges_tangent(&a.body, &pa, &b.body, &pb, weights)?,
+            &[],
+        )
     })?;
     Ok(named(
         body,

@@ -146,7 +146,7 @@ fn named_solid(m: &sd::SheetBody, prefix: &str, flat: bool) -> Result<ExactSolid
         face_names: Vec::new(),
         profiles: Vec::new(),
     };
-    let samples = super::face_samples(&s)?;
+    let samples = super::face_middles(&s)?;
     // Panel faces of every sample at once (an unfolded sheet's flat is worked out once).
     let points: Vec<_> = samples.iter().flatten().map(v3).collect();
     let mut panels = m.panel_faces_at(&points, m.t * 0.2).into_iter();

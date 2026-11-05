@@ -418,6 +418,37 @@ pub fn prism_between(loops: &[[(Plane, Loop2); 2]]) -> Result<(Body, Numbers)> {
     let Some(dir) = (b - a).normalized() else {
         return invalid("a prism without a length");
     };
+    // Sections that are not one shape moved along one direction (a drafted wall): a ruled solid
+    // between them. Pushing the start section along would leave the walls straight.
+    let tol = 1e-7 * (b - a).len().max(1.0);
+    let moved = loops.iter().all(|[(q0, m0), (q1, m1)]| {
+        m0.segs.len() == m1.segs.len()
+            && m0.segs.iter().zip(&m1.segs).all(|(s, e)| {
+                let step = q1.to_world(e.start()) - q0.to_world(s.start());
+                // Along the prism's direction, whatever the end planes' tilt.
+                step.cross(dir).len() <= tol
+            })
+    });
+    if !moved {
+        let region = |i: usize| {
+            let mut all = loops.iter().map(|l| l[i].1.clone());
+            all.next().map(|outer| Region2 {
+                outer,
+                holes: all.collect(),
+            })
+        };
+        let (Some(r0), Some(r1)) = (region(0), region(1)) else {
+            return invalid("a prism without a section");
+        };
+        let body = k::loft_regions(&[(*p0, r0), (*p1, r1)])?;
+        let count: usize = loops.iter().map(|l| l[0].1.segs.len()).sum();
+        let roles = swept(&body, |o| match o {
+            FaceOrigin::Profile { segment } => Some(*segment),
+            FaceOrigin::Cap { end } => Some(if *end { count + 1 } else { count }),
+            _ => None,
+        });
+        return Ok((body, roles));
+    }
     let helper = if dir.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
     let Some(x) = dir.cross(helper).normalized() else {
         return invalid("a prism without a direction");
@@ -537,5 +568,6 @@ pub fn bspline_sheet(net: &[Vec<Vec3>], wrap: bool) -> Result<Body> {
     } else {
         surface
     };
-    k::tensor_sheet(&surface)
+    // Its normal as the program's surfaces have always had it (Thicken's side reads it).
+    k::reverse_faces(&k::tensor_sheet(&surface)?, &[])
 }

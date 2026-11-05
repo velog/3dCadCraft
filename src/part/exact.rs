@@ -1045,7 +1045,6 @@ pub(super) struct EdgePoints<'a> {
     /// The kernel's body of each B-rep solid.
     owner: Vec<Option<usize>>,
     taken: Vec<(usize, crate::kernel::EdgeId)>,
-    circles: Vec<(usize, Point3, Real)>,
 }
 
 impl<'a> EdgePoints<'a> {
@@ -1063,32 +1062,7 @@ impl<'a> EdgePoints<'a> {
                     .collect()
             },
             taken: Vec::new(),
-            circles: Vec::new(),
         }
-    }
-
-    fn straight(&self, e: crate::kernel::EdgeId) -> bool {
-        matches!(
-            self.body.edge(e).and_then(|x| self.body.curve(x.curve)),
-            Some(Curve::Line(_))
-        )
-    }
-
-    fn joined(&self, a: crate::kernel::EdgeId, b: crate::kernel::EdgeId) -> bool {
-        let body = self.body;
-        let (Some(x), Some(y)) = (body.edge(a), body.edge(b)) else {
-            return false;
-        };
-        let mut fa = body.edge_faces(a);
-        let mut fb = body.edge_faces(b);
-        fa.sort();
-        fb.sort();
-        self.straight(a)
-            && self.straight(b)
-            && fa == fb
-            && [x.start, x.end]
-                .iter()
-                .any(|v| *v == y.start || *v == y.end)
     }
 
     /// (solid index, point) for each new edge of `refs`.
@@ -1097,26 +1071,12 @@ impl<'a> EdgePoints<'a> {
         for r in refs {
             let (i, pts) = edge_points(self.body, &self.solids, r)?;
             for (e, p) in pts {
-                if self
-                    .taken
-                    .iter()
-                    .any(|&(j, t)| j == i && (t == e || self.joined(t, e)))
-                {
+                // Every piece: the kernel blends exactly the edges it is given, and refuses a
+                // blend that stops where a circle or a line goes on tangentially.
+                if self.taken.contains(&(i, e)) {
                     continue;
                 }
                 self.taken.push((i, e));
-                let circle = match self.body.edge(e).and_then(|x| self.body.curve(x.curve)) {
-                    Some(Curve::Circle(c)) => Some((c.center, c.radius)),
-                    _ => None,
-                };
-                if let Some((c, rad)) = circle {
-                    if self.circles.iter().any(|&(j, cc, rr)| {
-                        j == i && (cc - c).norm() < 1e-6 && (rr - rad).abs() < 1e-6
-                    }) {
-                        continue;
-                    }
-                    self.circles.push((i, c, rad));
-                }
                 // The kernel's body of this B-rep solid.
                 let owner = self
                     .owner

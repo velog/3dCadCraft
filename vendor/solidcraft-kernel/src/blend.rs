@@ -258,6 +258,7 @@ pub fn fillet(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
 fn fillet_turning(body: &Body, edges: &[Vec3], radius: f64, turn: FilletTurn) -> Result<Body> {
     let _span = solidcraft_profile::span("kernel", "fillet");
     body.require_brep("fillet")?;
+    fillet_fits(body, edges, &vec![radius; edges.len()])?;
     crate::blend_smlib::fillet(body, edges, radius, turn).and_then(|b| closed(body, b))
 }
 
@@ -631,6 +632,7 @@ pub fn fillet_each(body: &Body, edges: &[Vec3], radii: &[f64], turn: FilletTurn)
         return fillet_turning(body, edges, *r, turn);
     }
     body.require_brep("fillet")?;
+    fillet_fits(body, edges, radii)?;
     crate::blend_smlib::fillet_each(body, edges, radii, turn).and_then(|b| closed(body, b))
 }
 
@@ -678,7 +680,101 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
     if edges.is_empty() || edges.len() > 1000 {
         return Err(KernelError::Invalid("select 1…1000 edges".into()));
     }
+    chamfer_fits(body, edges, distance)?;
     crate::blend_smlib::chamfer(body, edges, distance)
+}
+
+/// How far a face reaches from point `a` in direction `d`, over points along its edges.
+fn face_extent(faces: &Faces, f: usize, a: Vec3, d: Vec3) -> f64 {
+    let mut extent = f64::NEG_INFINITY;
+    for u in faces.uses(f) {
+        let Some(edge) = faces.rec.edges.get(u.edge as usize) else { continue };
+        let Ok(curve) = CurveEval::new(edge.parameters()) else { continue };
+        let [t0, t1] = edge.interval;
+        for k in 0..=16 {
+            if let Some(p) = curve.point(t0 + (t1 - t0) * f64::from(k) / 16.0) {
+                extent = extent.max((p - a).dot(d));
+            }
+        }
+    }
+    extent
+}
+
+/// 3DCadCraft: refuses a round whose contact line runs off a planar face beside its straight
+/// edge. SMLib lets such a round roll over the far edge; this program's rule is that a round larger
+/// than the face it rolls on is refused and the part stays as it was.
+fn fillet_fits(body: &Body, edges: &[Vec3], radii: &[f64]) -> Result<()> {
+    let faces = Faces::of(body)?;
+    let (picked, _) = crate::blend_smlib::picked_edges(body, edges)?;
+    for (e, &radius) in picked.into_iter().zip(radii) {
+        let Some(edge) = faces.rec.edges.get(e) else { continue };
+        let Some(a) = faces.ends(e).map(|(a, _)| a).filter(|_| faces.straight(e)) else { continue };
+        let used: Vec<u32> = faces.faces_of(e).into_iter().collect();
+        let [f0, f1] = used[..] else { continue };
+        let (Some(n0), Some(n1)) = (faces.plane_normal(f0 as usize), faces.plane_normal(f1 as usize)) else { continue };
+        let turn = n0.cross(n1).len().atan2(n0.dot(n1));
+        if turn < 1e-6 {
+            continue;
+        }
+        let reach = radius * (turn / 2.0).tan();
+        for u in &edge.uses {
+            let f = u.face as usize;
+            let Some(d) = faces.uses(f).find(|x| x.edge as usize == e).and_then(|x| faces.direction_into_face(f, x)) else { continue };
+            let extent = face_extent(&faces, f, a, d);
+            if extent.is_finite() && reach > extent + (radius * 1e-6).max(1e-6) {
+                return Err(too_large(&format!(
+                    "a round of {} mm reaches {} mm across a face only {} mm wide",
+                    trimmed_mm(radius),
+                    trimmed_mm(reach),
+                    trimmed_mm(extent)
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 3DCadCraft: refuses a chamfer at least as wide as a convex arc of its edges, seen from a planar
+/// face: the bevel's offset of that arc collapses. SMLib returns a body there that removes far more
+/// than the chamfer (2.8 times, on a rounded box), and the caller has a way that keeps the corners
+/// sharp for a chamfer of a whole loop.
+fn chamfer_fits(body: &Body, edges: &[Vec3], distance: f64) -> Result<()> {
+    let faces = Faces::of(body)?;
+    let (picked, _) = crate::blend_smlib::picked_edges(body, edges)?;
+    for e in picked {
+        let Some(edge) = faces.rec.edges.get(e) else { continue };
+        if faces.straight(e) {
+            continue;
+        }
+        let Ok(curve) = CurveEval::new(edge.parameters()) else { continue };
+        let [t0, t1] = edge.interval;
+        let t = (t0 + t1) / 2.0;
+        let (Some(p0), Some(mid), Some(p1), Some(along)) = (curve.point(t0), curve.point(t), curve.point(t1), curve_tangent(edge.parameters(), t)) else { continue };
+        // The circle through three points of the edge: a round's edge need not be a record circle.
+        let (u, v) = (p0 - mid, p1 - mid);
+        let w = u.cross(v);
+        if w.len2() <= 1e-18 * u.len2().max(1e-12) * v.len2().max(1e-12) {
+            continue;
+        }
+        let centre = mid + ((v * u.len2() - u * v.len2()).cross(w)) * (1.0 / (2.0 * w.len2()));
+        let radius = centre.dist(mid);
+        if distance < radius * (1.0 - 1e-9) {
+            continue;
+        }
+        for u in &edge.uses {
+            let Some(n) = faces.natural_plane_normal(u.face as usize) else { continue };
+            let Some(x) = faces.uses(u.face as usize).find(|x| x.edge as usize == e) else { continue };
+            let into = n.cross(if x.forward { along } else { along * -1.0 });
+            if (centre - mid).dot(into) > 0.0 {
+                return Err(too_large(&format!(
+                    "a chamfer of {} mm is wider than an arc of {} mm in its edges",
+                    trimmed_mm(distance),
+                    trimmed_mm(radius)
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The second side of an unequal chamfer: a distance along the other face, or the angle the
