@@ -551,8 +551,9 @@ What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, s
 
 The pin moved to SolidCraft `8f67c7f` on solidcore. The branch builds, GUI included; it is not ready
 for main. Last full run without GUI (2026-11-05): 1431 passed, 31 failed, `perf_drawing` over its
-15 minute limit. Checked in the running app by opening saved files only: Emboss on a cylinder, a twisted
-loft, half an egg thickened, the r62 file; no Rebuild All, no command driven through its panel. Old project files are test data (owner,
+15 minute limit. Checked in the running app: saved files opened (Emboss on a cylinder, a twisted loft, half an egg
+thickened, the r62 file), Rebuild All of the owner's surface file, and one command driven through its
+panel (a symmetric Through All Cut); other commands not yet. Old project files are test data (owner,
 2026-11-05), so `tests/compat` records follow the new names and face counts, with no migration;
 volumes on a fine mesh stay within 0.002 % of the old ones except the r14 spring, now closer to its
 true volume. Open:
