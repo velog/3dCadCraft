@@ -295,10 +295,18 @@ fn curve_shape(body: &BRep, e: crate::kernel::EdgeId, closed: bool) -> Result<Sh
 
 /// A curved model edge in model coordinates: a circle or arc, or any other
 /// curve as an interpolation spline (`curve_shape`). With a target
-/// `plane`, a circle or arc not parallel to it (an ellipse there) is a
-/// spline too.
+/// `plane`, a circle or arc square to it is the segment it is seen as, one
+/// otherwise not parallel to it (an ellipse there) is a spline too.
 pub fn edge_shape_on(body: &BRep, edge: &EdgeRef, plane: Option<&Plane>) -> Result<Shape3, String> {
     let shape = edge_shape(body, edge)?;
+    // A circle or arc seen edge-on (its plane square to the sketch) is a
+    // segment there, as in Inventor: a hole seen from the side, which
+    // Dimension can take (a flattened spline it could not).
+    if let Some(pl) = plane
+        && let Some(line) = edge_on_segment(&shape, pl)
+    {
+        return Ok(line);
+    }
     let tilted =
         |n: &UnitVector3| plane.is_some_and(|pl| !Tolerance::default().are_parallel(n, &pl.normal));
     match &shape {
@@ -310,6 +318,50 @@ pub fn edge_shape_on(body: &BRep, edge: &EdgeRef, plane: Option<&Plane>) -> Resu
         }
         _ => Ok(shape),
     }
+}
+
+/// The segment a circle or arc projects to on `plane` when its own plane is
+/// square to it: between its extreme points across the plane's normal (a
+/// circle's `centre ± r·d`; an arc's ends, or those of them it reaches).
+fn edge_on_segment(shape: &Shape3, plane: &Plane) -> Option<Shape3> {
+    let (center, normal) = match shape {
+        Shape3::Circle { center, normal, .. } | Shape3::Arc { center, normal, .. } => {
+            (*center, normal.into_inner())
+        }
+        _ => return None,
+    };
+    let pn = plane.normal.into_inner();
+    if normal.dot(&pn).abs() > 1e-9 {
+        return None;
+    }
+    // d: in the circle's plane and in the sketch plane.
+    let d = normal.cross(&pn).try_normalize(1e-12)?;
+    let along = |p: &Point3| (p - center).dot(&d);
+    let pts: Vec<Point3> = match shape {
+        Shape3::Circle { radius, .. } => vec![center - d * *radius, center + d * *radius],
+        Shape3::Arc { start, end, .. } => {
+            let r = (start - center).norm();
+            // Counter-clockwise about `normal` from start to end.
+            let u = (start - center) / r;
+            let v = normal.cross(&u);
+            let angle = |p: &Point3| {
+                let w = p - center;
+                w.dot(&v).atan2(w.dot(&u)).rem_euclid(std::f64::consts::TAU)
+            };
+            let span = angle(end);
+            let mut out = vec![*start, *end];
+            for q in [center + d * r, center - d * r] {
+                if angle(&q) <= span + 1e-12 {
+                    out.push(q);
+                }
+            }
+            out
+        }
+        _ => return None,
+    };
+    let lo = pts.iter().min_by(|a, b| along(a).total_cmp(&along(b)))?;
+    let hi = pts.iter().max_by(|a, b| along(a).total_cmp(&along(b)))?;
+    ((along(hi) - along(lo)) > 1e-9).then_some(Shape3::Line(*lo, *hi))
 }
 
 /// A curved model edge in model coordinates: a circle or arc, or any other

@@ -705,8 +705,8 @@ impl CadCraftApp {
                 return Err("nothing to project".into());
             }
         };
-        // A curve the tool cannot take (Dimension of a spline: a circle seen
-        // edge-on) is not left behind in the sketch (rule 5).
+        // A curve the tool cannot take (Dimension of a spline) is not left
+        // behind in the sketch (rule 5).
         if let Ok(Snap::OnEntity(e)) = r
             && self.tools.tool == Tool::Dimension
             && self.part().sketches[i]
