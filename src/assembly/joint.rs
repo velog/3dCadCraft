@@ -252,6 +252,7 @@ mod tests {
         let p = Point3::new(10.0, 10.0, 0.0);
         let drag = solve::Drag {
             occurrence: 2,
+            inside: None,
             local: p,
             target: t * p + Vector3::new(0.0, 0.0, 12.0),
         };

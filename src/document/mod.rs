@@ -609,11 +609,13 @@ impl Project {
     /// triangles are not saved and a free-form face has no tessellation of its own, so a blade's
     /// spline wall opened as a hole (the back faces behind it red). The others keep the saved
     /// body: rebuilding all of them would make opening a large assembly slow.
+    /// A part with work features is rebuilt too: their geometry is not saved
+    /// either, and an assembly's joints on them would find nothing.
     pub fn rebuild_unmeshed_parts(&mut self) -> usize {
         let mut n = 0;
         for d in &mut self.documents {
             if let DocumentData::Part(p) = &mut d.data
-                && p.has_undrawable_faces()
+                && (p.lacks_work_geometry() || p.has_undrawable_faces())
             {
                 let _ = p.regenerate();
                 n += 1;

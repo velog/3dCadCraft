@@ -70,6 +70,9 @@ enum DragKind {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct AsmDrag {
     id: u32,
+    /// A component inside `id` when that is a flexible subassembly (the
+    /// drag moves it there; `start` is then its place in the assembly).
+    inside: Option<u32>,
     kind: DragKind,
     start: Transform3,
     last: Pos2,
@@ -2435,6 +2438,7 @@ impl CadCraftApp {
             };
             return Some(AsmDrag {
                 id,
+                inside: None,
                 kind,
                 start: o.transform,
                 last: press,
@@ -2447,6 +2451,9 @@ impl CadCraftApp {
         ) {
             return None;
         }
+        if let Some(d) = self.flexible_drag(press, rect) {
+            return Some(d);
+        }
         let (h, grab) = self.asm_pick(press, rect)?;
         let o = a.find(h.occurrence)?;
         let free_move = self.asm.tool == Some(AsmTool::FreeMove);
@@ -2455,8 +2462,35 @@ impl CadCraftApp {
         }
         Some(AsmDrag {
             id: o.id,
+            inside: None,
             kind: DragKind::Move { grab },
             start: o.transform,
+            last: press,
+            radius: 0.0,
+        })
+    }
+
+    /// A drag of a free component inside a flexible subassembly (spec 3.1a
+    /// S5): the part under the cursor, when its first-level component in the
+    /// subassembly is free there.
+    fn flexible_drag(&self, press: Pos2, rect: Rect) -> Option<AsmDrag> {
+        let a = self.assembly()?;
+        let (part, _, t) = self.part_hit(press, rect)?;
+        let &child = part.sub.first()?;
+        let holder = a.find(part.top).filter(|o| o.flexible)?;
+        let linked = self.linked();
+        let sub = crate::assembly::tree::assembly_of(&self.project, &linked, holder.component)?;
+        let c = sub.find(child)?;
+        if c.grounded || c.suppressed || sub.is_element(child) {
+            return None;
+        }
+        let (o, d) = self.camera.ray(press, rect)?;
+        let grab = o + d.try_normalize(1e-12)? * t;
+        Some(AsmDrag {
+            id: holder.id,
+            inside: Some(child),
+            kind: DragKind::Move { grab },
+            start: holder.transform * holder.child_transform(c),
             last: press,
             radius: 0.0,
         })
@@ -2499,16 +2533,18 @@ impl CadCraftApp {
                 };
                 // A grounded one (Free Move) is put where it is dragged and
                 // the others solved after it.
-                let constrained = self.assembly().is_some_and(|a| {
-                    a.find(d.id).is_some_and(|o| !o.grounded)
-                        && a.constraints.iter().any(|c| !c.suppressed && c.uses(d.id))
-                });
+                let constrained = d.inside.is_some()
+                    || self.assembly().is_some_and(|a| {
+                        a.find(d.id).is_some_and(|o| !o.grounded)
+                            && a.constraints.iter().any(|c| !c.suppressed && c.uses(d.id))
+                    });
                 if constrained {
                     // The grabbed point follows the cursor as far as the
                     // constraints let it: the component moves (or turns)
                     // along its free directions, its partners follow.
                     let drag = asm::Drag {
                         occurrence: d.id,
+                        inside: d.inside,
                         local: d.start.inverse() * grab,
                         target: q,
                     };

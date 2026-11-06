@@ -1087,6 +1087,15 @@ pub struct PartDocument {
 }
 
 impl PartDocument {
+    /// Whether the part has work features but no work geometry: it was read
+    /// from a file (`work` is not saved) and not regenerated since.
+    pub fn lacks_work_geometry(&self) -> bool {
+        self.work.planes.is_empty()
+            && self.work.axes.is_empty()
+            && self.work.points.is_empty()
+            && self.features.iter().any(|f| matches!(f, Feature::Work(_)))
+    }
+
     /// Whether a face of the body comes out of the tessellation without a triangle.
     pub fn has_undrawable_faces(&self) -> bool {
         let opts = crate::kernel::TessellationOptions::default();

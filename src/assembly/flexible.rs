@@ -159,11 +159,11 @@ pub fn solve(
     sub_of: &dyn Fn(&Occurrence) -> Option<AssemblyDocument>,
 ) -> Solved {
     if !has_flexible(asm) {
-        return solve::solve(asm, local, drag);
+        return solve::solve(asm, local, drag.filter(|d| d.inside.is_none()));
     }
     let flat = flatten(asm, sub_of);
     if flat.stand_ins.is_empty() && flat.asm.constraints.len() == asm.constraints.len() {
-        return solve::solve(asm, local, drag);
+        return solve::solve(asm, local, drag.filter(|d| d.inside.is_none()));
     }
     let stand_ins = &flat.stand_ins;
     let holders = &flat.holders;
@@ -185,6 +185,19 @@ pub fn solve(
         }
         local(r)
     };
+    // A drag of a component inside a flexible occurrence pulls its stand-in.
+    let inner_drag = drag.and_then(|d| {
+        let child = d.inside?;
+        let (&id, _) = stand_ins
+            .iter()
+            .find(|(_, s)| s.holder == d.occurrence && s.child == child)?;
+        Some(Drag {
+            occurrence: id,
+            inside: None,
+            ..*d
+        })
+    });
+    let drag = inner_drag.as_ref().or(drag.filter(|d| d.inside.is_none()));
     let mut s = solve::solve(&flat.asm, &flat_local, drag);
     let new_place = |id: u32| {
         s.transforms

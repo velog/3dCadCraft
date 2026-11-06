@@ -136,6 +136,10 @@ fn freedom(m: &DMatrix<Real>) -> Freedom {
 pub struct Drag {
     /// The dragged component.
     pub occurrence: u32,
+    /// A component inside `occurrence` when that is a flexible subassembly
+    /// (`flexible::solve` drags it there; `local` is then in its
+    /// coordinates). `None`: the occurrence itself.
+    pub inside: Option<u32>,
     /// The grabbed point, in the component's coordinates.
     pub local: Point3,
     /// Where the cursor puts it.
@@ -1205,6 +1209,7 @@ mod tests {
         let p = Point3::new(10.0, 10.0, 0.0);
         let drag = Drag {
             occurrence: 2,
+            inside: None,
             local: p,
             target: t * p + Vector3::new(0.0, 0.0, 30.0),
         };
@@ -1238,6 +1243,7 @@ mod tests {
         let w0 = t * p;
         let drag = Drag {
             occurrence: 2,
+            inside: None,
             local: p,
             target: w0 + Vector3::new(0.0, 8.0, 0.0),
         };
@@ -1320,6 +1326,7 @@ mod tests {
         let z2 = (t2 * Point3::origin()).z + 10.0;
         let drag = Drag {
             occurrence: 2,
+            inside: None,
             local: Point3::origin(),
             target: t2 * Point3::origin() + Vector3::new(0.0, 0.0, 10.0),
         };

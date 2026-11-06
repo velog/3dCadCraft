@@ -22,6 +22,7 @@ pub mod interference;
 pub mod joint;
 pub mod looks;
 pub mod make;
+pub mod mechanisms;
 pub mod motion;
 pub mod pattern;
 pub mod physical;

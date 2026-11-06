@@ -1281,6 +1281,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `Occurrence::child_transform` (the holder's `flex` entry when flexible, else its own `transform`) — never read
   `child.transform` of a nested occurrence directly. Solves go through `flexible::solve` (GUI `solve_copy`) and their
   results through `flexible::apply` (it writes `flex` too); a plain `for (id, t) in &s.transforms` loses the flexible places.
+  A drag of a part inside is `Drag::inside` (the first-level component); `assembly::mechanisms` builds the arm and delta-robot
+  samples (joints on UCS work features) and `solve_in` solves a project's assembly GUI-free, as the app does.
 - **References into subassemblies** (spec 3.1a S3): a `GeomRef`'s `sub` is the path below its occurrence; resolve it only
   through `asm_local_in` / `relation::resolve` (geometry in the *top* occurrence's coordinates) and find its part and world
   placement with `geom_part` — never `a.find(g.occurrence())` + `with_part(o.component)` (that is the subassembly, no part).
@@ -1501,6 +1503,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Boss with ribs and a Fillet**: the kernel cannot carry a round through the corners where ribs meet the post and the body, so the post's
   foot is rounded before the ribs are joined; a rib crossing that torus takes the kernel ~6 s per boss (no faster way found yet). Grill: centre
   lines usually share the boundary's sketch and would cut its regions: read them through `grill::regions_of` (those curves as construction).
+- **Work geometry is not saved** (`PartDocument::work` is `serde(skip)`): a part of a design file opened from disk had no UCS / work
+  planes until it was regenerated, so every assembly joint on them was sick and a drag moved nothing — while the solve still said
+  "converged". `Project::rebuild_unmeshed_parts` rebuilds parts with work features too (`lacks_work_geometry`). An assembly whose own
+  relationships are empty is still solved when it has a flexible occurrence (`flexible::has_flexible`): the subassemblies bring theirs.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

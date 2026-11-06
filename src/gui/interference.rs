@@ -110,7 +110,8 @@ impl CadCraftApp {
                 }
                 continue;
             };
-            let leaves = crate::assembly::tree::leaves(&self.project, &linked, o.component, sub);
+            let leaves =
+                crate::assembly::tree::leaves_in(&self.project, &linked, o, o.component, sub);
             let world = |t: &crate::kernel::Transform3| o.transform * t;
             // Merged overlaps are listed by the subassembly's own name.
             names.insert(o.id, o.name.clone());

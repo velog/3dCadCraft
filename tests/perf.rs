@@ -3034,6 +3034,7 @@ fn speed_budgets() {
         dragged.find_mut(b).unwrap().grounded = false;
         let drag = cadcraft3d::assembly::Drag {
             occurrence: b,
+            inside: None,
             local: Point3::new(5.0, 25.0, 25.0),
             target: Point3::new(135.0, 25.0, 25.0),
         };
@@ -3045,6 +3046,40 @@ fn speed_budgets() {
                     .unwrap()
                     .unwrap();
                 assert!(r.solved.converged);
+            }),
+        ));
+    }
+
+    // Dragging inside a flexible subassembly (spec 3.1a S5): one drag step
+    // (every mouse move) of a delta robot's effector, the robot placed
+    // flexible in a top assembly (10 components, 9 joints, flattened).
+    {
+        use cadcraft3d::assembly::mechanisms::{self, EFFECTOR_CENTRE};
+        use cadcraft3d::document::{AssemblyDocument, DocRef};
+        use cadcraft3d::kernel::{Transform3, Vector3};
+        let mut p = cadcraft3d::document::Project::new("Perf");
+        let ids = mechanisms::delta(&mut p).unwrap();
+        let mut top = AssemblyDocument::default();
+        let d = top.place(
+            DocRef::local(ids.doc),
+            "Delta",
+            Transform3::identity(),
+            true,
+        );
+        top.find_mut(d).unwrap().flexible = true;
+        let start = mechanisms::placement(&p, &top, d, &[ids.effector]).unwrap() * EFFECTOR_CENTRE;
+        let drag = cadcraft3d::assembly::Drag {
+            occurrence: d,
+            inside: Some(ids.effector),
+            local: EFFECTOR_CENTRE,
+            target: start + Vector3::new(2.0, 0.0, -2.0),
+        };
+        rows.push((
+            "assembly: drag step of a delta robot inside a flexible subassembly",
+            30.0,
+            median_ms(5, || {
+                let s = mechanisms::solve_in(&p, &top, Some(&drag));
+                assert!(s.converged);
             }),
         ));
     }

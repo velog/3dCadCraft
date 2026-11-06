@@ -650,6 +650,7 @@ impl Case {
         let base = self.part(p).clone();
         let d = cadcraft3d::assembly::Drag {
             occurrence: o,
+            inside: None,
             local,
             target,
         };
@@ -745,6 +746,7 @@ fn a_drag_the_relationships_allow_needs_no_new_size() {
     let base = c.part(p).clone();
     let d = cadcraft3d::assembly::Drag {
         occurrence: b,
+        inside: None,
         local: Point3::new(5.0, 25.0, 25.0),
         target: Point3::new(115.0, 40.0, 25.0),
     };

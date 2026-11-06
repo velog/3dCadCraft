@@ -258,6 +258,10 @@ impl CadCraftApp {
     /// no Undo step (the drag's own). A drag no size can follow stays as
     /// the rigid solve left it.
     pub(super) fn adapt_drag(&mut self, drag: &asm::Drag) {
+        // Inside a flexible subassembly the parts keep their sizes.
+        if drag.inside.is_some() {
+            return;
+        }
         let Some(mut a) = self.assembly().cloned() else {
             return;
         };
@@ -322,11 +326,13 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return;
         };
-        if a.constraints.is_empty() && a.patterns.is_empty() {
+        // Flexible subassemblies bring their own relationships.
+        let none = a.constraints.is_empty() && !crate::assembly::flexible::has_flexible(a);
+        if none && a.patterns.is_empty() {
             self.cons.last = Solved::default();
             return;
         }
-        let s = if a.constraints.is_empty() {
+        let s = if none {
             Solved::default()
         } else {
             self.solve_copy(a, drag)
@@ -350,7 +356,9 @@ impl CadCraftApp {
     /// unchanged).
     pub(super) fn asm_refresh_status(&mut self) {
         self.cons.last = match self.assembly() {
-            Some(a) if !a.constraints.is_empty() => self.solve_copy(a, None),
+            Some(a) if !a.constraints.is_empty() || crate::assembly::flexible::has_flexible(a) => {
+                self.solve_copy(a, None)
+            }
             _ => Solved::default(),
         };
     }
@@ -785,9 +793,14 @@ impl CadCraftApp {
         {
             match crate::assembly::tree::assembly_of(&self.project, &linked, occ.component) {
                 Some(sub) => {
-                    for l in
-                        crate::assembly::tree::leaves(&self.project, &linked, occ.component, sub)
-                    {
+                    // A flexible occurrence's components at their places in it.
+                    for l in crate::assembly::tree::leaves_in(
+                        &self.project,
+                        &linked,
+                        occ,
+                        occ.component,
+                        sub,
+                    ) {
                         if l.occurrence.pickable() {
                             out.push(PickPart {
                                 top: occ.id,
