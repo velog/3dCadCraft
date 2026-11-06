@@ -1941,10 +1941,12 @@ impl PartDialog {
     /// menu and the pick filter read it). None is required: OK stays off
     /// anyway.
     pub(super) fn flow(&self) -> Flow {
+        // Colours by place among the selectors on show: hidden ones would
+        // leave two shown selectors one colour.
         let sels = selector_defs(self.kind)
             .into_iter()
+            .filter(|s| !self.sel_hidden(s.0))
             .enumerate()
-            .filter(|(_, s)| !self.sel_hidden(s.0))
             .map(|(i, (key, label, prompt, accepts))| Selector {
                 key,
                 label,
@@ -2139,6 +2141,47 @@ impl PartDialog {
         }
     }
 
+    /// Selector `key` takes `g` alone (any earlier pick goes).
+    pub(super) fn set_ref(&mut self, key: &'static str, what: String, g: crate::assembly::GeomRef) {
+        self.refs.insert(key, vec![g]);
+        self.picks.insert(key, vec![what]);
+        self.items.remove(key);
+    }
+
+    /// Selector `key` takes `g` as one more pick (the same again removes it).
+    pub(super) fn add_ref(&mut self, key: &'static str, what: String, g: crate::assembly::GeomRef) {
+        let refs = self.refs.entry(key).or_default();
+        let list = self.picks.entry(key).or_default();
+        if let Some(i) = refs.iter().position(|r| *r == g) {
+            refs.remove(i);
+            if i < list.len() {
+                list.remove(i);
+            }
+        } else {
+            refs.push(g);
+            list.push(what);
+        }
+    }
+
+    /// Selector `key` holds nothing.
+    pub(super) fn clear_ref(&mut self, key: &str) {
+        self.refs.remove(key);
+        self.picks.remove(key);
+        self.items.remove(key);
+    }
+
+    /// The first empty selector on show becomes the active one (none empty:
+    /// the active one stays).
+    pub(super) fn activate_first_empty(&mut self) {
+        if let Some(k) = self
+            .keys_on_show(self.tab)
+            .into_iter()
+            .find(|k| self.picks.get(k).is_none_or(Vec::is_empty))
+        {
+            self.active = Some(k);
+        }
+    }
+
     /// The selectors of tab `ti` on show.
     fn keys_on_show(&self, ti: usize) -> Vec<&'static str> {
         let mut keys = tab_keys(self.kind, ti);
@@ -2150,6 +2193,7 @@ impl PartDialog {
     pub(super) fn sel_color(&self, key: &str) -> egui::Color32 {
         let c = selector_defs(self.kind)
             .iter()
+            .filter(|s| !self.sel_hidden(s.0))
             .position(|s| s.0 == key)
             .map_or(COLORS[0], |i| COLORS[i % COLORS.len()]);
         egui::Color32::from_rgb(c[0], c[1], c[2])
@@ -2499,6 +2543,7 @@ impl PartDialog {
                 selector_row(ui, s, flow.active == Some(i), &text, ev);
                 ui.end_row();
             }
+            Check(label, _) | Num(label, ..) if super::bolted::row_hidden(self, at.0, label) => {}
             Check(label, on) => {
                 let off = self
                     .kind

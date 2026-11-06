@@ -28,6 +28,15 @@ const EDGE: &[PickKind] = &[PickKind::Edge, PickKind::StraightEdge];
 const CIRCLE: &[PickKind] = &[PickKind::Edge];
 const LINE: &[PickKind] = &[PickKind::StraightEdge, PickKind::Axis];
 const CYLINDER: &[PickKind] = &[PickKind::Face];
+/// Bolted Connection's start plane: a planar face, or an edge whose face it
+/// is (a hole's rim gives the start plane and the centre at once).
+const BOLT_START: &[PickKind] = &[PickKind::PlanarFace, PickKind::Plane, PickKind::Edge];
+/// An existing hole: its wall or its rim.
+const BOLT_HOLE: &[PickKind] = &[PickKind::Face, PickKind::Edge];
+/// On Point: points, or a circular edge (its centre: Concentric).
+const BOLT_POINT: &[PickKind] = &[PickKind::Point, PickKind::Edge];
+/// The termination: a planar face or a work plane.
+const BOLT_END: &[PickKind] = &[PickKind::PlanarFace, PickKind::Plane];
 /// A face or edge of a feature (its feature pattern).
 const FEATURE_FACE: &[PickKind] = &[PickKind::Face, PickKind::Edge];
 const POINT: &[PickKind] = &[PickKind::Point];
@@ -859,8 +868,8 @@ impl AsmPlanned {
                         Sel(
                             "start",
                             "Start Plane",
-                            "select the start plane (the bolt goes in from it)",
-                            PLANE,
+                            "select the start plane (the bolt goes in from it), or a hole's rim",
+                            BOLT_START,
                         ),
                         Sel(
                             "edge1",
@@ -868,12 +877,14 @@ impl AsmPlanned {
                             "select the first edge to dimension the hole from",
                             EDGE,
                         ),
+                        Num("Distance 1", 10.0, " mm"),
                         Sel(
                             "edge2",
                             "Linear Edge 2",
                             "select the second edge to dimension the hole from",
                             EDGE,
                         ),
+                        Num("Distance 2", 10.0, " mm"),
                         Sel(
                             "circle",
                             "Circular Reference",
@@ -883,25 +894,28 @@ impl AsmPlanned {
                         Sel(
                             "point",
                             "Point",
-                            "select a work point or a sketch point",
-                            POINT,
+                            "select work points (a circular edge: its centre)",
+                            BOLT_POINT,
                         ),
-                        Sel("hole", "Existing Hole", "select an existing hole", CYLINDER),
+                        Sel(
+                            "hole",
+                            "Existing Hole",
+                            "select an existing hole (its wall or its rim)",
+                            BOLT_HOLE,
+                        ),
+                        Check("Follow Pattern", false),
                         Sel(
                             "end",
                             "Termination",
-                            "select the end face (the nut side)",
-                            PLANE,
+                            "select the end face (the nut side), or keep the one found",
+                            BOLT_END,
                         ),
                         Sel(
                             "blind",
                             "Blind Start Plane",
-                            "select the face where the threaded hole starts",
-                            PLANE,
+                            "select the face where the threaded hole starts, or keep the one found",
+                            BOLT_END,
                         ),
-                        Num("Distance 1", 10.0, " mm"),
-                        Num("Distance 2", 10.0, " mm"),
-                        Check("Follow Pattern", false),
                         Head("Thread"),
                         Combo("Thread", &["ISO Metric profile"], 0),
                         Combo("Diameter", &["M8"], 0),
@@ -1824,6 +1838,10 @@ impl CadCraftApp {
         if self.frame_between_click(p, rect) {
             return;
         }
+        // Bolted Connection: the smart selectors (gui/bolted.rs).
+        if self.bolt_click(p, rect) {
+            return;
+        }
         let Some(kinds) = self
             .part_planned
             .as_ref()
@@ -1991,9 +2009,11 @@ impl CadCraftApp {
         let Some(d) = self.part_planned.as_mut() else {
             return;
         };
-        // Pattern Component's directions and axis take one pick each.
-        let single = d.kind == Planned::Asm(AsmPlanned::Pattern)
-            && matches!(d.active, Some("column" | "row" | "axis" | "feature"));
+        // Pattern Component's directions and axis take one pick each, so do
+        // Bolted Connection's selectors but its points.
+        let single = (d.kind == Planned::Asm(AsmPlanned::Pattern)
+            && matches!(d.active, Some("column" | "row" | "axis" | "feature")))
+            || (super::bolted::is_bolted(d) && d.active != Some("point"));
         d.pick_ref(label, g, single);
     }
 }

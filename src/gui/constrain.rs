@@ -1090,6 +1090,15 @@ impl CadCraftApp {
     }
 
     /// The persistent name of face `f` of a part.
+    /// [`Self::face_name`] for the panels.
+    pub(super) fn face_name_pub(
+        &self,
+        part: &PickPart,
+        f: crate::kernel::FaceId,
+    ) -> Option<String> {
+        self.face_name(part, f)
+    }
+
     fn face_name(&self, part: &PickPart, f: crate::kernel::FaceId) -> Option<String> {
         self.with_part(part.component, |p| {
             p.body.face(f).and_then(|x| x.name.clone())
