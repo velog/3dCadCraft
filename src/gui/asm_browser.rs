@@ -291,6 +291,15 @@ impl CadCraftApp {
                     if grounded {
                         super::panels::tree_icon(ui, Icon::Ground);
                     }
+                    // Flexible subassembly (spec 3.1a S5).
+                    let flexible = sub
+                        && this
+                            .assembly()
+                            .and_then(|a| a.find(id))
+                            .is_some_and(|o| o.flexible);
+                    if flexible {
+                        super::panels::tree_icon(ui, Icon::Flexible);
+                    }
                     // A component in a file of its own says so in its tooltip.
                     let linked_file = component.library.is_some();
                     let mut text = RichText::new(label.clone());

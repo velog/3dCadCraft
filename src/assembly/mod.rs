@@ -15,6 +15,7 @@ pub mod context;
 pub mod copy;
 pub mod create;
 pub mod features;
+pub mod flexible;
 pub mod frame;
 pub mod import;
 pub mod interference;
@@ -309,7 +310,7 @@ pub fn pick(
     dir: &Vector3,
     mesh: &dyn Fn(DocRef) -> Option<Arc<PickMesh>>,
 ) -> Option<Hit> {
-    pick_among(asm, origin, dir, mesh, &|_| true)
+    pick_among(asm, origin, dir, &|o| mesh(o.component), &|_| true)
 }
 
 /// [`pick`] among the pickable occurrences that `keep` accepts (Isolate).
@@ -317,12 +318,12 @@ pub fn pick_among(
     asm: &AssemblyDocument,
     origin: &Point3,
     dir: &Vector3,
-    mesh: &dyn Fn(DocRef) -> Option<Arc<PickMesh>>,
+    mesh: &dyn Fn(&Occurrence) -> Option<Arc<PickMesh>>,
     keep: &dyn Fn(&Occurrence) -> bool,
 ) -> Option<Hit> {
     let mut best: Option<Hit> = None;
     for o in asm.occurrences.iter().filter(|o| o.pickable() && keep(o)) {
-        let Some(m) = mesh(o.component) else {
+        let Some(m) = mesh(o) else {
             continue;
         };
         let inv = o.transform.inverse();
@@ -456,7 +457,16 @@ mod tests {
         let keep_first = |o: &Occurrence| o.id == id1;
         a.find_mut(id1).unwrap().suppressed = false;
         // Isolate: only the kept ones are picked.
-        assert!(pick_among(a, &Point3::new(95.0, 15.0, 10.0), &down, &f, &keep_first).is_none());
+        assert!(
+            pick_among(
+                a,
+                &Point3::new(95.0, 15.0, 10.0),
+                &down,
+                &|o| f(o.component),
+                &keep_first
+            )
+            .is_none()
+        );
         // Hidden occurrences are not picked and leave the box.
         a.find_mut(id2).unwrap().visible = false;
         assert!(pick(a, &Point3::new(95.0, 15.0, 10.0), &down, &f).is_none());

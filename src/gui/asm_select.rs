@@ -364,7 +364,7 @@ impl CadCraftApp {
                 .appearance
                 .as_deref()
                 .and_then(|n| looks.get(n).cloned());
-            for l in crate::assembly::tree::leaves(&self.project, &linked, o.component, sub) {
+            for l in crate::assembly::tree::leaves_in(&self.project, &linked, o, o.component, sub) {
                 let inner = &l.occurrence.looks;
                 let leaf_over = |name: Option<&str>| FaceOver {
                     look: own.clone().or_else(|| {

@@ -170,8 +170,9 @@ pub fn nested<'a>(
             .find(id)
             .ok_or_else(|| format!("{}: the component inside no longer exists", n.name))?;
         n.component = rebase(o.component, n.component.library);
+        // A flexible occurrence holds its components' own places.
+        n.at *= n.occurrence.child_transform(o);
         n.occurrence = o;
-        n.at *= o.transform;
         n.name = format!("{}/{}", n.name, o.name);
     }
     Ok(n)
@@ -210,7 +211,30 @@ pub fn leaves<'a>(
         stack: &mut stack,
         out: &mut out,
     };
-    w.walk(asm, top.library, Transform3::identity());
+    w.walk(asm, top.library, Transform3::identity(), None);
+    out
+}
+
+/// [`leaves`] of the subassembly placed by occurrence `holder` (`sub` is its
+/// document, `holder.component` in the top file's terms): a flexible holder's
+/// components stand at their places in it.
+pub fn leaves_in<'a>(
+    project: &'a Project,
+    linked: &'a Linked,
+    holder: &'a Occurrence,
+    component: DocRef,
+    sub: &'a AssemblyDocument,
+) -> Vec<Leaf<'a>> {
+    let mut out = Vec::new();
+    let mut stack = vec![component.document];
+    let mut w = Walk {
+        project,
+        linked,
+        path: Vec::new(),
+        stack: &mut stack,
+        out: &mut out,
+    };
+    w.walk(sub, component.library, Transform3::identity(), Some(holder));
     out
 }
 
@@ -223,9 +247,16 @@ struct Walk<'a, 'w> {
 }
 
 impl<'a> Walk<'a, '_> {
-    fn walk(&mut self, asm: &'a AssemblyDocument, from: Option<LibraryId>, at: Transform3) {
+    /// `holder`: the occurrence `asm` is placed by (its flexible places).
+    fn walk(
+        &mut self,
+        asm: &'a AssemblyDocument,
+        from: Option<LibraryId>,
+        at: Transform3,
+        holder: Option<&'a Occurrence>,
+    ) {
         for o in asm.occurrences.iter().filter(|o| o.shown()) {
-            let world = at * o.transform;
+            let world = at * holder.map_or(o.transform, |h| h.child_transform(o));
             let component = rebase(o.component, from);
             self.path.push(o.id);
             match assembly_of(self.project, self.linked, component) {
@@ -233,7 +264,7 @@ impl<'a> Walk<'a, '_> {
                     let d = component.document;
                     if !self.stack.contains(&d) && self.stack.len() <= MAX_DEPTH {
                         self.stack.push(d);
-                        self.walk(sub, component.library, world);
+                        self.walk(sub, component.library, world, Some(o));
                         self.stack.pop();
                     }
                 }

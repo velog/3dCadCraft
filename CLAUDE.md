@@ -1277,6 +1277,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `pattern::Lookup::feature` (`feature_instances` = `PatternFeature::placements` as rigid motions); `follow_patterns`
   re-places them when an assembly is opened or shown again (a part's count may have changed). Planned assembly panels keep the geometry of
   their face / edge picks in `PartDialog::refs` (aligned with `picks`), so a command's logic never re-parses labels.
+- **Flexible subassemblies** (spec 3.1a S5, `assembly::flexible`): a nested component's place in its holder is
+  `Occurrence::child_transform` (the holder's `flex` entry when flexible, else its own `transform`) — never read
+  `child.transform` of a nested occurrence directly. Solves go through `flexible::solve` (GUI `solve_copy`) and their
+  results through `flexible::apply` (it writes `flex` too); a plain `for (id, t) in &s.transforms` loses the flexible places.
 - **References into subassemblies** (spec 3.1a S3): a `GeomRef`'s `sub` is the path below its occurrence; resolve it only
   through `asm_local_in` / `relation::resolve` (geometry in the *top* occurrence's coordinates) and find its part and world
   placement with `geom_part` — never `a.find(g.occurrence())` + `with_part(o.component)` (that is the subassembly, no part).

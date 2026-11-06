@@ -77,6 +77,9 @@ pub(super) struct AsmDrag {
     radius: f32,
 }
 
+/// A picking mesh with the signature it was built for.
+type CachedMesh = (String, Arc<PickMesh>);
+
 /// The assembly environment's UI state.
 #[derive(Default)]
 pub(super) struct AsmUi {
@@ -126,6 +129,9 @@ pub(super) struct AsmUi {
     pub libs: super::place::LibCache,
     /// Picking triangles per component (by its body signature).
     meshes: std::cell::RefCell<HashMap<DocRef, (String, Arc<PickMesh>)>>,
+    /// Picking triangles of flexible subassembly occurrences (their parts
+    /// where they stand in that occurrence), by component and occurrence.
+    flex_meshes: std::cell::RefCell<HashMap<(DocRef, u32), CachedMesh>>,
     /// Features, faces and edges selected under Feature priority / Select
     /// Faces and Edges (`gui/asm_select.rs`), and the one under the cursor.
     pub sub: Vec<super::asm_select::AsmSub>,
@@ -276,6 +282,8 @@ const CONTEXT_ALPHA: f32 = 0.22;
 pub(super) type AdaptedIn = (DocRef, crate::assembly::adapt::Adapted);
 
 /// The tooltip of the Adaptive switch.
+const FLEXIBLE_TIP: &str = "The subassembly's free components move in this assembly, held by its own relationships and by this assembly's; stored in this assembly only, so each placement can stand otherwise (Adaptive goes off)";
+
 const ADAPTIVE_TIP: &str = "The part's adaptive sketches and features take their free sizes from this \
 occurrence's relationships (right-click a sketch or feature of the part: Adaptive). One occurrence of a part \
 can be adaptive";
@@ -350,6 +358,46 @@ impl CadCraftApp {
         Some(m)
     }
 
+    /// The picking triangles of occurrence `o` in its own coordinates: its
+    /// component's, or for a flexible subassembly its parts where they
+    /// stand in this occurrence (cached by occurrence and places).
+    pub(super) fn asm_occ_mesh(&self, o: &crate::document::Occurrence) -> Option<Arc<PickMesh>> {
+        if !o.flexible {
+            return self.asm_mesh(o.component);
+        }
+        let linked = self.linked();
+        let Some(sub) = crate::assembly::tree::assembly_of(&self.project, &linked, o.component)
+        else {
+            return self.asm_mesh(o.component);
+        };
+        let leaves = crate::assembly::tree::leaves_in(&self.project, &linked, o, o.component, sub);
+        let mut sig = serde_json::to_string(sub).unwrap_or_default();
+        sig.push_str(&serde_json::to_string(&o.flex).unwrap_or_default());
+        let mut parts = Vec::new();
+        for l in &leaves {
+            sig.push_str(
+                &self
+                    .with_part(l.component, |p| p.body_signature())
+                    .unwrap_or_default(),
+            );
+            if let Some(m) = self.part_mesh(l.component) {
+                parts.push((m, l.world));
+            }
+        }
+        let key = (o.component, o.id);
+        if let Some((k, m)) = self.asm.flex_meshes.borrow().get(&key)
+            && *k == sig
+        {
+            return Some(m.clone());
+        }
+        let m = Arc::new(PickMesh::merged(parts.iter().map(|(m, t)| (&**m, *t))));
+        self.asm
+            .flex_meshes
+            .borrow_mut()
+            .insert(key, (sig, m.clone()));
+        Some(m)
+    }
+
     /// A subassembly's parts as one picking mesh in its own coordinates
     /// (spec 3.1a: it is picked and moved as a whole), cached by its
     /// content and its parts' bodies.
@@ -397,7 +445,7 @@ impl CadCraftApp {
         let a = self.assembly()?;
         let (o, d) = self.camera.ray(pos, rect)?;
         let d = d.try_normalize(1e-12)?;
-        let h = asm::pick_among(a, &o, &d, &|r| self.asm_mesh(r), &|o| {
+        let h = asm::pick_among(a, &o, &d, &|x| self.asm_occ_mesh(x), &|o| {
             self.asm_isolated(o.id)
         })?;
         Some((h, o + d * h.t))
@@ -417,7 +465,7 @@ impl CadCraftApp {
     /// The box of occurrence `id` in assembly coordinates.
     pub(super) fn asm_box(&self, id: u32) -> Option<(Point3, Point3)> {
         let o = self.assembly()?.find(id)?;
-        let local = self.asm_mesh(o.component)?.bbox?;
+        let local = self.asm_occ_mesh(o)?.bbox?;
         Some(asm::occurrence_box(o, local))
     }
 
@@ -539,7 +587,7 @@ impl CadCraftApp {
         let Some(o) = self.assembly().and_then(|a| a.find(id)).cloned() else {
             return;
         };
-        let Some(mesh) = self.asm_mesh(o.component) else {
+        let Some(mesh) = self.asm_occ_mesh(&o) else {
             return;
         };
         let faces: Vec<crate::kernel::FaceId> = self
@@ -1654,6 +1702,34 @@ impl CadCraftApp {
 
     /// Turns the flag `field` of the occurrences `ids` off when it is on
     /// for all of them, else on for all (one Undo step `label`).
+    /// Whether occurrence `id` of the active assembly places a subassembly.
+    pub(super) fn places_subassembly(&self, id: u32) -> bool {
+        let Some(o) = self.assembly().and_then(|a| a.find(id)) else {
+            return false;
+        };
+        let linked = self.linked();
+        crate::assembly::tree::assembly_of(&self.project, &linked, o.component).is_some()
+    }
+
+    /// Flexible on / off for subassembly occurrence `id` (spec 3.1a S5):
+    /// on lets its free components move here (and turns Adaptive off, as
+    /// Inventor does); off puts them back where the subassembly has them.
+    pub(super) fn toggle_flexible(&mut self, id: u32) {
+        let Some(o) = self.assembly().and_then(|a| a.find(id)).cloned() else {
+            return;
+        };
+        self.edit_assembly("Flexible", |a| {
+            if let Some(x) = a.find_mut(id) {
+                x.flexible = !o.flexible;
+                x.adaptive = false;
+                if o.flexible {
+                    x.flex.clear();
+                }
+            }
+        });
+        self.asm_solve(None);
+    }
+
     /// Adaptive on / off for occurrence `id` (spec 3.10 §3.4): on makes the
     /// other occurrences of its part plain (one adaptive occurrence per
     /// part), and the assembly is solved again so the part adapts.
@@ -1755,11 +1831,7 @@ impl CadCraftApp {
                 }
             }
         }
-        for (id, t) in &ad.solved.transforms {
-            if let Some(o) = a.find_mut(*id) {
-                o.transform = *t;
-            }
-        }
+        crate::assembly::flexible::apply(&ad.solved, a);
         self.cons.last = ad.solved;
         self.scene_dirty = true;
     }
@@ -1948,7 +2020,7 @@ impl CadCraftApp {
         };
         let linked = self.linked();
         if let Some(sub) = crate::assembly::tree::assembly_of(&self.project, &linked, o.component) {
-            for l in crate::assembly::tree::leaves(&self.project, &linked, o.component, sub) {
+            for l in crate::assembly::tree::leaves_in(&self.project, &linked, o, o.component, sub) {
                 add(l.component, place * l.world);
             }
         } else {
@@ -2817,6 +2889,7 @@ impl CadCraftApp {
         let suppressed = all(|o| o.suppressed);
         let enabled = all(|o| o.enabled);
         let adaptive = all(|o| o.adaptive);
+        let flexible = all(|o| o.flexible);
         let isolated = self.asm.isolated.is_some();
         // Inventor's first group: relate the component to another one.
         if ui.button("Constrain...").clicked() {
@@ -2871,6 +2944,17 @@ impl CadCraftApp {
                 .clicked()
         {
             self.toggle_adaptive(ids[0]);
+            ui.close();
+        }
+        let mut fx = flexible;
+        if ids.len() == 1
+            && self.places_subassembly(ids[0])
+            && ui
+                .checkbox(&mut fx, "Flexible")
+                .on_hover_text(FLEXIBLE_TIP)
+                .clicked()
+        {
+            self.toggle_flexible(ids[0]);
             ui.close();
         }
         let mut v = visible;
@@ -3035,6 +3119,18 @@ impl CadCraftApp {
                     self.toggle_adaptive(o.id);
                 }
                 ui.end_row();
+                if self.places_subassembly(o.id) {
+                    let mut fx = o.flexible;
+                    super::panels::plabel(ui, "Flexible");
+                    if ui
+                        .checkbox(&mut fx, "")
+                        .on_hover_text(FLEXIBLE_TIP)
+                        .changed()
+                    {
+                        self.toggle_flexible(o.id);
+                    }
+                    ui.end_row();
+                }
                 if self
                     .assembly()
                     .is_some_and(|a| a.pattern_of(o.id).is_some())

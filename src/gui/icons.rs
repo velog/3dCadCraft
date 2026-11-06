@@ -286,6 +286,8 @@ pub enum Icon {
     FreeMove,
     FreeRotate,
     Ground,
+    /// A flexible subassembly: a linkage that bends.
+    Flexible,
     // property panel choices
     DirDefault,
     DirFlipped,
@@ -2524,6 +2526,14 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.disc(8.0, 4.5, 3.0, warn);
             p.line(&[(8.0, 7.5), (8.0, 12.5)], ink);
             p.line(&[(2.0, 14.0), (14.0, 14.0)], ink);
+        }
+        Flexible => {
+            // Two links on a pin, the second turning.
+            p.line(&[(2.0, 13.0), (8.0, 8.0)], ink);
+            p.line(&[(8.0, 8.0), (14.0, 9.5)], acc);
+            p.disc(8.0, 8.0, 1.6, ink);
+            p.line(&[(12.0, 3.5), (14.5, 5.5), (14.0, 8.0)], hot);
+            p.head((14.0, 8.0), (-0.2, 1.0), hot);
         }
         // Direction: the sketch plane (a line) and where the feature goes.
         DirDefault => {

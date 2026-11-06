@@ -232,7 +232,7 @@ impl CadCraftApp {
         .moved(&first)
         .direction()
         .try_normalize(1e-9)?;
-        let (mf, mc) = (self.asm_mesh(f.component)?, self.asm_mesh(cam.component)?);
+        let (mf, mc) = (self.asm_occ_mesh(f)?, self.asm_occ_mesh(cam)?);
         let middle = |m: &crate::assembly::PickMesh, t: &Transform3| -> Option<Point3> {
             let (lo, hi) = m.bbox?;
             Some(t * Point3::from((lo.coords + hi.coords) / 2.0))
@@ -269,8 +269,7 @@ impl CadCraftApp {
         let place = |id: u32| places.iter().find(|p| p.0 == id).map(|p| p.1);
         for (x, y) in a.motion.contact_pairs(&ids) {
             let (ox, oy) = (a.find(x)?, a.find(y)?);
-            let (Some(mx), Some(my)) = (self.asm_mesh(ox.component), self.asm_mesh(oy.component))
-            else {
+            let (Some(mx), Some(my)) = (self.asm_occ_mesh(ox), self.asm_occ_mesh(oy)) else {
                 continue;
             };
             let tol = motion::contact_tolerance(&mx, &my);
@@ -301,7 +300,7 @@ impl CadCraftApp {
         for (x, y) in &pairs {
             for id in [*x, *y] {
                 let o = a.find(id)?;
-                let (lo, hi) = self.asm_mesh(o.component)?.bbox?;
+                let (lo, hi) = self.asm_occ_mesh(o)?.bbox?;
                 let d = hi - lo;
                 thin = thin.min(d.x).min(d.y).min(d.z);
                 let (t0, t1) = (

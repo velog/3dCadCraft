@@ -169,7 +169,7 @@ pub fn promote(
         _ => return Err("not an assembly".into()),
     };
     let t = a.find(top).ok_or("the subassembly no longer exists")?;
-    let (place, component) = (t.transform, t.component);
+    let (place, component, holder) = (t.transform, t.component, t.clone());
     if component.library.is_some() {
         return Err("the subassembly is in another file: open it to change it".into());
     }
@@ -197,7 +197,13 @@ pub fn promote(
         .partition(|c| c.uses(inner));
     sub.constraints = stay;
     sub.remove(inner);
-    let id = a.place(o.component, &o.name, place * o.transform, o.grounded);
+    // A flexible subassembly's component comes up from where it stands.
+    let id = a.place(
+        o.component,
+        &o.name,
+        place * holder.child_transform(&o),
+        o.grounded,
+    );
     if let Some(n) = a.find_mut(id) {
         n.visible = o.visible;
         n.enabled = o.enabled;

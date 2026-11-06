@@ -50,6 +50,9 @@ pub struct Solved {
     pub dof: HashMap<u32, usize>,
     /// The same as motions, for the degrees of freedom glyph (not while dragging).
     pub free: HashMap<u32, Freedom>,
+    /// New places of flexible subassemblies' components inside their
+    /// occurrences (`assembly::flexible`): (occurrence, place).
+    pub flex: Vec<(u32, crate::document::FlexPlace)>,
 }
 
 /// What a component can still do, the others held: its free moves and the axes of

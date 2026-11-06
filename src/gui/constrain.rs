@@ -201,7 +201,13 @@ impl CadCraftApp {
     /// in this document's components).
     pub(super) fn solve_copy(&self, a: &AssemblyDocument, drag: Option<&asm::Drag>) -> Solved {
         let local = |r: &GeomRef| self.asm_local_in(a, r);
-        asm::solve(a, &local, drag)
+        // Flexible subassemblies' free components move here too (3.1a S5).
+        let linked = self.linked();
+        let sub_of = |o: &crate::document::Occurrence| {
+            crate::assembly::tree::assembly_of(&self.project, &linked, o.component)
+                .map(|s| crate::assembly::tree::rebased(s, o.component.library))
+        };
+        crate::assembly::flexible::solve(a, &local, drag, &sub_of)
     }
 
     /// Solves the active assembly and moves its components (no Undo step:
@@ -326,11 +332,7 @@ impl CadCraftApp {
             self.solve_copy(a, drag)
         };
         let mut a = a.clone();
-        for (id, t) in &s.transforms {
-            if let Some(o) = a.find_mut(*id) {
-                o.transform = *t;
-            }
-        }
+        crate::assembly::flexible::apply(&s, &mut a);
         // Pattern copies follow their sources (a reference that no longer
         // resolves leaves them where they are).
         if let Err(e) = self.place_patterns(&mut a) {
@@ -388,11 +390,7 @@ impl CadCraftApp {
             self.context_follow();
             return Ok(());
         }
-        for (id, t) in &s.transforms {
-            if let Some(o) = a.find_mut(*id) {
-                o.transform = *t;
-            }
-        }
+        crate::assembly::flexible::apply(&s, &mut a);
         if let Err(e) = self.place_patterns(&mut a) {
             log::warn!("{e}");
         }
@@ -1827,7 +1825,7 @@ impl CadCraftApp {
                 .and_then(|p| p.get(&occ.id).copied())
                 .unwrap_or(occ.transform);
             let size = self
-                .asm_mesh(occ.component)
+                .asm_occ_mesh(occ)
                 .and_then(|m| m.bbox)
                 .map_or(40.0, |(lo, hi)| (hi - lo).norm() * 0.6);
             (t, size.max(10.0))
@@ -1890,7 +1888,7 @@ impl CadCraftApp {
                     .as_ref()
                     .and_then(|p| p.get(&occ.id).copied())
                     .unwrap_or(occ.transform),
-                self.asm_mesh(occ.component)
+                self.asm_occ_mesh(occ)
                     .and_then(|m| m.bbox)
                     .map_or(30.0, |(lo, hi)| (hi - lo).norm() * 0.15),
             ),

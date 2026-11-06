@@ -262,6 +262,27 @@ pub struct Occurrence {
     /// (`assembly::adapt`); at most one occurrence of a part.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub adaptive: bool,
+    /// Flexible (spec 3.1a): an occurrence of a subassembly whose free
+    /// components move in this assembly (its own relationships hold them),
+    /// each at its place in [`Self::flex`]; off = one rigid body. Stored here
+    /// only, never in the subassembly (each placement can stand otherwise).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flexible: bool,
+    /// The places of a flexible subassembly's components inside this
+    /// occurrence, by their ids in the subassembly (a component not listed
+    /// stands where the subassembly put it).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flex: Vec<FlexPlace>,
+}
+
+/// Where one component of a flexible subassembly stands inside an
+/// occurrence of it (subassembly coordinates).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FlexPlace {
+    /// The component's id in the subassembly.
+    pub child: u32,
+    /// Its placement in the subassembly's coordinates.
+    pub transform: Transform3,
 }
 
 /// Appearance overrides an assembly gives one occurrence, by appearance
@@ -346,7 +367,20 @@ impl Occurrence {
             transparent: false,
             looks: OccurrenceLooks::default(),
             adaptive: false,
+            flexible: false,
+            flex: Vec::new(),
         }
+    }
+
+    /// Where component `child` of this occurrence's subassembly stands in
+    /// its coordinates: its flexible place here, else its own placement.
+    pub fn child_transform(&self, child: &Occurrence) -> Transform3 {
+        if self.flexible
+            && let Some(f) = self.flex.iter().find(|f| f.child == child.id)
+        {
+            return f.transform;
+        }
+        child.transform
     }
 
     /// Drawn in the view: visible and not suppressed.
