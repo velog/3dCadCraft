@@ -283,15 +283,24 @@ impl Planned {
                 ],
             )],
             Self::SketchedSymbols => &[Page(
-                "Symbols",
+                "Sketch Symbols",
                 &[
+                    Text("Search For", ""),
                     Combo("Symbol", &["(no symbols in Drawing Resources)"], 0),
                     Num("Scale", 1.0, ""),
-                    Num("Rotation", 0.0, "°"),
+                    Num("Rotate", 0.0, "°"),
+                    Check("Symbol Clipping", false),
                     Check("Static", false),
                     Check("Leader", false),
-                    Sel("place", "Placement", "click where the symbol goes"),
-                    Note("Symbols are sketches in Drawing Resources > Sketched Symbols"),
+                    Check("Visible", true),
+                    Sel(
+                        "place",
+                        "Placement",
+                        "click where the symbol goes; right-click > Done ends",
+                    ),
+                    Note(
+                        "Symbols are sketches in Drawing Resources > Sketched Symbols (spec 4.13 §3.4)",
+                    ),
                 ],
             )],
             Self::SurfaceTexture => &[Page(
@@ -615,38 +624,113 @@ impl Planned {
                     ),
                 ],
             )],
-            Self::DefineBorder => &[Page(
-                "Define Border",
-                &[
-                    Radio("Kind", &["Default (zones)", "Sketched"], 0),
-                    Num("Horizontal Zones", 6.0, ""),
-                    Num("Vertical Zones", 4.0, ""),
-                    Radio("Label", &["Alphabetical", "Numeric", "None"], 0),
-                    Check("Label from Bottom Right", true),
-                    Check("Delimit by Lines", true),
-                    Check("Center Marks", true),
-                    Num("Margin", 10.0, " mm"),
-                    Text("Name", "Default Border"),
-                ],
-            )],
-            Self::DefineTitleBlock => &[Page(
-                "Define Title Block",
-                &[
-                    Note(
-                        "A sketch with lines, texts and property fields (Properties of the drawing or of the model of the first view), prompted entries",
-                    ),
-                    Text("Name", "ISO"),
-                    Button("Edit Definition..."),
-                ],
-            )],
+            Self::DefineBorder => &[
+                Page(
+                    "Zones",
+                    &[
+                        Radio("Kind", &["Zone Border", "Border"], 0),
+                        Head("Horizontal Zones"),
+                        Num("Number of Zones", 6.0, ""),
+                        Combo("Label", &["Numeric", "Alphabetical", "None"], 0),
+                        Head("Vertical Zones"),
+                        Num("Number of Vertical Zones", 4.0, ""),
+                        Combo("Vertical Label", &["Alphabetical", "Numeric", "None"], 0),
+                        Radio("Label Zones From", &["Bottom/Right", "Top/Left"], 0),
+                        Radio("Delimit Zones By", &["Line", "Arrowhead"], 0),
+                        Check("Center Marks", true),
+                    ],
+                ),
+                Page(
+                    "More",
+                    &[
+                        Combo("Text Style", &["Label Text (ISO)"], 0),
+                        Combo("Text Layer", &["Border (ISO)"], 0),
+                        Combo("Line Layer", &["Border (ISO)"], 0),
+                        Head("Sheet Margins"),
+                        Num("Top", 10.0, " mm"),
+                        Num("Bottom", 10.0, " mm"),
+                        Num("Left", 10.0, " mm"),
+                        Num("Right", 10.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Definition",
+                    &[
+                        Note(
+                            "The border's own sketch on top of the zones: lines, texts, property fields, prompted entries (spec 4.13 §3.3)",
+                        ),
+                        Button("Edit Sketch..."),
+                        Button("Connection Point"),
+                        Text("Name", "Border1"),
+                        Button("Save Border"),
+                    ],
+                ),
+            ],
+            Self::DefineTitleBlock => &[
+                Page(
+                    "Title Block",
+                    &[
+                        Note(
+                            "A sketch with lines, texts and fields; its outermost corner sits on the border's connection point (spec 4.13 §3.2)",
+                        ),
+                        Button("Edit Sketch..."),
+                        Button("Text"),
+                        Button("Image"),
+                        Text("Name", "Title Block1"),
+                        Button("Save Title Block"),
+                    ],
+                ),
+                Page(
+                    "Fields",
+                    &[
+                        Combo(
+                            "Type",
+                            &[
+                                "Properties - Drawing",
+                                "Sheet Properties",
+                                "Properties - Model",
+                                "Prompted Entry",
+                            ],
+                            0,
+                        ),
+                        Combo(
+                            "Property",
+                            &[
+                                "Designer",
+                                "Checked By",
+                                "Creation Date",
+                                "Company",
+                                "Eng. Approved By",
+                                "Title",
+                                "Part Number",
+                                "Material",
+                                "Revision Number",
+                                "Sheet Name",
+                                "Sheet Number",
+                                "Number of Sheets",
+                                "Sheet Size",
+                                "Scale",
+                            ],
+                            0,
+                        ),
+                        Text("Prompt", "Enter a value"),
+                        Button("Add Field"),
+                        Button("Reorder Prompted Entries"),
+                    ],
+                ),
+            ],
             Self::DefineSymbol => &[Page(
                 "Define Sketched Symbol",
                 &[
                     Note(
-                        "A sketch with geometry, texts and property fields; insertion and connection grips",
+                        "A sketch with geometry, texts and fields; it is placed, scaled and turned about its insertion point (spec 4.13 §3.4)",
                     ),
+                    Button("Edit Sketch..."),
+                    Button("Set Insertion Point Grip"),
+                    Button("Connection Point"),
+                    Button("Text"),
                     Text("Name", "Symbol1"),
-                    Button("Edit Definition..."),
+                    Button("Save Sketch Symbol"),
                 ],
             )],
         }
