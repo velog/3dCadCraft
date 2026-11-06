@@ -1439,6 +1439,8 @@ impl CadCraftApp {
     /// Finish Sketch.
     fn finish_sketch(&mut self) {
         self.scene_dirty = true;
+        // The sketch's box, for the view correction at the end.
+        let sketch_box = self.editing.and_then(|i| self.sketch_box(i));
         // Sketches that project from this one follow it now (Inventor
         // updates projections when the source sketch is finished).
         if let Some(i) = self.editing
@@ -1468,12 +1470,29 @@ impl CadCraftApp {
         self.tools.dim_edit = None;
         self.tools.over_prompt = None;
         self.report = None;
-        // Inventor returns to the view from before the sketch. A view the
-        // user turned meanwhile stays (zoom and pan do not count).
+        // Inventor returns to the view direction from before the sketch (a
+        // view the user turned meanwhile stays), about the current centre
+        // and zoom: the view the user worked in counts (owner 2026-11-06).
+        // Then, only if the sketch does not fit, the view zooms out from
+        // there just enough to show it.
+        let before = self.camera.clone();
+        let mut moved = false;
         if let Some((view, look)) = self.view_before_sketch.take()
             && (self.camera.frame().0 - look).norm() < 1e-3
         {
-            let before = std::mem::replace(&mut self.camera, view);
+            let (target, distance) = (self.camera.target, self.camera.distance);
+            self.camera = view;
+            self.camera.target = target;
+            self.camera.distance = distance;
+            moved = true;
+        }
+        if self.fit_new_geometry
+            && let Some((lo, hi)) = sketch_box
+            && self.viewport_rect.width() > 1.0
+        {
+            moved |= self.camera.zoom_out_to(lo, hi, self.viewport_rect, 8.0);
+        }
+        if moved {
             self.view_cube.animate(before, &mut self.camera);
         }
         // Back to the tab the sketch was opened from; no sketch open: the
@@ -4614,6 +4633,7 @@ impl CadCraftApp {
             text,
             is_angle,
             focused: false,
+            fresh: false,
         });
     }
 
@@ -5107,11 +5127,23 @@ impl CadCraftApp {
         pointer: egui::Pos2,
         rect: egui::Rect,
         ctrl: bool,
+        alt: bool,
     ) -> Option<Pick> {
         let ps = &self.part().sketches[i];
         let plane = &ps.sketch.plane;
         let world = self.camera.ray_plane(pointer, rect, plane)?;
         let raw = plane.project(&world);
+        // Alt held: a drawing tool takes the bare cursor, nothing snaps or
+        // is inferred (owner 2026-11-06); picking tools still pick the
+        // sketch's own geometry, but nothing of the model is projected.
+        if alt && self.tools.drawing() {
+            return Some(Pick {
+                pos: raw,
+                snap: Snap::None,
+                infer: None,
+                align: Align::default(),
+            });
+        }
         // Drawing tools snap per the inference settings; tools that pick
         // geometry always see points and curves.
         let k = self.tools.inference;
@@ -6564,11 +6596,12 @@ impl CadCraftApp {
 
         // --- sketch tools ---
         let ctrl = ui.input(|i| i.modifiers.ctrl);
+        let alt_held = ui.input(|i| i.modifiers.alt);
         let shift_held = ui.input(|i| i.modifiers.shift);
         let selecting = self.tools.tool == Tool::Select;
         let in_sketch = self.editing.filter(|_| !picking && on_cube.is_none());
         let cursor_pick = match (in_sketch, pointer) {
-            (Some(i), Some(p)) => self.sketch_pick(i, p, rect, ctrl),
+            (Some(i), Some(p)) => self.sketch_pick(i, p, rect, ctrl, alt_held),
             _ => None,
         };
         // Dynamic Input: reset when the step changes, then apply the locks.
@@ -6714,28 +6747,27 @@ impl CadCraftApp {
                 }
             } else if let Some(mut pick) = cursor_pick {
                 // Automatic projection (Inventor): Dimension / a constraint
-                // on a model edge projects it and takes the projected line.
-                let wants_edge = self.tools.picks_geometry()
-                    && pick.snap == Snap::None
-                    && (self.tools.tool != Tool::Dimension || self.tools.pick_count() < 2);
-                if wants_edge
+                // on a model vertex or edge (straight, circle, arc, curve)
+                // projects it and takes the projected point / curve; Alt
+                // held projects nothing.
+                let mut refused = false;
+                if self.auto_projects(&pick, alt_held)
                     && let (Some(i), Some(p)) = (in_sketch, pointer)
-                    && let Some(e) = self.edge_under(p, rect)
-                    && self.part().body.edge_direction(e).is_some()
+                    && let Some(target) = self.auto_project_pick(p, rect)
                 {
-                    self.checkpoint("Project Geometry");
-                    match self.part_mut().project_edge(i, e) {
-                        Ok(line) => {
-                            self.solve();
-                            pick.snap = Snap::OnEntity(line);
-                        }
+                    match self.auto_project(i, target) {
+                        Ok(snap) => pick.snap = snap,
                         Err(err) => {
-                            self.history.cancel();
+                            // The click was meant for that edge: the tool does
+                            // not take it as a placement.
+                            refused = true;
                             self.file_status = Some(Err(format!("Project Geometry: {err}")));
                         }
                     }
                 }
-                self.hud_click(pick);
+                if !refused {
+                    self.hud_click(pick);
+                }
             }
         }
         // Double-click on a curve: select its chain (Fusion; SolidWorks'
@@ -7523,6 +7555,7 @@ impl CadCraftApp {
             self.edge_toolbar(ui, rect);
         }
         self.draw_project_hover(&painter, rect, pointer);
+        self.draw_auto_project_hover(&painter, rect, pointer);
         // The References row under the pointer: its geometry lights up.
         if let Some((si, pts)) = self.ref_hover.take()
             && let Some(ps) = self.part().sketches.get(si)
@@ -8265,7 +8298,7 @@ impl CadCraftApp {
         }
         if apply {
             valuefield::remember(ctx, &text);
-            self.apply_dimension_text(i, edit.constraint, &text);
+            self.apply_dimension_text(i, edit.constraint, &text, edit.fresh);
         } else if (cancel || ctx.input(|i| i.key_pressed(Key::Escape)))
             && self.measure_pick.is_none()
         {
@@ -8275,12 +8308,33 @@ impl CadCraftApp {
 
     /// Applies a value or equation typed for a dimension, through the
     /// part's parameters; on failure nothing changes.
-    fn apply_dimension_text(&mut self, i: usize, c: ConstraintId, text: &str) {
+    fn apply_dimension_text(&mut self, i: usize, c: ConstraintId, text: &str, fresh: bool) {
         self.part_mut().sync_parameters();
         let name = self.part().sketches[i].sketch.dim_param(c).name;
         self.checkpoint("Edit Dimension");
         let before = self.part().clone();
-        let r = self.part_mut().set_parameter_expr(&name, text);
+        let mut r = self.part_mut().set_parameter_expr(&name, text);
+        // The sketch's first dimension scales the whole sketch about its
+        // origin (Inventor: Auto-scale sketch geometry on initial
+        // dimension); the view scales with it, so the picture stays.
+        let mut scaled = None;
+        if r.is_ok()
+            && fresh
+            && self.sketch_opts.autoscale_first_dimension
+            && let Some(v) = self.part().sketches[i]
+                .sketch
+                .constraint(c)
+                .and_then(|k| k.value())
+            && let Some(k) = self.part().sketches[i].autoscale_factor(c, v)
+            && self.part_mut().sketches[i]
+                .sketch
+                .scale_about_origin(k)
+                .is_ok()
+        {
+            // The scale multiplied this dimension too: its value again.
+            r = self.part_mut().set_parameter_expr(&name, text);
+            scaled = Some(k);
+        }
         let solved = r.is_ok()
             && matches!(
                 self.part_mut().solve_sketch(i),
@@ -8289,6 +8343,15 @@ impl CadCraftApp {
         if solved {
             self.tools.dim_edit = None;
             self.file_status = None;
+            if let Some(k) = scaled {
+                let origin = self.part().sketches[i].sketch.plane.point_at(0.0, 0.0);
+                let before = self.camera.clone();
+                self.camera.scale_about(origin, k);
+                self.view_cube.animate(before, &mut self.camera);
+                self.file_status = Some(Ok(format!(
+                    "Sketch scaled by {k:.4} to its first dimension (Application Options > Sketch)"
+                )));
+            }
             if self.editing.is_none() {
                 // Edited from a feature command's preview: the features
                 // that already use the sketch follow.

@@ -963,6 +963,41 @@ impl Sketch {
             .map(|_| ())
     }
 
+    /// Scales the whole sketch about its origin by `factor` (Inventor's
+    /// *Auto-scale sketch geometry on initial dimension*, spec 1.4): every
+    /// point, circle radius, length dimension and dimension text offset.
+    /// Angles and the other constraints stay true as they are.
+    pub fn scale_about_origin(&mut self, factor: Real) -> Result<(), SketchError> {
+        if !(factor.is_finite() && factor > 0.0) {
+            return Err(SketchError::InvalidValue(
+                "the scale factor must be positive",
+            ));
+        }
+        for p in self.points.values_mut() {
+            p.position = Point2::from(p.position.coords * factor);
+        }
+        for e in self.entities.values_mut() {
+            if let Entity::Circle { radius, .. } = e {
+                *radius *= factor;
+            }
+        }
+        for c in self.constraints.values_mut() {
+            match c {
+                Constraint::Angle { .. } => {}
+                Constraint::Fix { at, .. } => *at = Point2::from(at.coords * factor),
+                _ => {
+                    if let Some(v) = c.value_mut() {
+                        *v *= factor;
+                    }
+                }
+            }
+        }
+        for v in self.dim_labels.values_mut() {
+            *v *= factor;
+        }
+        Ok(())
+    }
+
     /// **Stretch**: moves the points of `entities` by `delta`; connected
     /// geometry stretches and the dimensions take their new values
     /// (Inventor: Sketch → Modify → Stretch).

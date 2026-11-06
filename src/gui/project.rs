@@ -655,3 +655,118 @@ fn edge_loop_on(
         })
         .unwrap_or_default()
 }
+
+/// Automatic projection (spec 1.4 / 1.8): while Dimension or a constraint
+/// tool picks geometry, a model vertex or edge under the cursor (where no
+/// curve or point of the sketch is) lights up and a click projects it as
+/// reference geometry and takes the projected point / curve. Holding Alt
+/// turns it off, with every snap of the sketch tools.
+impl CadCraftApp {
+    /// Whether a click with `pick` (the sketch's own snap under the cursor)
+    /// would project model geometry: a picking tool, nothing of the sketch
+    /// under the cursor, Alt not held, and Dimension still taking items.
+    pub(super) fn auto_projects(&self, pick: &super::sketch_tools::Pick, alt: bool) -> bool {
+        use super::sketch_tools::{Snap, Tool};
+        self.editing.is_some()
+            && !alt
+            && !self.project_geometry
+            && self.tools.picks_geometry()
+            && self.tools.pattern_dialog.is_none()
+            && pick.snap == Snap::None
+            && (self.tools.tool != Tool::Dimension || self.tools.pick_count() < 2)
+    }
+
+    /// The model vertex or edge a click at `p` would project.
+    pub(super) fn auto_project_pick(&self, p: Pos2, rect: Rect) -> Option<ProjPick> {
+        if let Some(v @ crate::part::PointRef::Vertex(_)) = self.vertex_under(p, rect) {
+            return Some(ProjPick::Vertex(v));
+        }
+        self.edge_under(p, rect).map(ProjPick::Edge)
+    }
+
+    /// Projects `pick` into sketch `i` (one Undo step with the click) and
+    /// returns what the tool takes: the projected point or curve.
+    pub(super) fn auto_project(
+        &mut self,
+        i: usize,
+        pick: ProjPick,
+    ) -> Result<super::sketch_tools::Snap, String> {
+        use super::sketch_tools::{Snap, Tool};
+        let before = self.part().sketches[i].clone();
+        self.checkpoint("Project Geometry");
+        let r = match pick {
+            ProjPick::Vertex(v) => self.part_mut().project_point(i, v).map(Snap::Point),
+            ProjPick::Edge(e) => self
+                .part_mut()
+                .project_model_edge(i, e, false)
+                .map(Snap::OnEntity),
+            _ => {
+                self.history.cancel();
+                return Err("nothing to project".into());
+            }
+        };
+        // A curve the tool cannot take (Dimension of a spline: a circle seen
+        // edge-on) is not left behind in the sketch (rule 5).
+        if let Ok(Snap::OnEntity(e)) = r
+            && self.tools.tool == Tool::Dimension
+            && self.part().sketches[i]
+                .sketch
+                .entity(e)
+                .is_some_and(crate::sketch::Entity::is_spline)
+        {
+            self.part_mut().sketches[i] = before;
+            self.history.cancel();
+            return Err(
+                "this edge projects as a free curve, which cannot be dimensioned yet".into(),
+            );
+        }
+        match r {
+            Ok(s) => {
+                self.solve();
+                Ok(s)
+            }
+            Err(e) => {
+                self.history.cancel();
+                Err(e.to_string())
+            }
+        }
+    }
+
+    /// Lights up what an automatic projection click at `pointer` would take.
+    pub(super) fn draw_auto_project_hover(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        pointer: Option<Pos2>,
+    ) {
+        let (Some(p), Some(pick)) = (pointer, self.last_pick) else {
+            return;
+        };
+        let alt = painter.ctx().input(|i| i.modifiers.alt);
+        if !self.auto_projects(&pick, alt) {
+            return;
+        }
+        let col = overlay::highlight_color();
+        match self.auto_project_pick(p, rect) {
+            Some(ProjPick::Edge(e)) => {
+                let opts = crate::kernel::TessellationOptions::default();
+                if let Ok(pts) = self.part().body.sample_edge(e, &opts) {
+                    let pts: Vec<Pos2> = pts
+                        .iter()
+                        .filter_map(|q| self.camera.project(q, rect))
+                        .collect();
+                    painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
+                }
+            }
+            Some(ProjPick::Vertex(v)) => {
+                let part = self.part();
+                if let Ok(q) = crate::part::placement::point_of(&v, &part.body, &part.work)
+                    && let Some(s) = self.camera.project(&q, rect)
+                {
+                    painter.circle_stroke(s, 7.0, Stroke::new(2.5, col));
+                }
+            }
+            _ => {}
+        }
+    }
+}

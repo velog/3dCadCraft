@@ -5385,7 +5385,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     "Zoom out when new geometry leaves the view",
                 )
                 .on_hover_text(
-                    "A sketch made larger (typed sizes, dimensions) or a placed component that no longer fits: the view zooms out to show everything",
+                    "At Finish Sketch, a sketch that no longer fits, and a placed component that does not: the view zooms out from where it is just enough to show it",
                 );
                 }
                 if tab == "General" {
@@ -5412,6 +5412,13 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 ui.checkbox(
                     &mut o.look_at_on_create,
                     "Look at sketch plane on sketch creation and edit",
+                );
+                ui.checkbox(
+                    &mut o.autoscale_first_dimension,
+                    "Auto-scale sketch geometry on initial dimension",
+                )
+                .on_hover_text(
+                    "The first dimension of a sketch scales the whole sketch about its origin, so its shape stays; the view follows",
                 );
                 ui.checkbox(&mut o.show_grid, "Grid lines");
                 ui.checkbox(&mut o.show_axes, "Axes");

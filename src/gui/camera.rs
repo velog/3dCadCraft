@@ -340,6 +340,42 @@ impl OrbitCamera {
         })
     }
 
+    /// The view of geometry scaled by `k` about `p`: what was on the screen
+    /// before is there again at the same size (the first dimension of a
+    /// sketch scales the sketch; the view follows so it does not jump).
+    pub fn scale_about(&mut self, p: Point3, k: Real) {
+        if !(k.is_finite() && k > 0.0) {
+            return;
+        }
+        self.target = p + (self.target - p) * k;
+        self.distance *= k;
+    }
+
+    /// Zooms out from the current view (same direction, same centre)
+    /// just enough that the box `[min, max]` fits inside `rect` less
+    /// `margin`; when the centre is too far off, the view frames the box
+    /// and what it showed before. `false` when the box was in view already.
+    pub fn zoom_out_to(&mut self, min: Point3, max: Point3, rect: Rect, margin: f32) -> bool {
+        if self.box_in_view(min, max, rect, margin) {
+            return false;
+        }
+        let start = self.distance;
+        for _ in 0..40 {
+            self.distance *= 1.12;
+            if self.box_in_view(min, max, rect, margin) {
+                return true;
+            }
+        }
+        // 40 steps is 90 times as far: the box lies off to the side.
+        self.distance = start;
+        let half = (self.fov_y / 2.0).tan() * start;
+        let seen = Vector3::new(half, half, half);
+        let lo = min.inf(&(self.target - seen));
+        let hi = max.sup(&(self.target + seen));
+        self.fit(lo, hi);
+        true
+    }
+
     /// Frames the axis-aligned box `[min, max]`.
     pub fn fit(&mut self, min: Point3, max: Point3) {
         self.target = nalgebra::center(&min, &max);

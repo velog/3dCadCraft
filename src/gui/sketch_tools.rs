@@ -357,6 +357,9 @@ pub struct DimEdit {
     pub is_angle: bool,
     /// Keyboard focus was given to the text field.
     pub focused: bool,
+    /// The dimension was just placed (not an existing one edited): its
+    /// value may scale the whole sketch (the sketch's first dimension).
+    pub fresh: bool,
 }
 
 /// A dimension that would over-constrain; the user may accept it as driven.
@@ -2178,6 +2181,7 @@ impl SketchTools {
             text: format_value(measured, is_angle),
             is_angle,
             focused: false,
+            fresh: true,
         });
         Ok(Some("Dimension".into()))
     }

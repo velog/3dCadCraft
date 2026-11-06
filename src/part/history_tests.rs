@@ -14,6 +14,7 @@ const OPTS: SketchOptions = SketchOptions {
     show_axes: false,
     show_triad: false,
     show_grid: false,
+    autoscale_first_dimension: false,
 };
 
 fn volume(part: &PartDocument) -> Real {

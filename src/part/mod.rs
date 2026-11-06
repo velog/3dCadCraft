@@ -134,6 +134,15 @@ pub struct SketchOptions {
     pub show_triad: bool,
     /// Show grid lines on the sketch plane (`DisplayGridLines`).
     pub show_grid: bool,
+    /// Scale the whole sketch about its origin when its first dimension
+    /// gets a value (Inventor: *Auto-scale sketch geometry on initial
+    /// dimension*, on by default).
+    #[serde(default = "default_true")]
+    pub autoscale_first_dimension: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for SketchOptions {
@@ -145,6 +154,7 @@ impl Default for SketchOptions {
             show_axes: true,
             show_triad: true,
             show_grid: true,
+            autoscale_first_dimension: true,
         }
     }
 }
@@ -601,6 +611,49 @@ impl PartSketch {
     pub fn is_projected(&self, p: PointId) -> bool {
         self.projections.iter().any(|pr| pr.point == p)
             || self.links.iter().any(|l| l.points.contains(&p))
+    }
+
+    /// Inventor's *Auto-scale sketch geometry on initial dimension* (spec
+    /// 1.4): the factor that scales the whole sketch about its origin so
+    /// that dimension `c`, the sketch's first, measures `value` with the
+    /// shape kept. `None` when it does not apply: an angle or driven
+    /// dimension, another dimension already there, projected geometry other
+    /// than points at the origin (the origin stays where it is), a fixed
+    /// point or a Fix away from the origin, or nothing to scale.
+    pub fn autoscale_factor(&self, c: crate::sketch::ConstraintId, value: Real) -> Option<Real> {
+        use crate::sketch::Constraint;
+        let sk = &self.sketch;
+        let dim = sk.constraint(c)?;
+        if matches!(dim, Constraint::Angle { .. }) || dim.value().is_none() || sk.is_driven(c) {
+            return None;
+        }
+        let others = sk
+            .constraints()
+            .any(|(id, k)| id != c && k.value().is_some() && !sk.is_driven(id));
+        if others
+            || !self.reference_lines.is_empty()
+            || self.links.iter().any(|l| l.curve.is_some())
+        {
+            return None;
+        }
+        let at_origin = |p: crate::sketch::PointId| {
+            sk.point(p).is_some_and(|q| q.position.coords.norm() < 1e-9)
+        };
+        let projected_away = sk
+            .points()
+            .any(|(p, q)| (self.is_projected(p) || q.fixed) && !at_origin(p));
+        let fixed_away = sk
+            .constraints()
+            .any(|(_, k)| matches!(k, Constraint::Fix { at, .. } if at.coords.norm() >= 1e-9));
+        if projected_away || fixed_away || sk.entities().next().is_none() {
+            return None;
+        }
+        let measured = sk.measure(c)?;
+        if !(measured.abs() > 1e-9 && value.is_finite() && value > 0.0) {
+            return None;
+        }
+        let k = value / measured.abs();
+        ((k - 1.0).abs() > 1e-12).then_some(k)
     }
 
     /// The closed regions of the user's own curves only: projected edges

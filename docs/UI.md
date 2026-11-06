@@ -141,6 +141,7 @@ By default they are **as in Inventor**. Your own keys: **Tools → Customize →
 | **Ctrl+O / Ctrl+N** | Open / New (empty part; both ask about unsaved changes) | ✅ |
 | **Esc** | ends the current input (command, dialog, Select Other, Edit Feature); clears the selection (→ Previous Selection); in a sketch a second Esc returns to Select | ✅ |
 | **Ctrl** (held, while drawing) | no H/V/∥/⊥ inference, no tangent snap and no point alignment; snapping to points, midpoints and curves (and the constraints from it) **stays** | ✅ |
+| **Alt** (held, in a sketch) | nothing snaps or is inferred while drawing (the bare cursor position); Dimension and the constraint tools still pick the sketch's own geometry but project nothing of the model (without Alt a model vertex / edge under the cursor lights up and a click projects it) | 🟡 2026-11-06 |
 | **Ctrl** (held, while dragging a manipulator) | finer step: 0.1 mm / 1° | ✅ |
 
 **Further aliases** (2026-10-26; type them over the view, the tooltips show them; the command search

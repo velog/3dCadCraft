@@ -82,8 +82,7 @@ impl CadCraftApp {
     }
 
     /// Zooms out by itself (animated, the view direction kept) when new
-    /// geometry no longer fits the view: the edited sketch after a change
-    /// (a typed size, a dimension), a component just placed in an
+    /// geometry no longer fits the view: a component just placed in an
     /// assembly. Nothing happens while a mouse button is down (a drag) or
     /// when Application Options › Zoom out to new geometry is off.
     pub(super) fn keep_in_view(&mut self, ctx: &egui::Context, rect: Rect) {
@@ -112,20 +111,24 @@ impl CadCraftApp {
         ctx.request_repaint();
     }
 
-    /// What [`Self::keep_in_view`] watches: a signature that changes with
-    /// the geometry, and its box. The edited sketch (its points and circle
-    /// radii), else the assembly's components (their count: a placement or
-    /// a paste, not a drag).
+    /// What [`Self::keep_in_view`] watches: the assembly's components
+    /// (their count: a placement or a paste, not a drag) and their box.
+    /// A sketch is not watched (owner 2026-11-06): its view is corrected at
+    /// its first dimension (`apply_dimension_text`) and at Finish Sketch,
+    /// never after each change.
     fn watched_geometry(&self) -> Option<(u64, Option<(Point3, Point3)>)> {
         use std::hash::{Hash, Hasher};
+        let a = self.assembly()?;
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        if let Some(a) = self.assembly() {
-            a.occurrences.len().hash(&mut h);
-            a.occurrences.iter().map(|o| o.id).max().hash(&mut h);
-            return Some((h.finish(), self.assembly_box()));
-        }
-        let ps = self.part().sketches.get(self.editing?)?;
-        let sk = &ps.sketch;
+        a.occurrences.len().hash(&mut h);
+        a.occurrences.iter().map(|o| o.id).max().hash(&mut h);
+        Some((h.finish(), self.assembly_box()))
+    }
+
+    /// The world box of sketch `i`'s geometry (points and circles), or
+    /// `None` for an empty sketch.
+    pub(super) fn sketch_box(&self, i: usize) -> Option<(Point3, Point3)> {
+        let sk = &self.part().sketches.get(i)?.sketch;
         let mut lo = [f64::INFINITY; 2];
         let mut hi = [f64::NEG_INFINITY; 2];
         let mut grow = |x: f64, y: f64, r: f64| {
@@ -134,20 +137,16 @@ impl CadCraftApp {
         };
         for (_, p) in sk.points() {
             grow(p.position.x, p.position.y, 0.0);
-            p.position.x.to_bits().hash(&mut h);
-            p.position.y.to_bits().hash(&mut h);
         }
         for (_, e) in sk.entities() {
             if let crate::sketch::Entity::Circle { center, radius } = e
                 && let Some(c) = sk.point(*center)
             {
                 grow(c.position.x, c.position.y, *radius);
-                radius.to_bits().hash(&mut h);
             }
         }
-        let sig = h.finish();
         if lo[0] > hi[0] {
-            return Some((sig, None));
+            return None;
         }
         let plane = &sk.plane;
         let corners = [
@@ -156,9 +155,10 @@ impl CadCraftApp {
             plane.point_at(lo[0], hi[1]),
             plane.point_at(hi[0], hi[1]),
         ];
-        let b = corners[1..]
-            .iter()
-            .fold((corners[0], corners[0]), |(a, b), p| (a.inf(p), b.sup(p)));
-        Some((sig, Some(b)))
+        Some(
+            corners[1..]
+                .iter()
+                .fold((corners[0], corners[0]), |(a, b), p| (a.inf(p), b.sup(p))),
+        )
     }
 }
