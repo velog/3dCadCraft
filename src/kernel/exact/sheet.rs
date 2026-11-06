@@ -86,6 +86,7 @@ fn named_sheet(body: sk::Body, names: &[String], prefix: &str) -> ExactSolid {
         }
     }
     ExactSolid {
+        prism: None,
         sheet: true,
         name: Some(prefix.to_owned()),
         body,
@@ -356,6 +357,7 @@ pub fn split_by_sheet(
                     .map(|n| n.or_else(|| Some(tmp.clone())))
                     .collect();
                 next.push(ExactSolid {
+                    prism: None,
                     sheet: false,
                     name: s.name.clone(),
                     body,

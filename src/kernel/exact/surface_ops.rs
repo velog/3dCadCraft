@@ -21,6 +21,7 @@ fn named(
         *n = Some(new_face.to_owned());
     }
     ExactSolid {
+        prism: None,
         name,
         body,
         face_names,

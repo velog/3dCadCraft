@@ -25,6 +25,7 @@ pub fn face_sheet(s: &ExactSolid, faces: &[usize]) -> Result<ExactSolid, String>
     let body = guarded("copy faces", || sk::copy_faces(&s.body, &at))?;
     let face_names = names_from(&body, &[s], &|_| None);
     Ok(ExactSolid {
+        prism: None,
         name: s.name.clone(),
         body,
         face_names,
@@ -86,6 +87,7 @@ pub fn thicken_sheet(
         _ => None,
     });
     Ok(ExactSolid {
+        prism: None,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -166,6 +168,7 @@ pub fn offset_sheet(
         _ => None,
     });
     Ok(ExactSolid {
+        prism: None,
         name: Some(prefix.to_owned()),
         body,
         face_names,

@@ -140,6 +140,7 @@ fn named_solid(m: &sd::SheetBody, prefix: &str, flat: bool) -> Result<ExactSolid
             .map_err(|e| solidcraft_kernel::KernelError::Failed(e.to_string()))
     })?;
     let mut s = ExactSolid {
+        prism: None,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,

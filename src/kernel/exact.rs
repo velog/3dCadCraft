@@ -45,6 +45,9 @@ pub struct ExactSolid {
     profiles: Vec<ProfileFrame>,
     /// A surface body (Output Surface), even where its sheet closes.
     sheet: bool,
+    /// The section of an extrusion without taper, for Cuts straight through it
+    /// ([`through_cut`]).
+    prism: Option<Arc<through_cut::Prism>>,
 }
 
 /// An extruded profile: its feature prefix, sketch plane and the start
@@ -191,6 +194,7 @@ pub fn prism_between(
         })
         .collect();
     Ok(ExactSolid {
+        prism: None,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -419,6 +423,7 @@ pub fn axial_stack(
         prefix,
     );
     Ok(ExactSolid {
+        prism: None,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -446,6 +451,7 @@ pub fn pipe_tee(radius: Real, bore: Real, c: Real, prefix: &str) -> Result<Exact
     .map_err(|e| format!("this part cannot be built ({e})"))?;
     let face_names = named_roles(&roles, &ROLES, prefix);
     Ok(ExactSolid {
+        prism: None,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -484,6 +490,7 @@ pub fn rolling_element(
     .map_err(|e| format!("this part cannot be built ({e})"))?;
     let face_names = vec![Some(format!("{name}:Surface")); body.face_count()];
     Ok(ExactSolid {
+        prism: None,
         name: Some(name.to_owned()),
         body,
         face_names,
@@ -565,6 +572,7 @@ pub fn pipe_bend(
     .map_err(|e| format!("this part cannot be built ({e})"))?;
     let face_names = named_roles(&roles, &ROLES, prefix);
     Ok(ExactSolid {
+        prism: None,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -767,6 +775,7 @@ pub fn box_named(a: Point3, b: Point3, prefix: &str) -> Result<ExactSolid, Strin
         })
         .collect();
     Ok(ExactSolid {
+        prism: None,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,
@@ -1109,7 +1118,13 @@ pub fn extrude(
     } else {
         face_names
     };
+    let prism = if taper.abs() < 1e-12 {
+        through_cut::Prism::of_extrusion(&body, plane, &prof.region, start, end)
+    } else {
+        None
+    };
     Ok(ExactSolid {
+        prism,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,
@@ -1207,12 +1222,55 @@ pub fn revolve(
         _ => None,
     });
     Ok(ExactSolid {
+        prism: None,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,
         face_names,
         profiles: Vec::new(),
     })
+}
+
+/// Whether a Cut straight through a prism takes the fast path ([`cut_through`]); Application
+/// Options › Part (spec 0.19 §3.2), on by default.
+static FAST_CUTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Turns the fast path for Cuts straight through a prism on or off.
+pub fn set_fast_cuts(on: bool) {
+    FAST_CUTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the fast path for Cuts straight through a prism is on.
+pub fn fast_cuts() -> bool {
+    FAST_CUTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `target` minus `tools` without the general Boolean, when every tool is a prism straight
+/// through the prism `target` and they stand apart (spec 0.19 §3.2); `Ok(None)` otherwise, or
+/// when [`fast_cuts`] is off. Same body and face names as cutting with the union of the tools.
+///
+/// # Errors
+/// The kernel's extrusion failing.
+pub fn cut_through(
+    target: &ExactSolid,
+    tools: &[ExactSolid],
+) -> Result<Option<ExactSolid>, String> {
+    if !fast_cuts() {
+        return Ok(None);
+    }
+    let r = through_cut::cut_through(target, tools)?;
+    if r.is_some() {
+        FAST_CUTS_DONE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(r)
+}
+
+/// How many Cuts took the fast path ([`cut_through`]) since the program started.
+static FAST_CUTS_DONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many Cuts took the fast path since the program started (tests, the log).
+pub fn fast_cuts_done() -> usize {
+    FAST_CUTS_DONE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// `a op b`; the result keeps `a`'s body name. `None`: nothing is left.
@@ -1226,6 +1284,7 @@ pub fn boolean(a: &ExactSolid, b: &ExactSolid, op: ExactOp) -> Result<Option<Exa
     Ok(r.map(|body| {
         let face_names = names_from(&body, &[a, b], &|_| None);
         ExactSolid {
+            prism: None,
             sheet: false,
             name: a.name.clone(),
             body,
@@ -1250,6 +1309,7 @@ pub fn union_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> 
     let refs: Vec<&ExactSolid> = solids.iter().collect();
     let face_names = names_from(&body, &refs, &|_| None);
     Ok(Some(ExactSolid {
+        prism: None,
         sheet: false,
         name: solids[0].name.clone(),
         body,
@@ -1275,6 +1335,7 @@ pub fn join_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> {
     let refs: Vec<&ExactSolid> = solids.iter().collect();
     let face_names = names_from(&body, &refs, &|_| None);
     Ok(Some(ExactSolid {
+        prism: None,
         sheet: false,
         name: solids[0].name.clone(),
         body,
@@ -1337,6 +1398,7 @@ pub fn lumps(s: &ExactSolid) -> Vec<ExactSolid> {
             .map(|body| {
                 let face_names = names_from(&body, &[s], &|_| None);
                 ExactSolid {
+                    prism: None,
                     sheet: false,
                     name: s.name.clone(),
                     body,
@@ -1532,6 +1594,7 @@ pub fn mesh_solid(
     let closed = !sides.is_empty() && sides.values().all(|&n| n == 2);
     let n = body.face_count();
     Ok(ExactSolid {
+        prism: None,
         sheet: !closed,
         name: Some(name.to_owned()),
         body,
@@ -1619,6 +1682,7 @@ pub fn step_bodies(text: &str, prefix: &str) -> Result<StepRead, String> {
             .collect();
         out.bodies.push(StepBody {
             solid: ExactSolid {
+                prism: None,
                 sheet: !b.closed,
                 name: Some(name),
                 body: b.body.clone(),
@@ -1785,6 +1849,7 @@ fn blend_result(s: &ExactSolid, body: sk::Body, prefix: &str, role: &str) -> Exa
         })
         .collect();
     ExactSolid {
+        prism: None,
         sheet: false,
         name: s.name.clone(),
         body,
@@ -2175,6 +2240,7 @@ pub fn shell_with(
                     })
                     .collect();
                 return Ok(ExactSolid {
+                    prism: None,
                     sheet: false,
                     name: s.name.clone(),
                     body,
@@ -2233,6 +2299,7 @@ pub fn shell_with(
             let body = guarded("shell", || sk::offset_faces(&s.body, &walls, out))?;
             let face_names = names_from(&body, &[s], &|_| None);
             let o = ExactSolid {
+                prism: None,
                 sheet: false,
                 name: s.name.clone(),
                 body,
@@ -2248,6 +2315,7 @@ pub fn shell_with(
             s.clone()
         };
         let lined = ExactSolid {
+            prism: None,
             sheet: false,
             name: s.name.clone(),
             body: s.body.clone(),
@@ -2260,6 +2328,7 @@ pub fn shell_with(
             let body = guarded("shell", || sk::offset_faces(&lined.body, &walls, -inn))?;
             let face_names = names_from(&body, &[&lined], &|_| None);
             let c = ExactSolid {
+                prism: None,
                 sheet: false,
                 face_names,
                 body,
@@ -2278,6 +2347,7 @@ pub fn shell_with(
             let body = guarded("shell", || sk::offset_faces(&cavity.body, &open_pts, push))?;
             let face_names = names_from(&body, &[&cavity], &|_| None);
             cavity = ExactSolid {
+                prism: None,
                 sheet: false,
                 face_names,
                 body,
@@ -2370,6 +2440,7 @@ fn plane_cavity(
         })
         .collect();
     Ok(ExactSolid {
+        prism: None,
         sheet: false,
         name: s.name.clone(),
         body,
@@ -2649,6 +2720,7 @@ pub fn draft(
     let body = guarded("draft", || sk::draft(&s.body, &pts, &pl, d3(&pull), angle))?;
     let face_names = names_from(&body, &[s], &|_| None);
     Ok(ExactSolid {
+        prism: None,
         sheet: false,
         name: s.name.clone(),
         body,
@@ -2719,6 +2791,7 @@ pub fn draft_two_sided(
         let face_names = names_from(&body, &[s], &|_| None);
         let origin = face_origins(&body, &[s]);
         let part = ExactSolid {
+            prism: None,
             sheet: false,
             name: s.name.clone(),
             body,
@@ -2770,6 +2843,7 @@ pub fn draft_two_sided(
             .ok_or_else(|| "the drafted halves do not join".to_owned())?;
             let face_names = names_from(&r, &[&a, &b], &|_| None);
             ExactSolid {
+                prism: None,
                 sheet: false,
                 name: s.name.clone(),
                 body: r,
@@ -2816,11 +2890,19 @@ pub fn transformed(
     if face_names.iter().all(Option::is_none) && placed.face_count() == s.face_names.len() {
         face_names = s.face_names.clone();
     }
+    // the copy's faces in the original's order: its section moves with it
+    let same_order = face_names.len() == s.face_names.len()
+        && face_names.iter().zip(&s.face_names).all(|(a, b)| a == b);
+    let prism = match &s.prism {
+        Some(p) if same_order => p.moved(m),
+        _ => None,
+    };
     let face_names = face_names
         .into_iter()
         .map(|n| n.map(|n| format!("{rename}:{n}")))
         .collect();
     Ok(ExactSolid {
+        prism,
         sheet: false,
         name: body.map(str::to_owned).or_else(|| s.name.clone()),
         body: placed,
@@ -2854,6 +2936,7 @@ pub fn similar(s: &ExactSolid, m: &nalgebra::Matrix4<Real>) -> Result<ExactSolid
         face_names = s.face_names.clone();
     }
     Ok(ExactSolid {
+        prism: None,
         sheet: s.sheet,
         name: s.name.clone(),
         body: placed,
@@ -2934,6 +3017,7 @@ pub fn cone_tool(
         _ => None,
     });
     Ok(ExactSolid {
+        prism: None,
         sheet: false,
         name: None,
         body,
@@ -2989,6 +3073,7 @@ pub fn revolved_tool(
         _ => None,
     });
     Ok(ExactSolid {
+        prism: None,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,
@@ -3039,6 +3124,7 @@ pub fn helix_tool(
     })?;
     let n = body.face_count();
     Ok(ExactSolid {
+        prism: None,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,
@@ -3755,6 +3841,7 @@ fn threaded_piece(
         }
     }
     Ok(Some(ExactSolid {
+        prism: None,
         sheet: false,
         name: s.name.clone(),
         body,
@@ -3781,6 +3868,7 @@ pub fn moved(s: &ExactSolid, m: &nalgebra::Matrix4<Real>) -> Result<ExactSolid, 
         face_names
     };
     Ok(ExactSolid {
+        prism: None,
         sheet: s.sheet,
         name: s.name.clone(),
         body,
@@ -3869,6 +3957,7 @@ pub fn split_faces(
         }
     };
     let mut out = ExactSolid {
+        prism: None,
         sheet: false,
         name: s.name.clone(),
         body,
@@ -3942,6 +4031,7 @@ pub fn split_by_plane(
             .map(|n| n.or_else(|| Some(format!("{cut}:Cut"))))
             .collect();
         let part = ExactSolid {
+            prism: None,
             sheet: false,
             name: s.name.clone(),
             body,
@@ -5817,6 +5907,7 @@ pub mod sheet_metal;
 mod delete_face;
 mod sweep;
 mod thicken;
+mod through_cut;
 pub use delete_face::{delete_faces, delete_shell};
 pub use sweep::{
     Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_surface, loft_to_point,

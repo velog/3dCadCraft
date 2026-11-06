@@ -681,6 +681,22 @@ fn open_off_axis(
     out
 }
 
+/// Prisms straight through one prismatic body (a plate full of holes): its section with the
+/// tools' added as holes, extruded again, without the general Boolean (spec 0.19 §3.2). True
+/// when it was done (`cur` holds the result); false: nothing changed, take the general path.
+fn cut_through_one(cur: &mut [ExactSolid], tools: &[ExactSolid], solids: &[String]) -> bool {
+    let chosen =
+        |s: &ExactSolid| solids.is_empty() || s.name.as_ref().is_some_and(|n| solids.contains(n));
+    let targets: Vec<usize> = (0..cur.len()).filter(|&i| chosen(&cur[i])).collect();
+    if let [i] = targets[..]
+        && let Ok(Some(r)) = exact::cut_through(&cur[i], tools)
+    {
+        cur[i] = r;
+        return true;
+    }
+    false
+}
+
 /// Applies a feature's operation: `added` (its solids) against the bodies
 /// so far (all of them, or those named in `solids`). `lenient` (pattern
 /// copies): a cutting tool that misses the body is skipped; only when none
@@ -699,12 +715,18 @@ pub(super) fn combine(
     // Many tools apart from each other (a sketch full of holes): one
     // compound tool, so the body is cut once instead of once per tool on an
     // ever larger body (36 holes: 30 s → see docs/PERF.md).
+    if added.len() > 1 {
+        crate::part::progress::stage(&format!("{} with {} tools", op.label(), added.len()));
+    }
+    let chosen =
+        |s: &ExactSolid| solids.is_empty() || s.name.as_ref().is_some_and(|n| solids.contains(n));
+    if op == Operation::Cut && cut_through_one(&mut cur, &added, solids) {
+        return Ok(cur);
+    }
     let added = match exact::union_apart(&added) {
         Ok(Some(one)) => vec![one],
         _ => added,
     };
-    let chosen =
-        |s: &ExactSolid| solids.is_empty() || s.name.as_ref().is_some_and(|n| solids.contains(n));
     let mut any_hit = false;
     for t in added {
         let targets: Vec<usize> = (0..cur.len()).filter(|&i| chosen(&cur[i])).collect();
@@ -910,7 +932,12 @@ pub(super) fn pattern(
                 copies.push(copy(t, *k, m, &tag(*k))?);
             }
         }
-        if !copies.is_empty() {
+        if set.op == Operation::Cut
+            && !copies.is_empty()
+            && cut_through_one(&mut out, &copies, &set.solids)
+        {
+            // straight through a prism: done without the Boolean
+        } else if !copies.is_empty() {
             // Copies apart from each other (checked on the tools' boxes moved
             // to each place, no mesh per copy) go in as one tool.
             let tool = match apart(&set.tools, &places) {

@@ -692,6 +692,7 @@ pub fn loft_guided(g: &GuidedLoft, prefix: &str) -> Result<ExactSolid, String> {
     let body = built.map_err(|e| format!("this shape cannot be built ({e})"))?;
     let face_names = names_from(&body, &[], &side_names(&names, prefix));
     Ok(ExactSolid {
+        prism: None,
         name: Some(prefix.to_owned()),
         body,
         face_names,

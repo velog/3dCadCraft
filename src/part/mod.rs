@@ -60,6 +60,7 @@ pub mod physical;
 pub mod placement;
 pub mod plastic;
 pub mod primitive;
+pub mod progress;
 pub mod revolve;
 pub mod rib;
 pub mod select;
@@ -1326,6 +1327,7 @@ impl PartDocument {
                 metal = hit.metal;
                 continue;
             }
+            progress::feature(f.name(), j + 1, limit.min(self.features.len()));
             let started = std::time::Instant::now();
             // The tools this step applies (kept for later patterns).
             let mut made: Vec<pattern::ToolSet> = Vec::new();

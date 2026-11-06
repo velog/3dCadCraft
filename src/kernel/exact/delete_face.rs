@@ -13,6 +13,7 @@ use super::{ExactSolid, guarded, names_from, sk};
 fn named(s: &ExactSolid, body: sk::Body, sheet: bool) -> ExactSolid {
     let face_names = names_from(&body, &[s], &|_| None);
     ExactSolid {
+        prism: None,
         name: s.name.clone(),
         body,
         face_names,

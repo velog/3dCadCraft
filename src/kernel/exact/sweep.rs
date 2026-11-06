@@ -281,6 +281,7 @@ pub fn loft_surface(
     let body = guarded("surface loft", || sk::loft_sheet(&input))?;
     let face_names = names_from(&body, &[], &side_names(&numbered, prefix));
     Ok(ExactSolid {
+        prism: None,
         sheet: true,
         name: Some(prefix.to_owned()),
         body,
@@ -454,6 +455,7 @@ fn named(
         face_names = fallback_names(&body, plane, prefix);
     }
     Ok(ExactSolid {
+        prism: None,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,
@@ -716,6 +718,7 @@ fn loft_sections(secs: &[Section], prefix: &str, rename_later: bool) -> Result<E
     let body = guarded("loft", || sk::loft(&input))?;
     let face_names = names_from(&body, &[], &side_names(&outer_names, prefix));
     let mut cur = ExactSolid {
+        prism: None,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,
@@ -753,6 +756,7 @@ fn loft_sections(secs: &[Section], prefix: &str, rename_later: bool) -> Result<E
         let tool = guarded("loft", || sk::loft(&input))?;
         let face_names = names_from(&tool, &[], &side_names(&names, prefix));
         let tool = ExactSolid {
+            prism: None,
             sheet: false,
             name: None,
             body: tool,

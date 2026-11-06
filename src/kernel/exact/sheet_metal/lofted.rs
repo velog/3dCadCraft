@@ -317,6 +317,7 @@ pub fn lofted_flange(
     };
     face_names.resize(faces, None);
     let solid = ExactSolid {
+        prism: None,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,

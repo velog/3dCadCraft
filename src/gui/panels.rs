@@ -5090,6 +5090,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                             "Dimension display: value, parameter name, equation, tolerance or precise value",
                         );
                 }
+                progress_bar(ui);
                 ui.separator();
                 // The CPU work of a frame, smoothed (measured in `ui`): shows
                 // when the view gets slow. Idle time between frames is not in it.
@@ -5371,7 +5372,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 let mut tab: &'static str =
                     ui.data(|d| d.get_temp(tab_id)).unwrap_or("General");
                 ui.horizontal(|ui| {
-                    for name in ["General", "Colors", "Save", "Display", "Prompts", "Sketch", "Assembly"] {
+                    for name in ["General", "Colors", "Save", "Display", "Prompts", "Sketch", "Part", "Assembly"] {
                         ui.selectable_value(&mut tab, name, name);
                     }
                 });
@@ -5590,6 +5591,18 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     .on_hover_text(
                         "Name faces and edges under the cursor by their persistent names (Extrusion1:End), as used in files and journals; off: kind, feature and body",
                     );
+                }
+                if tab == "Part" {
+                ui.label(RichText::new("Speed").strong());
+                if ui
+                    .checkbox(&mut self.fast_cuts, "Fast path for many identical through cuts")
+                    .on_hover_text(
+                        "A Cut whose tools all pass straight through a prismatic body (a plate full of holes) is built                          without the general Boolean; off: always the general kernel. The result is the same (spec 0.19 §3.2)",
+                    )
+                    .changed()
+                {
+                    crate::kernel::exact::set_fast_cuts(self.fast_cuts);
+                }
                 }
                 if tab == "Prompts" {
                 ui.label(RichText::new("Prompted Interaction").strong());
@@ -7389,6 +7402,44 @@ relationships: its sketch's free points and, for an Extrude with a Distance, the
 /// Tooltip of a sketch's Adaptive switch.
 const ADAPTIVE_SKETCH_TIP: &str = "In an assembly where this part is Adaptive, the sketch's free points (not fixed by \
 its dimensions and constraints) follow the relationships";
+
+/// How long a job runs before the status bar shows its progress (spec 0.19 §3.1).
+const PROGRESS_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The status bar's progress of the longest-running worker job, once it has run for
+/// [`PROGRESS_AFTER`] (spec 0.19 §3.1): its step, a bar of the features done and the time spent.
+fn progress_bar(ui: &mut egui::Ui) {
+    let jobs = crate::part::progress::running();
+    let Some(first) = jobs.first() else {
+        return;
+    };
+    // keep the bar moving while anything runs (the worker does not wake the frame)
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(250));
+    if first.elapsed < PROGRESS_AFTER {
+        return;
+    }
+    ui.separator();
+    let secs = first.elapsed.as_secs();
+    let mut text = format!("{} s", secs);
+    if jobs.len() > 1 {
+        text.push_str(&format!(" (+{})", jobs.len() - 1));
+    }
+    ui.label(RichText::new(text).weak());
+    let bar = egui::ProgressBar::new(first.fraction().unwrap_or(0.0))
+        .desired_width(120.0)
+        .desired_height(12.0);
+    let bar = if first.fraction().is_none() {
+        bar.animate(true)
+    } else {
+        bar
+    };
+    ui.add(bar).on_hover_text(first.text());
+    ui.scope(|ui| {
+        ui.set_max_width(320.0);
+        ui.add(egui::Label::new(first.text()).truncate());
+    });
+}
 
 #[cfg(test)]
 mod tests {

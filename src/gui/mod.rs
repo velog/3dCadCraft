@@ -601,6 +601,8 @@ struct CadCraftApp {
     show_labels: bool,
     /// Application Options → Display → Thread texture (cosmetic threads).
     thread_texture: bool,
+    /// Application Options › Part › Fast path for many identical through cuts.
+    fast_cuts: bool,
     /// Application Options › Display: the projection at start.
     default_projection: camera::Projection,
     /// Application Options › Display: the visual style at start.
@@ -1055,6 +1057,7 @@ impl CadCraftApp {
             sketch_opts: SketchOptions::default(),
             show_labels: true,
             thread_texture: true,
+            fast_cuts: true,
             default_projection: Default::default(),
             default_visual_style: Default::default(),
             view_defaults_taken: false,
@@ -2419,6 +2422,7 @@ impl CadCraftApp {
             // The kernel recurses deeply on large bodies.
             .stack_size(64 << 20)
             .spawn(move || {
+                let _progress = crate::part::progress::Reporter::install("Preview");
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
                     .unwrap_or_else(|_| Err("internal error while computing the preview".into()));
                 let _ = tx.send(r);

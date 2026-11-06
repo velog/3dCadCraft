@@ -251,6 +251,8 @@ pub struct AppOptions {
     pub show_labels: bool,
     /// Cosmetic threads drawn as a texture on their faces.
     pub thread_texture: bool,
+    /// Fast path for many identical through cuts (spec 0.19 §3.2).
+    pub fast_cuts: bool,
     /// Dimension Display of sketches (Value, Name, Expression...).
     pub dim_display: crate::sketch::DimDisplay,
     /// A command's value and its editor next to the cursor.
@@ -367,6 +369,7 @@ impl Default for AppOptions {
             inference: InferenceSettings::default(),
             show_labels: true,
             thread_texture: true,
+            fast_cuts: true,
             dim_display: Default::default(),
             cursor_value: true,
             constraint_ring: false,
@@ -1007,6 +1010,7 @@ impl CadCraftApp {
             inference: self.tools.inference,
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
+            fast_cuts: self.fast_cuts,
             dim_display: self.dim_display,
             ui_theme: super::theme::current(),
             canvas_scheme: self.colors.active.clone(),
@@ -1071,6 +1075,8 @@ impl CadCraftApp {
             self.scene_dirty = true;
         }
         self.internal_names = o.internal_names;
+        self.fast_cuts = o.fast_cuts;
+        crate::kernel::exact::set_fast_cuts(o.fast_cuts);
         super::theme::set_current(o.ui_theme);
         self.colors.load(&o.canvas_scheme, o.canvas_gradient);
         self.colors.enhanced = o.enhanced_highlight;
