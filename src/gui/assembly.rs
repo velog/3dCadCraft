@@ -157,6 +157,9 @@ pub(super) struct AsmUi {
     ),
     /// The assembly a component was opened from (browser *Return*).
     pub came_from: Option<DocumentId>,
+    /// An assembly sketch is open (spec 3.10 T0): the tools part is edited
+    /// in place for it, and the sketch's end returns to the assembly.
+    pub sketch_return: bool,
     /// The features of the part edited in place seen so far (*Features are
     /// initially adaptive*).
     pub in_place_features: Option<(DocumentId, Vec<String>)>,
@@ -2384,6 +2387,7 @@ impl CadCraftApp {
             self.asm_measure_view(&painter, rect, pointer.filter(|_| on_view), measure_click);
         }
         self.asm_sub_overlay(&painter, rect);
+        self.asm_sketch_overlay(&painter, rect);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_select_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_corner_overlay(&painter, rect, pointer.filter(|_| on_view));

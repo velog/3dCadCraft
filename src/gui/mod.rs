@@ -1528,7 +1528,29 @@ impl CadCraftApp {
                     nalgebra::distance(&lo, &hi) / 2.0,
                 )
             }
-            None => (plane.origin, 50.0),
+            // No body (an assembly sketch in the tools part): about the
+            // sketch's own points (the picked face's projected outline).
+            None => {
+                let pts: Vec<Point3> = ps
+                    .sketch
+                    .points()
+                    // The projected origin is not on the face.
+                    .filter(|(_, p)| p.position.coords.norm() > 1e-9)
+                    .map(|(_, p)| ps.sketch.to_world(&p.position))
+                    .collect();
+                match pts.split_first() {
+                    Some((first, rest)) if !rest.is_empty() => {
+                        let (lo, hi) = rest
+                            .iter()
+                            .fold((*first, *first), |(lo, hi), p| (lo.inf(p), hi.sup(p)));
+                        (
+                            nalgebra::center(&lo, &hi),
+                            (nalgebra::distance(&lo, &hi) / 2.0).max(10.0),
+                        )
+                    }
+                    _ => (plane.origin, 50.0),
+                }
+            }
         };
         self.camera.look_at(&plane, center, radius);
     }
@@ -4339,6 +4361,7 @@ impl CadCraftApp {
         match action {
             Action::Drawing(c) => self.drw_apply(c),
             Action::AsmFeatures => self.asm_features_edit(),
+            Action::AsmStartSketch => self.asm_start_sketch(),
             Action::AsmPlace | Action::AsmJoint | Action::AsmConstrain
                 if self.reps_refuse_structure() => {}
             Action::AsmPlace
@@ -8562,6 +8585,7 @@ impl eframe::App for CadCraftApp {
         self.variants_window(&ctx);
         self.part_variants_tick(ctx.input(|i| i.time));
         self.drawing_windows(&ctx);
+        self.asm_sketch_tick();
         self.doc_settings_window(&ctx);
         self.iprops_window(&ctx);
         self.new_file_window(&ctx);

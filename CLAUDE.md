@@ -1503,6 +1503,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Boss with ribs and a Fillet**: the kernel cannot carry a round through the corners where ribs meet the post and the body, so the post's
   foot is rounded before the ribs are joined; a rib crossing that torus takes the kernel ~6 s per boss (no faster way found yet). Grill: centre
   lines usually share the boundary's sketch and would cut its regions: read them through `grill::regions_of` (those curves as construction).
+- **Assembly sketches live in the tools part** (spec 3.10 T0, `gui/asm_features.rs`): Start 2D Sketch in an assembly opens the
+  Assembly Features tools part in place (`asm_open_tools`) and its plane pick; `AsmUi::sketch_return` + `asm_sketch_tick` (once a
+  frame) return to the assembly when no sketch or plane pick is open any more. A new way to end a sketch needs nothing more.
 - **Work geometry is not saved** (`PartDocument::work` is `serde(skip)`): a part of a design file opened from disk had no UCS / work
   planes until it was regenerated, so every assembly joint on them was sick and a drag moved nothing — while the solve still said
   "converged". `Project::rebuild_unmeshed_parts` rebuilds parts with work features too (`lacks_work_geometry`). An assembly whose own

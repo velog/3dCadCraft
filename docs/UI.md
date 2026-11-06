@@ -115,7 +115,7 @@ By default they are **as in Inventor**. Your own keys: **Tools → Customize →
 | letters with *Show command alias input dialog* off | multi-letter aliases gather in the status bar (`Command: SM_  (Flange)`); an alias no longer one starts with runs at once (`SMF`, `E`), one with longer ones after 0.6 s or Enter / Space (`S`); Backspace, Esc clears; red when nothing matches | 🟡 |
 | right-click a ribbon tab | **Show Tabs** (turn tabs on / off, Show All), **Minimize Ribbon** | 🟡 |
 | letters with *Show command alias input dialog* on (default) | the list opens next to the cursor with every match, other environments' commands greyed with the reason. One command left: it starts at once (E, RCT). Two letters or more that are a whole alias (RC beside RCT): it starts after 0.6 s unless you are choosing. A single letter with longer ones (R, S, C): it waits. Arrows or Tab choose, Space or Enter or a click starts, Esc closes |
-| **S** (outside a sketch) | new 2D sketch (Start 2D Sketch) | ✅ |
+| **S** (outside a sketch) | new 2D sketch (Start 2D Sketch); in an assembly a sketch of the assembly (Assemble › Sketch) | ✅ |
 | **E** (everywhere; in a sketch it first leaves the sketch) | Extrude | ✅ |
 | **R** | outside a sketch: Revolve; in a sketch: Two Point Rectangle | ✅ |
 | **H** (outside a sketch) | Hole | ✅ |

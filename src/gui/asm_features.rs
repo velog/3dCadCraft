@@ -42,6 +42,184 @@ impl CadCraftApp {
         }
     }
 
+    /// Assemble › Start 2D Sketch (spec 3.10 T0): a sketch of the assembly.
+    /// It lives in the tools part (placed at the origin: its coordinates are
+    /// the assembly's), edited in place, so every sketch tool works and a
+    /// component's face becomes a cross-part reference; Finish Sketch (or
+    /// Esc before a plane is picked) returns to the assembly.
+    pub(super) fn asm_start_sketch(&mut self) {
+        if !self.asm_open_tools("Start 2D Sketch") {
+            return;
+        }
+        self.asm.sketch_return = true;
+        self.mode = super::Mode::PickPlane(super::PickPurpose::NewSketch);
+        self.file_status = Some(Ok(
+            "Start 2D Sketch: pick a planar face of a component or an origin plane (Esc returns to the assembly)"
+                .into(),
+        ));
+    }
+
+    /// Edit Sketch of the assembly's sketch `id` (browser).
+    pub(super) fn asm_edit_sketch(&mut self, id: &str) {
+        if !self.asm_open_tools("Edit Sketch") {
+            return;
+        }
+        let Some(i) = self.part().sketches.iter().position(|s| s.id == id) else {
+            return;
+        };
+        self.asm.sketch_return = true;
+        self.edit_sketch(i);
+    }
+
+    /// The tools part (made when there is none, one Undo step) edited in
+    /// place; `false` when it cannot be.
+    fn asm_open_tools(&mut self, label: &str) -> bool {
+        if !self.is_assembly() {
+            return false;
+        }
+        let asm = self.part_id;
+        let mut trial = self.project.clone();
+        match features::ensure_tools(&mut trial, asm) {
+            Ok((occ, doc)) => {
+                if trial.documents().len() != self.project.documents().len() {
+                    self.checkpoint(label);
+                    self.project = trial;
+                }
+                self.edit_in_place(occ, Vec::new());
+                self.part_id == doc
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("{label}: {e}")));
+                false
+            }
+        }
+    }
+
+    /// Once a frame: an assembly sketch that ended (Finish Sketch, Esc while
+    /// picking its plane) returns to the assembly.
+    pub(super) fn asm_sketch_tick(&mut self) {
+        if !self.asm.sketch_return {
+            return;
+        }
+        let open = self.editing.is_some()
+            || matches!(self.mode, super::Mode::PickPlane(_))
+            || self.asm.pending_context.is_some();
+        if open {
+            return;
+        }
+        self.asm.sketch_return = false;
+        if self.in_place_now().is_some() {
+            self.return_to_assembly();
+        }
+    }
+
+    /// The assembly's sketches: the tools part's sketches without a feature
+    /// (id, name, visible).
+    pub(super) fn asm_sketches(&self) -> Vec<(String, String, bool)> {
+        let Some(p) = self.asm_tools_doc() else {
+            return Vec::new();
+        };
+        self.with_part(p, |part| {
+            part.sketches
+                .iter()
+                .filter(|s| part.consumers(&s.id).is_empty())
+                .map(|s| (s.id.clone(), s.name.clone(), s.visible))
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// The tools part of the active assembly, if it has one.
+    fn asm_tools_doc(&self) -> Option<DocRef> {
+        let a = self.assembly()?;
+        let f = a.features.as_ref()?;
+        Some(a.find(f.occurrence)?.component)
+    }
+
+    /// Draws the assembly's visible sketches in its view (the tools part
+    /// stands at the origin).
+    pub(super) fn asm_sketch_overlay(
+        &self,
+        painter: &eframe::egui::Painter,
+        rect: eframe::egui::Rect,
+    ) {
+        let Some(p) = self.asm_tools_doc() else {
+            return;
+        };
+        let style = super::overlay::SketchStyle {
+            dim_display: self.dim_display,
+            fully_color: super::theme::canvas().sketch_full,
+            fully: Vec::new(),
+            dof: None,
+            hovered_constraint: None,
+            selected_constraints: Vec::new(),
+            color: eframe::egui::Color32::from_gray(90),
+            reference: eframe::egui::Color32::from_gray(140),
+            show_labels: false,
+            selected_points: Vec::new(),
+            highlighted: None,
+            selected: Vec::new(),
+        };
+        self.with_part(p, |part| {
+            for ps in part.sketches.iter().filter(|s| s.visible) {
+                super::overlay::draw_sketch(painter, &self.camera, rect, ps, &style);
+            }
+        });
+    }
+
+    /// The assembly's sketches in the browser: double-click (or Edit Sketch)
+    /// opens one; Visibility shows or hides it in the assembly.
+    pub(super) fn asm_sketches_tree(&mut self, ui: &mut eframe::egui::Ui) {
+        let sketches = self.asm_sketches();
+        let mut edit: Option<String> = None;
+        let mut toggle: Option<String> = None;
+        for (id, name, visible) in &sketches {
+            let r = ui
+                .horizontal(|ui| {
+                    super::panels::tree_icon(ui, super::icons::Icon::Sketch);
+                    let text = if *visible {
+                        eframe::egui::RichText::new(name)
+                    } else {
+                        eframe::egui::RichText::new(name).weak()
+                    };
+                    ui.add(eframe::egui::Label::new(text).sense(eframe::egui::Sense::click()))
+                })
+                .inner;
+            if r.double_clicked() {
+                edit = Some(id.clone());
+            }
+            r.context_menu(|ui| {
+                if ui.button("Edit Sketch").clicked() {
+                    edit = Some(id.clone());
+                    ui.close();
+                }
+                let mut v = *visible;
+                if ui.checkbox(&mut v, "Visibility").clicked() {
+                    toggle = Some(id.clone());
+                    ui.close();
+                }
+            });
+        }
+        if let Some(id) = toggle
+            && let Some(DocRef {
+                document,
+                library: None,
+                ..
+            }) = self.asm_tools_doc()
+        {
+            self.checkpoint("Visibility");
+            if let Some(DocumentData::Part(p)) =
+                self.project.document_mut(document).map(|d| &mut d.data)
+                && let Some(s) = p.sketches.iter_mut().find(|s| s.id == id)
+            {
+                s.visible = !s.visible;
+            }
+        }
+        if let Some(id) = edit {
+            self.asm_edit_sketch(&id);
+        }
+    }
+
     /// After the tools part `doc` was edited: the participants of the
     /// assembly now shown follow its bodies (one Undo step).
     pub(super) fn asm_features_refresh(&mut self, doc: DocumentId) {

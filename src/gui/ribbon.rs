@@ -64,6 +64,8 @@ pub enum Action {
     /// Assemble › Assembly Features: the tools part edited in place (spec
     /// 3.10 §3.8).
     AsmFeatures,
+    /// Assemble › Start 2D Sketch: a sketch of the assembly (spec 3.10 T0).
+    AsmStartSketch,
     /// Assemble › Free Rotate.
     AsmFreeRotate,
     /// Assemble › Grounded: toggle on the selected occurrences.
@@ -788,6 +790,16 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 "Pattern",
                 vec![c("asm.pattern"), c("asm.mirror"), c("asm.copy")],
             ),
+            panel(
+                "Work Features",
+                vec![
+                    c("asm.work_plane"),
+                    c("asm.work_axis"),
+                    c("asm.work_point"),
+                    c("asm.ucs"),
+                ],
+            ),
+            panel("Sketch", vec![c("asm.start_sketch").large()]),
             panel(
                 "Productivity",
                 vec![

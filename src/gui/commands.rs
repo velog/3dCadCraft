@@ -425,6 +425,8 @@ const A_PATTERN: Place = Place::Ribbon("Assemble", "Pattern");
 const A_MOTION: Place = Place::Ribbon("Assemble", "Motion");
 const A_REPS: Place = Place::Ribbon("Manage", "Representations");
 const A_PRODUCTIVITY: Place = Place::Ribbon("Assemble", "Productivity");
+const A_WORK: Place = Place::Ribbon("Assemble", "Work Features");
+const A_SKETCH: Place = Place::Ribbon("Assemble", "Sketch");
 const A_SIMPLIFY: Place = Place::Ribbon("Assemble", "Simplification");
 const I_INTERFERENCE: Place = Place::Ribbon("Inspect", "Interference");
 const X_FASTEN: Place = Place::Ribbon("Design", "Fasten");
@@ -2229,6 +2231,34 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("Cuts made in the assembly only (holes through several components): sketch and extrude in the tools part edited in place; each body cuts the components it reaches")
         .spec("3.10-top-down.md"),
+    c("asm.start_sketch", "Start 2D Sketch", "Нова 2D скица", Icon::StartSketch)
+        .run(Action::AsmStartSketch)
+        .inv("Start 2D Sketch")
+        .alias(&["S"])
+        .at(&[A_SKETCH])
+        .env(ASSEMBLY)
+        .tip("A sketch of the assembly: pick a planar face of a component or an origin plane; Finish Sketch returns to the assembly")
+        .spec("3.10-top-down.md"),
+    c("asm.work_plane", "Plane", "Работна равнина", Icon::WorkPlane)
+        .alias(&["]"])
+        .at(&[A_WORK])
+        .env(ASSEMBLY)
+        .todo("2.10"),
+    c("asm.work_axis", "Axis", "Работна ос", Icon::WorkAxis)
+        .alias(&["/"])
+        .at(&[A_WORK])
+        .env(ASSEMBLY)
+        .todo("2.10"),
+    c("asm.work_point", "Point", "Работна точка", Icon::WorkPoint)
+        .alias(&["."])
+        .at(&[A_WORK])
+        .env(ASSEMBLY)
+        .todo("2.10"),
+    c("asm.ucs", "UCS", "Потребителска координатна система", Icon::Ucs)
+        .alias(&["UCS"])
+        .at(&[A_WORK])
+        .env(ASSEMBLY)
+        .todo("2.10"),
     ap("asm.make_layout", "Make Layout", "Създаване на оформление", Icon::MakeLayout, Ap::MakeLayout)
         .alias(&["MKL"])
         .at(&[A_PRODUCTIVITY]),
