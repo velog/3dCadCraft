@@ -1714,5 +1714,10 @@
     "Face1:Flange1.4:top",
     "Face1:base:bottom",
     "Face1:base:top"
+  ],
+  "r66/bolted_r66.3dcadcraft": [
+    "BoltHole1:End",
+    "BoltHole1:Start",
+    "BoltHole1:Wall"
   ]
 }

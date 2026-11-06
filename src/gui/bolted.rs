@@ -30,36 +30,7 @@ const LOGIC_TIP: &str = "they come with the command's logic (spec 6.2 §3.4)";
 /// Plates closer than this are one stack (mm).
 const STACK_TOL: f64 = 0.05;
 
-/// What a fastener is in the stack.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Role {
-    Bolt,
-    Washer,
-    Nut,
-}
-
-impl Role {
-    fn of(category: &str) -> Option<Role> {
-        let c = category.strip_prefix("Fasteners/")?;
-        if c.starts_with("Bolts") {
-            Some(Role::Bolt)
-        } else if c.starts_with("Washers") {
-            Some(Role::Washer)
-        } else if c.starts_with("Nuts") {
-            Some(Role::Nut)
-        } else {
-            None
-        }
-    }
-
-    fn title(self) -> &'static str {
-        match self {
-            Role::Bolt => "Bolt",
-            Role::Washer => "Washer",
-            Role::Nut => "Nut",
-        }
-    }
-}
+pub(super) use crate::assembly::bolted::Role;
 
 /// Which side of the plates a fastener sits on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +56,10 @@ pub(super) struct PlateRow {
     pub name: String,
     /// Its thickness along the axis.
     pub thickness: f64,
+    /// Its occurrence path (the top occurrence, then the path below it).
+    pub path: Vec<u32>,
+    /// Where it starts along the axis (from the start plane).
+    pub from: f64,
 }
 
 /// The panel state of Bolted Connection (`PartDialog::bolt`).
@@ -108,6 +83,8 @@ pub(super) struct BoltPanel {
     /// The inputs [`Self::axis`] was found from (it is found again only when
     /// they change: rule 20).
     pub key: String,
+    /// Edit: the connection OK replaces.
+    pub editing: Option<u32>,
 }
 
 /// Whether `d` is the Bolted Connection panel.
@@ -124,12 +101,12 @@ pub(super) fn kind(d: &PartDialog) -> BoltKind {
     }
 }
 
-fn placement(d: &PartDialog) -> Placement {
+pub(super) fn placement(d: &PartDialog) -> Placement {
     Placement::from_index(d.index(0, "Placement"))
 }
 
 /// The selector holding the termination for the type chosen.
-fn end_key(d: &PartDialog) -> &'static str {
+pub(super) fn end_key(d: &PartDialog) -> &'static str {
     if kind(d) == BoltKind::Blind {
         "blind"
     } else {
@@ -166,7 +143,7 @@ pub(super) fn row_hidden(d: &PartDialog, ti: usize, label: &str) -> bool {
 }
 
 /// The reference selectors of a placement.
-fn reference_keys(p: Placement) -> &'static [&'static str] {
+pub(super) fn reference_keys(p: Placement) -> &'static [&'static str] {
     match p {
         Placement::Linear => &["edge1", "edge2"],
         Placement::Concentric => &["circle"],
@@ -260,7 +237,7 @@ pub(super) fn start(d: &mut PartDialog) {
 }
 
 /// The nominal diameter chosen (mm), with its holes.
-fn holes(d: &PartDialog) -> Option<(String, bolted::HoleSizes)> {
+pub(super) fn holes(d: &PartDialog) -> Option<(String, bolted::HoleSizes)> {
     let thread = choice(d, "Thread")?;
     let size = choice(d, "Diameter")?;
     let h = bolted::hole_sizes(Standards::global(), &thread, &size, FastenerFit::Normal)?;
@@ -665,12 +642,12 @@ fn fit_cell(ui: &mut egui::Ui) {
 
 impl CadCraftApp {
     /// The first pick of selector `key` in assembly coordinates.
-    fn bolt_geom(&self, d: &PartDialog, key: &str) -> Option<Geom> {
+    pub(super) fn bolt_geom(&self, d: &PartDialog, key: &str) -> Option<Geom> {
         let r = d.refs.get(key)?.first()?;
         self.bolt_world(r)
     }
 
-    fn bolt_world(&self, r: &GeomRef) -> Option<Geom> {
+    pub(super) fn bolt_world(&self, r: &GeomRef) -> Option<Geom> {
         let g = self.asm_local_geom(r).ok()?;
         let a = self.assembly()?;
         Some(match a.find(r.occurrence()) {
@@ -744,7 +721,19 @@ impl CadCraftApp {
         let mut plates = Vec::new();
         let mut found_end = None;
         if let Some(Ok((a, _))) = &entry {
-            let parts = self.pick_parts();
+            // Not the fasteners of connections already made (a nut's washer
+            // would read as one more plate).
+            let fasteners: Vec<u32> = self
+                .assembly()
+                .map(|a| {
+                    a.bolts
+                        .iter()
+                        .flat_map(|b| b.fasteners.iter().map(|f| f.occurrence))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut parts = self.pick_parts();
+            parts.retain(|p| !fasteners.contains(&p.top));
             let meshes: Vec<_> = parts.iter().map(|p| self.asm_mesh(p.component)).collect();
             let list: Vec<_> = parts
                 .iter()
@@ -761,6 +750,10 @@ impl CadCraftApp {
                         .map(|l| l.split(" · ").next().unwrap_or_default().to_owned())
                         .unwrap_or_default(),
                     thickness: p.to - p.from,
+                    path: std::iter::once(part.top)
+                        .chain(part.sub.iter().copied())
+                        .collect(),
+                    from: p.from,
                 });
             }
             if !user_end && let Some((i, face, t)) = bolted::auto_end(&s, kind(d)) {
@@ -823,11 +816,23 @@ impl CadCraftApp {
         let Some(d) = self.part_planned.as_ref().filter(|d| is_bolted(d)) else {
             return false;
         };
-        let Some(active) = d.active else {
+        if d.active.is_none() {
             return false;
-        };
+        }
         let Some(g) = self.geom_under_pub(pos, rect) else {
             return true;
+        };
+        self.bolt_take(g, Some((pos, rect)))
+    }
+
+    /// A face or an edge given to the open Bolted Connection (a click at `at`,
+    /// or the selection it was started from): the smart selectors' route.
+    pub(super) fn bolt_take(&mut self, g: GeomRef, at: Option<(egui::Pos2, egui::Rect)>) -> bool {
+        let Some(d) = self.part_planned.as_ref().filter(|d| is_bolted(d)) else {
+            return false;
+        };
+        let Some(active) = d.active else {
+            return false;
         };
         let geom = self.bolt_world(&g);
         let what = match (&g, &geom) {
@@ -855,7 +860,7 @@ impl CadCraftApp {
         // the cursor when it is one of the edge's, else the one square to a
         // circle / facing the eye).
         let start = if route.keys.first() == Some(&"start*") {
-            match self.bolt_edge_face(&g, &geom, pos, rect) {
+            match self.bolt_edge_face(&g, &geom, at) {
                 Some(f) => Some(f),
                 None => {
                     self.file_status = Some(Err(
@@ -903,8 +908,7 @@ impl CadCraftApp {
         &self,
         g: &GeomRef,
         geom: &Option<Geom>,
-        pos: egui::Pos2,
-        rect: egui::Rect,
+        at: Option<(egui::Pos2, egui::Rect)>,
     ) -> Option<GeomRef> {
         let GeomRef::Edge {
             occurrence,
@@ -918,13 +922,16 @@ impl CadCraftApp {
             Some(Geom::Plane { n, .. }) => Some(n),
             _ => None,
         };
-        if let Some(f) = self.face_under_pub(pos, rect)
+        if let Some((pos, rect)) = at
+            && let Some(f) = self.face_under_pub(pos, rect)
             && matches!(&f, GeomRef::Face { name, .. } if edge.faces.contains(name))
             && plane_of(&f).is_some()
         {
             return Some(f);
         }
-        let view = self.camera.ray(pos, rect).map(|(_, d)| d);
+        let view = at
+            .and_then(|(pos, rect)| self.camera.ray(pos, rect))
+            .map(|(_, d)| d);
         edge.faces
             .iter()
             .map(|name| GeomRef::Face {

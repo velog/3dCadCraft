@@ -179,6 +179,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (2026-11-03).
 /// - 65: drawing Draft View (`ViewKind::Draft`); sheet and view sketches
 ///   (`Sheet::sketches`, `DrawingView::sketches`) (2026-11-06).
+/// - 66: Bolted Connection (`AssemblyDocument::bolts`, its holes as
+///   `BodyOp::BoltHole` in the tools part) (2026-11-06).
 /// - 67: drawing sketched symbols (`AnnotationKind::Symbol`,
 ///   `Resources::symbols`) (2026-11-08; 66 is taken by the bolted connection's
 ///   holes).

@@ -215,6 +215,9 @@ pub enum BodyOp {
     RuleFillet(super::plastic::rule_fillet::RuleFilletOp),
     /// A lip or groove along a rim (plastic parts).
     Lip(super::plastic::lip::LipOp),
+    /// A bolted connection's hole, a cylinder about any axis (format
+    /// revision 66; spec 6.2).
+    BoltHole(super::bolt_hole::BoltHoleOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -464,6 +467,7 @@ impl BodyOpFeature {
             BodyOp::Prism(_) => "Prism",
             BodyOp::Freeform(_) => "Freeform",
             BodyOp::Axial(_) => "Axial",
+            BodyOp::BoltHole(_) => "BoltHole",
             BodyOp::Emboss(_) => "Emboss",
             BodyOp::Grill(_) => "Grill",
             BodyOp::Boss(_) => "Boss",
@@ -506,6 +510,7 @@ impl BodyOpFeature {
             BodyOp::Prism(o) => o.validate(),
             BodyOp::Freeform(o) => o.validate(),
             BodyOp::Axial(o) => o.validate(),
+            BodyOp::BoltHole(o) => o.validate(),
             BodyOp::Emboss(o) => o.validate(),
             BodyOp::Grill(o) => o.validate(),
             BodyOp::Boss(o) => o.validate(),
@@ -529,6 +534,7 @@ impl BodyOpFeature {
             | BodyOp::Import(_)
             | BodyOp::Prism(_)
             | BodyOp::Axial(_)
+            | BodyOp::BoltHole(_)
             | BodyOp::Freeform(_) => true,
             BodyOp::Sculpt(s) => s.operation == super::surface_op::SculptOperation::NewSolid,
             BodyOp::DeleteFace(_)
@@ -576,6 +582,7 @@ impl BodyOpFeature {
             | BodyOp::CopyObject(_)
             | BodyOp::Import(_)
             | BodyOp::Axial(_)
+            | BodyOp::BoltHole(_)
             | BodyOp::Prism(_) => Vec::new(),
             BodyOp::MoveBodies(m) => m
                 .steps
@@ -696,6 +703,7 @@ impl BodyOpFeature {
             BodyOp::Import(o) => o.describe(),
             BodyOp::Prism(_) => "Frame member".into(),
             BodyOp::Axial(_) => "Library component".into(),
+            BodyOp::BoltHole(o) => o.describe(),
             BodyOp::Freeform(o) => o.describe(),
         }
     }

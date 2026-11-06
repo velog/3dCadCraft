@@ -26,6 +26,7 @@ pub mod appearance;
 pub mod axial;
 pub mod blend;
 pub mod body_op;
+pub mod bolt_hole;
 pub mod boolean;
 pub mod coil;
 pub mod combine;

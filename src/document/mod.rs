@@ -438,6 +438,11 @@ pub struct AssemblyDocument {
     /// its bodies cuts. Older builds ignore it (no cuts shown).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub features: Option<crate::assembly::features::AsmFeatures>,
+    /// Bolted connections (spec 6.2, format revision 66): what each one was
+    /// made from and made. Its fasteners are ordinary occurrences and its
+    /// holes assembly features, so older builds show both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bolts: Vec<crate::assembly::bolted::BoltedConnection>,
     /// View and positional representations and model states (spec 3.9). Older
     /// builds ignore them: the assembly opens as it was saved.
     #[serde(
@@ -790,6 +795,7 @@ mod tests {
             frames: Vec::new(),
             import: None,
             features: None,
+            bolts: Vec::new(),
         })
     }
 

@@ -1546,6 +1546,7 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::EditFrame
                     | super::asm_planned::AsmPlanned::FrameMemberInfo
                     | super::asm_planned::AsmPlanned::PlaceImported
+                    | super::asm_planned::AsmPlanned::BoltedConnection
             ) | Planned::Part(
                 PartPlanned::Emboss
                     | PartPlanned::Grill
@@ -3111,6 +3112,11 @@ impl CadCraftApp {
                 | super::asm_planned::AsmPlanned::Notch),
             ) => {
                 if self.treatment_ok(k, &d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::BoltedConnection) => {
+                if self.bolted_ok(&d) {
                     self.part_planned = None;
                 }
             }

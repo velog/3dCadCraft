@@ -2941,6 +2941,13 @@ impl CadCraftApp {
             self.apply(Action::App(super::commands::AppCmd::Measure));
             ui.close();
         }
+        if let [id] = ids
+            && let Some(b) = self.bolt_of(*id)
+            && ui.button("Edit Bolted Connection...").clicked()
+        {
+            self.bolt_edit(b);
+            ui.close();
+        }
         if self.change_size_offered(ids) && ui.button("Change Size...").clicked() {
             self.change_size_start(ids);
             ui.close();

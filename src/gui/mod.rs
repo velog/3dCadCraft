@@ -36,6 +36,7 @@ mod asm_select_modes;
 mod assembly;
 mod blend;
 mod bolted;
+mod bolted_ok;
 mod bom;
 mod breadcrumb;
 mod browser_edit;
@@ -1905,6 +1906,11 @@ impl CadCraftApp {
                 crate::part::BodyOp::Axial(_) => {
                     self.file_status = Some(Err(
                         "Edit Feature: a library component's size comes from its table".into(),
+                    ));
+                }
+                crate::part::BodyOp::BoltHole(_) => {
+                    self.file_status = Some(Err(
+                        "Edit Feature: a bolt hole follows its Bolted Connection (edit the connection)".into(),
                     ));
                 }
                 _ => self.surface_op_edit(k),

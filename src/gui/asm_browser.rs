@@ -227,6 +227,7 @@ impl CadCraftApp {
                 self.asm_sketches_tree(ui);
                 self.asm_works_tree(ui);
                 self.asm_features_tree(ui);
+                self.bolts_tree(ui);
             }
             if !opts.hide_work && query.is_empty() {
                 self.origin_folder(ui, ASSEMBLY, &mut cmds);

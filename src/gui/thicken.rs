@@ -611,6 +611,7 @@ impl CadCraftApp {
             BodyOp::Import(_) => Icon::Import,
             BodyOp::Prism(_) => Icon::InsertFrame,
             BodyOp::Axial(_) => Icon::Revolve,
+            BodyOp::BoltHole(_) => Icon::Hole,
             BodyOp::Freeform(_) => Icon::FfPlane,
         };
         self.panel_header(ui, icon, f.name());
@@ -619,7 +620,7 @@ impl CadCraftApp {
         }
         ui.label(b.describe());
         // A library fastener's shape comes from its table: nothing to edit here.
-        let editable = !matches!(b.op, BodyOp::Axial(_));
+        let editable = !matches!(b.op, BodyOp::Axial(_) | BodyOp::BoltHole(_));
         if ui
             .add_enabled(editable, egui::Button::new("Edit Feature"))
             .on_disabled_hover_text("A library component's size comes from its table")

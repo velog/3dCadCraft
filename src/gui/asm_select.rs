@@ -728,6 +728,17 @@ impl CadCraftApp {
             }
             ui.separator();
         }
+        // Rule 17: a face or an edge starts Bolted Connection with it (a
+        // hole's rim gives the start plane and the centre at once).
+        if let [AsmSub::Geom(g)] = self.asm.sub.as_slice()
+            && ui.button("Bolted Connection...").clicked()
+        {
+            let g = g.clone();
+            self.asm.sub.clear();
+            self.start_asm_planned(super::asm_planned::AsmPlanned::BoltedConnection);
+            self.bolt_take(g, None);
+            ui.close();
+        }
         let targets = self.asm_look_targets();
         if !targets.is_empty() {
             let doc = self

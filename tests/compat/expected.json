@@ -483,5 +483,12 @@
     "exact": true
   },
   "r65/drawing_r65.3dcadcraft": {"volume": 31458.046097366463, "faces": 54, "features": 3, "sketches": 1, "exact": true},
-  "r67/drawing_r67.3dcadcraft": {"volume": 31458.046097366463, "faces": 54, "features": 3, "sketches": 1, "exact": true}
+  "r67/drawing_r67.3dcadcraft": {"volume": 31458.046097366463, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r66/bolted_r66.3dcadcraft": {
+    "volume": 1397.3178242136137,
+    "faces": 3,
+    "features": 1,
+    "sketches": 0,
+    "exact": true
+  }
 }

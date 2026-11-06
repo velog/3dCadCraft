@@ -5428,3 +5428,103 @@ fn library_full_details_within_budget() {
     eprintln!("slowest Full member: {:.0} ms, {}", worst.0, worst.1);
     assert!(worst.0 < 500.0, "{}: {:.0} ms > 500 ms", worst.1, worst.0);
 }
+
+/// Bolted Connection (spec 6.2): finding the plates along the axis runs when
+/// the panel's inputs change (within a frame), OK's holes in the tools part and
+/// the cut of a plate stay within a command's 200 ms (rule 20).
+#[test]
+fn bolted_connection_within_budget() {
+    use cadcraft3d::assembly::PickMesh;
+    use cadcraft3d::assembly::bolted::{self, Axis, BoltKind, BoltedConnection, Making, Placement};
+    use cadcraft3d::assembly::features;
+    use cadcraft3d::assembly::relation::GeomRef;
+    use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData, Project};
+    use cadcraft3d::kernel::{Point3, Transform3, Vector3};
+    use cadcraft3d::part::hole::FastenerFit;
+    use cadcraft3d::part::standards::{ISO_METRIC, Standards};
+    let plate = PartDocument::with_box("Box1", [120.0, 80.0, 10.0]).unwrap();
+    let mesh = PickMesh::of(&plate);
+    let axis = Axis {
+        at: Point3::new(60.0, 40.0, 20.0),
+        dir: -Vector3::z(),
+        length: 0.0,
+    };
+    let parts = [
+        (mesh.triangles(), Transform3::identity()),
+        (mesh.triangles(), Transform3::translation(0.0, 0.0, 10.0)),
+    ];
+    let along = median_ms(5, || {
+        std::hint::black_box(bolted::stack_along(&parts, &axis, 6.25, 0.05));
+    });
+    let mut project = Project::new("Perf");
+    let doc = project.add_document("Plate", DocumentData::Part(plate));
+    let mut a = AssemblyDocument::default();
+    let lower = a.place(DocRef::local(doc), "Plate", Transform3::identity(), true);
+    let upper = a.place(
+        DocRef::local(doc),
+        "Plate",
+        Transform3::translation(0.0, 0.0, 10.0),
+        true,
+    );
+    let asm = project.add_document("Top", DocumentData::Assembly(a));
+    let h = bolted::hole_sizes(Standards::global(), ISO_METRIC, "M8", FastenerFit::Normal).unwrap();
+    let axis = Axis {
+        length: 20.0,
+        ..axis
+    };
+    let face = |occurrence: u32, name: &str| GeomRef::Face {
+        occurrence,
+        sub: Vec::new(),
+        name: name.into(),
+        hint: [60.0, 40.0, 0.0],
+    };
+    let m = Making {
+        axis,
+        holes: bolted::hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
+        clearance: vec![vec![upper], vec![lower]],
+        tapped: Vec::new(),
+        start_plane: (Point3::new(0.0, 0.0, 20.0), Vector3::z()),
+        end_plane: (Point3::origin(), -Vector3::z()),
+        fasteners: Vec::new(),
+        record: BoltedConnection {
+            id: 0,
+            name: String::new(),
+            kind: BoltKind::ThroughAll,
+            placement: Placement::OnPoint,
+            start: face(upper, "Box1:Top"),
+            references: Vec::new(),
+            distances: [0.0; 2],
+            end: face(lower, "Box1:Bottom"),
+            end_auto: true,
+            thread: ISO_METRIC.into(),
+            size: "M8".into(),
+            fasteners: Vec::new(),
+            holes: Vec::new(),
+        },
+    };
+    let t = std::time::Instant::now();
+    let mut done = project.clone();
+    bolted::make(&mut done, asm, m).unwrap();
+    let ok = t.elapsed().as_secs_f64() * 1000.0;
+    let Some(DocumentData::Assembly(a)) = done.document(asm).map(|d| &d.data) else {
+        panic!("no assembly")
+    };
+    let f = a.features.clone().unwrap();
+    let tools_doc = a.find(f.occurrence).unwrap().component.document;
+    let (Some(DocumentData::Part(tools)), Some(DocumentData::Part(plate))) = (
+        done.document(tools_doc).map(|d| &d.data),
+        done.document(doc).map(|d| &d.data),
+    ) else {
+        panic!("no parts")
+    };
+    let tools = features::tools_for(a, tools, &[lower]);
+    let cut = median_ms(3, || {
+        std::hint::black_box(features::cut(plate, &Transform3::identity(), &tools).unwrap());
+    });
+    println!(
+        "Bolted Connection: plates along the axis {along:.2} ms, OK {ok:.1} ms, cut {cut:.1} ms"
+    );
+    assert!(along < 16.0, "plates along the axis {along:.2} ms > 16 ms");
+    assert!(ok < 200.0, "OK {ok:.1} ms > 200 ms");
+    assert!(cut < 200.0, "cut of a plate {cut:.1} ms > 200 ms");
+}

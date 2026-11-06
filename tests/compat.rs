@@ -3340,6 +3340,157 @@ fn notch_r49_reads() {
     assert!((v - 200.0 * 370.0).abs() < 1e-3 * 200.0 * 370.0, "{v}");
 }
 
+/// Revision 66: a bolted connection (`AssemblyDocument::bolts`) and its hole
+/// (`BodyOp::BoltHole` in the assembly's tools part, the first part of the
+/// file so the volume check reads it): an M8 x 35 hex bolt, two washers and
+/// a nut through two 10 mm plates.
+fn bolted_r66() -> Project {
+    use cadcraft3d::assembly::bolted::{
+        self, Axis, BoltFastener, BoltKind, BoltedConnection, Making, Placement, Placing, Role,
+    };
+    use cadcraft3d::assembly::features::AsmFeatures;
+    use cadcraft3d::assembly::relation::GeomRef;
+    use cadcraft3d::document::{AssemblyDocument, DocRef};
+    use cadcraft3d::kernel::{Transform3, Vector3};
+    use cadcraft3d::part::hole::FastenerFit;
+    use cadcraft3d::part::standards::{ISO_METRIC, Standards};
+    let mut p = Project::new("BoltedR66");
+    let tools = p.add_document("Top Features", DocumentData::Part(PartDocument::default()));
+    let plate = p.add_document(
+        "Plate",
+        DocumentData::Part(PartDocument::with_box("Box1", [120.0, 80.0, 10.0]).unwrap()),
+    );
+    let member = |p: &mut Project, family: &str, size: &str| {
+        let s = cadcraft3d::components::samples::all()
+            .into_iter()
+            .find(|s| s.family == family && s.size == size)
+            .unwrap();
+        DocRef::local(p.add_document(&s.size, DocumentData::Part(s.part().unwrap())))
+    };
+    let bolt = member(&mut p, "ISO 4017", "M8 x 35");
+    let washer = member(&mut p, "ISO 7089", "8");
+    let nut = member(&mut p, "ISO 4032", "M8");
+    let mut a = AssemblyDocument::default();
+    let t = a.place(
+        DocRef::local(tools),
+        "Assembly Features",
+        Transform3::identity(),
+        true,
+    );
+    if let Some(o) = a.find_mut(t) {
+        o.visible = false;
+    }
+    a.features = Some(AsmFeatures {
+        occurrence: t,
+        participants: Default::default(),
+    });
+    let lower = a.place(DocRef::local(plate), "Plate", Transform3::identity(), true);
+    let upper = a.place(
+        DocRef::local(plate),
+        "Plate",
+        Transform3::translation(0.0, 0.0, 10.0),
+        true,
+    );
+    let asm = p.add_document("Top", DocumentData::Assembly(a));
+    let h = bolted::hole_sizes(Standards::global(), ISO_METRIC, "M8", FastenerFit::Normal).unwrap();
+    let lay = bolted::layout(
+        BoltKind::ThroughAll,
+        20.0,
+        0.0,
+        8.0,
+        &[0.0, 1.6],
+        0.0,
+        &[1.6, 6.8],
+    );
+    let axis = Axis {
+        at: Point3::new(60.0, 40.0, 20.0),
+        dir: -Vector3::z(),
+        length: 20.0,
+    };
+    let face = |occurrence: u32, name: &str, z: Real| GeomRef::Face {
+        occurrence,
+        sub: Vec::new(),
+        name: name.into(),
+        hint: [60.0, 40.0, z],
+    };
+    let parts = [
+        (bolt, "ISO 4017 M8 x 35", Role::Bolt, false, lay.head[0]),
+        (washer, "ISO 7089 8", Role::Washer, false, lay.head[1]),
+        (washer, "ISO 7089 8", Role::Washer, true, lay.nut[0]),
+        (nut, "ISO 4032 M8", Role::Nut, true, lay.nut[1]),
+    ];
+    let m = Making {
+        axis,
+        holes: bolted::hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
+        clearance: vec![vec![upper], vec![lower]],
+        tapped: Vec::new(),
+        start_plane: (Point3::new(0.0, 0.0, 20.0), Vector3::z()),
+        end_plane: (Point3::new(0.0, 0.0, 0.0), -Vector3::z()),
+        fasteners: parts
+            .iter()
+            .map(|(c, name, _, nut_side, offset)| Placing {
+                component: *c,
+                name: (*name).into(),
+                nut_side: *nut_side,
+                offset: *offset,
+            })
+            .collect(),
+        record: BoltedConnection {
+            id: 0,
+            name: String::new(),
+            kind: BoltKind::ThroughAll,
+            placement: Placement::Concentric,
+            start: face(upper, "Box1:Top", 10.0),
+            references: Vec::new(),
+            distances: [10.0, 10.0],
+            end: face(lower, "Box1:Bottom", 0.0),
+            end_auto: true,
+            thread: ISO_METRIC.into(),
+            size: "M8".into(),
+            fasteners: parts
+                .iter()
+                .map(|(_, name, role, nut_side, _)| BoltFastener {
+                    occurrence: 0,
+                    nut_side: *nut_side,
+                    role: *role,
+                    family: name.rsplit_once(' ').map_or(*name, |x| x.0).to_owned(),
+                    standard: "ISO".into(),
+                })
+                .collect(),
+            holes: Vec::new(),
+        },
+    };
+    bolted::make(&mut p, asm, m).unwrap();
+    p
+}
+
+/// The revision 66 bolted connection reads back: its record, its four
+/// fasteners with their relationships and the hole's participants.
+#[test]
+fn bolted_r66_reads() {
+    let f = root().join("r66/bolted_r66.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let a = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Assembly(a) => Some(a.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(a.bolts.len(), 1);
+    let b = &a.bolts[0];
+    assert_eq!(b.size, "M8");
+    assert_eq!(b.fasteners.len(), 4);
+    assert!(b.fasteners.iter().all(|f| a.find(f.occurrence).is_some()));
+    assert_eq!(a.constraints.len(), 8);
+    let parts = &a.features.as_ref().unwrap().participants[&b.holes[0]];
+    assert_eq!(parts.len(), 2);
+}
+
 /// The revision 39 drawing reads back with its offset section's line.
 #[test]
 fn drawing_r39_reads() {
@@ -3871,6 +4022,11 @@ fn old_files_still_open() {
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
             project.save(&f).unwrap();
+        }
+        let f = root().join("r66/bolted_r66.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            bolted_r66().save(&f).unwrap();
         }
         let f = root().join("r64/plastic_r64.3dcadcraft");
         if !f.exists() {

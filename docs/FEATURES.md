@@ -1245,7 +1245,7 @@ Insert Frame on straight model edges (orientation, member parts, the members fol
 
 Generators that **calculate** and **model** standard machine elements:
 
-- **Bolted connections:** choosing the bolt, washers, nuts and holes in several parts at once, with a strength check. **Specification:** [spec/6.2-bolted-connection.md](spec/6.2-bolted-connection.md). Interface done 2026-11-06 (panel, preview, stack; logic next).
+- **Bolted connections:** choosing the bolt, washers, nuts and holes in several parts at once, with a strength check. **Specification:** [spec/6.2-bolted-connection.md](spec/6.2-bolted-connection.md). Interface and logic of the Design tab 2026-11-06: holes as assembly features through the plates, bolt / washers / nut from the Component Library with relationships, the shortest bolt that fits, Blind into a tapped hole, a browser node with Edit / Delete, format revision 66 (waiting for a visual check). Open: Follow Pattern, several points, length grip, countersunk seat, Calculation.
 - **Shafts:** segments, chamfers, grooves, keyways, bearing seats; bending, torsion, deflection.
 - **Gears:** spur (straight/helical), bevel, worm; geometry per ISO/DIN, strength check.
 - **Bearings:** selection by load and life (L10).

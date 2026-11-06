@@ -7285,6 +7285,7 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
                 crate::part::BodyOp::Lip(_) => Icon::Lip,
                 crate::part::BodyOp::Prism(_) => Icon::InsertFrame,
                 crate::part::BodyOp::Axial(_) => Icon::Revolve,
+                crate::part::BodyOp::BoltHole(_) => Icon::Hole,
                 crate::part::BodyOp::Freeform(_) => Icon::FfPlane,
             },
             f.describe(),

@@ -1327,6 +1327,10 @@ pub(super) fn body_op(
             .map_err(User)?;
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
         }
+        super::BodyOp::BoltHole(o) => {
+            let made = o.build(&f.id).map_err(Kernel)?;
+            Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
+        }
         super::BodyOp::Axial(o) => {
             let made = if o.runs.is_empty() && o.tee.is_none() && o.bend.is_none() {
                 None
