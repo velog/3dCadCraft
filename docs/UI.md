@@ -167,7 +167,7 @@ finds every command by its alias too):
   UIB / UIP / UIR / UIS / UIV / UIT Browser / Properties / Ribbon / Status Bar / ViewCube / Axis Triad,
   UIL Reset UI Layout, UIM Minimize Ribbon.
 - Assembly: FIX Grounded, UPD Update, BOM Bill of Materials.
-- File / Help: NDW New Drawing, NAS New Assembly, SVF Save as Folder, STL / STP / SGL Export STL / STEP /
+- File / Help: NDW New Drawing, NAS New Assembly, SVF Save as Folder, FXF Export Face As, STL / STP / SGL Export STL / STEP /
   GLB, SDG Save Diagnostics, SLG Open Logs Folder.
 
 E and H (3D Model) and L, D, O, X (sketch) have no longer alias starting with them, so they start at
@@ -206,6 +206,7 @@ Works for Line, Center Point Circle, Two Point / Two Point Center Rectangle, Poi
 | Extrude/Revolve: dragging from empty space | picking profiles with a rectangle |
 | **Rebuild** (the top bar) / Tools → Update → Rebuild All | all features again, without the cache |
 | File → **Export** → STL / STEP / GLB | file dialog with the suggested name `<name>.stl` / `.step` / `.glb` |
+| **Export Face As...** (right-click menu of selected planar faces, File menu, `FXF`) | the faces' outline as `.dxf` or `.svg` (by the extension typed), suggested name `<name>-face.dxf` |
 | Fillet/Chamfer: **Select** Edge / Loop / Feature / Solid | Loop and Feature: click on a face; Solid: All Edges / All Fillets / All Rounds |
 | Fillet: Type Constant / Variable / Chord / Full Round; **Add set** | edge sets with different radii; Full Round: click on the middle face |
 | Line: cursor on a circle/arc near the tangent point | tangent snap ("tangent" glyph): end on the curve + Tangent |

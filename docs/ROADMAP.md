@@ -225,7 +225,7 @@ Implemented and covered by tests; **waiting for a visual check** in the applicat
 | Feature browser: editing, suppression, End of Part | 2.16 |
 | Persistent naming v1 (names for the faces of Extrude/Revolve, derived from the IDs of the sketch elements) | 0.8 |
 | Measurement, mass and centre of gravity (Physical Properties 🟡, Measure ⬜) | 0.10 |
-| STL and STEP export (export only) | 7.7 |
+| STL and STEP export (export only); Export Face As to DXF / SVG (2026-11-06: one or several parallel planar faces, exact arcs) | 7.7 |
 
 **Acceptance criteria:**
 - A bracket (an L-shaped plate with 4 M8 holes, chamfers and fillets) is modeled parametrically.

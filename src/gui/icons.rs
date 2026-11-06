@@ -254,6 +254,8 @@ pub enum Icon {
     SmUnfold,
     SmRefold,
     SmExportFlat,
+    /// Export Face As: a face seen in 3D, out to a flat drawing.
+    ExportFace,
     Drawing,
     // drawings
     BaseView,
@@ -2267,6 +2269,17 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.dashed((2.0, 7.0), (8.0, 7.0), acc);
             p.line(&[(9.0, 3.5), (14.0, 3.5)], hot);
             p.head((15.0, 3.5), (1.0, 0.0), hot);
+        }
+        ExportFace => {
+            // The face on a block, its hole, and the flat sheet it becomes.
+            p.closed(&[(1.5, 11.0), (5.5, 8.5), (10.0, 11.0), (6.0, 13.5)], acc);
+            p.circle(5.8, 11.0, 1.0, acc);
+            p.line(&[(1.5, 11.0), (1.5, 14.0), (6.0, 16.0), (6.0, 13.5)], ink);
+            p.line(&[(6.0, 16.0), (10.0, 13.5), (10.0, 11.0)], ink);
+            p.rect(9.0, 1.5, 15.0, 7.0, ink);
+            p.circle(12.0, 4.2, 1.0, ink);
+            p.line(&[(6.0, 8.0), (7.5, 5.5)], hot);
+            p.head((8.3, 4.2), (0.5, -0.9), hot);
         }
         Drawing => {
             p.rect(2.0, 2.0, 14.0, 14.0, ink);

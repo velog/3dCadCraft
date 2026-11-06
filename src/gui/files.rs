@@ -35,6 +35,8 @@ pub(super) enum DialogPurpose {
     ExportBom,
     /// Sheet Metal → Export Flat Pattern (DXF).
     ExportDxf,
+    /// Export Face As (DXF or SVG by the extension).
+    ExportFace,
     /// Drawing → File › Export › PDF.
     ExportPdf,
     /// Drawing → Annotate › Table: the CSV file of a general table.
@@ -100,6 +102,7 @@ impl DialogPurpose {
             DialogPurpose::ImportParams => "Import Parameters".into(),
             DialogPurpose::ExportBom => "Export Bill of Materials".into(),
             DialogPurpose::ExportDxf => "Export Flat Pattern".into(),
+            DialogPurpose::ExportFace => "Export Face As".into(),
             DialogPurpose::ExportPdf => "Export PDF".into(),
             DialogPurpose::TableSource => "Table Source".into(),
             DialogPurpose::LinkFile => "Link File".into(),
@@ -132,6 +135,7 @@ impl DialogPurpose {
             | DialogPurpose::ExportBom
             | DialogPurpose::TableSource => &["csv"],
             DialogPurpose::ExportDxf => &["dxf"],
+            DialogPurpose::ExportFace => &["dxf", "svg"],
             DialogPurpose::ExportPdf => &["pdf"],
         }
     }
@@ -156,6 +160,7 @@ impl DialogPurpose {
             | DialogPurpose::ExportBom
             | DialogPurpose::TableSource => "CSV",
             DialogPurpose::ExportDxf => "DXF",
+            DialogPurpose::ExportFace => "DXF or SVG",
             DialogPurpose::ExportPdf => "PDF",
         };
         let pats: Vec<String> = self.extensions().iter().map(|e| format!("*.{e}")).collect();
@@ -930,6 +935,7 @@ impl CadCraftApp {
             DialogPurpose::ExportParams => format!("{stem}-parameters.csv"),
             DialogPurpose::ExportBom => format!("{stem}-bom.csv"),
             DialogPurpose::ExportDxf => format!("{stem}-flat.dxf"),
+            DialogPurpose::ExportFace => format!("{stem}-face.dxf"),
             DialogPurpose::ExportPdf => format!("{stem}.pdf"),
             DialogPurpose::ImportParams
             | DialogPurpose::ImportOptions
@@ -1439,6 +1445,7 @@ impl CadCraftApp {
                         .map_err(|e| format!("Export Flat Pattern: {e}")),
                 );
             }
+            DialogPurpose::ExportFace => self.export_face_to(&path),
             DialogPurpose::ExportBom => {
                 let text = self.bom_export.take().unwrap_or_default();
                 self.file_status = Some(

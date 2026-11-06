@@ -146,6 +146,8 @@ pub enum AppCmd {
     SaveAsFolder,
     /// File → Export in a format.
     Export(ExportFormat),
+    /// Export Face As: the selected planar faces as DXF / SVG.
+    ExportFace,
     /// Help (F1): the spec of what the user is doing.
     Help,
     /// Help → Save Diagnostics.
@@ -2813,6 +2815,13 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::App(AppCmd::Export(ExportFormat::Glb)))
         .at(&[FILE])
         .tip("Binary glTF for viewers and the web")
+        .spec("7.7-export.md"),
+    c("file.export_face", "Export Face As", "Износ на лице (DXF / SVG)", Icon::ExportFace)
+        .alias(&["FXF"])
+        .run(Action::App(AppCmd::ExportFace))
+        .at(&[FILE])
+        .env(PART)
+        .tip("The selected planar faces (Shift / Ctrl + click adds) as a 2D DXF or SVG drawing: outlines and holes, arcs exact")
         .spec("7.7-export.md"),
     c("file.print", "Print", "Печат", Icon::Part)
         .key("Ctrl+P")

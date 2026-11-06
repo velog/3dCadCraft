@@ -55,6 +55,8 @@ pub(super) enum Entry {
     EditSketch,
     EditFeature,
     LookAt,
+    /// Export Face As: the selected planar faces as DXF / SVG.
+    ExportFace,
     /// Visibility of the selected bodies (of the bodies of selected faces); Alt+V.
     Visibility,
     Planned(Pp),
@@ -85,6 +87,7 @@ impl Entry {
             Entry::EditSketch => "Edit Sketch",
             Entry::EditFeature => "Edit Feature",
             Entry::LookAt => "Look At",
+            Entry::ExportFace => "Export Face As...",
             Entry::Visibility => "Visibility (Alt+V)",
             Entry::Planned(p) => p.title(),
             Entry::Separator => "",
@@ -189,6 +192,11 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
         v.push(E::Separator);
         v.extend_from_slice(edits);
     }
+    // Planar faces, one or many, go out as a 2D drawing.
+    if kind == SelKind::PlanarFace {
+        v.push(E::Separator);
+        v.push(E::ExportFace);
+    }
     // Bodies, surfaces and faces can be hidden (Inventor: Visibility, Alt+V).
     if matches!(
         kind,
@@ -213,6 +221,7 @@ fn entry_icon(e: Entry) -> Option<super::icons::Icon> {
     }
     let label = e.label();
     let head = label.split(" (").next().unwrap_or(label);
+    let head = head.trim_end_matches("...");
     super::commands::COMMANDS
         .iter()
         .find(|c| c.name == head)
@@ -450,6 +459,7 @@ impl CadCraftApp {
                 }
             }
             E::Hole => self.apply(Action::Hole),
+            E::ExportFace => self.export_face_start(),
             E::Shell => self.apply(Action::Shell),
             E::FaceDraft => {
                 self.apply(Action::Draft);
@@ -578,6 +588,58 @@ impl CadCraftApp {
             SelItem::Feature(id) => Some(WpInput::Plane(PlaneRef::Work(id.clone()))),
             _ => None,
         }
+    }
+}
+
+impl CadCraftApp {
+    /// Export Face As: the selected faces' outline, then the file dialog
+    /// (DXF or SVG by the extension typed).
+    pub(super) fn export_face_start(&mut self) {
+        let faces: Vec<String> = self
+            .sel
+            .iter()
+            .filter_map(|x| match x {
+                SelItem::Face(n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        if faces.is_empty() {
+            self.file_status = Some(Err(
+                "Export Face As: select one or more planar faces first (Shift or Ctrl + click adds)"
+                    .into(),
+            ));
+            return;
+        }
+        match crate::part::face_export::outline(&self.part().body, &faces) {
+            Ok(o) => {
+                self.face_export = Some(o);
+                self.open_dialog(super::files::DialogPurpose::ExportFace);
+            }
+            Err(e) => self.file_status = Some(Err(format!("Export Face As: {e}"))),
+        }
+    }
+
+    /// Writes the waiting outline to `path` (atomic).
+    pub(super) fn export_face_to(&mut self, path: &std::path::Path) {
+        use crate::part::face_export::{self, FaceFormat};
+        let Some(o) = self.face_export.take() else {
+            return;
+        };
+        let format = FaceFormat::of_path(path).unwrap_or(FaceFormat::Dxf);
+        let text = face_export::text(&o, format);
+        self.file_status = Some(
+            crate::diagnostics::write_atomic(path, text.as_bytes())
+                .map(|()| {
+                    format!(
+                        "Face exported to {} ({:.1} x {:.1} mm)",
+                        path.display(),
+                        o.size[0],
+                        o.size[1]
+                    )
+                })
+                .map_err(|e| format!("Export Face As: {e}")),
+        );
+        log::info!("Export Face As: {}", path.display());
     }
 }
 

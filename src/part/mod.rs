@@ -40,6 +40,7 @@ mod exact;
 pub mod export;
 pub mod expr;
 pub mod extrude;
+pub mod face_export;
 pub mod family;
 pub mod frame;
 pub mod freeform;

@@ -1434,6 +1434,33 @@ fn speed_budgets() {
         ));
     }
 
+    // Export Face As of the filleted hollow box's planar faces (on the
+    // main thread at the menu click: within a pick's budget, rule 20).
+    {
+        let planar: Vec<String> = filleted
+            .body
+            .faces()
+            .filter(|(id, _)| {
+                filleted
+                    .body
+                    .face_plane(*id)
+                    .is_some_and(|p| p.normal.z.abs() > 1.0 - 1e-9)
+            })
+            .filter_map(|(_, f)| f.name.clone())
+            .collect();
+        assert!(!planar.is_empty());
+        rows.push((
+            "Export Face As (DXF + SVG) of the filleted hollow box's flat faces",
+            50.0,
+            median_ms(3, || {
+                use cadcraft3d::part::face_export::{self, FaceFormat};
+                let o = face_export::outline(&filleted.body, &planar).unwrap();
+                assert!(face_export::text(&o, FaceFormat::Dxf).len() > 100);
+                assert!(face_export::text(&o, FaceFormat::Svg).len() > 100);
+            }),
+        ));
+    }
+
     // Materials: Physical Properties (mass, COG, inertia) and the face
     // appearances the viewport and the exports resolve.
     {

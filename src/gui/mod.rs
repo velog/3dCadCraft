@@ -752,6 +752,8 @@ struct CadCraftApp {
     /// The Sheet Metal environment (`sheet_metal.rs`).
     sm: sheet_metal::SheetUi,
     bom_export: Option<String>,
+    /// Export Face As: the outline waiting for the file dialog's path.
+    face_export: Option<crate::part::face_export::FaceOutline>,
 
     tab: Tab,
     /// The ribbon tab before Edit Sketch (Finish Sketch returns to it).
@@ -1124,6 +1126,7 @@ impl CadCraftApp {
             docs: documents::DocsUi::default(),
             sm: Default::default(),
             bom_export: None,
+            face_export: None,
             tab: Tab::Model,
             tab_before_sketch: Tab::Model,
             mouse: MousePreset::Inventor,
@@ -4476,6 +4479,7 @@ impl CadCraftApp {
             AppCmd::SaveAs => self.open_dialog(files::DialogPurpose::SaveAs),
             AppCmd::SaveAsFolder => self.open_dialog(files::DialogPurpose::SaveFolder),
             AppCmd::Export(f) => self.open_dialog(files::DialogPurpose::Export(f)),
+            AppCmd::ExportFace => self.export_face_start(),
             AppCmd::Help => self.open_help(),
             AppCmd::SaveDiagnostics => self.open_dialog(files::DialogPurpose::Diagnostics),
             AppCmd::OpenLogsFolder => self.open_logs_folder(),
