@@ -568,7 +568,10 @@ true volume. Open:
   of moved planes, `plane_cavity`; the box lid of `project_box_lip` is still refused), a Parallel sweep whose path ends along the section's
   plane (SMLib's check), lofts through stations, Thicken of a symmetric closed egg, of a swept tube and
   of lofted surfaces, an inclined hole's exit on a side wall, tangent and guided patches.
-- **Speed:** `perf` over 15 minutes (`speed_budgets`), `perf_drawing` over 15 minutes; a variable radius
+- **Speed:** solidcore is patched to our fork (`vendor/README.md`): a plate with 1024 holes went from
+  119 s to 32 s (the check 92 s → 6 s), then 27 s → 21 s (deleting the faces a Boolean discards is
+  no longer quadratic); each pair measured at the same time, the machine's speed varied between them. Next in the Boolean: the imprint and `intersect_topology`, then `bounds`. Still open:
+  `perf` over 15 minutes (`speed_budgets`: 5041 holes never ends), `perf_drawing` over 15 minutes; a variable radius
   fillet on a box edge is right but takes 164 s; library parts near their budgets (DN600 285-621 ms
   against 150 ms); `matrix`'s 36 hole cases 6-7 s against 5 s.
 

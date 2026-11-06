@@ -111,3 +111,8 @@ codegen-units = 1
 solidcraft-doc = { path = "vendor/solidcraft-doc" }
 solidcraft-kernel = { path = "vendor/solidcraft-kernel" }
 solidcraft-smlib = { path = "vendor/solidcraft-smlib" }
+
+# solidcore 31eea8e's main plus our speed fixes (branch perf/check-linear of our fork;
+# vendor/README.md lists them). Drop it when upstream has them.
+[patch."https://github.com/tangency-labs/solidcore"]
+solidcore = { git = "https://github.com/velog/solidcore", rev = "3bb2ae777d4be54702d7c6275f33bdb03079a2d6" }
