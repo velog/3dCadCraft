@@ -484,11 +484,11 @@ impl CadCraftApp {
             })
             .unwrap_or(1);
         let name = format!("Drawing{n}");
-        let id = self
-            .project
-            .add_document(&name, DocumentData::Drawing(DrawingDocument::default()));
+        // The standard drawing template (spec 0.6c §3.3: New in this file).
+        let n = self.standard_new_document(crate::document::DocumentKind::Drawing);
+        let id = self.project.add_document(&name, n.data);
         if let Some(d) = self.project.document_mut(id) {
-            d.properties = crate::document::iprops::IProperties::new_document();
+            d.properties = n.properties;
         }
         self.activate_document(id);
         self.file_status = Some(Ok(format!(

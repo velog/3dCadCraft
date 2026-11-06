@@ -114,7 +114,13 @@ impl CadCraftApp {
     /// The active document is an untouched empty "Untitled": New / Open
     /// replace it instead of adding a tab.
     pub(super) fn active_is_blank(&mut self) -> bool {
-        self.file_path.trim().is_empty()
+        // A new drawing or assembly is no blank: Home hid its tab and the next
+        // New replaced it.
+        let part = self
+            .project
+            .document(self.part_id)
+            .is_none_or(|d| matches!(d.data, crate::document::DocumentData::Part(_)));
+        part && self.file_path.trim().is_empty()
             && !self.is_dirty(f64::INFINITY, true)
             && self.part().features.is_empty()
             && self.part().sketches.is_empty()

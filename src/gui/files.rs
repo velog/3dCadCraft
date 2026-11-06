@@ -49,6 +49,12 @@ pub(super) enum DialogPurpose {
     Extract(crate::document::DocumentId, crate::document::DocumentKind),
     /// 3D Model › Import: the STEP file (spec 7.7a).
     ImportCad,
+    /// Home / Projects editor › Browse...: a design project (`.ccproj`).
+    OpenProject,
+    /// New Project: where `<name>.ccproj` goes (spec 0.6a §3.2).
+    NewProject,
+    /// File › Save Copy As Template (spec 0.6c §3.4): a file of the kind.
+    SaveTemplate(crate::document::DocumentKind),
 }
 
 /// The files that hold documents (Open, Link File, Insert Document).
@@ -109,6 +115,9 @@ impl DialogPurpose {
             DialogPurpose::InsertDocument => "Insert Document".into(),
             DialogPurpose::ImportCad => "Import".into(),
             DialogPurpose::Extract(..) => "Save to Separate File".into(),
+            DialogPurpose::OpenProject => "Open Project".into(),
+            DialogPurpose::NewProject => "New Project".into(),
+            DialogPurpose::SaveTemplate(_) => "Save Copy As Template".into(),
         }
     }
 
@@ -123,6 +132,10 @@ impl DialogPurpose {
             DialogPurpose::Extract(_, crate::document::DocumentKind::Part) => &["ccpart"],
             DialogPurpose::Extract(_, crate::document::DocumentKind::Assembly) => &["ccasm"],
             DialogPurpose::Extract(_, crate::document::DocumentKind::Drawing) => &["ccdrw"],
+            DialogPurpose::SaveTemplate(crate::document::DocumentKind::Part) => &["ccpart"],
+            DialogPurpose::SaveTemplate(crate::document::DocumentKind::Assembly) => &["ccasm"],
+            DialogPurpose::SaveTemplate(crate::document::DocumentKind::Drawing) => &["ccdrw"],
+            DialogPurpose::OpenProject | DialogPurpose::NewProject => &["ccproj"],
             DialogPurpose::SaveFolder => &[],
             DialogPurpose::Export(ExportFormat::Stl) => &["stl"],
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
@@ -147,7 +160,10 @@ impl DialogPurpose {
             DialogPurpose::LinkFile | DialogPurpose::InsertDocument => "3DCadCraft files",
             DialogPurpose::ImportCad => "STEP",
             DialogPurpose::SaveAs => "Part, Assembly, Drawing (one document) or Package (all)",
-            DialogPurpose::Extract(_, k) => crate::document::FileType::for_kind(k).name(),
+            DialogPurpose::Extract(_, k) | DialogPurpose::SaveTemplate(k) => {
+                crate::document::FileType::for_kind(k).name()
+            }
+            DialogPurpose::OpenProject | DialogPurpose::NewProject => "Project",
             DialogPurpose::SaveFolder => return "3DCadCraft project folder".into(),
             DialogPurpose::Export(ExportFormat::Stl) => "STL",
             DialogPurpose::Export(ExportFormat::Step) => "STEP",
@@ -178,6 +194,7 @@ impl DialogPurpose {
                 | DialogPurpose::LinkFile
                 | DialogPurpose::InsertDocument
                 | DialogPurpose::ImportCad
+                | DialogPurpose::OpenProject
         )
     }
 }
@@ -744,7 +761,6 @@ pub(super) fn target_path(dir: &Path, name: &str, exts: &[&str]) -> Option<PathB
 /// What waits for "save changes?" to be answered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Pending {
-    New,
     Open,
     /// Quit the application.
     Close,
@@ -819,9 +835,9 @@ fn remember_recent(path: &Path) {
     }
 }
 
-/// Where dialogs start: the current file's folder, else ~/Documents (on
-/// Windows also a OneDrive-redirected Documents), else ~.
-fn start_dir(current: &str) -> PathBuf {
+/// Where dialogs start: the current file's folder, else `fallback` (the active
+/// project's workspace) when it exists, else [`documents_dir`].
+fn start_dir(current: &str, fallback: Option<PathBuf>) -> PathBuf {
     let cur = Path::new(current.trim());
     if let Some(parent) = cur
         .parent()
@@ -829,6 +845,13 @@ fn start_dir(current: &str) -> PathBuf {
     {
         return parent.to_path_buf();
     }
+    fallback
+        .filter(|d| d.is_dir())
+        .unwrap_or_else(documents_dir)
+}
+
+/// ~/Documents (on Windows also a OneDrive-redirected Documents), else ~.
+pub(super) fn documents_dir() -> PathBuf {
     let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
     let onedrive = cfg!(windows)
         .then(|| std::env::var_os("OneDrive"))
@@ -943,7 +966,16 @@ impl CadCraftApp {
             | DialogPurpose::TableSource
             | DialogPurpose::LinkFile
             | DialogPurpose::InsertDocument
-            | DialogPurpose::ImportCad => String::new(),
+            | DialogPurpose::ImportCad
+            | DialogPurpose::OpenProject => String::new(),
+            DialogPurpose::NewProject => "MyProject.ccproj".to_owned(),
+            DialogPurpose::SaveTemplate(k) => format!(
+                "{}.{}",
+                self.project
+                    .document(self.part_id)
+                    .map_or_else(|| stem.clone(), |d| d.name.clone()),
+                crate::document::FileType::for_kind(k).ext()
+            ),
             DialogPurpose::Extract(id, _) => self
                 .project
                 .document(id)
@@ -954,9 +986,21 @@ impl CadCraftApp {
                 })
                 .unwrap_or_default(),
         };
-        self.file_dialog = Some(
-            FileDialog::new(purpose, start_dir(&self.file_path), name).with_file(&self.file_path),
-        );
+        let dir = match purpose {
+            DialogPurpose::OpenProject | DialogPurpose::NewProject => {
+                let d = documents_dir().join("3DCadCraft");
+                if d.is_dir() { d } else { documents_dir() }
+            }
+            DialogPurpose::SaveTemplate(_) => self
+                .templates_dir()
+                .filter(|d| d.is_dir())
+                .unwrap_or_else(documents_dir),
+            _ => {
+                let ws = self.workspace_dir();
+                start_dir(&self.file_path, ws)
+            }
+        };
+        self.file_dialog = Some(FileDialog::new(purpose, dir, name).with_file(&self.file_path));
     }
 
     /// New / Open open a tab of their own; Close / Close Tab ask to save
@@ -975,10 +1019,6 @@ impl CadCraftApp {
 
     fn run_pending(&mut self, what: Pending) {
         match what {
-            Pending::New => {
-                self.add_blank_tab();
-                self.new_project();
-            }
             Pending::Open => self.open_dialog(DialogPurpose::Open),
             Pending::CloseTab => self.close_active_tab(),
             Pending::Place => self.open_place_dialog(),
@@ -1437,6 +1477,9 @@ impl CadCraftApp {
             DialogPurpose::InsertDocument => self.docs_insert_file(&path),
             DialogPurpose::ImportCad => self.import_file_picked(&path),
             DialogPurpose::Extract(id, _) => self.docs_extract_to(id, &path),
+            DialogPurpose::OpenProject => self.project_file_picked(&path, false),
+            DialogPurpose::NewProject => self.project_file_picked(&path, true),
+            DialogPurpose::SaveTemplate(_) => self.save_template_to(&path),
             DialogPurpose::ExportDxf => {
                 let text = self.sm.dxf.take().unwrap_or_default();
                 self.file_status = Some(
@@ -1592,6 +1635,25 @@ impl CadCraftApp {
             .clicked()
         {
             self.open_dialog(DialogPurpose::SaveFolder);
+            ui.close();
+        }
+        if ui
+            .button("Save Copy As Template...")
+            .on_hover_text(
+                "This document as a template in the templates folder (File > New lists it)",
+            )
+            .clicked()
+        {
+            self.start_save_template();
+            ui.close();
+        }
+        ui.separator();
+        if ui
+            .button("Projects...")
+            .on_hover_text("The Projects editor: the active project, its workspace and folders")
+            .clicked()
+        {
+            self.open_projects_editor();
             ui.close();
         }
         ui.separator();

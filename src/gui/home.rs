@@ -3,9 +3,9 @@
 //! (search, sort, filter, pins, selection) and learning links. It is a tab
 //! of its own, not a document: no browser, Properties or Undo.
 //!
-//! Interface first (rule 15): parts whose logic is not there yet (projects
-//! other than Default, the Projects editor, Open with options, column
-//! configuration) are shown disabled with their spec row in the tooltip.
+//! Interface first (rule 15): parts whose logic is not there yet (Open with
+//! options, column configuration) are shown disabled with their spec row in
+//! the tooltip. Projects and templates: `gui/design_projects.rs`.
 //! Home's own settings (view, sort, pins, Show on startup) live in
 //! `settings.json` key `home`, beside `recent_files`.
 
@@ -210,7 +210,7 @@ impl std::fmt::Debug for HomeUi {
 
 // ---- settings.json -----------------------------------------------------------
 
-fn read_settings() -> serde_json::Value {
+pub(super) fn read_settings() -> serde_json::Value {
     super::files::settings_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
@@ -218,7 +218,7 @@ fn read_settings() -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
-fn write_settings(v: &serde_json::Value) {
+pub(super) fn write_settings(v: &serde_json::Value) {
     let Some(p) = super::files::settings_path() else {
         return;
     };
@@ -277,6 +277,11 @@ fn matches(r: &Recent, search: &str) -> bool {
 }
 
 impl HomeUi {
+    /// The recent list is read again (another project became active).
+    pub(super) fn forget_list(&mut self) {
+        self.list = None;
+    }
+
     /// Reads the settings once.
     pub(super) fn load(&mut self) {
         if self.loaded {
@@ -376,6 +381,8 @@ enum Ask {
     Folder(PathBuf),
     Help,
     Options,
+    /// The Projects editor.
+    Projects,
 }
 
 /// Size of a card on the empty Home page, and the gap between cards.
@@ -520,6 +527,7 @@ impl CadCraftApp {
             }
             Ask::OpenDialog => self.request(super::files::Pending::Open, now),
             Ask::NewDialog => self.open_new_file(),
+            Ask::Projects => self.open_projects_editor(),
             Ask::New(k) => {
                 self.home.shown = false;
                 self.new_file_of(k, now);
@@ -586,10 +594,12 @@ impl CadCraftApp {
                 {
                     ask = Some(Ask::OpenDialog);
                 }
-                planned(
-                    big(ui, Icon::Project, "Projects", false),
-                    "Projects editor (spec 0.6a §3.2)",
-                );
+                if big(ui, Icon::Project, "Projects", true)
+                    .on_hover_text("The Projects editor: the active project and its folders")
+                    .clicked()
+                {
+                    ask = Some(Ask::Projects);
+                }
             });
             group(ui, "Options", &mut |ui| {
                 if big(ui, Icon::Options, "Application Options", true)
@@ -618,25 +628,7 @@ impl CadCraftApp {
     fn home_nav(&mut self, ui: &mut egui::Ui, ask: &mut Option<Ask>) {
         ui.add_space(8.0);
         ui.label(RichText::new("Project").weak());
-        egui::ComboBox::from_id_salt("home_project")
-            .width(200.0)
-            .selected_text("Default")
-            .show_ui(ui, |ui| {
-                let _ = ui
-                    .selectable_label(true, "Default")
-                    .on_hover_text("Built-in project: workspace Documents\\3DCadCraft");
-                ui.separator();
-                planned(
-                    ui.add_enabled(false, egui::Button::new("New Project...")),
-                    "New Project",
-                );
-                planned(
-                    ui.add_enabled(false, egui::Button::new("Browse...")),
-                    "Browse for a project file (.ccproj)",
-                );
-            })
-            .response
-            .on_hover_text("The active project: where files are found and saved");
+        self.project_combo(ui, "home_project");
         ui.add_space(12.0);
         let big = |ui: &mut egui::Ui, icon, text: &str| {
             super::ribbon::icon_button(
@@ -673,10 +665,16 @@ impl CadCraftApp {
                     "Presentation (.ccpres)",
                 );
                 ui.separator();
-                planned(
-                    ui.add_enabled(false, egui::Button::new("Browse templates...")),
-                    "Templates",
-                );
+                if ui
+                    .button("Browse templates...")
+                    .on_hover_text(
+                        "Create New File: every template of the project's templates folder",
+                    )
+                    .clicked()
+                {
+                    *ask = Some(Ask::NewDialog);
+                    ui.close();
+                }
             })
             .response
             .on_hover_text("New from a standard template");
@@ -687,10 +685,14 @@ impl CadCraftApp {
                 *ask = Some(Ask::OpenDialog);
             }
             ui.menu_button("…", |ui| {
-                planned(
-                    ui.add_enabled(false, egui::Button::new("Settings...")),
-                    "Projects editor",
-                );
+                if ui
+                    .button("Settings...")
+                    .on_hover_text("The Projects editor")
+                    .clicked()
+                {
+                    *ask = Some(Ask::Projects);
+                    ui.close();
+                }
             });
         });
         ui.add_space(16.0);
@@ -702,6 +704,10 @@ impl CadCraftApp {
         {
             self.home.s.show_on_start = on;
             self.home.save();
+        }
+        if let Some(m) = self.projects.message.clone() {
+            ui.add_space(8.0);
+            ui.label(RichText::new(m).color(super::theme::tokens().warning));
         }
         if let Some(m) = &self.home.message {
             ui.add_space(8.0);

@@ -12,11 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::document::documents::base_name;
 use crate::document::storage;
-use crate::document::{
-    AssemblyDocument, DocumentData, DocumentId, DocumentKind, LibraryId, Project, ProjectResult,
-    Resolver,
-};
-use crate::part::PartDocument;
+use crate::document::{DocumentId, DocumentKind, LibraryId, Project, ProjectResult, Resolver};
 
 /// A command of the Documents panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,9 +133,13 @@ impl CadCraftApp {
             return;
         }
         match c {
-            DocCmd::NewPart => self.docs_new(c, DocumentData::Part(PartDocument::default())),
+            DocCmd::NewPart => {
+                let n = self.standard_new_document(crate::document::DocumentKind::Part);
+                self.docs_new(c, n);
+            }
             DocCmd::NewAssembly => {
-                self.docs_new(c, DocumentData::Assembly(AssemblyDocument::default()));
+                let n = self.standard_new_document(crate::document::DocumentKind::Assembly);
+                self.docs_new(c, n);
             }
             DocCmd::NewDrawing => self.new_drawing(),
             DocCmd::Duplicate => {
@@ -188,40 +188,11 @@ impl CadCraftApp {
         let kind = match c {
             DocCmd::NewPart => Kind::Part,
             DocCmd::NewAssembly => Kind::Assembly,
-            DocCmd::NewDrawing => {
-                self.new_drawing_file();
-                return true;
-            }
+            DocCmd::NewDrawing => Kind::Drawing,
             _ => return false,
         };
         self.new_file_of(kind, 0.0);
         true
-    }
-
-    /// A new file (tab) holding one empty drawing.
-    fn new_drawing_file(&mut self) {
-        self.add_blank_tab();
-        let mut project = Project::new("Drawing1");
-        let id = project.add_new_document(
-            "Drawing",
-            DocumentData::Drawing(crate::drawing::DrawingDocument::default()),
-        );
-        self.project = project;
-        self.part_id = id;
-        self.reset_asm_ui();
-        self.cons = Default::default();
-        self.file_path.clear();
-        self.history.clear();
-        self.editing = None;
-        self.selection = super::Selection::Body;
-        self.drw.reset();
-        self.tab = super::ribbon::Tab::PlaceViews;
-        self.after_restore();
-        self.fit_view();
-        self.mark_saved();
-        self.file_status = Some(Ok(
-            "New drawing: Place Views > Base View (BV) picks a model file".into(),
-        ));
     }
 
     /// The saved design file, or a message that it must be saved first
@@ -463,9 +434,17 @@ impl CadCraftApp {
 
     /// New Part / Assembly in this file: added with the next
     /// free name of its kind and made the active document.
-    fn docs_new(&mut self, c: DocCmd, data: DocumentData) {
-        let base = base_name(data.kind());
-        if let Some(id) = self.docs_edit(c, |p| Ok(p.add_new_document(base, data))) {
+    fn docs_new(&mut self, c: DocCmd, n: crate::document::templates::NewDocument) {
+        let base = base_name(n.data.kind());
+        let added = self.docs_edit(c, |p| {
+            let id = p.add_new_document(base, n.data);
+            if let Some(d) = p.document_mut(id) {
+                d.properties = n.properties;
+            }
+            p.rebuild_unmeshed_parts();
+            Ok(id)
+        });
+        if let Some(id) = added {
             self.asm.came_from = None;
             self.activate_document(id);
             let name = self.doc_name(id);

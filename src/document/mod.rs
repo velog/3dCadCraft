@@ -39,6 +39,7 @@ pub mod filetype;
 pub mod format;
 pub mod library;
 pub mod storage;
+pub mod templates;
 
 use std::path::PathBuf;
 

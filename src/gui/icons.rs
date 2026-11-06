@@ -234,6 +234,9 @@ pub enum Icon {
     Folder,
     /// File › Save: a diskette.
     FileSave,
+    /// File › Save Copy As Template: a sheet with a folded corner over a
+    /// dashed copy (spec 0.6c).
+    Template,
     SheetMetal,
     // sheet metal commands (one each)
     SmFace,
@@ -2476,6 +2479,28 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             );
             p.rect(5.0, 2.5, 10.5, 6.0, ink);
             p.rect(4.5, 9.0, 11.5, 13.5, ink);
+        }
+        Template => {
+            // The dashed sheet behind: the copy a new file starts from.
+            for (a, b) in [
+                ((1.5, 1.5), (9.5, 1.5)),
+                ((1.5, 1.5), (1.5, 11.5)),
+                ((1.5, 11.5), (4.0, 11.5)),
+            ] {
+                p.dashed(a, b, ink);
+            }
+            let sheet = [
+                (4.5, 4.0),
+                (11.0, 4.0),
+                (14.5, 7.5),
+                (14.5, 15.0),
+                (4.5, 15.0),
+            ];
+            p.fill(&sheet, soft);
+            p.closed(&sheet, acc);
+            p.line(&[(11.0, 4.0), (11.0, 7.5), (14.5, 7.5)], acc);
+            p.line(&[(6.5, 10.0), (12.5, 10.0)], ink);
+            p.line(&[(6.5, 12.5), (12.5, 12.5)], ink);
         }
         Folder => {
             p.fill(

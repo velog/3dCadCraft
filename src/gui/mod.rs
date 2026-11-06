@@ -49,6 +49,7 @@ mod cursor_value;
 mod delete_face;
 mod demos;
 mod derive;
+mod design_projects;
 mod diag;
 mod doc_settings;
 mod doc_tabs;
@@ -747,6 +748,8 @@ struct CadCraftApp {
     new_file: bool,
     /// The Home page (`home.rs`).
     home: home::HomeUi,
+    /// Design projects and templates (spec 0.6a, 0.6c).
+    projects: design_projects::ProjectsUi,
     /// Manage › Documents: the Documents window, Rename (spec 0.6b).
     docs: documents::DocsUi,
     /// The Sheet Metal environment (`sheet_metal.rs`).
@@ -1123,6 +1126,7 @@ impl CadCraftApp {
             drive: None,
             new_file: false,
             home: home::HomeUi::default(),
+            projects: Default::default(),
             docs: documents::DocsUi::default(),
             sm: Default::default(),
             bom_export: None,
@@ -4521,6 +4525,8 @@ impl CadCraftApp {
             AppCmd::Save => self.save(),
             AppCmd::SaveAs => self.open_dialog(files::DialogPurpose::SaveAs),
             AppCmd::SaveAsFolder => self.open_dialog(files::DialogPurpose::SaveFolder),
+            AppCmd::SaveTemplate => self.start_save_template(),
+            AppCmd::Projects => self.open_projects_editor(),
             AppCmd::Export(f) => self.open_dialog(files::DialogPurpose::Export(f)),
             AppCmd::ExportFace => self.export_face_start(),
             AppCmd::Help => self.open_help(),
@@ -8603,6 +8609,7 @@ impl eframe::App for CadCraftApp {
         self.doc_settings_window(&ctx);
         self.iprops_window(&ctx);
         self.new_file_window(&ctx);
+        self.projects_editor_window(&ctx);
         self.sm_defaults_window(&ctx);
         if self.is_assembly() {
             self.bom_window(&ctx);

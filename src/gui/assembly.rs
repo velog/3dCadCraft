@@ -487,34 +487,6 @@ impl CadCraftApp {
 
     // ---- documents ---------------------------------------------------------
 
-    /// File → New Assembly: a new file (tab) holding an empty assembly,
-    /// as Inventor's new `.iam`; Place links part files into it.
-    pub(super) fn new_assembly(&mut self) {
-        self.add_blank_tab();
-        let mut project = crate::document::Project::new("Assembly1");
-        let id = project.add_document(
-            "Assembly1",
-            DocumentData::Assembly(AssemblyDocument::default()),
-        );
-        if let Some(d) = project.document_mut(id) {
-            d.properties = crate::document::iprops::IProperties::new_document();
-        }
-        self.project = project;
-        self.part_id = id;
-        self.reset_asm_ui();
-        self.cons = Default::default();
-        self.file_path.clear();
-        self.history.clear();
-        self.editing = None;
-        self.selection = super::Selection::Body;
-        self.after_restore();
-        self.fit_view();
-        self.mark_saved();
-        self.file_status = Some(Ok(
-            "New assembly: Assemble > Place (P) picks a part file to place".into(),
-        ));
-    }
-
     /// Makes document `id` of the project the active one (browser click,
     /// Open, Return).
     pub(super) fn activate_document(&mut self, id: DocumentId) {

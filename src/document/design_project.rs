@@ -219,6 +219,140 @@ pub fn project_file(folder: &Path, name: &str) -> PathBuf {
     folder.join(format!("{name}.{}", FileType::Project.ext()))
 }
 
+/// New Project: writes `<folder>/<name>.ccproj` with the workspace `.` and
+/// creates the folder. Refuses an empty name and an existing file.
+pub fn create_project(folder: &Path, name: &str) -> ProjectResult<PathBuf> {
+    let name = name.trim();
+    let bad = |reason: &str| ProjectError::Corrupt {
+        path: folder.to_path_buf(),
+        reason: reason.into(),
+    };
+    if name.is_empty() {
+        return Err(bad("the project needs a name"));
+    }
+    if name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+        return Err(bad("a project name cannot hold / \\ : * ? \" < > |"));
+    }
+    let path = project_file(folder, name);
+    if path.exists() {
+        return Err(ProjectError::Corrupt {
+            path,
+            reason: "a project file of that name is already there".into(),
+        });
+    }
+    fs::create_dir_all(folder).map_err(|source| ProjectError::Io {
+        path: folder.to_path_buf(),
+        source,
+    })?;
+    DesignProject::new(name).save(&path)?;
+    Ok(path)
+}
+
+/// The projects a user knows and the active one (`settings.json`
+/// `projects`); `active: None` = the built-in Default project.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectList {
+    /// The active project's file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active: Option<PathBuf>,
+    /// Every project file created or browsed to, in the order added.
+    pub known: Vec<PathBuf>,
+}
+
+impl ProjectList {
+    /// Adds `path` to the known projects (once).
+    pub fn add(&mut self, path: &Path) {
+        if !self.known.iter().any(|k| k == path) {
+            self.known.push(path.to_path_buf());
+        }
+    }
+
+    /// Makes `path` the active project (`None` = Default), adding it.
+    pub fn activate(&mut self, path: Option<&Path>) {
+        if let Some(p) = path {
+            self.add(p);
+        }
+        self.active = path.map(Path::to_path_buf);
+    }
+
+    /// Removes `path` from the list (Default becomes active if it was).
+    pub fn remove(&mut self, path: &Path) {
+        self.known.retain(|k| k != path);
+        if self.active.as_deref() == Some(path) {
+            self.active = None;
+        }
+    }
+}
+
+/// The project in force: its settings and its file (`None` = Default).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActiveProject {
+    /// Its settings.
+    pub project: DesignProject,
+    /// Its `.ccproj` file.
+    pub file: Option<PathBuf>,
+}
+
+impl ActiveProject {
+    /// The built-in Default project in `documents`.
+    pub fn default_in(documents: &Path) -> Self {
+        Self {
+            project: DesignProject::default_project(documents),
+            file: None,
+        }
+    }
+
+    /// The list's active project. A file that cannot be read leaves Default
+    /// active, with the reason (spec 0.6a §5).
+    pub fn from_list(list: &ProjectList, documents: &Path) -> (Self, Option<String>) {
+        match &list.active {
+            None => (Self::default_in(documents), None),
+            Some(f) => match DesignProject::load(f) {
+                Ok(project) => (
+                    Self {
+                        project,
+                        file: Some(f.clone()),
+                    },
+                    None,
+                ),
+                Err(e) => (Self::default_in(documents), Some(e.to_string())),
+            },
+        }
+    }
+
+    /// The folder relative paths count from (the `.ccproj`'s folder).
+    pub fn base(&self) -> Option<&Path> {
+        self.file.as_deref().and_then(Path::parent)
+    }
+
+    /// The workspace folder, absolute.
+    pub fn workspace(&self) -> PathBuf {
+        match self.base() {
+            Some(b) => self.project.workspace_dir(b),
+            None => self.project.workspace.clone(),
+        }
+    }
+
+    /// A path of the project made absolute.
+    pub fn resolve(&self, p: &Path) -> PathBuf {
+        match self.base() {
+            Some(b) => DesignProject::resolve(b, p),
+            None => p.to_path_buf(),
+        }
+    }
+
+    /// The project's name.
+    pub fn name(&self) -> &str {
+        &self.project.name
+    }
+
+    /// Is it the built-in Default project?
+    pub fn is_default(&self) -> bool {
+        self.file.is_none()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,6 +429,35 @@ mod tests {
             DesignProject::resolve(&d, Path::new("./a/../b")),
             d.join("b")
         );
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn new_project_list_and_active_project() {
+        let d = tmp("list");
+        let f = create_project(&d.join("Pump"), "Pump").unwrap();
+        assert!(create_project(&d.join("Pump"), "Pump").is_err());
+        assert!(create_project(&d, " ").is_err());
+        assert!(create_project(&d, "a/b").is_err());
+        let mut list = ProjectList::default();
+        list.activate(Some(&f));
+        list.activate(Some(&f));
+        assert_eq!(list.known, std::slice::from_ref(&f));
+        let docs = d.join("Docs");
+        let (a, warn) = ActiveProject::from_list(&list, &docs);
+        assert!(warn.is_none());
+        assert_eq!(a.name(), "Pump");
+        assert_eq!(a.workspace(), d.join("Pump"));
+        // A list survives settings.json; a lost file falls back to Default.
+        let back: ProjectList =
+            serde_json::from_value(serde_json::to_value(&list).unwrap()).unwrap();
+        assert_eq!(back, list);
+        fs::remove_file(&f).unwrap();
+        let (a, warn) = ActiveProject::from_list(&list, &docs);
+        assert!(a.is_default() && warn.is_some());
+        assert_eq!(a.workspace(), docs.join("3DCadCraft"));
+        list.remove(&f);
+        assert_eq!(list, ProjectList::default());
         let _ = fs::remove_dir_all(&d);
     }
 

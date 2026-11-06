@@ -144,6 +144,10 @@ pub enum AppCmd {
     SaveAs,
     /// File → Save as Folder.
     SaveAsFolder,
+    /// File → Save Copy As Template (spec 0.6c).
+    SaveTemplate,
+    /// File → Projects: the Projects editor (spec 0.6a).
+    Projects,
     /// File → Export in a format.
     Export(ExportFormat),
     /// Export Face As: the selected planar faces as DXF / SVG.
@@ -2807,7 +2811,7 @@ pub static COMMANDS: &[Command] = &[
         .key("Ctrl+N")
         .bound()
         .at(&[FILE])
-        .tip("A new project with an empty part")
+        .tip("Create New File: a new file from a template")
         .spec("0.6-files.md"),
     c("file.open", "Open", "Отваряне", Icon::Folder)
         .run(Action::App(AppCmd::Open))
@@ -2830,6 +2834,23 @@ pub static COMMANDS: &[Command] = &[
         .at(&[FILE])
         .tip("Save the project under another name")
         .spec("0.6-files.md"),
+    c(
+        "file.save_template",
+        "Save Copy As Template",
+        "Запис на копие като шаблон",
+        Icon::Template,
+    )
+    .alias(&["SAT"])
+    .run(Action::App(AppCmd::SaveTemplate))
+    .at(&[FILE])
+    .tip("This document as a template in the templates folder; File › New lists it")
+    .spec("0.6c-templates.md"),
+    c("file.projects", "Projects", "Проекти", Icon::Project)
+        .alias(&["PJ"])
+        .run(Action::App(AppCmd::Projects))
+        .at(&[FILE])
+        .tip("The Projects editor: the active project, its workspace, libraries and folders")
+        .spec("0.6a-file-types-projects.md"),
     c("file.save_folder", "Save as Folder", "Запис като папка", Icon::Part)
         .alias(&["SVF"])
         .run(Action::App(AppCmd::SaveAsFolder))
