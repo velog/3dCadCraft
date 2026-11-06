@@ -480,3 +480,51 @@ fn a_chamfer_on_a_body_cut_in_two() {
         .sum::<Real>();
     assert!(v1 < v0 && v0 - v1 < 200.0, "{v0} -> {v1}");
 }
+
+#[test]
+fn a_variable_fillet_of_one_radius_is_the_constant_fillet() {
+    // The owner's box rounds its vertical edges with a Variable fillet whose
+    // points all say r 10. The kernel's variable fillet took minutes per edge
+    // (the saved session did not open); such a fillet is built as the
+    // constant one, with the same faces and names.
+    let build = |variable: bool| {
+        let mut p = plate(W, D, H);
+        let edges = vertical(&p, W, D, H);
+        let mut f = BlendFeature::fillet(edges.clone(), R);
+        if variable {
+            f.fillet_type = cadcraft3d::part::FilletType::Variable;
+            f.variable = edges
+                .into_iter()
+                .map(|e| cadcraft3d::part::blend::VariableRadius {
+                    start: [e.hint[0], e.hint[1], 0.0],
+                    edge: e,
+                    points: vec![[0.0, R], [0.5, R], [1.0, R]],
+                })
+                .collect();
+            f.edges.clear();
+        }
+        let t = std::time::Instant::now();
+        p.add_blend(f).unwrap();
+        assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+        (p, t.elapsed())
+    };
+    let (c, _) = build(false);
+    let (v, took) = build(true);
+    assert!(
+        took.as_secs_f64() < 10.0,
+        "variable of one radius took {took:?}"
+    );
+    let names = |p: &PartDocument| {
+        let mut n: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
+        n.sort();
+        n
+    };
+    assert_eq!(names(&v), names(&c));
+    assert!(names(&v).iter().any(|n| n.starts_with("Fillet1:Round[")));
+    assert_eq!(v.body.faces().count(), c.body.faces().count());
+    let vol = |p: &PartDocument| p.exact_bodies.0[0].volume_at(1e-4).unwrap();
+    let (a, b) = (vol(&v), vol(&c));
+    assert!((a - b).abs() < 1e-6 * b, "variable {a} vs constant {b}");
+    let expect = W * D * H - 4.0 * (R * R - std::f64::consts::PI * R * R / 4.0) * H;
+    assert!((a - expect).abs() < 1e-3 * expect, "{a} vs {expect}");
+}

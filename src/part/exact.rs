@@ -2655,6 +2655,20 @@ fn special_fillet(
                     continue;
                 };
                 let pts: Vec<(Real, Real)> = v.points.iter().map(|q| (q[0], q[1])).collect();
+                // Every point with the same radius: a constant round of that
+                // edge. The kernel's variable fillet gives the same surface but
+                // took minutes per edge (the owner's box did not open); both
+                // name their faces `<id>:Round[..]` through `blend_result`.
+                let tol = crate::kernel::Tolerance::default().linear;
+                if let Some(&(_, r0)) = pts.first()
+                    && pts.iter().all(|&(_, r)| (r - r0).abs() <= tol)
+                {
+                    if r0.is_nan() || r0 <= 0.0 {
+                        return Err(User("the radius must be positive".into()));
+                    }
+                    out[i] = exact::fillet_each(&out[i], &[p], &[r0], &bl.id).map_err(cannot)?;
+                    continue;
+                }
                 out[i] = exact::fillet_variable(
                     &out[i],
                     p,
