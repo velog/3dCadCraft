@@ -69,6 +69,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [6.1-frame-generator.md](6.1-frame-generator.md) | Frames (Frame Generator): Insert Frame, End Cap, Change, Miter, Corner Joint, Trim/Extend, Notch, Lengthen/Shorten, Reuse, Frame Member Info, Refresh, naming, cut lists — stages F0–F5 |
 | [6.4-weldments.md](6.4-weldments.md) | Weldments: Convert to Weldment, Preparation / Welds / Machining groups, Fillet, Groove and Cosmetic welds, Welding Symbol, Bead Report, drawing states — stages W0–W5 |
 | [5.7-part-families.md](5.7-part-families.md) | Part families (Create Part Family), the base of the library |
+| [6.2-bolted-connection.md](6.2-bolted-connection.md) | Bolted Connection (Design Accelerator): placements, Through All / Blind, fastener stack, holes as assembly features, Follow Pattern, editing, strength check |
 | [6.3-content-center.md](6.3-content-center.md) | Component Library: placing, defining and publishing; samples, plan CC0–CC7 |
 | [5.6-sheet-metal.md](5.6-sheet-metal.md) | Sheet Metal: rules, features, flat pattern, DXF — research document and stages (nothing implemented yet) |
 | [3.0-assembly-commands.md](3.0-assembly-commands.md) | The whole assembly command set (Assemble, Design, Inspect, Manage, View, Environments) with every dialog, interface first |
