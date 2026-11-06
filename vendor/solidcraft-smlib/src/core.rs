@@ -107,7 +107,6 @@ pub(crate) fn fixes() -> UpstreamFixes {
     f.offset_resolve_crossing_loops = true;
     f.offset_walls_touch_refused = true;
     f.offset_analytic_mate_edges = true;
-    f.precise_properties_split_at_surface_knots = true;
     f.nurb_cylinder_inside_out_frame = true;
     f.shell_inner_shell_of_statuses = true;
     f.local_operation_offset_status = true;
@@ -272,7 +271,6 @@ pub(crate) fn fixes() -> UpstreamFixes {
     f.offset_four_face_vertex_split = true;
     f.gap_samples_non_bspline_v_stride = true;
     f.imprint_skips_collapsed_definition = true;
-    f.precise_properties_trim_base_v = true;
     f.fillet_blend_curve_revolved_on_arc = true;
     f.temporary_radius_setup_errors = true;
     f.ellipse_step_interval_checks = true;
@@ -334,7 +332,6 @@ pub(crate) fn fixes() -> UpstreamFixes {
     f.curve_property_gs_branch_bounds = true;
     f.volume_representational_end_continuities = true;
     f.integrator_propagates_failure = true;
-    f.precise_properties_span_end_from_below = true;
     f.offset_open_edge_second_trim_point = true;
     f.close_loop_relates_only_coincident_edges = true;
     f.ssi_split_curves_at_singular_points = true;

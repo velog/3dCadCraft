@@ -121,7 +121,7 @@ solidcraft-doc = { path = "vendor/solidcraft-doc" }
 solidcraft-kernel = { path = "vendor/solidcraft-kernel" }
 solidcraft-smlib = { path = "vendor/solidcraft-smlib" }
 
-# solidcore main (9856ffe) plus our speed fixes (branch perf/check-linear of our fork;
+# solidcore main (513e6fc) plus our speed fixes (branch perf/check-linear of our fork;
 # vendor/README.md lists them). Drop it when upstream has them.
 [patch."https://github.com/tangency-labs/solidcore"]
-solidcore = { git = "https://github.com/velog/solidcore", rev = "3bb2ae777d4be54702d7c6275f33bdb03079a2d6" }
+solidcore = { git = "https://github.com/velog/solidcore", rev = "269e0db436ed4866d2ac0b0847e825fa8f050cce" }

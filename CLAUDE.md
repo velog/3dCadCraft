@@ -221,6 +221,13 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     reported, its `debug`, `release` and `doc` folders go (`cargo clean --profile dev`, `--release`, `--doc`), wherever the target
     directory is. Screenshots, logs and saved files next to them stay. Never while a build or another session uses that directory.
 
+23. **Check solidcore for updates before kernel work** (owner's rule, 2026-11-06): before starting kernel work (a speed
+    fix, a kernel bug, a pin move) and at least once a day while it goes on, fetch `tangency-labs/solidcore` main and
+    `tangency-labs/solidcraft` main. On new solidcore commits: list those that touch `crates/solidcore/src` (tests and
+    docs need nothing), rebase our fork's branch (`velog/solidcore`, `vendor/README.md`) onto them, drop our fixes upstream
+    now has, rebuild, run the kernel's lib tests and our suite, repin `[patch]` in `Cargo.toml`. On new SolidCraft
+    commits in `crates/smlib` / `crates/kernel`: port them into `vendor/` with a README row. Report what changed.
+
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 
 - **Branch `solidcore-probe`:** the kernel is SolidCraft `8f67c7f` on solidcore (`kernel/exact/compat.rs`, `vendor/README.md`), and notes below about truck describe main. Open items: `docs/ROADMAP.md`, "solidcore probe". A dense point path is a polyline with mitres there: give the kernel a spline's Bézier spans (`PathPiece::Spline`).
