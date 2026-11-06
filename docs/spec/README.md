@@ -60,6 +60,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [4.8-sheet-metal-drawings.md](4.8-sheet-metal-drawings.md) | Sheet metal in drawings: flat pattern views (Bend Centerline / Bend Extent layers), Bend Notes; bend tables next |
 | [4.9-format-text.md](4.9-format-text.md) | Format Text for notes: runs (font, size, colour, styles), justification, spacing, rotation, border / fill, symbol palette, live fields (stage D-S2) |
 | [4.10-break-view.md](4.10-break-view.md) | Break view: Rectangular / Structural breaks, gap, display, symbols, true dimensions across a break (stage D-S6) |
+| [4.13-drawing-resources.md](4.13-drawing-resources.md) | Drawing Resources: title blocks, borders (zones, connection points), sketched symbols, prompted entries (stage D-S5) |
 | [4.12-drawing-sketches.md](4.12-drawing-sketches.md) | Drawing sketches on the sheet or a view, Draft View (stage D-S5) |
 | [4.11-break-out.md](4.11-break-out.md) | Break Out: a local section inside a closed view sketch profile to a depth (From Point, To Sketch, To Hole, Through Part), hatched cut face (stage D-S6) |
 | [4.6-drawing-styles.md](4.6-drawing-styles.md) | Drawing styles: the Style and Standard Editor of drawings (dimension, text, leader, centre mark, hatch, view annotation styles, layers, Object Defaults) |

@@ -474,6 +474,109 @@ fn sketch_row(
     });
 }
 
+/// Drawing Resources in the browser (spec 4.13 §3.1): the folders with the
+/// built-in border and title block. Only the interface so far: every menu item
+/// is shown disabled with its spec row.
+fn resources_tree(ui: &mut egui::Ui, title_name: &str) {
+    let off = |ui: &mut egui::Ui, label: &str, row: &str| {
+        ui.add_enabled(false, egui::Button::new(label))
+            .on_disabled_hover_text(format!("Planned: spec 4.13 {row}"));
+    };
+    let folder =
+        |ui: &mut egui::Ui, name: &str, defines: &[&str], entries: &[(&str, &str)], row: &str| {
+            let header = egui::CollapsingHeader::new(name)
+                .id_salt(("drw_res", name))
+                .default_open(true)
+                .show(ui, |ui| {
+                    if entries.is_empty() {
+                        ui.weak("(none)");
+                    }
+                    for (entry, what) in entries {
+                        ui.horizontal(|ui| {
+                            super::panels::tree_icon(ui, Icon::Drawing);
+                            let r = ui.selectable_label(false, *entry).on_hover_text(*what);
+                            r.context_menu(|ui| {
+                                for item in [
+                                    "Insert",
+                                    "Edit",
+                                    "Copy",
+                                    "Rename",
+                                    "Delete",
+                                    "Reorder Prompted Entries",
+                                ] {
+                                    off(ui, item, row);
+                                }
+                            });
+                        });
+                    }
+                });
+            header.header_response.context_menu(|ui| {
+                for d in defines {
+                    off(ui, d, row);
+                }
+                off(ui, "Sort by Name", "§3.1");
+            });
+        };
+    folder(
+        ui,
+        "Sheet Formats",
+        &["Create New Sheet Format"],
+        &[],
+        "§3.1 (templates: spec 4)",
+    );
+    folder(
+        ui,
+        "Borders",
+        &["Define New Border", "Define New Zone Border"],
+        &[(
+            "Default Border",
+            "Built in: zones, margins and centre marks for every sheet size",
+        )],
+        "§3.3",
+    );
+    folder(
+        ui,
+        "Title Blocks",
+        &["Define New Title Block"],
+        &[(title_name, "Built in: the standard's title block")],
+        "§3.2",
+    );
+    folder(ui, "Sketched Symbols", &["Define New Symbol"], &[], "§3.4");
+}
+
+/// The border and title block rows under a sheet (spec 4.13 §4).
+fn sheet_format_rows(ui: &mut egui::Ui, [border, title]: [bool; 2], title_name: &str) {
+    for (on, name, items) in [
+        (
+            border,
+            "Default Border",
+            &["Edit Instance", "Edit Field Text", "Delete"][..],
+        ),
+        (
+            title,
+            title_name,
+            &["Edit Definition", "Edit Field Text", "Delete"][..],
+        ),
+    ] {
+        if !on {
+            continue;
+        }
+        ui.horizontal(|ui| {
+            super::panels::tree_icon(ui, Icon::Drawing);
+            ui.selectable_label(false, name).context_menu(|ui| {
+                for item in items {
+                    ui.add_enabled(false, egui::Button::new(*item))
+                        .on_disabled_hover_text("Planned: spec 4.13 §3.2–3.5");
+                }
+            });
+        });
+    }
+}
+
+/// A sheet in the browser: name, size, views, its own sketches, border and
+/// title block shown.
+type TreeSheet = (String, String, Vec<TreeView>, Vec<TreeSketch>, [bool; 2]);
+
 /// A Break (`out` false) or Break Out under a view in the browser: its index
 /// and whether it is suppressed.
 #[derive(Clone, Copy)]
@@ -2261,12 +2364,13 @@ impl CadCraftApp {
             return;
         };
         let active = d.active_sheet;
+        let title_name = d.standard.kind.label().to_string();
         let tree_sketches = |l: &[crate::drawing::view_sketch::DrawingSketch]| -> Vec<TreeSketch> {
             l.iter()
                 .map(|k| (k.id, k.name.clone(), k.visible))
                 .collect()
         };
-        let sheets: Vec<(String, String, Vec<TreeView>, Vec<TreeSketch>)> = d
+        let sheets: Vec<TreeSheet> = d
             .sheets
             .iter()
             .map(|s| {
@@ -2304,6 +2408,7 @@ impl CadCraftApp {
                     s.size.label(),
                     views,
                     tree_sketches(&s.sketches),
+                    [s.border, s.title_block],
                 )
             })
             .collect();
@@ -2325,22 +2430,8 @@ impl CadCraftApp {
             egui::CollapsingHeader::new("Drawing Resources")
                 .id_salt("drw_resources")
                 .default_open(false)
-                .show(ui, |ui| {
-                    for r in [
-                        "Sheet Formats",
-                        "Borders",
-                        "Title Blocks",
-                        "Sketched Symbols",
-                    ] {
-                        ui.horizontal(|ui| {
-                            super::panels::tree_icon(ui, Icon::Folder);
-                            ui.weak(r).on_hover_text(
-                                "Editing resources: planned (spec 4 §3.1, stage D5)",
-                            );
-                        });
-                    }
-                });
-            for (i, (sname, size, views, sheet_sketches)) in sheets.iter().enumerate() {
+                .show(ui, |ui| resources_tree(ui, &title_name));
+            for (i, (sname, size, views, sheet_sketches, format)) in sheets.iter().enumerate() {
                 let label = RichText::new(format!("{sname} ({size})"));
                 let label = if i == active { label.strong() } else { label };
                 let header = egui::CollapsingHeader::new(label)
@@ -2472,6 +2563,9 @@ impl CadCraftApp {
                                 sk_action = Some((i, a));
                             }
                         }
+                        // Its border and title block (spec 4.13: instances of
+                        // Drawing Resources; the menus are interface only).
+                        sheet_format_rows(ui, *format, &title_name);
                     });
                 if header.header_response.clicked() && i != active {
                     activate = Some(i);
@@ -2551,6 +2645,8 @@ impl CadCraftApp {
             self.new_drawing_sketch(view);
         }
         if let Some((i, (id, a))) = sk_action {
+            // The sheet was drawn before the browser this frame: draw it again.
+            ui.ctx().request_repaint();
             switch(self, i);
             match a {
                 SketchAction::Edit => self.edit_drawing_sketch(id),

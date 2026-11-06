@@ -533,9 +533,12 @@ impl CadCraftApp {
                 i.key_pressed(egui::Key::Escape),
             )
         });
+        // A tool key ends Project Geometry too (its clicks went on projecting).
         if l {
+            s.project = false;
             s.tools.set_tool(Tool::Line);
         } else if d {
+            s.project = false;
             s.tools.set_tool(Tool::Dimension);
         } else if esc {
             if s.project {

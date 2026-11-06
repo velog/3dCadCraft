@@ -74,6 +74,12 @@ fn assembly(n: usize, plate: &Arc<ViewModel>, bolt: &Arc<ViewModel>) -> Vec<Inst
         .collect()
 }
 
+/// Whether case `case` runs: `CADCRAFT3D_PERF_ONLY=<part of its name>` runs
+/// only the cases whose name contains it.
+fn wanted(case: &str) -> bool {
+    std::env::var("CADCRAFT3D_PERF_ONLY").map_or(true, |only| case.contains(only.as_str()))
+}
+
 fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1e3
 }
@@ -150,9 +156,7 @@ fn drawing_views_of_large_models() {
     ];
     let mut over = Vec::new();
     for (case, budget, n, simplify) in cases {
-        if let Ok(only) = std::env::var("CADCRAFT3D_PERF_ONLY")
-            && !case.contains(only.as_str())
-        {
+        if !wanted(case) {
             continue;
         }
         let inst = assembly(n, &plate, &bolt);
@@ -175,7 +179,7 @@ fn drawing_views_of_large_models() {
         }
     }
     // A complex part: a plate with 2 500 holes, three views.
-    {
+    if wanted("complex part") {
         let model = part_model(&holes_plate(50));
         let t = Instant::now();
         for frame in [&front, &ViewOrientation::Top.frame(), &iso] {
@@ -196,7 +200,7 @@ fn drawing_views_of_large_models() {
     }
     // Break Out: the 2 500-hole plate seen from the top with a round
     // profile (48 sides) over a quarter of it, cut 2 mm deep.
-    {
+    if wanted("break out") {
         use cadcraft3d::drawing::hlr::{Aligned, OutCut};
         let model = part_model(&holes_plate(50));
         let frame = ViewOrientation::Top.frame();
@@ -244,7 +248,7 @@ fn drawing_views_of_large_models() {
     }
     // A sheet full of toleranced dimensions: 2 000 labels with ISO fits
     // (Edit Dimension), laid out and placed every frame.
-    {
+    if wanted("dimension labels") {
         use cadcraft3d::drawing::dimtext::{DimFormat, Label, TolMethod};
         let look = cadcraft3d::drawing::style::AnnotationLook::default();
         let f = DimFormat {
@@ -271,7 +275,7 @@ fn drawing_views_of_large_models() {
     }
     // Drawing sketches (spec 4.12): 200 sheet sketches of a rectangle, a
     // circle and an arc each, turned into the display list every frame.
-    {
+    if wanted("drawing sketches") {
         use cadcraft3d::drawing::DrawingDocument;
         use cadcraft3d::drawing::view_sketch::ViewSketch;
         use cadcraft3d::sketch::Point2;
@@ -310,7 +314,7 @@ fn drawing_views_of_large_models() {
     }
     // A general table of 1 000 rows × 8 columns read from CSV text, and a
     // revision table of 500 revisions with 100 clouds, drawn every frame.
-    {
+    if wanted("general / revision tables") {
         use cadcraft3d::drawing::revision::{self, RevisionCloud, RevisionTable};
         use cadcraft3d::drawing::table::{self, GeneralTable};
         let look = cadcraft3d::drawing::style::AnnotationLook::default();
@@ -351,7 +355,7 @@ fn drawing_views_of_large_models() {
     }
     // A hole table of 2 500 holes in two kinds (a 50 × 50 grid of circles
     // seen face-on), with its tags.
-    {
+    if wanted("hole table") {
         use cadcraft3d::drawing::annot::Placement;
         use cadcraft3d::drawing::hlr::{ViewEdge, ViewLines};
         use cadcraft3d::drawing::hole_table::{self, HoleScope, HoleTable};
@@ -404,7 +408,7 @@ fn drawing_views_of_large_models() {
     }
     // 1 000 chamfer notes on a view of 1 000 chamfered corners (4 000
     // straight edges): each note finds its two edges by name.
-    {
+    if wanted("chamfer notes") {
         use cadcraft3d::drawing::AnnotationKind;
         use cadcraft3d::drawing::annot::{Placement, resolve};
         use cadcraft3d::drawing::chamfer_note::ChamferNote;
@@ -482,7 +486,7 @@ fn drawing_views_of_large_models() {
         }
     }
     // Arrange Dimensions over 1 000 horizontal dimensions above a view.
-    {
+    if wanted("arrange dimensions") {
         use cadcraft3d::drawing::annot::Placement;
         use cadcraft3d::drawing::{DimKind, Dimension, PointRef, PointRole};
         let model = part_model(&box_with_circle(
@@ -551,7 +555,7 @@ fn drawing_views_of_large_models() {
     }
     // Three breaks in a view of 2 000 polylines of 50 points (100 000
     // points, a dense flat pattern or assembly view) and 500 cut-face loops.
-    {
+    if wanted("break view") {
         use cadcraft3d::drawing::brk::{self, BreakOrientation, ViewBreak};
         use cadcraft3d::drawing::hlr::ViewLines;
         let visible: Vec<Vec<[f64; 2]>> = (0..2000)

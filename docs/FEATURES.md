@@ -972,7 +972,9 @@ Used for handing models to suppliers without revealing the details.
 
 **Specification:** [spec/4-drawings.md](spec/4-drawings.md). 🟡 2026-10-26: drawing documents, sheets
 (New / Edit / Delete), ISO 5457 border with zones, a fixed title block from Properties; waiting for a
-visual check.
+visual check. ⬜ 2026-11-06: the user's own title blocks, borders and sketched symbols as Drawing Resources
+([spec/4.13-drawing-resources.md](spec/4.13-drawing-resources.md)): browser folders and rows drawn, menus
+interface only.
 
 **What it does.** Sheets A4–A0 (or ANSI A–E), a border, a **title block** with fields filled in automatically from the model's properties (name, material, mass, drafter, date, revision).
 
