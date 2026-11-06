@@ -2370,6 +2370,8 @@ impl CadCraftApp {
         }
         self.asm_sub_overlay(&painter, rect);
         self.asm_sketch_overlay(&painter, rect);
+        self.bolt_follow();
+        self.bolt_preview(&painter, rect);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_select_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_corner_overlay(&painter, rect, pointer.filter(|_| on_view));

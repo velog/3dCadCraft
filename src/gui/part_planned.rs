@@ -1787,6 +1787,8 @@ pub(super) struct PartDialog {
     /// anchor points, each member's anchor (index into `Anchor::ALL`) and
     /// the edited members' skeleton lines when the panel opened.
     pub members: MemberEditState,
+    /// Bolted Connection: the library and the fastener stack (`gui/bolted.rs`).
+    pub bolt: super::bolted::BoltPanel,
 }
 
 /// One set of Insert Frame (+ Add Set): its lines and options.
@@ -1931,6 +1933,7 @@ impl PartDialog {
             between_first: None,
             frame_sets: Vec::new(),
             members: MemberEditState::default(),
+            bolt: Default::default(),
         }
     }
 
@@ -2114,6 +2117,9 @@ impl PartDialog {
 
     /// A selector the options chosen have no use for: it is not shown and takes no pick.
     pub(super) fn sel_hidden(&self, key: &str) -> bool {
+        if super::bolted::sel_hidden(self, key) {
+            return true;
+        }
         let Planned::Part(k) = self.kind else {
             return false;
         };
@@ -2457,6 +2463,9 @@ impl PartDialog {
                 }
                 ui.end_row();
             }
+            Button("Click to add a fastener") if super::bolted::is_bolted(self) => {
+                super::bolted::stack_ui(self, ui);
+            }
             Button(t) => {
                 plabel(ui, "");
                 let live = self.kind.has_logic() && LIVE_BUTTONS.contains(&t);
@@ -2491,7 +2500,10 @@ impl PartDialog {
                 ui.end_row();
             }
             Check(label, on) => {
-                let off = self.kind.option_off(label, None);
+                let off = self
+                    .kind
+                    .option_off(label, None)
+                    .or_else(|| super::bolted::row_off(self, at.0, label));
                 let v = self.bools.entry(at).or_insert(on);
                 plabel(ui, "");
                 let r = ui.add_enabled(off.is_none(), egui::Checkbox::new(v, label));
@@ -2535,9 +2547,14 @@ impl PartDialog {
             }
             Combo(label, opts, def) => {
                 plabel(ui, label);
-                let off = self.kind.option_off(label, None);
-                // Frame panels: the section table's lists (gui/frame.rs).
+                let off = self
+                    .kind
+                    .option_off(label, None)
+                    .or_else(|| super::bolted::row_off(self, at.0, label));
+                // Frame panels: the section table's lists (gui/frame.rs); Bolted
+                // Connection: the thread and library lists (gui/bolted.rs).
                 let list: Vec<String> = super::frame::frame_combo(self, at.0, label)
+                    .or_else(|| super::bolted::combo(self, at.0, label))
                     .unwrap_or_else(|| opts.iter().map(|o| (*o).to_owned()).collect());
                 let v = self.indices.entry(at).or_insert(def);
                 *v = (*v).min(list.len().saturating_sub(1));
@@ -2563,16 +2580,30 @@ impl PartDialog {
                     && ((label == "Depth" && plane) || (label == "Taper" && !plane)))
                     || matches!(self.kind, Planned::Part(k)
                         if super::plastic::row_off(self, k, at.0, label));
+                let why = super::bolted::row_off(self, at.0, label);
                 let v = self.nums.entry(at).or_insert(def);
-                ui.add_enabled_ui(!off, |ui| {
-                    ui.add(ExprValue::new(v).suffix(unit).cursor(label));
+                let on = !off && why.is_none();
+                let r = ui.add_enabled_ui(on, |ui| {
+                    // A disabled field is no input of the value next to the cursor.
+                    let field = ExprValue::new(v).suffix(unit);
+                    ui.add(if on { field.cursor(label) } else { field });
                 });
+                if let Some(t) = why {
+                    r.response.on_disabled_hover_text(t);
+                }
                 ui.end_row();
             }
             Text(label, def) => {
                 plabel(ui, label);
+                let why = super::bolted::row_off(self, at.0, label);
                 let v = self.texts.entry(at).or_insert_with(|| def.to_string());
-                ui.add(egui::TextEdit::singleline(v).desired_width(180.0));
+                let r = ui.add_enabled(
+                    why.is_none(),
+                    egui::TextEdit::singleline(v).desired_width(180.0),
+                );
+                if let Some(t) = why {
+                    r.on_disabled_hover_text(t);
+                }
                 ui.end_row();
             }
         }

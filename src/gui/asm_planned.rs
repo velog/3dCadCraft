@@ -880,44 +880,75 @@ impl AsmPlanned {
                             "select a circular edge for the centre",
                             CIRCLE,
                         ),
-                        Sel("point", "Point", "select a work point", POINT),
+                        Sel(
+                            "point",
+                            "Point",
+                            "select a work point or a sketch point",
+                            POINT,
+                        ),
                         Sel("hole", "Existing Hole", "select an existing hole", CYLINDER),
-                        Sel("end", "Termination", "select the end face", PLANE),
+                        Sel(
+                            "end",
+                            "Termination",
+                            "select the end face (the nut side)",
+                            PLANE,
+                        ),
+                        Sel(
+                            "blind",
+                            "Blind Start Plane",
+                            "select the face where the threaded hole starts",
+                            PLANE,
+                        ),
+                        Num("Distance 1", 10.0, " mm"),
+                        Num("Distance 2", 10.0, " mm"),
                         Check("Follow Pattern", false),
                         Head("Thread"),
-                        Combo(
-                            "Thread",
-                            &["ISO Metric profile", "ANSI Unified Screw Threads"],
-                            0,
-                        ),
-                        Combo("Diameter", &["M6", "M8", "M10", "M12", "M16"], 1),
+                        Combo("Thread", &["ISO Metric profile"], 0),
+                        Combo("Diameter", &["M8"], 0),
                         Head("Fasteners"),
+                        Combo("Standard", &["All"], 0),
+                        Combo("Category", &["All"], 0),
                         Button("Click to add a fastener"),
-                        Combo("Standard", &["ISO", "DIN", "ANSI"], 0),
-                        Combo(
-                            "Category",
-                            &[
-                                "Bolts",
-                                "Hex Head Bolts",
-                                "Socket Head Bolts",
-                                "Washers",
-                                "Nuts",
-                            ],
-                            0,
-                        ),
                     ],
                 ),
                 Page(
                     "Calculation",
-                    &[Note(
-                        "Strength check of the joint (comes after the geometry)",
-                    )],
+                    &[
+                        Combo(
+                            "Type of Strength Calculation",
+                            &[
+                                "Bolt Diameter Design",
+                                "Bolt Number Design",
+                                "Bolt Material Design",
+                                "Check Calculation",
+                            ],
+                            3,
+                        ),
+                        Head("Loads"),
+                        Num("Max. Axial Force", 2000.0, " N"),
+                        Num("Max. Tangent Force", 0.0, " N"),
+                        Num("Tightness Factor", 1.0, ""),
+                        Combo("Force Input Factor", &["0.3", "0.5", "0.7", "1"], 1),
+                        Num("Joint Friction Factor", 0.15, ""),
+                        Num("Required Safety Factor", 1.5, ""),
+                        Head("Plates Material"),
+                        Text("Material", "Steel"),
+                        Num("Functional Width", 20.0, " mm"),
+                        Head("Bolt"),
+                        Num("Number of Bolts", 1.0, ""),
+                        Num("Yield Strength", 640.0, " MPa"),
+                        Num("Allowable Thread Pressure", 160.0, " MPa"),
+                        Num("Thread Friction Factor", 0.15, ""),
+                        Num("Head Friction Factor", 0.15, ""),
+                        Button("Calculate"),
+                    ],
                 ),
                 Page(
                     "Fatigue Calculation",
-                    &[Note(
-                        "Fatigue check of the joint (comes after the geometry)",
-                    )],
+                    &[
+                        Check("Fatigue Calculation", false),
+                        Note("Fatigue check of the joint (comes after the strength check)"),
+                    ],
                 ),
             ],
             ClevisPin | SecurePin | RadialPin => &[Page(
@@ -1751,6 +1782,7 @@ impl CadCraftApp {
             return;
         }
         let mut d = PartDialog::new(kind);
+        super::bolted::start(&mut d);
         let defs = selector_defs(Planned::Asm(kind));
         if !self.frame_preselect(&mut d)
             && let Some(first) = defs.first()

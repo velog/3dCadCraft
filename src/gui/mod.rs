@@ -35,6 +35,7 @@ mod asm_select;
 mod asm_select_modes;
 mod assembly;
 mod blend;
+mod bolted;
 mod bom;
 mod breadcrumb;
 mod browser_edit;
