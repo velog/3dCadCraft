@@ -162,24 +162,37 @@ fn footer_top(natural_top: f32, visible_bottom: f32) -> f32 {
     natural_top.min(visible_bottom - FOOTER_HEIGHT)
 }
 
+/// Left edge and width of a footer whose slot runs `left..right`, kept within the
+/// visible `clip_left..clip_right`.
+fn footer_span(left: f32, right: f32, clip_left: f32, clip_right: f32) -> (f32, f32) {
+    let l = left.max(clip_left);
+    let r = right.min(clip_right).max(l);
+    (l, r - l)
+}
+
 /// The OK / Cancel row of a command panel: it stays in view while the panel scrolls.
 pub fn panel_footer<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
     let (slot, _) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), FOOTER_HEIGHT),
         Sense::hover(),
     );
-    let top = footer_top(slot.top(), ui.clip_rect().bottom());
-    let at = Pos2::new(slot.left(), top);
+    let clip = ui.clip_rect();
+    let top = footer_top(slot.top(), clip.bottom());
+    // Content wider than the panel (the Hole picture) made the row wider than the
+    // screen: egui then pushed the area left over the panel's edge, where its
+    // buttons took no clicks. The row keeps to what is visible of the panel.
+    let (left, width) = footer_span(slot.left(), slot.right(), clip.left(), clip.right());
+    let at = Pos2::new(left, top);
     egui::Area::new(ui.id().with("panel_footer"))
         .order(egui::Order::Middle)
         .fixed_pos(at)
         .show(ui.ctx(), |ui| {
-            ui.set_width(slot.width());
+            ui.set_width(width);
             egui::Frame::new()
                 .fill(tokens().panel)
                 .inner_margin(Margin::symmetric(0, 4))
                 .show(ui, |ui| {
-                    ui.set_min_width(slot.width());
+                    ui.set_min_width(width);
                     ui.horizontal(add).inner
                 })
                 .inner
@@ -404,6 +417,14 @@ mod tests {
         // Scrolled to its end: back in the flow, once its whole height fits.
         assert_eq!(footer_top(775.0, 800.0), 800.0 - FOOTER_HEIGHT);
         assert_eq!(footer_top(760.0, 800.0), 760.0);
+    }
+
+    #[test]
+    fn the_footer_keeps_to_the_visible_panel() {
+        // Content as wide as the panel: unchanged.
+        assert_eq!(footer_span(1110.0, 1392.0, 1104.0, 1396.0), (1110.0, 282.0));
+        // Wider content (the Hole picture): cut at the panel's right edge.
+        assert_eq!(footer_span(1110.0, 1430.0, 1104.0, 1396.0), (1110.0, 286.0));
     }
 
     #[test]
