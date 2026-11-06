@@ -2941,3 +2941,277 @@ fn a_projected_view_follows_the_representations_of_its_base() {
     let v = sheet.view(top).unwrap();
     assert!(!serde_json::to_string(v).unwrap().contains("reps"));
 }
+
+// ---- drawing sketches and Draft View (spec 4.12) ------------------------------
+
+/// A sketch with a 30 x 20 rectangle from (x, y), a centreline and a
+/// construction circle (the last two: one shown as a chain, one only while
+/// editing).
+fn rect_sketch(x: f64, y: f64) -> view_sketch::ViewSketch {
+    let mut s = view_sketch::ViewSketch::default();
+    let sk = &mut s.0;
+    let p: Vec<_> = [[x, y], [x + 30.0, y], [x + 30.0, y + 20.0], [x, y + 20.0]]
+        .iter()
+        .map(|q| sk.add_point(Point2::new(q[0], q[1])))
+        .collect();
+    for k in 0..4 {
+        sk.add_line_between(p[k], p[(k + 1) % 4]).unwrap();
+    }
+    let a = sk.add_point(Point2::new(x - 5.0, y + 10.0));
+    let b = sk.add_point(Point2::new(x + 35.0, y + 10.0));
+    let c = sk.add_line_between(a, b).unwrap();
+    sk.set_style(c, crate::sketch::Style::Centerline).unwrap();
+    let o = sk.add_point(Point2::new(x + 15.0, y + 10.0));
+    let circle = sk.add_circle_at(o, 4.0).unwrap();
+    sk.set_style(circle, crate::sketch::Style::Construction)
+        .unwrap();
+    s
+}
+
+/// Sheet and view sketches: added with their own names and ids (never
+/// reused), edited, hidden, deleted; a view's go with the view; they survive
+/// a save; `fix` keeps the next id above every sketch.
+#[test]
+fn drawing_sketches_live_on_sheets_and_views() {
+    let mut d = DrawingDocument::default();
+    let v = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [100.0, 100.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let a = d.add_sketch(None, rect_sketch(10.0, 10.0)).unwrap();
+    let b = d.add_sketch(Some(v), rect_sketch(0.0, 0.0)).unwrap();
+    let c = d
+        .add_sketch(Some(v), view_sketch::ViewSketch::default())
+        .unwrap();
+    assert_eq!((a, b, c), (1, 2, 3));
+    let sheet = d.sheet().unwrap();
+    assert_eq!(sheet.sketches[0].name, "Sketch1");
+    let names: Vec<&str> = sheet
+        .view(v)
+        .unwrap()
+        .sketches
+        .iter()
+        .map(|k| k.name.as_str())
+        .collect();
+    assert_eq!(names, ["Sketch1", "Sketch2"]);
+    assert_eq!(d.find_sketch(b).map(|(o, _)| o), Some(Some(v)));
+    assert_eq!(d.find_sketch(a).map(|(o, _)| o), Some(None));
+    assert!(
+        d.add_sketch(Some(99), view_sketch::ViewSketch::default())
+            .is_none()
+    );
+
+    // Edit, hide, delete.
+    assert!(d.set_sketch(c, rect_sketch(5.0, 5.0)));
+    assert_eq!(d.find_sketch(c).unwrap().1.sketch, rect_sketch(5.0, 5.0));
+    assert!(d.set_sketch_visible(a, false));
+    assert!(!d.find_sketch(a).unwrap().1.visible);
+    assert!(d.remove_sketch(c));
+    assert!(!d.remove_sketch(c));
+    assert!(!d.set_sketch(c, view_sketch::ViewSketch::default()));
+    // A new one takes a new id, never the deleted one's.
+    assert_eq!(
+        d.add_sketch(Some(v), view_sketch::ViewSketch::default()),
+        Some(4)
+    );
+
+    // Saved and read back.
+    let json = serde_json::to_string(&d).unwrap();
+    let mut back: DrawingDocument = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.sheets[0].sketches, d.sheets[0].sketches);
+    assert_eq!(
+        back.sheets[0].views[0].sketches,
+        d.sheets[0].views[0].sketches
+    );
+    back.next_sketch_id = 1;
+    back.fix();
+    assert_eq!(back.next_sketch_id, 5);
+
+    // A drawing from before sketches reads with none.
+    let mut old: serde_json::Value = serde_json::from_str(&json).unwrap();
+    old.as_object_mut().unwrap().remove("next_sketch_id");
+    old["sheets"][0].as_object_mut().unwrap().remove("sketches");
+    old["sheets"][0]["views"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("sketches");
+    let mut old: DrawingDocument = serde_json::from_value(old).unwrap();
+    old.fix();
+    assert!(old.sheets[0].sketches.is_empty() && old.sheets[0].views[0].sketches.is_empty());
+    assert_eq!(old.next_sketch_id, 1);
+
+    // Deleting the view takes its sketches.
+    d.delete_view(v);
+    assert!(d.find_sketch(b).is_none());
+    assert!(d.find_sketch(a).is_some());
+}
+
+/// A finished sketch shows its normal curves solid and its centrelines as
+/// chain lines; construction geometry only while editing.
+#[test]
+fn drawing_sketch_curves() {
+    let k = view_sketch::DrawingSketch {
+        id: 1,
+        name: "Sketch1".into(),
+        visible: true,
+        sketch: rect_sketch(0.0, 0.0),
+    };
+    let c = k.curves();
+    let solid = c
+        .iter()
+        .filter(|(_, l)| *l == view_sketch::CurveLook::Solid)
+        .count();
+    let chain = c
+        .iter()
+        .filter(|(_, l)| *l == view_sketch::CurveLook::Chain)
+        .count();
+    assert_eq!((solid, chain), (4, 1));
+    let (lo, hi) = k.extent().unwrap();
+    assert_eq!((lo, hi), ([-5.0, 0.0], [35.0, 20.0]));
+    // Arcs follow their sweep: a quarter from (10, 0) to (0, 10).
+    let mut s = view_sketch::ViewSketch::default();
+    let o = s.0.add_point(Point2::new(0.0, 0.0));
+    let a = s.0.add_point(Point2::new(10.0, 0.0));
+    let b = s.0.add_point(Point2::new(0.0, 10.0));
+    s.0.add_arc(o, a, b).unwrap();
+    let arc = view_sketch::DrawingSketch { sketch: s, ..k };
+    let pts = &arc.curves()[0].0;
+    assert!(pts.iter().all(|p| p[0] >= -1e-9 && p[1] >= -1e-9));
+    close(
+        (pts[pts.len() / 2][0]).hypot(pts[pts.len() / 2][1]),
+        10.0,
+        1e-9,
+        "on the arc",
+    );
+}
+
+/// The display list draws sketches on the Sketch Geometry layer: the
+/// sheet's at their sheet points, a view's through the view's placement
+/// (scale 2 about its anchor); hidden sketches, a layer turned off and the
+/// sketch being edited are left out.
+#[test]
+fn drawing_sketches_in_the_display_list() {
+    let mut d = DrawingDocument::default();
+    let v = d.add_draft_view([200.0, 150.0], 2.0, None, false).unwrap();
+    d.add_sketch(None, rect_sketch(10.0, 10.0)).unwrap();
+    let in_view = d.add_sketch(Some(v), rect_sketch(0.0, 0.0)).unwrap();
+    fn draft_lines_of(doc: &DrawingDocument, id: u32) -> Option<Arc<super::hlr::ViewLines>> {
+        doc.draft_lines(doc.sheet()?, id).map(Arc::new)
+    }
+    let list = |doc: &DrawingDocument, skip: Option<u32>| {
+        let l = |id: u32| draft_lines_of(doc, id);
+        let placed = super::render::placements(doc, 0, &l);
+        let view = |id: u32| placed.get(&id).map(|(pl, _, l)| (*pl, l.as_ref()));
+        super::render::sketch_prims(doc, 0, &view, skip)
+    };
+    let paths = |prims: &[Prim]| -> Vec<Vec<[f64; 2]>> {
+        prims
+            .iter()
+            .filter_map(|p| match p {
+                Prim::Path { pts, .. } => Some(pts.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let prims = list(&d, None);
+    assert!(matches!(prims.first(), Some(Prim::Pen { .. })));
+    let p = paths(&prims);
+    assert_eq!(p.len(), 8, "four lines of each rectangle");
+    assert!(
+        p.contains(&vec![[10.0, 10.0], [40.0, 10.0]]),
+        "sheet sketch as drawn"
+    );
+    // The draft view's origin at its position, model mm × 2.
+    assert!(p.contains(&vec![[200.0, 150.0], [260.0, 150.0]]), "{p:?}");
+    let chains = prims
+        .iter()
+        .filter(|p| matches!(p, Prim::Center { chain: true, .. }))
+        .count();
+    assert_eq!(chains, 2);
+    let w = d.styles.layer(&d.styles.defaults.sketch_layer).weight;
+    assert!(
+        prims
+            .iter()
+            .all(|p| !matches!(p, Prim::Path { width, .. } if *width != w))
+    );
+    // Hidden, edited, layer off.
+    assert_eq!(paths(&list(&d, Some(in_view))).len(), 4);
+    d.set_sketch_visible(in_view, false);
+    assert_eq!(paths(&list(&d, None)).len(), 4);
+    let name = d.styles.defaults.sketch_layer.clone();
+    if let Some(l) = d.styles.layers.iter_mut().find(|l| l.name == name) {
+        l.on = false;
+    }
+    assert!(list(&d, None).is_empty());
+    // The whole sheet's list (screen and PDF) carries them too.
+    if let Some(l) = d.styles.layers.iter_mut().find(|l| l.name == name) {
+        l.on = true;
+    }
+    let l = |id: u32| draft_lines_of(&d, id);
+    let all = super::render::sheet_list(&d, 0, &|_| String::new(), &l, &Default::default());
+    assert!(paths(&all).contains(&vec![[10.0, 10.0], [40.0, 10.0]]));
+}
+
+/// A Draft View: no model, its extent follows its sketches about a fixed
+/// anchor (sketching does not move what is drawn), a small box while empty;
+/// no projected, section or detail view can come from it; Edit View values
+/// and the label stay its own.
+#[test]
+fn draft_views() {
+    let mut d = DrawingDocument::default();
+    let v = d
+        .add_draft_view([150.0, 120.0], 0.5, Some("DRAFT".into()), true)
+        .unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    assert_eq!(d.model_of(&sheet, v), None);
+    assert!(d.lines_job(&sheet, v).is_none());
+    assert!(d.frame_of(&sheet, v).is_none());
+    let empty = d.draft_lines(&sheet, v).unwrap();
+    assert_eq!(empty.center(), [0.0, 0.0]);
+    assert_eq!(
+        (empty.min, empty.max),
+        ([-40.0, -30.0], [40.0, 30.0]),
+        "40 x 30 on paper"
+    );
+    d.add_sketch(Some(v), rect_sketch(10.0, 10.0)).unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    let l = d.draft_lines(&sheet, v).unwrap();
+    assert_eq!((l.min, l.max), ([5.0, 10.0], [45.0, 30.0]));
+    assert_eq!(l.center(), [0.0, 0.0], "the anchor stays");
+    assert!(d.draft_lines(&sheet, 99).is_none());
+    // Only views with a model have children.
+    assert!(d.add_projected_view(v, [300.0, 120.0]).is_none());
+    assert!(
+        d.add_section_view(v, [0.0, 0.0], [10.0, 0.0], [150.0, 50.0])
+            .is_none()
+    );
+    assert!(
+        d.add_detail_view(v, [0.0, 0.0], 5.0, [300.0, 50.0], 1.0)
+            .is_none()
+    );
+    let view = d.sheet().unwrap().view(v).unwrap();
+    assert_eq!(view.parent(), None);
+    assert_eq!(view.label_lines(0.5), ["DRAFT", "SCALE 1:2"]);
+    // A base view's identifier is the next free one.
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [50.0, 50.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    assert_eq!(d.sheet().unwrap().view(b).unwrap().identifier, "VIEW1");
+    // The kind reads back.
+    let json = serde_json::to_string(&d).unwrap();
+    assert!(json.contains(r#""kind":"Draft""#));
+    let back: DrawingDocument = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.sheets[0].views[0].kind, ViewKind::Draft);
+    assert_eq!(back.sheets[0].views[0].sketches.len(), 1);
+}

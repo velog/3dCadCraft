@@ -269,6 +269,45 @@ fn drawing_views_of_large_models() {
             over.push("dimension labels");
         }
     }
+    // Drawing sketches (spec 4.12): 200 sheet sketches of a rectangle, a
+    // circle and an arc each, turned into the display list every frame.
+    {
+        use cadcraft3d::drawing::DrawingDocument;
+        use cadcraft3d::drawing::view_sketch::ViewSketch;
+        use cadcraft3d::sketch::Point2;
+        let mut d = DrawingDocument::default();
+        for k in 0..200 {
+            let (x, y) = ((k % 20) as f64 * 20.0, (k / 20) as f64 * 25.0);
+            let mut s = ViewSketch::default();
+            let sk = &mut s.0;
+            let p: Vec<_> = [[x, y], [x + 15.0, y], [x + 15.0, y + 10.0], [x, y + 10.0]]
+                .iter()
+                .map(|q| sk.add_point(Point2::new(q[0], q[1])))
+                .collect();
+            for i in 0..4 {
+                sk.add_line_between(p[i], p[(i + 1) % 4]).unwrap();
+            }
+            sk.add_circle(Point2::new(x + 7.5, y + 5.0), 3.0).unwrap();
+            let c = sk.add_point(Point2::new(x + 7.5, y + 15.0));
+            let a = sk.add_point(Point2::new(x + 12.5, y + 15.0));
+            let b = sk.add_point(Point2::new(x + 2.5, y + 15.0));
+            sk.add_arc(c, a, b).unwrap();
+            d.add_sketch(None, s).unwrap();
+        }
+        let t = Instant::now();
+        let prims = cadcraft3d::drawing::render::sketch_prims(&d, 0, &|_| None, None);
+        let total = ms(t);
+        let budget = 15.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({} prims){flag}",
+            "drawing sketches: 200 on a sheet",
+            prims.len()
+        );
+        if total > budget {
+            over.push("drawing sketches");
+        }
+    }
     // A general table of 1 000 rows × 8 columns read from CSV text, and a
     // revision table of 500 revisions with 100 clouds, drawn every frame.
     {

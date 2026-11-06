@@ -51,6 +51,10 @@ pub enum DrwCmd {
     BreakOut,
     /// Place Views › Auxiliary.
     Auxiliary,
+    /// Place Views › Draft View (spec 4.12).
+    DraftView,
+    /// Place Views / Annotate › New Sketch (spec 4.12).
+    StartSketch,
     /// Annotate › Center Mark.
     CenterMark,
     /// Annotate › Centerline.
@@ -167,6 +171,10 @@ pub(super) enum DrwTool {
     BreakOut(super::drawing_breakout::BoDraft),
     /// Auxiliary View: an edge, then the place.
     Auxiliary(super::drawing_section::AuxDraft),
+    /// New Sketch: a click on a view (its sketch) or on the sheet.
+    StartSketch,
+    /// Draft View: the dialog's values; a click places the view.
+    DraftView(super::drawing_sketch::DraftDraft),
     /// Parts List: the source view (dialog), then the place.
     PartsList,
     /// Balloon: a component's edge (view, edge, where along it), then the
@@ -402,8 +410,69 @@ fn hash_str(s: &str) -> u64 {
 }
 
 /// A view row of the browser: id, identifier, parent, model name, its
-/// breaks and break outs.
-type TreeView = (u32, String, Option<u32>, String, Vec<TreeOp>);
+/// breaks and break outs, its sketches.
+type TreeView = (
+    u32,
+    String,
+    Option<u32>,
+    String,
+    Vec<TreeOp>,
+    Vec<TreeSketch>,
+);
+
+/// The model column of a Draft View's browser row.
+const DRAFT_ROW: &str = "Draft View";
+
+/// A drawing sketch row of the browser: id, name, visible.
+type TreeSketch = (u32, String, bool);
+
+/// What a sketch row of the browser asks for.
+#[derive(Clone, Copy)]
+enum SketchAction {
+    Edit,
+    Visible(bool),
+    Delete,
+}
+
+/// A sketch row (spec 4.12): double-click edits it; its menu has Edit
+/// Sketch, Visibility and Delete.
+fn sketch_row(
+    ui: &mut egui::Ui,
+    depth: usize,
+    k: &TreeSketch,
+    act: &mut Option<(u32, SketchAction)>,
+) {
+    ui.horizontal(|ui| {
+        ui.add_space(depth as f32 * 14.0);
+        super::panels::tree_icon(ui, Icon::StartSketch);
+        let text = RichText::new(&k.1);
+        let text = if k.2 { text } else { text.weak() };
+        let r = ui.selectable_label(false, text);
+        let r = if k.2 {
+            r
+        } else {
+            r.on_hover_text("Hidden: right-click > Visibility shows it")
+        };
+        if r.double_clicked() {
+            *act = Some((k.0, SketchAction::Edit));
+        }
+        r.context_menu(|ui| {
+            if ui.button("Edit Sketch").clicked() {
+                *act = Some((k.0, SketchAction::Edit));
+                ui.close();
+            }
+            let mut on = k.2;
+            if ui.checkbox(&mut on, "Visibility").clicked() {
+                *act = Some((k.0, SketchAction::Visible(on)));
+                ui.close();
+            }
+            if ui.button("Delete").clicked() {
+                *act = Some((k.0, SketchAction::Delete));
+                ui.close();
+            }
+        });
+    });
+}
 
 /// A Break (`out` false) or Break Out under a view in the browser: its index
 /// and whether it is suppressed.
@@ -542,6 +611,14 @@ impl CadCraftApp {
                 None => self.start_annotation(DrwTool::BreakOutView),
             },
             DrwCmd::Auxiliary => self.start_annotation(DrwTool::Auxiliary(Default::default())),
+            DrwCmd::StartSketch => match self.drw.sel {
+                Some(view) => self.new_drawing_sketch(Some(view)),
+                None => self.start_annotation(DrwTool::StartSketch),
+            },
+            DrwCmd::DraftView => {
+                let draft = self.draft_view_defaults();
+                self.start_annotation(DrwTool::DraftView(draft));
+            }
             DrwCmd::CenterMark => self.start_annotation(DrwTool::CenterMark),
             DrwCmd::Centerline => self.start_annotation(DrwTool::Centerline(None)),
             DrwCmd::Dimension => self.start_annotation(DrwTool::Dimension(Default::default())),
@@ -680,6 +757,10 @@ impl CadCraftApp {
         let Some(v) = sheet.view(id) else {
             return;
         };
+        if v.kind == ViewKind::Draft {
+            self.open_draft_edit(id);
+            return;
+        }
         let (model, orientation) = match &v.kind {
             ViewKind::Base { model, orientation } => (Some(*model), *orientation),
             _ => (d.model_of(sheet, id), ViewOrientation::Front),
@@ -827,6 +908,15 @@ impl CadCraftApp {
             }
             Some(DrwTool::BreakOut(d)) => d.prompt().into(),
             Some(DrwTool::Auxiliary(d)) => d.prompt().into(),
+            Some(DrwTool::StartSketch) => {
+                "New Sketch: click a view (the sketch moves and scales with it) or the sheet".into()
+            }
+            Some(DrwTool::DraftView(d)) if d.edit.is_some() => {
+                "Edit View: the draft view's identifier, scale and label, then OK".into()
+            }
+            Some(DrwTool::DraftView(_)) => {
+                "Draft View: set the identifier and scale, then click where the view goes".into()
+            }
             Some(DrwTool::BendNote) => {
                 "Bend Notes: click bend lines of a flat pattern view (Esc ends)".into()
             }
@@ -976,6 +1066,12 @@ impl CadCraftApp {
         let Some(sheet) = doc.sheets.get(i) else {
             return out;
         };
+        // Draft views: no model, the extent of their sketches (spec 4.12).
+        for v in &sheet.views {
+            if let Some(l) = doc.draft_lines(sheet, v.id) {
+                out.insert(v.id, Arc::new(l));
+            }
+        }
         let mut jobs: Vec<(u32, LinesJob)> = sheet
             .views
             .iter()
@@ -1226,6 +1322,15 @@ impl CadCraftApp {
             let extras =
                 crate::drawing::render::view_extras(d, d.active_sheet, &|id| map.get(&id).copied());
             super::drawing_annot::paint_prims_styled(&painter, &cam, rect, &extras, INK);
+            // Drawing sketches (the one being edited draws itself).
+            let editing = self.drw.sketch.as_ref().and_then(|s| s.editing());
+            let sketches = crate::drawing::render::sketch_prims(
+                d,
+                d.active_sheet,
+                &|id| map.get(&id).copied(),
+                editing,
+            );
+            super::drawing_annot::paint_prims_styled(&painter, &cam, rect, &sketches, INK);
         }
 
         // Annotations (parts lists and balloons read this frame's BOM).
@@ -1294,6 +1399,12 @@ impl CadCraftApp {
                     self.open_break_out_sketch(id);
                 }
             }
+            Some(DrwTool::StartSketch) => {
+                if response.clicked() {
+                    self.new_drawing_sketch(self.drw.hover);
+                }
+            }
+            Some(DrwTool::DraftView(_)) => self.draft_view_tool(&ctx, &painter, rect, &response),
             Some(DrwTool::BreakOut(_)) => {
                 self.break_out_tool(&ctx, &painter, rect, &response, &views)
             }
@@ -1709,10 +1820,39 @@ impl CadCraftApp {
                 }
                 return;
             }
+            // The sketches of the view (or of the sheet), and New Sketch.
+            let sketches: Vec<(u32, String)> = self
+                .drawing()
+                .and_then(|d| d.sketches(target))
+                .map(|l| l.iter().map(|k| (k.id, k.name.clone())).collect())
+                .unwrap_or_default();
+            let sketch_items = |app: &mut Self, ui: &mut egui::Ui| {
+                if ui.button("New Sketch (DS)").clicked() {
+                    app.new_drawing_sketch(target);
+                    ui.close();
+                }
+                for (k, name) in &sketches {
+                    if ui.button(format!("Edit {name}")).clicked() {
+                        app.edit_drawing_sketch(*k);
+                        ui.close();
+                    }
+                }
+            };
+            let draft = target
+                .and_then(|id| self.drawing()?.sheet()?.view(id))
+                .is_some_and(|v| v.kind == ViewKind::Draft);
             if let Some(id) = target {
                 if ui.button("Edit View...").clicked() {
                     self.open_edit_view(id);
                     ui.close();
+                }
+                sketch_items(self, ui);
+                if draft {
+                    if ui.button("Delete").clicked() {
+                        self.delete_drawing_view(id);
+                        ui.close();
+                    }
+                    return;
                 }
                 if ui.button("Projected View (PV)").clicked() {
                     self.drw.tool = Some(DrwTool::Projected(Some(id)));
@@ -1767,6 +1907,9 @@ impl CadCraftApp {
             if ui.button("Base View (BV)...").clicked() {
                 self.open_base_view();
                 ui.close();
+            }
+            if target.is_none() {
+                sketch_items(self, ui);
             }
             if ui.button("Edit Sheet...").clicked() {
                 self.drw_apply(DrwCmd::EditSheet);
@@ -2118,7 +2261,12 @@ impl CadCraftApp {
             return;
         };
         let active = d.active_sheet;
-        let sheets: Vec<(String, String, Vec<TreeView>)> = d
+        let tree_sketches = |l: &[crate::drawing::view_sketch::DrawingSketch]| -> Vec<TreeSketch> {
+            l.iter()
+                .map(|k| (k.id, k.name.clone(), k.visible))
+                .collect()
+        };
+        let sheets: Vec<(String, String, Vec<TreeView>, Vec<TreeSketch>)> = d
             .sheets
             .iter()
             .map(|s| {
@@ -2126,9 +2274,12 @@ impl CadCraftApp {
                     .views
                     .iter()
                     .map(|v| {
-                        let model = d
-                            .model_of(s, v.id)
-                            .map_or_else(String::new, |m| self.model_name(m));
+                        let model = if v.kind == ViewKind::Draft {
+                            DRAFT_ROW.to_string()
+                        } else {
+                            d.model_of(s, v.id)
+                                .map_or_else(String::new, |m| self.model_name(m))
+                        };
                         let ops = v
                             .breaks
                             .iter()
@@ -2144,10 +2295,16 @@ impl CadCraftApp {
                                 suppressed: b.suppressed,
                             }))
                             .collect();
-                        (v.id, v.identifier.clone(), v.parent(), model, ops)
+                        let sk = tree_sketches(&v.sketches);
+                        (v.id, v.identifier.clone(), v.parent(), model, ops, sk)
                     })
                     .collect();
-                (s.name.clone(), s.size.label(), views)
+                (
+                    s.name.clone(),
+                    s.size.label(),
+                    views,
+                    tree_sketches(&s.sketches),
+                )
             })
             .collect();
         let mut activate = None;
@@ -2158,6 +2315,8 @@ impl CadCraftApp {
         let mut edit_view = None;
         let mut delete_view = None;
         let mut op_action: Option<(usize, u32, TreeOp, OpAction)> = None;
+        let mut sk_action: Option<(usize, (u32, SketchAction))> = None;
+        let mut new_sketch: Option<(usize, Option<u32>)> = None;
         ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Drawing);
             ui.label(RichText::new(name).strong());
@@ -2181,7 +2340,7 @@ impl CadCraftApp {
                         });
                     }
                 });
-            for (i, (sname, size, views)) in sheets.iter().enumerate() {
+            for (i, (sname, size, views, sheet_sketches)) in sheets.iter().enumerate() {
                 let label = RichText::new(format!("{sname} ({size})"));
                 let label = if i == active { label.strong() } else { label };
                 let header = egui::CollapsingHeader::new(label)
@@ -2205,7 +2364,9 @@ impl CadCraftApp {
                             };
                             ui.horizontal(|ui| {
                                 ui.add_space(depth as f32 * 14.0);
-                                let icon = if v.2.is_none() {
+                                let icon = if v.3 == DRAFT_ROW && v.2.is_none() {
+                                    Icon::DraftView
+                                } else if v.2.is_none() {
                                     Icon::BaseView
                                 } else {
                                     Icon::ProjectedView
@@ -2224,6 +2385,10 @@ impl CadCraftApp {
                                 r.context_menu(|ui| {
                                     if ui.button("Edit View...").clicked() {
                                         edit_view = Some((i, id));
+                                        ui.close();
+                                    }
+                                    if ui.button("New Sketch (DS)").clicked() {
+                                        new_sketch = Some((i, Some(id)));
                                         ui.close();
                                     }
                                     if ui.button("Delete").clicked() {
@@ -2287,8 +2452,24 @@ impl CadCraftApp {
                                     });
                                 });
                             }
+                            // Its sketches (spec 4.12).
+                            for k in &v.5 {
+                                let mut a = None;
+                                sketch_row(ui, depth + 1, k, &mut a);
+                                if let Some(a) = a {
+                                    sk_action = Some((i, a));
+                                }
+                            }
                             for c in views.iter().filter(|c| c.2 == Some(id)).rev() {
                                 stack.push((c.0, depth + 1));
+                            }
+                        }
+                        // The sheet's own sketches.
+                        for k in sheet_sketches {
+                            let mut a = None;
+                            sketch_row(ui, 0, k, &mut a);
+                            if let Some(a) = a {
+                                sk_action = Some((i, a));
                             }
                         }
                     });
@@ -2302,6 +2483,10 @@ impl CadCraftApp {
                     }
                     if ui.button("Edit Sheet...").clicked() {
                         edit_sheet = Some(i);
+                        ui.close();
+                    }
+                    if ui.button("New Sketch (DS)").clicked() {
+                        new_sketch = Some((i, None));
                         ui.close();
                     }
                     if ui
@@ -2355,6 +2540,29 @@ impl CadCraftApp {
                     if self.edit_drawing(label, move |d| d.suppress_break(id, out, op.k, on))
                         != Some(true)
                     {
+                        self.history.cancel();
+                    }
+                    self.history.break_coalescing();
+                }
+            }
+        }
+        if let Some((i, view)) = new_sketch {
+            switch(self, i);
+            self.new_drawing_sketch(view);
+        }
+        if let Some((i, (id, a))) = sk_action {
+            switch(self, i);
+            match a {
+                SketchAction::Edit => self.edit_drawing_sketch(id),
+                SketchAction::Visible(on) => {
+                    let label = if on { "Show Sketch" } else { "Hide Sketch" };
+                    if self.edit_drawing(label, |d| d.set_sketch_visible(id, on)) != Some(true) {
+                        self.history.cancel();
+                    }
+                    self.history.break_coalescing();
+                }
+                SketchAction::Delete => {
+                    if self.edit_drawing("Delete Sketch", |d| d.remove_sketch(id)) != Some(true) {
                         self.history.cancel();
                     }
                     self.history.break_coalescing();
@@ -2450,6 +2658,7 @@ impl CadCraftApp {
             ViewKind::Section { .. } => "Section View".to_string(),
             ViewKind::Auxiliary { .. } => "Auxiliary View".to_string(),
             ViewKind::Detail { .. } => "Detail View".to_string(),
+            ViewKind::Draft => "Draft View".to_string(),
         };
         let model = d
             .model_of(sheet, v.id)
@@ -2467,9 +2676,12 @@ impl CadCraftApp {
                 super::panels::plabel(ui, "Type");
                 ui.label(kind);
                 ui.end_row();
-                super::panels::plabel(ui, "Model");
-                ui.label(model);
-                ui.end_row();
+                let draft = nv.kind == ViewKind::Draft;
+                if !draft {
+                    super::panels::plabel(ui, "Model");
+                    ui.label(model);
+                    ui.end_row();
+                }
                 if let ViewKind::Detail {
                     radius,
                     rect,
@@ -2615,7 +2827,7 @@ impl CadCraftApp {
                     ui.end_row();
                 }
                 super::panels::plabel(ui, "Style");
-                ui.add_enabled_ui(!(parent.is_some() && nv.style_from_base), |ui| {
+                ui.add_enabled_ui(!draft && !(parent.is_some() && nv.style_from_base), |ui| {
                     egui::ComboBox::from_id_salt("drw_style_prop")
                         .selected_text(nv.style.label())
                         .show_ui(ui, |ui| {
@@ -2690,7 +2902,7 @@ fn planned_check(ui: &mut egui::Ui, text: &str, why: &str) {
         .on_disabled_hover_text(why);
 }
 
-fn scale_combo(ui: &mut egui::Ui, id: &str, scale: &mut f64) {
+pub(super) fn scale_combo(ui: &mut egui::Ui, id: &str, scale: &mut f64) {
     egui::ComboBox::from_id_salt(id)
         .selected_text(drw::scale_text(*scale))
         .width(70.0)

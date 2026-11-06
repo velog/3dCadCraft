@@ -49,14 +49,12 @@ use Row::{Button, Check, Combo, Head, Note, Num, Radio, Sel, Text};
 pub enum Planned {
     // Place Views
     Overlay,
-    DraftView,
     Slice,
     Crop,
     AlignHorizontal,
     AlignVertical,
     AlignInPosition,
     AlignBreak,
-    StartSketch,
     // Annotate › Dimension
     Retrieve,
     // Feature Notes
@@ -104,16 +102,14 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 34] = [
+    pub const ALL: [Planned; 32] = [
         Self::Overlay,
-        Self::DraftView,
         Self::Slice,
         Self::Crop,
         Self::AlignHorizontal,
         Self::AlignVertical,
         Self::AlignInPosition,
         Self::AlignBreak,
-        Self::StartSketch,
         Self::Retrieve,
         Self::PunchNote,
         Self::SketchedSymbols,
@@ -145,14 +141,12 @@ impl Planned {
     pub fn title(self) -> &'static str {
         match self {
             Self::Overlay => "Overlay View",
-            Self::DraftView => "Draft View",
             Self::Slice => "Slice",
             Self::Crop => "Crop",
             Self::AlignHorizontal => "Horizontally Align View",
             Self::AlignVertical => "Vertically Align View",
             Self::AlignInPosition => "Positionally Align View",
             Self::AlignBreak => "Remove View Alignment",
-            Self::StartSketch => "New Sketch",
             Self::Retrieve => "Retrieve Model Annotations",
             Self::PunchNote => "Punch Notes",
             Self::SketchedSymbols => "Symbols",
@@ -207,21 +201,6 @@ impl Planned {
                     ),
                 ],
             )],
-            Self::DraftView => &[Page(
-                "Draft View",
-                &[
-                    Text("View Identifier", "VIEW"),
-                    Combo("Scale", &["1:1", "1:2", "1:5", "2:1", "5:1"], 0),
-                    Check("Toggle Label Visibility", true),
-                    Button("Edit View Label..."),
-                    Sel(
-                        "place",
-                        "Placement",
-                        "click on the sheet: a sketch opens in the new view",
-                    ),
-                    Note("A view holding only a 2D sketch (no model)"),
-                ],
-            )],
             Self::Slice => &[Page(
                 "Slice",
                 &[
@@ -261,19 +240,6 @@ impl Planned {
                 &[
                     Sel("view", "View", "select a view whose alignment is removed"),
                     Note("The view can then be moved freely"),
-                ],
-            )],
-            Self::StartSketch => &[Page(
-                "Sketch",
-                &[
-                    Sel(
-                        "target",
-                        "Sheet or View",
-                        "select a view (the sketch belongs to it) or click the sheet",
-                    ),
-                    Note(
-                        "Sketch tools of the drawing: lines, arcs, text, Fill/Hatch Sketch Region, Project Geometry",
-                    ),
                 ],
             )],
             Self::Retrieve => &[
@@ -692,14 +658,12 @@ impl Planned {
             Self::Overlay => {
                 "Positional representations of an assembly drawn over a view in phantom lines"
             }
-            Self::DraftView => "A view with only a 2D sketch",
             Self::Slice => "A zero-depth section of a view along a sketch line",
             Self::Crop => "Clips a view to a rectangle or a closed sketch",
             Self::AlignHorizontal | Self::AlignVertical | Self::AlignInPosition => {
                 "Aligns a view to another one"
             }
             Self::AlignBreak => "Frees a view from its alignment",
-            Self::StartSketch => "A sketch on the sheet or in a view",
             Self::Retrieve => {
                 "Brings the model's sketch / feature dimensions and 3D annotations into a view"
             }

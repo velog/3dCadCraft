@@ -177,7 +177,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 63: sketch text (`Sketch::texts`, stored outlines) (2026-11-03).
 /// - 64: plastic part features (`BodyOp::{Grill, Boss, Rest, SnapFit, RuleFillet, Lip}`)
 ///   (2026-11-03).
-pub const FORMAT_REVISION: u32 = 64;
+/// - 65: drawing Draft View (`ViewKind::Draft`); sheet and view sketches
+///   (`Sheet::sketches`, `DrawingView::sketches`) (2026-11-06).
+pub const FORMAT_REVISION: u32 = 65;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

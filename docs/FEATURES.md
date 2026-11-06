@@ -982,6 +982,12 @@ visual check.
 
 ## 4.2 Views — 🟡 · XL
 
+🟡 2026-11-06: **drawing sketches and Draft View** ([spec/4.12-drawing-sketches.md](spec/4.12-drawing-sketches.md),
+format revision 65): New Sketch (DS) on the sheet or owned by a view (moves and scales with it), the part sketch's
+tools and Project Geometry, drawn and printed on the Sketch Geometry layer (construction, points, constraints and
+dimensions only while editing); browser rows with Edit Sketch / Visibility / Delete; Draft View (DFV): identifier,
+scale, label, a click places it and its sketch opens.
+
 🟡 2026-10-26: Base, Projected, Section (full, straight line, hatched), Detail (circular) and Auxiliary
 views with hidden line removal (display mesh, A2 of the spec), move / align / edit / delete; Break, Break
 Out, Slice, Crop, Overlay, Draft views are listed greyed. The base view's preview has Inventor's ViewCube

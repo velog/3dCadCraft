@@ -9,6 +9,10 @@
 //! A section line is such a sketch of its parent view: Section View opens
 //! it with the Line tool; Finish Sketch takes its lines, end to end, as the
 //! line; Edit Section Line opens it again.
+//!
+//! The user's own drawing sketches (spec 4.12, New Sketch, Draft View) use
+//! the same editor: a view's in its view plane, the sheet's ([`SHEET`]) in
+//! sheet mm (an identity placement).
 
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 
@@ -24,9 +28,16 @@ use crate::kernel::Point3;
 use crate::part::PartSketch;
 use crate::sketch::{ConstraintId, Point2, PointId};
 
+/// `DrwSketch::view` of a sheet sketch (view ids start at 1).
+pub(super) const SHEET: u32 = 0;
+
 /// What finishing a view sketch does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SketchFor {
+    /// A new drawing sketch of the view, or of the sheet ([`SHEET`]).
+    NewSketch,
+    /// Drawing sketch `id` (spec 4.12).
+    Sketch(u32),
     /// The line of a new section view (the view is placed next).
     NewSection,
     /// The line of section view `id`.
@@ -235,9 +246,19 @@ impl DrwSketch {
         }
     }
 
+    /// The drawing sketch being edited (its saved form is not drawn).
+    pub(super) fn editing(&self) -> Option<u32> {
+        match self.owner {
+            SketchFor::Sketch(id) => Some(id),
+            _ => None,
+        }
+    }
+
     /// Status-bar prompt.
     pub(super) fn prompt(&self) -> String {
         let what = match self.owner {
+            SketchFor::NewSketch | SketchFor::Sketch(_) if self.view == SHEET => "Sheet sketch",
+            SketchFor::NewSketch | SketchFor::Sketch(_) => "View sketch",
             SketchFor::NewSection => "Section line",
             SketchFor::Section(_) => "Edit Section Line",
             SketchFor::BreakOut => "Break Out profile",
@@ -264,6 +285,36 @@ impl Projector for SheetProjector {
     fn project(&self, p: &Point3, rect: Rect) -> Option<Pos2> {
         Some(self.cam.to_screen(rect, self.pl.to_sheet([p.x, p.y])))
     }
+}
+
+/// A sheet sketch's placement: sheet mm as they are.
+fn sheet_placement() -> Placement {
+    Placement {
+        position: [0.0, 0.0],
+        scale: 1.0,
+        center: [0.0, 0.0],
+        breaks: Default::default(),
+    }
+}
+
+/// Where sketch geometry of view `view` (or of the sheet) is drawn.
+fn sketch_placement(views: &[ShownView], view: u32) -> Option<Placement> {
+    if view == SHEET {
+        return Some(sheet_placement());
+    }
+    views.iter().find(|v| v.id == view).and_then(placement)
+}
+
+/// A view edge in sheet mm (Project Geometry into a sheet sketch).
+fn edge_on_sheet(
+    e: &crate::drawing::hlr::ViewEdge,
+    pl: &Placement,
+) -> crate::drawing::hlr::ViewEdge {
+    let mut out = e.clone();
+    out.a = pl.to_sheet(e.a);
+    out.b = pl.to_sheet(e.b);
+    out.circle = e.circle.map(|(c, r)| (pl.to_sheet(c), r * pl.scale));
+    out
 }
 
 fn placement(v: &ShownView) -> Option<Placement> {
@@ -334,6 +385,37 @@ impl CadCraftApp {
             return false;
         };
         let sketch = ViewSketch(s.ps.sketch.clone());
+        match s.owner {
+            SketchFor::NewSketch => {
+                let owner = (s.view != SHEET).then_some(s.view);
+                if self
+                    .edit_drawing("New Sketch", |d| d.add_sketch(owner, sketch))
+                    .flatten()
+                    .is_none()
+                {
+                    self.history.cancel();
+                    self.file_status = Some(Err("New Sketch: the view is gone".into()));
+                }
+                self.history.break_coalescing();
+                self.end_drawing_sketch(s.view);
+                return true;
+            }
+            SketchFor::Sketch(id) => {
+                let same = self
+                    .drawing()
+                    .and_then(|d| d.find_sketch(id))
+                    .is_some_and(|(_, k)| k.sketch == sketch);
+                if !same
+                    && self.edit_drawing("Edit Sketch", |d| d.set_sketch(id, sketch)) != Some(true)
+                {
+                    self.history.cancel();
+                }
+                self.history.break_coalescing();
+                self.end_drawing_sketch(s.view);
+                return true;
+            }
+            _ => {}
+        }
         if s.owner == SketchFor::BreakOutDepth {
             let mut s = s;
             let line = match sketch.line() {
@@ -404,7 +486,11 @@ impl CadCraftApp {
                 let pts = line.iter().map(|q| pl.to_sheet(*q)).collect();
                 self.drw.tool = Some(DrwTool::Section(SectionDraft::placing(s.view, pts, sketch)));
             }
-            SketchFor::BreakOut | SketchFor::BreakOutEdit(_) | SketchFor::BreakOutDepth => {}
+            SketchFor::BreakOut
+            | SketchFor::BreakOutEdit(_)
+            | SketchFor::BreakOutDepth
+            | SketchFor::NewSketch
+            | SketchFor::Sketch(_) => {}
             SketchFor::Section(id) => {
                 let pl = views
                     .iter()
@@ -479,7 +565,7 @@ impl CadCraftApp {
         let Some(mut s) = self.drw.sketch.take() else {
             return;
         };
-        let Some(pl) = views.iter().find(|v| v.id == s.view).and_then(placement) else {
+        let Some(pl) = sketch_placement(views, s.view) else {
             self.drw.sketch = Some(s);
             return;
         };
@@ -603,17 +689,27 @@ impl CadCraftApp {
             && response.clicked()
             && let Some(p) = pointer
         {
-            let pv = views.iter().find(|v| v.id == s.view);
+            // A sheet sketch takes the geometry of any view, in sheet mm.
+            let sheet = s.view == SHEET;
             match self.geometry_under(views, rect, p) {
-                Some(g) if g.view == s.view && g.is_point() => {
+                Some(g) if (sheet || g.view == s.view) && g.is_point() => {
                     s.project_point(to_view(g.at));
                 }
-                Some(g) if g.view == s.view => {
+                Some(g) if sheet || g.view == s.view => {
+                    let pv = views.iter().find(|v| v.id == g.view);
                     let lines = pv.and_then(|v| v.lines.as_deref());
                     let edge = lines.and_then(|l| l.edge(&g.edge)).cloned();
                     let piece = lines.and_then(|l| l.edge_piece(&g.edge));
+                    let gpl = pv.and_then(placement);
+                    let (edge, piece) = match (sheet, gpl) {
+                        (true, Some(gpl)) => (
+                            edge.map(|e| edge_on_sheet(&e, &gpl)),
+                            piece.map(|pc| pc.iter().map(|q| gpl.to_sheet(*q)).collect::<Vec<_>>()),
+                        ),
+                        _ => (edge, piece.map(<[[f64; 2]]>::to_vec)),
+                    };
                     if let Some(e) = edge
-                        && let Err(msg) = s.project_edge(&e, piece)
+                        && let Err(msg) = s.project_edge(&e, piece.as_deref())
                     {
                         self.file_status = Some(Err(msg));
                     }
@@ -660,7 +756,7 @@ impl CadCraftApp {
             match s.tools.click(&mut s.ps, p) {
                 Ok(Some(_)) => {
                     if let Err(e) = s.ps.sketch.solve() {
-                        self.file_status = Some(Err(format!("Section line: {e}")));
+                        self.file_status = Some(Err(format!("Sketch: {e}")));
                     }
                 }
                 Ok(None) => {}
@@ -782,7 +878,7 @@ impl CadCraftApp {
         }
 
         // A thin frame round the view being sketched in.
-        if let Some(v) = views.iter().find(|v| v.id == s.view) {
+        if let Some(v) = views.iter().find(|v| v.id == s.view && s.view != SHEET) {
             let r = Rect::from_two_pos(cam.to_screen(rect, v.lo), cam.to_screen(rect, v.hi));
             painter.rect_stroke(
                 r.expand(4.0),
@@ -938,6 +1034,221 @@ impl CadCraftApp {
             _ => return false,
         }
         true
+    }
+}
+
+// ---- drawing sketches and Draft View (spec 4.12) -----------------------------
+
+/// The Draft View dialog: its values, and the view it edits (`None`: a new
+/// view, placed by a click).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct DraftDraft {
+    /// View Identifier.
+    pub identifier: String,
+    /// Scale.
+    pub scale: f64,
+    /// Toggle Label Visibility.
+    pub label: bool,
+    /// Edit View of this draft view.
+    pub edit: Option<u32>,
+}
+
+impl CadCraftApp {
+    /// New Sketch on view `view` (`None`: on the sheet): the sketch editor
+    /// opens with the Line tool; Finish Sketch adds the sketch.
+    pub(super) fn new_drawing_sketch(&mut self, view: Option<u32>) {
+        let owner = view.unwrap_or(SHEET);
+        self.open_view_sketch(owner, SketchFor::NewSketch, ViewSketch::default());
+        if view.is_none() {
+            self.drw.sel = None;
+        }
+    }
+
+    /// Edit Sketch of drawing sketch `id`: its geometry opens in the editor
+    /// (Select tool); Finish Sketch writes it back, Cancel leaves it.
+    pub(super) fn edit_drawing_sketch(&mut self, id: u32) {
+        let Some((view, k)) = self
+            .drawing()
+            .and_then(|d| d.find_sketch(id))
+            .map(|(v, k)| (v, k.sketch.clone()))
+        else {
+            return;
+        };
+        self.open_view_sketch(view.unwrap_or(SHEET), SketchFor::Sketch(id), k);
+        if view.is_none() {
+            self.drw.sel = None;
+        }
+        if let Some(s) = self.drw.sketch.as_mut() {
+            s.tools.set_tool(Tool::Select);
+        }
+    }
+
+    /// After a drawing sketch's Finish: the editor closes, its view stays
+    /// selected and the ribbon goes back.
+    fn end_drawing_sketch(&mut self, view: u32) {
+        self.drw.sketch = None;
+        self.drw.section_track.clear();
+        self.drw.sel = (view != SHEET).then_some(view);
+        if self.tab == super::ribbon::Tab::Sketch {
+            self.tab = super::ribbon::Tab::PlaceViews;
+        }
+    }
+
+    /// The Draft View dialog's starting values: the next free identifier,
+    /// 1 : 1, the label shown.
+    pub(super) fn draft_view_defaults(&self) -> DraftDraft {
+        let used: Vec<String> = self
+            .drawing()
+            .map(|d| {
+                d.sheets
+                    .iter()
+                    .flat_map(|s| &s.views)
+                    .map(|v| v.identifier.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let identifier = (1..)
+            .map(|k| format!("VIEW{k}"))
+            .find(|s| !used.contains(s))
+            .unwrap_or_default();
+        DraftDraft {
+            identifier,
+            scale: 1.0,
+            label: true,
+            edit: None,
+        }
+    }
+
+    /// Edit View of draft view `id`: the Draft View dialog with its values.
+    pub(super) fn open_draft_edit(&mut self, id: u32) {
+        let Some(v) = self.drawing().and_then(|d| d.sheet()?.view(id)).cloned() else {
+            return;
+        };
+        self.drw.sel = Some(id);
+        self.drw.tool = Some(super::drawing::DrwTool::DraftView(DraftDraft {
+            identifier: v.identifier,
+            scale: v.scale,
+            label: v.label_visible,
+            edit: Some(id),
+        }));
+    }
+
+    /// Draft View: the dialog, the view's outline under the pointer, and the
+    /// click that places it (its sketch opens at once). Edit View: OK
+    /// applies the values.
+    pub(super) fn draft_view_tool(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        rect: Rect,
+        response: &egui::Response,
+    ) {
+        let Some(DrwTool::DraftView(mut d)) = self.drw.tool.clone() else {
+            return;
+        };
+        let mut ok = false;
+        let mut cancel = false;
+        let window = egui::Window::new("Draft View")
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(rect.left_top() + egui::vec2(20.0, 20.0));
+        self.layout
+            .place("drw_draft_view", ctx.content_rect(), false, window)
+            .show(ctx, |ui| {
+                egui::Grid::new("drw_draft_grid")
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        ui.label("View Identifier");
+                        ui.text_edit_singleline(&mut d.identifier);
+                        ui.end_row();
+                        ui.label("Scale");
+                        ui.horizontal(|ui| {
+                            super::drawing::scale_combo(ui, "drw_draft_scale", &mut d.scale)
+                        });
+                        ui.end_row();
+                        ui.label("Label");
+                        ui.checkbox(&mut d.label, "Toggle Label Visibility");
+                        ui.end_row();
+                    });
+                ui.add_space(4.0);
+                if d.edit.is_none() {
+                    ui.weak("Click on the sheet to place the view; its sketch opens");
+                }
+                ui.horizontal(|ui| {
+                    if d.edit.is_some() {
+                        ok |= ui.add(super::theme::ok_button("OK")).clicked()
+                            || super::keys::panel_ok_key(ui, true);
+                    }
+                    cancel |= ui.button("Cancel").clicked();
+                });
+            });
+        if cancel {
+            self.drw.tool = None;
+            return;
+        }
+        if let Some(id) = d.edit {
+            if ok {
+                let DraftDraft {
+                    identifier,
+                    scale,
+                    label,
+                    ..
+                } = d.clone();
+                let r = self.edit_drawing("Edit View", |doc| {
+                    let v = doc.sheet_mut()?.view_mut(id)?;
+                    v.identifier = identifier;
+                    v.scale = scale.max(1e-6);
+                    v.label_visible = label;
+                    Some(())
+                });
+                if r.flatten().is_none() {
+                    self.history.cancel();
+                }
+                self.history.break_coalescing();
+                self.drw.tool = None;
+                return;
+            }
+            self.drw.tool = Some(DrwTool::DraftView(d));
+            return;
+        }
+        // The empty view's box follows the pointer.
+        let cam = self.drw.cam;
+        if let Some(p) = response.hover_pos() {
+            let q = cam.to_sheet(rect, p);
+            let r = Rect::from_center_size(
+                cam.to_screen(rect, q),
+                egui::vec2(40.0 * cam.zoom as f32, 30.0 * cam.zoom as f32),
+            );
+            painter.rect_stroke(
+                r,
+                0.0,
+                Stroke::new(1.0, Color32::from_rgb(60, 140, 90)),
+                egui::StrokeKind::Middle,
+            );
+            if response.clicked() {
+                let at = super::drawing::snap(q);
+                let DraftDraft {
+                    identifier,
+                    scale,
+                    label,
+                    ..
+                } = d.clone();
+                let id = self
+                    .edit_drawing("Draft View", |doc| {
+                        doc.add_draft_view(at, scale, Some(identifier), label)
+                    })
+                    .flatten();
+                self.history.break_coalescing();
+                self.drw.tool = None;
+                if let Some(id) = id {
+                    self.new_drawing_sketch(Some(id));
+                } else {
+                    self.history.cancel();
+                }
+                return;
+            }
+        }
+        self.drw.tool = Some(DrwTool::DraftView(d));
     }
 }
 

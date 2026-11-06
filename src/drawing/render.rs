@@ -99,6 +99,7 @@ pub fn sheet_list(
     }
     let view = |id: u32| placed.get(&id).map(|(pl, _, l)| (*pl, l.as_ref()));
     out.extend(view_extras(doc, i, &view));
+    out.extend(sketch_prims(doc, i, &view, None));
     let look = st.look();
     for a in &sheet.annotations {
         let Some(pen) = st.pen(a.layer_name(&st.defaults)) else {
@@ -339,6 +340,66 @@ pub fn view_extras<'a>(
                 });
             }
         }
+    }
+    out
+}
+
+/// The visible drawing sketches of sheet `i` (spec 4.12) on the sketch layer:
+/// the sheet's own in sheet mm, each view's through its placement (views
+/// without lines yet are left out). `skip`: the sketch being edited (the
+/// editor draws it).
+pub fn sketch_prims<'a>(
+    doc: &DrawingDocument,
+    i: usize,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    skip: Option<u32>,
+) -> Vec<Prim> {
+    use super::view_sketch::{CurveLook, DrawingSketch};
+    let mut out = Vec::new();
+    let Some(sheet) = doc.sheets.get(i) else {
+        return out;
+    };
+    let st = &doc.styles;
+    let Some(pen) = st.pen(&st.defaults.sketch_layer) else {
+        return out;
+    };
+    let layer = st.layer(&st.defaults.sketch_layer);
+    let add = |out: &mut Vec<Prim>, k: &DrawingSketch, map: &dyn Fn([f64; 2]) -> [f64; 2]| {
+        if !k.visible || Some(k.id) == skip {
+            return;
+        }
+        for (pts, look) in k.curves() {
+            let pts: Vec<[f64; 2]> = pts.into_iter().map(map).collect();
+            match look {
+                CurveLook::Chain if pts.len() == 2 => out.push(Prim::Center {
+                    a: pts[0],
+                    b: pts[1],
+                    width: layer.weight,
+                    chain: true,
+                }),
+                _ => out.push(Prim::Path {
+                    pts,
+                    width: layer.weight,
+                    dashed: look == CurveLook::Chain
+                        || layer.line_type == super::style::LineType::Dashed,
+                }),
+            }
+        }
+    };
+    out.push(pen);
+    for k in &sheet.sketches {
+        add(&mut out, k, &|q| q);
+    }
+    for v in &sheet.views {
+        let Some((pl, _)) = view(v.id) else {
+            continue;
+        };
+        for k in &v.sketches {
+            add(&mut out, k, &|q| pl.to_sheet(q));
+        }
+    }
+    if out.len() == 1 {
+        out.clear();
     }
     out
 }

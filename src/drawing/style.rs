@@ -393,6 +393,8 @@ pub struct ObjectDefaults {
     pub title_layer: String,
     /// Layer of detail view boundaries.
     pub detail_layer: String,
+    /// Layer of drawing sketches (spec 4.12).
+    pub sketch_layer: String,
 }
 
 impl Default for ObjectDefaults {
@@ -417,6 +419,7 @@ impl Default for ObjectDefaults {
             centerline_layer: "Centerline (ISO)".into(),
             title_layer: "Title (ISO)".into(),
             detail_layer: "Detail Boundary (ISO)".into(),
+            sketch_layer: "Sketch Geometry (ISO)".into(),
         }
     }
 }
@@ -574,6 +577,7 @@ impl DrawingStyles {
                 centerline_layer: n("Centerline"),
                 title_layer: n("Title"),
                 detail_layer: n("Detail Boundary"),
+                sketch_layer: n("Sketch Geometry"),
             },
         };
         if kind == StandardKind::Ansi {
@@ -650,6 +654,7 @@ impl DrawingStyles {
             (&mut d.bend_center_layer, &b.bend_center_layer),
             (&mut d.bend_extent_layer, &b.bend_extent_layer),
             (&mut d.section_layer, &b.section_layer),
+            (&mut d.sketch_layer, &b.sketch_layer),
         ] {
             if !has(field, &layers) {
                 *field = want.clone();
@@ -858,6 +863,7 @@ impl DrawingStyles {
                     &mut d.centerline_layer,
                     &mut d.title_layer,
                     &mut d.detail_layer,
+                    &mut d.sketch_layer,
                 ] {
                     fix(l);
                 }

@@ -60,6 +60,9 @@ pub struct DrawingDocument {
     /// The drawing's styles (Style and Standard Editor).
     #[serde(default)]
     pub styles: style::DrawingStyles,
+    /// The next drawing sketch id (never reused; spec 4.12).
+    #[serde(default = "one")]
+    pub next_sketch_id: u32,
 }
 
 fn one() -> u32 {
@@ -165,6 +168,10 @@ pub struct Sheet {
     /// Dimensions, centre marks, centrelines, texts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub annotations: Vec<Annotation>,
+    /// Sketches on the sheet itself (sheet mm; spec 4.12; old builds leave
+    /// them out).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sketches: Vec<view_sketch::DrawingSketch>,
 }
 
 fn yes() -> bool {
@@ -185,6 +192,7 @@ impl Sheet {
             title_block: true,
             views: Vec::new(),
             annotations: Vec::new(),
+            sketches: Vec::new(),
         }
     }
 
@@ -507,6 +515,9 @@ pub enum ViewKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         connection: bool,
     },
+    /// Draft View: no model, only the view's own sketches (spec 4.12;
+    /// format revision 65).
+    Draft,
 }
 
 fn is_true(b: &bool) -> bool {
@@ -725,6 +736,10 @@ pub struct DrawingView {
     /// follow their base; old builds show the assembly as it was saved).
     #[serde(default, skip_serializing_if = "ViewReps::is_active")]
     pub reps: ViewReps,
+    /// The view's own sketches (its view plane, model mm: they move and scale
+    /// with it; spec 4.12; old builds leave them out).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sketches: Vec<view_sketch::DrawingSketch>,
 }
 
 /// A Break Out of a view (spec 4.11): inside a closed profile drawn on the
@@ -887,7 +902,7 @@ impl DrawingView {
             | ViewKind::Section { parent, .. }
             | ViewKind::Auxiliary { parent, .. }
             | ViewKind::Detail { parent, .. } => Some(parent),
-            ViewKind::Base { .. } => None,
+            ViewKind::Base { .. } | ViewKind::Draft => None,
         }
     }
 
@@ -1061,6 +1076,7 @@ impl DrawingDocument {
             next_view_id: 1,
             next_annotation_id: 1,
             styles: style::DrawingStyles::of(standard.kind),
+            next_sketch_id: 1,
         }
     }
 
@@ -1158,6 +1174,7 @@ impl DrawingDocument {
             breaks: Vec::new(),
             break_outs: Vec::new(),
             reps: ViewReps::default(),
+            sketches: Vec::new(),
         });
         Some(id)
     }
@@ -1166,6 +1183,9 @@ impl DrawingDocument {
     /// orthographic one is aligned with its parent. Returns its id.
     pub fn add_projected_view(&mut self, parent: u32, at: [f64; 2]) -> Option<u32> {
         let p = self.sheet()?.view(parent)?.clone();
+        if p.kind == ViewKind::Draft {
+            return None; // no model (spec 4.12)
+        }
         let dir = ProjectDir::from_offset(at[0] - p.position[0], at[1] - p.position[1])?;
         let identifier = self.next_identifier();
         let id = self.take_id();
@@ -1186,6 +1206,7 @@ impl DrawingDocument {
             breaks: Vec::new(),
             break_outs: Vec::new(),
             reps: ViewReps::default(),
+            sketches: Vec::new(),
         };
         align(&mut v.position, p.position, dir);
         self.sheet_mut()?.views.push(v);
@@ -1384,7 +1405,11 @@ impl DrawingDocument {
         at: [f64; 2],
         scale: Option<f64>,
     ) -> Option<u32> {
+        // A draft view has no model to project or cut (spec 4.12).
         let p = self.sheet()?.view(parent)?.clone();
+        if p.kind == ViewKind::Draft {
+            return None;
+        }
         let (pscale, pstyle) = {
             let s = self.sheet()?;
             self.effective(s, parent)?
@@ -1408,6 +1433,7 @@ impl DrawingDocument {
             breaks: Vec::new(),
             break_outs: Vec::new(),
             reps: ViewReps::default(),
+            sketches: Vec::new(),
         };
         self.sheet_mut()?.views.push(v);
         // Positions are kept to 0.1 mm (readable in Properties).
@@ -1894,6 +1920,7 @@ impl DrawingDocument {
                 self.line_frame(&fp, *a, *b, *side)?.0
             }
             ViewKind::Detail { parent, .. } => self.frame_of(sheet, *parent)?,
+            ViewKind::Draft => return None,
         })
     }
 
@@ -2041,7 +2068,166 @@ impl DrawingDocument {
             .max()
             .unwrap_or(0);
         self.next_annotation_id = self.next_annotation_id.max(max + 1);
+        let max = self
+            .sheets
+            .iter()
+            .flat_map(|s| {
+                s.sketches
+                    .iter()
+                    .chain(s.views.iter().flat_map(|v| &v.sketches))
+            })
+            .map(|k| k.id)
+            .max()
+            .unwrap_or(0);
+        self.next_sketch_id = self.next_sketch_id.max(max + 1);
         self.styles.complete(self.standard.kind);
+    }
+
+    // ---- drawing sketches (spec 4.12) ---------------------------------------
+
+    /// The sketches of the active sheet's view `view` (`None`: the sheet's
+    /// own).
+    pub fn sketches(&self, view: Option<u32>) -> Option<&Vec<view_sketch::DrawingSketch>> {
+        let sheet = self.sheet()?;
+        match view {
+            None => Some(&sheet.sketches),
+            Some(id) => Some(&sheet.view(id)?.sketches),
+        }
+    }
+
+    fn sketches_mut(&mut self, view: Option<u32>) -> Option<&mut Vec<view_sketch::DrawingSketch>> {
+        let sheet = self.sheet_mut()?;
+        match view {
+            None => Some(&mut sheet.sketches),
+            Some(id) => Some(&mut sheet.view_mut(id)?.sketches),
+        }
+    }
+
+    /// The sketch `id` of the active sheet: its owner (`None`: the sheet)
+    /// and the sketch.
+    pub fn find_sketch(&self, id: u32) -> Option<(Option<u32>, &view_sketch::DrawingSketch)> {
+        let sheet = self.sheet()?;
+        if let Some(k) = sheet.sketches.iter().find(|k| k.id == id) {
+            return Some((None, k));
+        }
+        sheet
+            .views
+            .iter()
+            .find_map(|v| Some((Some(v.id), v.sketches.iter().find(|k| k.id == id)?)))
+    }
+
+    /// Adds `sketch` to the active sheet (`view` `None`) or to one of its
+    /// views; it is named `Sketch<n>` (the first free number of its owner).
+    /// Returns its id.
+    pub fn add_sketch(
+        &mut self,
+        view: Option<u32>,
+        sketch: view_sketch::ViewSketch,
+    ) -> Option<u32> {
+        let id = self.next_sketch_id.max(1);
+        let list = self.sketches_mut(view)?;
+        let n = (1..)
+            .find(|k| !list.iter().any(|s| s.name == format!("Sketch{k}")))
+            .unwrap_or(1);
+        list.push(view_sketch::DrawingSketch {
+            id,
+            name: format!("Sketch{n}"),
+            visible: true,
+            sketch,
+        });
+        self.next_sketch_id = id + 1;
+        Some(id)
+    }
+
+    /// Replaces the geometry of sketch `id`; false when there is none.
+    pub fn set_sketch(&mut self, id: u32, sketch: view_sketch::ViewSketch) -> bool {
+        self.sketch_mut(id).map(|k| k.sketch = sketch).is_some()
+    }
+
+    /// Shows or hides sketch `id`; false when there is none.
+    pub fn set_sketch_visible(&mut self, id: u32, on: bool) -> bool {
+        self.sketch_mut(id).map(|k| k.visible = on).is_some()
+    }
+
+    /// Removes sketch `id`; false when there is none.
+    pub fn remove_sketch(&mut self, id: u32) -> bool {
+        let Some((view, _)) = self.find_sketch(id) else {
+            return false;
+        };
+        self.sketches_mut(view)
+            .map(|l| l.retain(|k| k.id != id))
+            .is_some()
+    }
+
+    fn sketch_mut(&mut self, id: u32) -> Option<&mut view_sketch::DrawingSketch> {
+        let (view, _) = self.find_sketch(id)?;
+        self.sketches_mut(view)?.iter_mut().find(|k| k.id == id)
+    }
+
+    /// Places an empty Draft View at `at` (spec 4.12); returns its id.
+    pub fn add_draft_view(
+        &mut self,
+        at: [f64; 2],
+        scale: f64,
+        identifier: Option<String>,
+        label_visible: bool,
+    ) -> Option<u32> {
+        let identifier = identifier
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| self.next_identifier());
+        let id = self.take_id();
+        self.sheet_mut()?.views.push(DrawingView {
+            id,
+            identifier,
+            kind: ViewKind::Draft,
+            position: at,
+            scale: if scale > 0.0 { scale } else { 1.0 },
+            scale_from_base: false,
+            style: ViewStyle::HiddenRemoved,
+            style_from_base: false,
+            label_visible,
+            raster: false,
+            display: DisplayOptions::default(),
+            recovery: RecoveryOptions::default(),
+            sheet_metal: SheetView::Folded,
+            breaks: Vec::new(),
+            break_outs: Vec::new(),
+            reps: ViewReps::default(),
+            sketches: Vec::new(),
+        });
+        Some(id)
+    }
+
+    /// The "lines" of a Draft View: none, an extent round its visible
+    /// sketches (a small box when they draw nothing) and the view's origin
+    /// as its anchor, so sketching does not move what is drawn.
+    pub fn draft_lines(&self, sheet: &Sheet, id: u32) -> Option<hlr::ViewLines> {
+        let v = sheet.view(id).filter(|v| v.kind == ViewKind::Draft)?;
+        let mut lo = [f64::INFINITY; 2];
+        let mut hi = [f64::NEG_INFINITY; 2];
+        for (a, b) in v
+            .sketches
+            .iter()
+            .filter(|k| k.visible)
+            .filter_map(|k| k.extent())
+        {
+            for k in 0..2 {
+                lo[k] = lo[k].min(a[k]);
+                hi[k] = hi[k].max(b[k]);
+            }
+        }
+        if lo[0] > hi[0] {
+            // Nothing drawn yet: 40 x 30 mm on paper round the origin.
+            let s = v.scale.max(1e-9);
+            lo = [-20.0 / s, -15.0 / s];
+            hi = [20.0 / s, 15.0 / s];
+        }
+        Some(hlr::ViewLines {
+            anchor: Some([0.0, 0.0]),
+            min: lo,
+            max: hi,
+            ..hlr::ViewLines::default()
+        })
     }
 
     /// Adds an annotation to the active sheet; returns its id.

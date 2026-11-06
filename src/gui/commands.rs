@@ -2483,10 +2483,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["OV"])
         .at(&[D_CREATE])
         .tip("Positional representations of an assembly in phantom lines"),
-    dp("drw.draft_view", "Draft View", "Изглед-скица", Icon::DraftView, Dp::DraftView)
+    d("drw.draft_view", "Draft View", "Изглед-скица", Icon::DraftView)
+        .run(Action::Drawing(DrwCmd::DraftView))
+        .spec("4.12-drawing-sketches.md")
         .alias(&["DFV"])
         .at(&[D_CREATE])
-        .tip("A view holding only a 2D sketch"),
+        .tip("A view with no model, only 2D sketches: set its identifier and scale, click on the sheet, sketch"),
     d("drw.break", "Break", "Прекъсване", Icon::BreakView)
         .run(Action::Drawing(DrwCmd::Break))
         .spec("4.10-break-view.md")
@@ -2507,10 +2509,13 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["CR"])
         .at(&[D_MODIFY])
         .tip("Clip a view by a rectangle or a closed sketch"),
-    dp("drw.start_sketch", "New Sketch", "Нова скица", Icon::StartSketch, Dp::StartSketch)
+    d("drw.start_sketch", "New Sketch", "Нова скица", Icon::StartSketch)
+        .run(Action::Drawing(DrwCmd::StartSketch))
+        .inv("Start Sketch")
+        .spec("4.12-drawing-sketches.md")
         .alias(&["DS"])
         .at(&[D_SKETCH])
-        .tip("A sketch on the sheet or on a view"),
+        .tip("A sketch on the sheet, or on a view (it moves and scales with it): select the view first or click it"),
     d("drw.new_sheet", "New Sheet", "Нов лист", Icon::NewSheet)
         .run(Action::Drawing(DrwCmd::NewSheet))
         .alias(&["NS"])

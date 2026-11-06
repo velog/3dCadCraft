@@ -51,7 +51,7 @@ to, and an annotation whose edge is gone is marked (not deleted).
 | **Slice** | a zero-depth section by a sketch line | | ⬜ |
 | **Crop** | clips a view by a sketch / rectangle | | ⬜ |
 | **Overlay** | other positional representations drawn in phantom lines | ⛔ positional reps | ⬜ |
-| Draft view | a view with only a sketch | | ⬜ |
+| Draft view | a view with only a sketch | [4.12](4.12-drawing-sketches.md) | 🟡 2026-11-06 (format revision 65) |
 | Move / align / rotate views; edit view; delete with dependents | | | 🟡 drag a view (aligned children follow, an aligned child slides on its axis), Edit View (double-click, browser, menu), Delete (with the views projected from it, one Undo step), position in Properties; rotate ⬜; waiting for a visual check |
 | Associativity | the model changes → views recompute; Defer Update for large drawings | | 🟡 a view's lines are cached by the model's body signature: a model change recomputes them (worker thread); linked part files are read again when their time changes; Defer Update ⬜ |
 

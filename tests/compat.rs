@@ -2791,6 +2791,71 @@ fn drawing_r60_project() -> Project {
     project
 }
 
+/// Revision 65: a Draft View with a sketch, a sketch of the base view and
+/// one on the sheet (spec 4.12).
+fn drawing_r65_project() -> Project {
+    use cadcraft3d::drawing::view_sketch::ViewSketch;
+    use cadcraft3d::sketch::Point2;
+    let line = |a: [f64; 2], b: [f64; 2]| {
+        let mut s = ViewSketch::default();
+        let p = s.0.add_point(Point2::new(a[0], a[1]));
+        let q = s.0.add_point(Point2::new(b[0], b[1]));
+        s.0.add_line_between(p, q).unwrap();
+        s
+    };
+    let mut project = drawing_r39_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let base = d.sheets[0].views[0].id;
+        let draft = d
+            .add_draft_view([330.0, 230.0], 0.5, Some("DRAFT".into()), true)
+            .unwrap();
+        d.add_sketch(Some(draft), line([0.0, 0.0], [80.0, 40.0]))
+            .unwrap();
+        d.add_sketch(Some(base), line([-20.0, -20.0], [20.0, 20.0]))
+            .unwrap();
+        d.add_sketch(None, line([20.0, 20.0], [120.0, 20.0]))
+            .unwrap();
+    }
+    project
+}
+
+/// The revision 65 drawing reads back with its Draft View and sketches.
+#[test]
+fn drawing_r65_reads() {
+    use cadcraft3d::drawing::ViewKind;
+    let f = root().join("r65/drawing_r65.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let s = &d.sheets[0];
+    let draft = s
+        .views
+        .iter()
+        .find(|v| v.kind == ViewKind::Draft)
+        .expect("draft view");
+    assert_eq!(draft.identifier, "DRAFT");
+    assert_eq!(draft.sketches.len(), 1);
+    assert_eq!(s.views[0].sketches.len(), 1);
+    assert_eq!(s.sketches.len(), 1);
+    assert_eq!(s.sketches[0].name, "Sketch1");
+    assert_eq!(d.next_sketch_id, 4);
+}
+
 /// The revision 60 drawing reads back with its To Sketch break out.
 #[test]
 fn drawing_r60_reads() {
@@ -3668,6 +3733,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r60_project().save(&f).unwrap();
+        }
+        let f = root().join("r65/drawing_r65.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r65_project().save(&f).unwrap();
         }
         let f = root().join("r38/drawing_r38.3dcadcraft");
         if !f.exists() {

@@ -3,11 +3,138 @@
 //! `ViewFrame::project`), edited with the part sketch's tools. A section
 //! line is such a sketch of its parent view: its lines, end to end, are the
 //! line's points (`ViewKind::Section`), which the section is computed from.
+//!
+//! The user's own drawing sketches (spec 4.12) are [`DrawingSketch`]es: on a
+//! sheet (sheet mm) or owned by a view (its view plane, model mm, so they
+//! move and scale with it).
 
 use serde::{Deserialize, Serialize};
 
 use crate::kernel::Plane;
-use crate::sketch::{Point2, PointId, Sketch, Style};
+use crate::sketch::{Entity, Point2, PointId, Sketch, Style};
+
+/// A sketch the user made on a drawing (New Sketch, Draft View): on a sheet
+/// or owned by a view.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DrawingSketch {
+    /// Identity inside the drawing (never reused).
+    pub id: u32,
+    /// Browser name (`Sketch1`).
+    pub name: String,
+    /// Drawn on the sheet (Visibility).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub visible: bool,
+    /// The geometry: sheet mm for a sheet sketch, the view plane (model mm)
+    /// for a view's.
+    pub sketch: ViewSketch,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+/// How a curve of a finished drawing sketch is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CurveLook {
+    /// A continuous line.
+    Solid,
+    /// A centreline: a chain line.
+    Chain,
+}
+
+impl DrawingSketch {
+    /// What the sketch shows once finished: its normal curves and
+    /// centrelines as polylines (its coordinates); construction geometry,
+    /// points, constraints and dimensions show only while it is edited
+    /// (Inventor's Sketch Only geometry and sizing dimensions).
+    pub fn curves(&self) -> Vec<(Vec<[f64; 2]>, CurveLook)> {
+        let sk = &self.sketch.0;
+        let mut out = Vec::new();
+        for (id, e) in sk.entities() {
+            let look = match sk.style(id) {
+                Style::Normal => CurveLook::Solid,
+                Style::Centerline => CurveLook::Chain,
+                _ => continue,
+            };
+            let pts = entity_points(sk, id, e);
+            if pts.len() >= 2 {
+                out.push((pts, look));
+            }
+        }
+        for t in sk.texts() {
+            if let Some((o, d)) = sk.text_frame(t) {
+                for line in t.polylines_at(o, d) {
+                    let pts: Vec<[f64; 2]> = line.iter().map(|p| [p.x, p.y]).collect();
+                    if pts.len() >= 2 {
+                        out.push((pts, CurveLook::Solid));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The box of what [`Self::curves`] draws (`None`: nothing).
+    pub fn extent(&self) -> Option<([f64; 2], [f64; 2])> {
+        let mut lo = [f64::INFINITY; 2];
+        let mut hi = [f64::NEG_INFINITY; 2];
+        for (pts, _) in self.curves() {
+            for p in pts {
+                for k in 0..2 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+            }
+        }
+        (lo[0] <= hi[0]).then_some((lo, hi))
+    }
+}
+
+/// The points of curve `id` (arcs and circles every 3.75°, splines in 96
+/// steps).
+fn entity_points(sk: &Sketch, id: crate::sketch::EntityId, e: &Entity) -> Vec<[f64; 2]> {
+    use std::f64::consts::TAU;
+    let at = |p: PointId| sk.point(p).map(|q| [q.position.x, q.position.y]);
+    let circle = |c: [f64; 2], r: f64, a0: f64, sweep: f64| {
+        let n = ((sweep / TAU) * 96.0).ceil().max(2.0) as usize;
+        (0..=n)
+            .map(|i| {
+                let a = a0 + sweep * i as f64 / n as f64;
+                [c[0] + r * a.cos(), c[1] + r * a.sin()]
+            })
+            .collect::<Vec<_>>()
+    };
+    match e {
+        Entity::Line { start, end } => [at(*start), at(*end)].into_iter().flatten().collect(),
+        Entity::Circle { center, radius } => at(*center)
+            .map(|c| circle(c, *radius, 0.0, TAU))
+            .unwrap_or_default(),
+        Entity::Arc { center, start, end } => {
+            let (Some(c), Some(s), Some(t)) = (at(*center), at(*start), at(*end)) else {
+                return Vec::new();
+            };
+            let a0 = (s[1] - c[1]).atan2(s[0] - c[0]);
+            let a1 = (t[1] - c[1]).atan2(t[0] - c[0]);
+            let mut sweep = a1 - a0;
+            if sweep <= 0.0 {
+                sweep += TAU;
+            }
+            circle(c, (s[0] - c[0]).hypot(s[1] - c[1]), a0, sweep)
+        }
+        Entity::Spline { .. } => sk.spline_curve(id).map_or_else(Vec::new, |c| {
+            (0..=96)
+                .map(|i| {
+                    let p = c.point_at(i as f64 / 96.0);
+                    [p.x, p.y]
+                })
+                .collect()
+        }),
+    }
+}
 
 /// A sketch of a view (its plane is the view plane: x right, y up).
 #[derive(Clone, Debug, Serialize, Deserialize)]
