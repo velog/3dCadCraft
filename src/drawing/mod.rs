@@ -19,6 +19,7 @@ pub mod brk;
 pub mod chamfer_note;
 pub mod dimset;
 pub mod dimtext;
+pub mod fields;
 pub mod fits;
 pub mod hlr;
 pub mod hole_table;
@@ -2140,6 +2141,7 @@ impl DrawingDocument {
             name: format!("Sketch{n}"),
             visible: true,
             sketch,
+            texts: Vec::new(),
         });
         self.next_sketch_id = id + 1;
         Some(id)
@@ -2148,6 +2150,11 @@ impl DrawingDocument {
     /// Replaces the geometry of sketch `id`; false when there is none.
     pub fn set_sketch(&mut self, id: u32, sketch: view_sketch::ViewSketch) -> bool {
         self.sketch_mut(id).map(|k| k.sketch = sketch).is_some()
+    }
+
+    /// Replaces the texts of sketch `id`; false when there is none.
+    pub fn set_sketch_texts(&mut self, id: u32, texts: Vec<view_sketch::DrawingText>) -> bool {
+        self.sketch_mut(id).map(|k| k.texts = texts).is_some()
     }
 
     /// Shows or hides sketch `id`; false when there is none.

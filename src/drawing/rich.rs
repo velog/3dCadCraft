@@ -461,6 +461,11 @@ pub fn set_measure(m: Box<Measure>) {
     let _ = MEASURE.set(m);
 }
 
+/// Advance (mm) of plain text `s` at cap height `h`, as the sheet draws it.
+pub fn text_advance(s: &str, h: f64) -> f64 {
+    run_width(s, h, 1.0)
+}
+
 /// Advance of a text run (mm).
 fn run_width(s: &str, size: f64, stretch: f64) -> f64 {
     MEASURE

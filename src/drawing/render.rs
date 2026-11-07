@@ -58,6 +58,18 @@ pub fn sheet_list(
     lines: &dyn Fn(u32) -> Option<Arc<ViewLines>>,
     tables: &super::parts::Tables,
 ) -> Vec<Prim> {
+    sheet_list_with(doc, i, title, &|_| None, lines, tables)
+}
+
+/// [`sheet_list`] with the Properties for the fields of texts (`props`).
+pub fn sheet_list_with(
+    doc: &DrawingDocument,
+    i: usize,
+    title: &dyn Fn(TitleField) -> String,
+    props: &dyn Fn(&super::fields::Field) -> Option<String>,
+    lines: &dyn Fn(u32) -> Option<Arc<ViewLines>>,
+    tables: &super::parts::Tables,
+) -> Vec<Prim> {
     let st = &doc.styles;
     let mut out = Vec::new();
     if let Some(pen) = st.pen(&st.defaults.border_layer) {
@@ -99,7 +111,7 @@ pub fn sheet_list(
     }
     let view = |id: u32| placed.get(&id).map(|(pl, _, l)| (*pl, l.as_ref()));
     out.extend(view_extras(doc, i, &view));
-    out.extend(sketch_prims(doc, i, &view, None));
+    out.extend(sketch_prims_with(doc, i, &view, None, props));
     let look = st.look();
     for a in &sheet.annotations {
         let Some(pen) = st.pen(a.layer_name(&st.defaults)) else {
@@ -354,6 +366,17 @@ pub fn sketch_prims<'a>(
     view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
     skip: Option<u32>,
 ) -> Vec<Prim> {
+    sketch_prims_with(doc, i, view, skip, &|_| None)
+}
+
+/// [`sketch_prims`] with the Properties for the texts' fields.
+pub fn sketch_prims_with<'a>(
+    doc: &DrawingDocument,
+    i: usize,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    skip: Option<u32>,
+    props: &dyn Fn(&super::fields::Field) -> Option<String>,
+) -> Vec<Prim> {
     use super::view_sketch::{CurveLook, DrawingSketch};
     let mut out = Vec::new();
     let Some(sheet) = doc.sheets.get(i) else {
@@ -385,6 +408,10 @@ pub fn sketch_prims<'a>(
                 }),
             }
         }
+        for t in &k.texts {
+            let text = super::fields::expand(&t.pieces, doc, i, props, &|_| None);
+            out.extend(text_prim(&text, t, map(t.at)));
+        }
     };
     out.push(pen);
     for k in &sheet.sketches {
@@ -402,6 +429,30 @@ pub fn sketch_prims<'a>(
         out.clear();
     }
     out
+}
+
+/// A drawing sketch's text `text` drawn at sheet point `at`.
+pub fn text_prim(text: &str, t: &super::view_sketch::DrawingText, at: [f64; 2]) -> Option<Prim> {
+    use super::view_sketch::TextAnchor;
+    if text.is_empty() {
+        return None;
+    }
+    let (at, anchor) = match t.anchor {
+        TextAnchor::Left => (at, sheet::Anchor::Left),
+        TextAnchor::Center => (at, sheet::Anchor::Center),
+        TextAnchor::Right => {
+            let w = super::rich::text_advance(text, t.height);
+            let (s, c) = t.angle.sin_cos();
+            ([at[0] - w * c, at[1] - w * s], sheet::Anchor::Left)
+        }
+    };
+    Some(Prim::Text {
+        at,
+        height: t.height,
+        text: text.to_string(),
+        anchor,
+        angle: t.angle,
+    })
 }
 
 /// The section line on the parent: a thin chain line, thick ends, arrows in

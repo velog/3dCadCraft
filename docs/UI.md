@@ -415,7 +415,7 @@ Texture **ST**, Welding **WS**, Caterpillar **CAT**, End Fill **EF**, FCF **FCF*
 **CB**, Centered Pattern **CP**, Automated Centerlines **ACL**, Parts List **PL**, Balloon **B**, Auto Balloon
 **AB**, Table **TB**, Hole Tables **HT / HTS / HTF**, Revision Tag / Table / Cloud **RTG / RT / RC**, Edit
 Layers **EL**, Update All Sheets **UAS**, Replace Model Reference **RMR**, Define Border / Title Block / Symbol
-**DBR / DTB / DSS**. Double-click a dimension: Edit Dimension (Text, Precision and Tolerance, Inspection). Parts List **PL** /
+**DBR / DTB / DSS**. A sheet's Default Border row: double-click / Edit Instance... = Edit Drawing Border Parameters (spec 4.13). In a drawing sketch, Text (toolbar **A**, Sketch tab) places a single-line text with fields (`<Designer>`, `<Model: Part Number>`, `<Sheet Number>`, `<?Prompt>` through Insert Field / Prompted Entry); Select + double-click edits it, Delete removes it. Double-click a dimension: Edit Dimension (Text, Precision and Tolerance, Inspection). Parts List **PL** /
 Balloon **B** / Auto Balloon **AB** work (spec 4.4); Drawing View › Sheet Metal View › Flat Pattern and Bend Notes
 **BN** work (spec 4.8); Table **TB** makes an empty table or one from a CSV file, Revision Table **RT**, Revision Tag
 **RTG** and Revision Cloud **RC** work (spec 4.7 §3.5; double-click edits each); Table **TB** on a flat pattern view makes the bend table (Column Chooser, numeric / alpha

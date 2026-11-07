@@ -27,6 +27,61 @@ pub struct DrawingSketch {
     /// The geometry: sheet mm for a sheet sketch, the view plane (model mm)
     /// for a view's.
     pub sketch: ViewSketch,
+    /// Its texts (spec 4.13 §3.2: title blocks are mostly text); old builds
+    /// leave them out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<DrawingText>,
+}
+
+/// How a text sits on its point.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextAnchor {
+    /// The point is the baseline's left end.
+    #[default]
+    Left,
+    /// Its middle.
+    Center,
+    /// Its right end.
+    Right,
+}
+
+impl TextAnchor {
+    /// Every choice.
+    pub const ALL: [TextAnchor; 3] = [TextAnchor::Left, TextAnchor::Center, TextAnchor::Right];
+
+    /// Name in the dialog.
+    pub fn label(self) -> &'static str {
+        match self {
+            TextAnchor::Left => "Left",
+            TextAnchor::Center => "Center",
+            TextAnchor::Right => "Right",
+        }
+    }
+}
+
+/// A single-line text of a drawing sketch: plain text and fields.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DrawingText {
+    /// The baseline point at the anchor (the sketch's coordinates).
+    pub at: [f64; 2],
+    /// Cap height on paper (mm).
+    pub height: f64,
+    /// Where `at` is along the line.
+    #[serde(default, skip_serializing_if = "is_left")]
+    pub anchor: TextAnchor,
+    /// Rotation (radians, counter-clockwise).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub angle: f64,
+    /// Its contents.
+    pub pieces: Vec<super::fields::Piece>,
+}
+
+fn is_left(a: &TextAnchor) -> bool {
+    *a == TextAnchor::Left
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 fn yes() -> bool {

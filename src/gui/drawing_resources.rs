@@ -75,7 +75,71 @@ pub(super) fn sheet_format_rows(
     action
 }
 
+/// The Properties a sheet's fields read (spec 4.13 §3.2): the drawing's,
+/// and those and the material of the model of the sheet's first view.
+#[derive(Clone, Debug, Default)]
+pub(super) struct FieldProps {
+    drawing: Option<crate::document::iprops::IProperties>,
+    model: Option<crate::document::iprops::IProperties>,
+    /// The model document's name (its Part Number when none is set, as
+    /// Inventor fills it from the file name).
+    model_name: String,
+    material: Option<String>,
+}
+
+impl FieldProps {
+    /// The value of `f` (`None`: no such value, drawn as `#?`).
+    pub fn get(&self, f: &crate::drawing::fields::Field) -> Option<String> {
+        use crate::drawing::fields::{Field, property};
+        match f {
+            Field::Drawing(k) => property(self.drawing.as_ref()?, k),
+            Field::Model(k) => {
+                let v = property(self.model.as_ref()?, k)?;
+                Some(if v.is_empty() && k == "part_number" {
+                    self.model_name.clone()
+                } else {
+                    v
+                })
+            }
+            Field::Material => self.material.clone(),
+            Field::Sheet(_) => None,
+        }
+    }
+}
+
 impl CadCraftApp {
+    /// The Properties for the fields of sheet `i` of `d`.
+    pub(super) fn field_props(&self, d: &crate::drawing::DrawingDocument, i: usize) -> FieldProps {
+        let model = d
+            .sheets
+            .get(i)
+            .and_then(|s| s.views.first().and_then(|v| d.model_of(s, v.id)));
+        let drawing = self
+            .project
+            .document(self.part_id)
+            .map(|x| x.properties.clone());
+        let model_doc = model.and_then(|m| match m.library {
+            None => self
+                .project
+                .document(m.document)
+                .map(|x| (x.properties.clone(), x.name.clone())),
+            Some(_) => None,
+        });
+        let (model_props, model_name) = match model_doc {
+            Some((p, n)) => (Some(p), n),
+            None => (None, String::new()),
+        };
+        let material = model
+            .and_then(|m| self.with_part(m, |p| p.material.clone()))
+            .flatten();
+        FieldProps {
+            drawing,
+            model: model_props,
+            model_name,
+            material,
+        }
+    }
+
     /// Runs a border / title block row's action on sheet `i`.
     pub(super) fn format_action(&mut self, i: usize, a: FormatAction) {
         match a {

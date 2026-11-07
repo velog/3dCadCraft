@@ -1400,11 +1400,13 @@ impl CadCraftApp {
             super::drawing_annot::paint_prims_styled(&painter, &cam, rect, &extras, INK);
             // Drawing sketches (the one being edited draws itself).
             let editing = self.drw.sketch.as_ref().and_then(|s| s.editing());
-            let sketches = crate::drawing::render::sketch_prims(
+            let props = self.field_props(d, d.active_sheet);
+            let sketches = crate::drawing::render::sketch_prims_with(
                 d,
                 d.active_sheet,
                 &|id| map.get(&id).copied(),
                 editing,
+                &|f| props.get(f),
             );
             super::drawing_annot::paint_prims_styled(&painter, &cam, rect, &sketches, INK);
         }
@@ -2037,6 +2039,7 @@ impl CadCraftApp {
             self.chamfer_window(ctx, &views);
         }
         self.sheet_dialog_window(ctx);
+        self.drawing_text_window(ctx);
         self.border_dialog_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);

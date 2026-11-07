@@ -74,6 +74,7 @@ mod drawing_section;
 mod drawing_sheet;
 mod drawing_sketch;
 mod drawing_styles;
+mod drawing_text;
 mod drive;
 mod feature_cmd;
 mod file_explorer;

@@ -75,16 +75,23 @@ pub(super) struct DrwSketch {
     /// The Break Out command waiting for this sketch (To Sketch); it comes
     /// back when the sketch ends.
     pub parked: Option<Box<super::drawing_breakout::BoDraft>>,
+    /// The sketch's texts (a drawing sketch's; spec 4.13 §3.2).
+    pub texts: Vec<crate::drawing::view_sketch::DrawingText>,
+    /// The selected text (Select tool).
+    pub text_sel: Option<usize>,
+    /// The Text dialog.
+    pub text_edit: Option<super::drawing_text::TextDraft>,
 }
 
 /// The tools of a view sketch's toolbar, in Inventor's Sketch tab order.
-const TOOLBAR: [Tool; 17] = [
+const TOOLBAR: [Tool; 18] = [
     Tool::Select,
     Tool::Line,
     Tool::CircleCenter,
     Tool::ArcThreePoint,
     Tool::RectTwoPoint,
     Tool::Point,
+    Tool::Text,
     Tool::Fillet,
     Tool::Dimension,
     Tool::Constrain(ConstraintTool::Coincident),
@@ -113,6 +120,9 @@ impl DrwSketch {
             drag: None,
             finish: false,
             parked: None,
+            texts: Vec::new(),
+            text_sel: None,
+            text_edit: None,
         }
     }
 
@@ -202,6 +212,7 @@ impl DrwSketch {
     /// Delete: the selected curves (reference geometry too) and the points
     /// left alone by them.
     pub(super) fn delete_selected(&mut self) -> bool {
+        let text = self.delete_text();
         let sel = std::mem::take(&mut self.tools.selected);
         let sk = &mut self.ps.sketch;
         let mut gone = false;
@@ -224,7 +235,7 @@ impl DrwSketch {
         if gone {
             let _ = sk.solve();
         }
-        gone
+        gone || text
     }
 
     /// Moves point `id` to `to`, the rest following (as a part sketch's
@@ -265,7 +276,13 @@ impl DrwSketch {
             SketchFor::BreakOutEdit(_) => "Edit Break Out Sketch",
             SketchFor::BreakOutDepth => "Break Out depth: sketch one straight line",
         };
-        format!("{what}: {} (Enter: Finish Sketch)", self.tools.prompt())
+        let tool = if self.tools.tool == Tool::Text {
+            "Text: click where the text's baseline starts; double-click a text with Select to edit it"
+                .to_string()
+        } else {
+            self.tools.prompt()
+        };
+        format!("{what}: {tool} (Enter: Finish Sketch)")
     }
 }
 
@@ -385,11 +402,16 @@ impl CadCraftApp {
             return false;
         };
         let sketch = ViewSketch(s.ps.sketch.clone());
+        let texts = s.texts.clone();
         match s.owner {
             SketchFor::NewSketch => {
                 let owner = (s.view != SHEET).then_some(s.view);
                 if self
-                    .edit_drawing("New Sketch", |d| d.add_sketch(owner, sketch))
+                    .edit_drawing("New Sketch", |d| {
+                        let id = d.add_sketch(owner, sketch)?;
+                        d.set_sketch_texts(id, texts);
+                        Some(id)
+                    })
                     .flatten()
                     .is_none()
                 {
@@ -404,9 +426,11 @@ impl CadCraftApp {
                 let same = self
                     .drawing()
                     .and_then(|d| d.find_sketch(id))
-                    .is_some_and(|(_, k)| k.sketch == sketch);
+                    .is_some_and(|(_, k)| k.sketch == sketch && k.texts == texts);
                 if !same
-                    && self.edit_drawing("Edit Sketch", |d| d.set_sketch(id, sketch)) != Some(true)
+                    && self.edit_drawing("Edit Sketch", |d| {
+                        d.set_sketch(id, sketch) && d.set_sketch_texts(id, texts)
+                    }) != Some(true)
                 {
                     self.history.cancel();
                 }
@@ -518,6 +542,12 @@ impl CadCraftApp {
         let Some(s) = self.drw.sketch.as_mut() else {
             return false;
         };
+        if s.text_edit.is_some() {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                s.text_edit = None;
+            }
+            return true; // the Text dialog has the keys
+        }
         if s.dim.is_some() {
             return true; // the value box has the keys
         }
@@ -646,6 +676,7 @@ impl CadCraftApp {
             selected_points: s.tools.selected_points.clone(),
         };
         overlay::draw_sketch(painter, &proj, rect, &s.ps, &style);
+        s.paint_texts(painter, &cam, rect, &pl);
         super::drawing_section::paint_guides(
             painter,
             |q| cam.to_screen(rect, q),
@@ -738,9 +769,14 @@ impl CadCraftApp {
                 s.tools.selected.clear();
                 s.tools.selected_points.clear();
             }
-            if let Some((e, _)) =
-                overlay::pick_entity(&proj, rect, &s.ps.sketch, p, overlay::CURVE_SNAP_PX)
+            s.text_sel = None;
+            let curve = overlay::pick_entity(&proj, rect, &s.ps.sketch, p, overlay::CURVE_SNAP_PX);
+            if curve.is_none()
+                && let Some(k) = s.text_at(&pl, cam.to_sheet(rect, p))
             {
+                s.text_sel = Some(k);
+            }
+            if let Some((e, _)) = curve {
                 if let Some(k) = s.tools.selected.iter().position(|x| *x == e) {
                     s.tools.selected.remove(k);
                 } else {
@@ -749,10 +785,20 @@ impl CadCraftApp {
             }
         }
 
+        // Text: a click places a text (its dialog opens).
+        if s.tools.tool == Tool::Text
+            && !s.project
+            && s.text_edit.is_none()
+            && response.clicked()
+            && let Some(p) = &pick
+        {
+            s.text_edit = Some(super::drawing_text::TextDraft::new([p.pos.x, p.pos.y]));
+        }
         // Clicks of the drawing tools.
         if s.dim.is_none()
             && !s.project
             && s.tools.tool != Tool::Select
+            && s.tools.tool != Tool::Text
             && response.clicked()
             && let Some(p) = pick
         {
@@ -771,9 +817,18 @@ impl CadCraftApp {
                 s.dim = v.map(|v| (e.constraint, v));
             }
         }
+        // A double-click on a text edits it, elsewhere it restarts the Line.
+        let on_text = pointer.and_then(|p| s.text_at(&pl, cam.to_sheet(rect, p)));
         if response.double_clicked() {
-            s.tools.escape();
-            s.tools.set_tool(Tool::Line);
+            match on_text {
+                Some(k) if s.tools.tool == Tool::Select && !s.project => {
+                    s.text_edit = Some(super::drawing_text::TextDraft::edit(k, &s.texts[k]));
+                }
+                _ => {
+                    s.tools.escape();
+                    s.tools.set_tool(Tool::Line);
+                }
+            }
         }
 
         // The right-click menu (with the toolbar off, every tool of it).
@@ -1070,14 +1125,17 @@ impl CadCraftApp {
     /// Edit Sketch of drawing sketch `id`: its geometry opens in the editor
     /// (Select tool); Finish Sketch writes it back, Cancel leaves it.
     pub(super) fn edit_drawing_sketch(&mut self, id: u32) {
-        let Some((view, k)) = self
+        let Some((view, k, texts)) = self
             .drawing()
             .and_then(|d| d.find_sketch(id))
-            .map(|(v, k)| (v, k.sketch.clone()))
+            .map(|(v, k)| (v, k.sketch.clone(), k.texts.clone()))
         else {
             return;
         };
         self.open_view_sketch(view.unwrap_or(SHEET), SketchFor::Sketch(id), k);
+        if let Some(s) = self.drw.sketch.as_mut() {
+            s.texts = texts;
+        }
         if view.is_none() {
             self.drw.sel = None;
         }

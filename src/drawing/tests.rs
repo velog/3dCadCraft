@@ -3060,6 +3060,7 @@ fn drawing_sketch_curves() {
         name: "Sketch1".into(),
         visible: true,
         sketch: rect_sketch(0.0, 0.0),
+        texts: Vec::new(),
     };
     let c = k.curves();
     let solid = c

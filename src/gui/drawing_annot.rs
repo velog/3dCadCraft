@@ -1590,7 +1590,8 @@ impl CadCraftApp {
             // Every view's lines, computed now when the cache has none.
             let lines = self.sheet_lines(None, &doc, i);
             let title = self.title_values(&doc, i);
-            let prims = crate::drawing::render::sheet_list(
+            let props = self.field_props(&doc, i);
+            let prims = crate::drawing::render::sheet_list_with(
                 &doc,
                 i,
                 &|f| {
@@ -1600,6 +1601,7 @@ impl CadCraftApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default()
                 },
+                &|f| props.get(f),
                 &|id| lines.get(&id).cloned(),
                 &self.bom_tables(&doc, i),
             );
