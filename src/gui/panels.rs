@@ -74,6 +74,16 @@ enum BrowserCmd {
 }
 
 /// The colour of warning texts.
+/// The id of feature `k` when it is a work plane: a browser row a plane pick takes.
+fn work_plane_id(part: &crate::part::PartDocument, k: usize) -> Option<String> {
+    match part.features.get(k) {
+        Some(Feature::Work(w)) if matches!(w.def, crate::part::WorkDef::Plane(_)) => {
+            Some(w.id.clone())
+        }
+        _ => None,
+    }
+}
+
 fn warning_color() -> Color32 {
     super::theme::tokens().warning
 }
@@ -390,6 +400,40 @@ impl CadCraftApp {
         match cmd {
             BrowserCmd::IProperties(d) => self.open_iproperties(d),
             BrowserCmd::Doc(c, d) => self.docs_apply_to(c, d),
+            // A plane row while a plane is being picked (Start 2D Sketch, Redefine, a
+            // primitive's plane) is that plane, as a click on it in the view (Inventor).
+            BrowserCmd::CommandPick(super::combine_split::BodyPick::Plane(p))
+                if matches!(self.mode, Mode::PickPlane(_)) =>
+            {
+                self.plane_picked(p)
+            }
+            BrowserCmd::Select(Selection::Feature(k))
+                if matches!(self.mode, Mode::PickPlane(_))
+                    && work_plane_id(self.part(), k).is_some() =>
+            {
+                if let Some(id) = work_plane_id(self.part(), k) {
+                    self.plane_picked(PlaneRef::Work(id));
+                }
+            }
+            // The Work Plane / Axis / Point command takes plane rows as its inputs too
+            // (never the work plane it redefines).
+            BrowserCmd::CommandPick(super::combine_split::BodyPick::Plane(p))
+                if self.work_draft.is_some() =>
+            {
+                if let Some(d) = self.work_draft.as_mut() {
+                    d.pick(super::work::WpInput::Plane(p));
+                }
+            }
+            BrowserCmd::Select(Selection::Feature(k))
+                if self.work_draft.as_ref().is_some_and(|d| d.edit != Some(k))
+                    && work_plane_id(self.part(), k).is_some() =>
+            {
+                if let Some(id) = work_plane_id(self.part(), k)
+                    && let Some(d) = self.work_draft.as_mut()
+                {
+                    d.pick(super::work::WpInput::Plane(PlaneRef::Work(id)));
+                }
+            }
             // The pattern command's Features selector takes browser rows.
             BrowserCmd::Select(Selection::Feature(k))
                 if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
@@ -7372,6 +7416,23 @@ mod tests {
         for (k, a) in seen.iter().enumerate() {
             assert!(!seen[k + 1..].contains(a), "{a:?} is used twice");
         }
+    }
+
+    /// A work plane's browser row is a plane for Start 2D Sketch; other rows are not.
+    #[test]
+    fn a_work_plane_row_is_a_sketch_plane() {
+        use crate::part::{PartDocument, WorkDef, WorkFeature, WorkPlaneDef};
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let id = part
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: 5.0,
+            })))
+            .unwrap();
+        let k = part.features.iter().position(|f| f.id() == id).unwrap();
+        assert_eq!(work_plane_id(&part, k), Some(id));
+        assert_eq!(work_plane_id(&part, 0), None, "the box is no plane");
+        assert_eq!(work_plane_id(&part, 99), None);
     }
 }
 
