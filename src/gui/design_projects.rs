@@ -823,10 +823,11 @@ fn project_settings(
 fn named_paths(ui: &mut egui::Ui, id: &str, list: &mut Vec<NamedPath>, what: &str) -> bool {
     let mut changed = false;
     let mut drop = None;
-    egui::Grid::new(("named_paths", id))
-        .num_columns(3)
-        .show(ui, |ui| {
-            for (k, np) in list.iter_mut().enumerate() {
+    // Rows, not a Grid: a Grid's cell gives a text field only last frame's
+    // column width, so new rows came out a few letters wide.
+    for (k, np) in list.iter_mut().enumerate() {
+        ui.push_id((id, k), |ui| {
+            ui.horizontal(|ui| {
                 changed |= ui
                     .add(egui::TextEdit::singleline(&mut np.name).desired_width(120.0))
                     .changed();
@@ -844,9 +845,9 @@ fn named_paths(ui: &mut egui::Ui, id: &str, list: &mut Vec<NamedPath>, what: &st
                 {
                     drop = Some(k);
                 }
-                ui.end_row();
-            }
+            });
         });
+    }
     if let Some(k) = drop {
         list.remove(k);
         changed = true;
