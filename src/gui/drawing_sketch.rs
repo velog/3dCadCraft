@@ -49,6 +49,9 @@ pub(super) enum SketchFor {
     /// Break Out › To Sketch: the line the cut follows (the Break Out
     /// command waits in `DrwSketch::parked`).
     BreakOutDepth,
+    /// A title block definition (spec 4.13): a new one, or the one named in
+    /// `DrwSketch::resource`.
+    TitleBlock,
 }
 
 /// A view sketch being edited.
@@ -81,6 +84,8 @@ pub(super) struct DrwSketch {
     pub text_sel: Option<usize>,
     /// The Text dialog.
     pub text_edit: Option<super::drawing_text::TextDraft>,
+    /// The definition a resource sketch edits (`None`: a new one).
+    pub resource: Option<String>,
 }
 
 /// The tools of a view sketch's toolbar, in Inventor's Sketch tab order.
@@ -123,6 +128,7 @@ impl DrwSketch {
             texts: Vec::new(),
             text_sel: None,
             text_edit: None,
+            resource: None,
         }
     }
 
@@ -275,6 +281,8 @@ impl DrwSketch {
             SketchFor::BreakOut => "Break Out profile",
             SketchFor::BreakOutEdit(_) => "Edit Break Out Sketch",
             SketchFor::BreakOutDepth => "Break Out depth: sketch one straight line",
+            SketchFor::TitleBlock if self.resource.is_some() => "Edit Title Block",
+            SketchFor::TitleBlock => "Define Title Block",
         };
         let tool = if self.tools.tool == Tool::Text {
             "Text: click where the text's baseline starts; double-click a text with Select to edit it"
@@ -422,6 +430,12 @@ impl CadCraftApp {
                 self.end_drawing_sketch(s.view);
                 return true;
             }
+            SketchFor::TitleBlock => {
+                let resource = s.resource.clone();
+                self.end_drawing_sketch(s.view);
+                self.finish_title_sketch(sketch, texts, resource);
+                return true;
+            }
             SketchFor::Sketch(id) => {
                 let same = self
                     .drawing()
@@ -514,6 +528,7 @@ impl CadCraftApp {
             | SketchFor::BreakOutEdit(_)
             | SketchFor::BreakOutDepth
             | SketchFor::NewSketch
+            | SketchFor::TitleBlock
             | SketchFor::Sketch(_) => {}
             SketchFor::Section(id) => {
                 let pl = views

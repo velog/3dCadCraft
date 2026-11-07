@@ -229,6 +229,18 @@ impl std::fmt::Display for LineError {
 }
 
 impl ViewSketch {
+    /// Moves every point by `d` (fixed ones too: the whole sketch moves).
+    pub fn translate(&mut self, d: [f64; 2]) {
+        let sk = &mut self.0;
+        let moves: Vec<(PointId, Point2)> = sk
+            .points()
+            .map(|(id, p)| (id, Point2::new(p.position.x + d[0], p.position.y + d[1])))
+            .collect();
+        for (id, q) in moves {
+            let _ = sk.move_point(id, q);
+        }
+    }
+
     /// A sketch holding the section line `pts`: lines end to end, sharing
     /// their points.
     pub fn from_line(pts: &[[f64; 2]]) -> Self {

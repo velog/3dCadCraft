@@ -764,13 +764,16 @@ impl CadCraftApp {
     /// The table's corner snapped to the border's upper right corner, or so
     /// that it stands on the title block, when the pointer is near.
     fn snap_parts_list(&self, pl: &PartsList, t: &parts::Table, q: [f64; 2]) -> [f64; 2] {
-        let Some(sheet) = self.drawing().and_then(|d| d.sheet()) else {
+        let Some(d) = self.drawing() else {
+            return q;
+        };
+        let Some(sheet) = d.sheet() else {
             return q;
         };
         let (lo, hi) = parts::bounds(pl, t, self.drw.look.leader_text.height);
         let height = hi[1] - lo[1];
         let mut targets = vec![fmt::frame(sheet).1];
-        if let Some((_, th)) = fmt::title_rect(sheet) {
+        if let Some((_, th)) = fmt::title_rect_in(d, sheet) {
             targets.push([th[0], th[1] + height]);
         }
         let tol = (12.0 / self.drw.cam.zoom).max(4.0);

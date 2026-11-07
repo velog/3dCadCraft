@@ -274,12 +274,15 @@ impl CadCraftApp {
     /// right corner sits on the border's, or so that it stands on the
     /// title block.
     fn snap_table(&self, q: [f64; 2], width: f64, height: f64) -> [f64; 2] {
-        let Some(sheet) = self.drawing().and_then(|d| d.sheet()) else {
+        let Some(d) = self.drawing() else {
+            return q;
+        };
+        let Some(sheet) = d.sheet() else {
             return q;
         };
         let fr = fmt::frame(sheet).1;
         let mut targets = vec![[fr[0] - width, fr[1]]];
-        if let Some((_, th)) = fmt::title_rect(sheet) {
+        if let Some((_, th)) = fmt::title_rect_in(d, sheet) {
             targets.push([th[0] - width, th[1] + height]);
         }
         let tol = (12.0 / self.drw.cam.zoom).max(4.0);
@@ -293,10 +296,13 @@ impl CadCraftApp {
     /// rows change (it grows upwards): the new upper left corner of table
     /// `id` with `rows` data rows.
     fn keep_standing(&self, id: u32, at: [f64; 2], rows: usize, title: bool) -> [f64; 2] {
-        let Some(sheet) = self.drawing().and_then(|d| d.sheet()) else {
+        let Some(d) = self.drawing() else {
             return at;
         };
-        let Some((_, th)) = fmt::title_rect(sheet) else {
+        let Some(sheet) = d.sheet() else {
+            return at;
+        };
+        let Some((_, th)) = fmt::title_rect_in(d, sheet) else {
             return at;
         };
         let look = &self.drw.look;

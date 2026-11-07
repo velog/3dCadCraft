@@ -65,6 +65,10 @@ pub struct DrawingDocument {
     /// The next drawing sketch id (never reused; spec 4.12).
     #[serde(default = "one")]
     pub next_sketch_id: u32,
+    /// Drawing Resources: the user's title blocks (spec 4.13); old builds
+    /// ignore them.
+    #[serde(default, skip_serializing_if = "resources::Resources::is_empty")]
+    pub resources: resources::Resources,
 }
 
 fn one() -> u32 {
@@ -178,6 +182,10 @@ pub struct Sheet {
     /// §3.3); `None` = the standard's default border. Old builds ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border_params: Option<resources::ZoneParams>,
+    /// The user's title block on this sheet (spec 4.13 §3.2); `None` = the
+    /// standard's. Old builds ignore it and show the standard's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_def: Option<resources::PlacedTitle>,
 }
 
 fn yes() -> bool {
@@ -200,6 +208,7 @@ impl Sheet {
             annotations: Vec::new(),
             sketches: Vec::new(),
             border_params: None,
+            title_def: None,
         }
     }
 
@@ -1084,6 +1093,7 @@ impl DrawingDocument {
             next_annotation_id: 1,
             styles: style::DrawingStyles::of(standard.kind),
             next_sketch_id: 1,
+            resources: resources::Resources::default(),
         }
     }
 

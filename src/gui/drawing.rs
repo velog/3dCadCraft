@@ -292,6 +292,10 @@ pub(super) struct DrwUi {
     pub sheet_dialog: Option<SheetDialog>,
     /// Edit Drawing Border Parameters (spec 4.13).
     pub border_dialog: Option<super::drawing_resources::BorderDialog>,
+    /// Save Title Block's name window.
+    pub title_save: Option<super::drawing_resources::TitleSave>,
+    /// Edit Property Fields of a sheet's title block.
+    pub prompt_dialog: Option<super::drawing_resources::PromptDialog>,
     /// Finished lines.
     done: Arc<Mutex<HashMap<LinesKey, Arc<ViewLines>>>>,
     /// Jobs started (finished ones stay until the cache is cleared).
@@ -476,79 +480,15 @@ fn sketch_row(
     });
 }
 
-/// Drawing Resources in the browser (spec 4.13 §3.1): the folders with the
-/// built-in border and title block. Only the interface so far: every menu item
-/// is shown disabled with its spec row.
-fn resources_tree(ui: &mut egui::Ui, title_name: &str) {
-    let off = |ui: &mut egui::Ui, label: &str, row: &str| {
-        ui.add_enabled(false, egui::Button::new(label))
-            .on_disabled_hover_text(format!("Planned: spec 4.13 {row}"));
-    };
-    let folder =
-        |ui: &mut egui::Ui, name: &str, defines: &[&str], entries: &[(&str, &str)], row: &str| {
-            let header = egui::CollapsingHeader::new(name)
-                .id_salt(("drw_res", name))
-                .default_open(true)
-                .show(ui, |ui| {
-                    if entries.is_empty() {
-                        ui.weak("(none)");
-                    }
-                    for (entry, what) in entries {
-                        ui.horizontal(|ui| {
-                            super::panels::tree_icon(ui, Icon::Drawing);
-                            let r = ui.selectable_label(false, *entry).on_hover_text(*what);
-                            r.context_menu(|ui| {
-                                for item in [
-                                    "Insert",
-                                    "Edit",
-                                    "Copy",
-                                    "Rename",
-                                    "Delete",
-                                    "Reorder Prompted Entries",
-                                ] {
-                                    off(ui, item, row);
-                                }
-                            });
-                        });
-                    }
-                });
-            header.header_response.context_menu(|ui| {
-                for d in defines {
-                    off(ui, d, row);
-                }
-                off(ui, "Sort by Name", "§3.1");
-            });
-        };
-    folder(
-        ui,
-        "Sheet Formats",
-        &["Create New Sheet Format"],
-        &[],
-        "§3.1 (templates: spec 4)",
-    );
-    folder(
-        ui,
-        "Borders",
-        &["Define New Border", "Define New Zone Border"],
-        &[(
-            "Default Border",
-            "Built in: zones, margins and centre marks for every sheet size",
-        )],
-        "§3.3",
-    );
-    folder(
-        ui,
-        "Title Blocks",
-        &["Define New Title Block"],
-        &[(title_name, "Built in: the standard's title block")],
-        "§3.2",
-    );
-    folder(ui, "Sketched Symbols", &["Define New Symbol"], &[], "§3.4");
-}
-
 /// A sheet in the browser: name, size, views, its own sketches, border and
 /// title block shown.
-type TreeSheet = (String, String, Vec<TreeView>, Vec<TreeSketch>, [bool; 2]);
+type TreeSheet = (
+    String,
+    String,
+    Vec<TreeView>,
+    Vec<TreeSketch>,
+    super::drawing_resources::SheetFormat,
+);
 
 /// A Break (`out` false) or Break Out under a view in the browser: its index
 /// and whether it is suppressed.
@@ -725,6 +665,11 @@ impl CadCraftApp {
                 ed.kind = Some(crate::drawing::style::StyleType::Layers);
                 ed.name = first;
                 self.drw.styles_editor = Some(ed);
+            }
+            DrwCmd::Planned(super::drawing_planned::Planned::DefineTitleBlock) => {
+                self.drw.tool = None;
+                self.drw.dialog = None;
+                self.define_title_block();
             }
             DrwCmd::Planned(p) => {
                 self.drw.tool = None;
@@ -1614,7 +1559,20 @@ impl CadCraftApp {
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default()
         };
-        fmt::format_prims(d, i, &get)
+        let mut out = fmt::format_prims(d, i, &get);
+        // A title block definition being edited draws itself.
+        let editing = self
+            .drw
+            .sketch
+            .as_ref()
+            .is_some_and(|s| s.owner == super::drawing_sketch::SketchFor::TitleBlock);
+        if !editing {
+            let props = self.field_props(d, i);
+            out.extend(crate::drawing::resources::title_prims(d, i, &|f| {
+                props.get(f)
+            }));
+        }
+        out
     }
 
     /// The title block's fields of sheet `i`: the drawing's Properties and
@@ -2041,6 +1999,7 @@ impl CadCraftApp {
         self.sheet_dialog_window(ctx);
         self.drawing_text_window(ctx);
         self.border_dialog_window(ctx);
+        self.resource_windows(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);
         self.planned_window(ctx);
@@ -2342,6 +2301,12 @@ impl CadCraftApp {
         };
         let active = d.active_sheet;
         let title_name = d.standard.kind.label().to_string();
+        let blocks: Vec<String> = d
+            .resources
+            .title_blocks
+            .iter()
+            .map(|b| b.name.clone())
+            .collect();
         let tree_sketches = |l: &[crate::drawing::view_sketch::DrawingSketch]| -> Vec<TreeSketch> {
             l.iter()
                 .map(|k| (k.id, k.name.clone(), k.visible))
@@ -2385,13 +2350,14 @@ impl CadCraftApp {
                     s.size.label(),
                     views,
                     tree_sketches(&s.sketches),
-                    [s.border, s.title_block],
+                    super::drawing_resources::SheetFormat::of(d, s),
                 )
             })
             .collect();
         let mut activate = None;
         let mut edit_sheet = None;
         let mut format_action = None;
+        let mut res_action = None;
         let mut delete_sheet = None;
         let mut new_sheet = false;
         let mut select = None;
@@ -2408,7 +2374,9 @@ impl CadCraftApp {
             egui::CollapsingHeader::new("Drawing Resources")
                 .id_salt("drw_resources")
                 .default_open(false)
-                .show(ui, |ui| resources_tree(ui, &title_name));
+                .show(ui, |ui| {
+                    res_action = super::drawing_resources::resources_tree(ui, &title_name, &blocks);
+                });
             for (i, (sname, size, views, sheet_sketches, format)) in sheets.iter().enumerate() {
                 let label = RichText::new(format!("{sname} ({size})"));
                 let label = if i == active { label.strong() } else { label };
@@ -2543,9 +2511,7 @@ impl CadCraftApp {
                         }
                         // Its border and title block (spec 4.13: instances of
                         // Drawing Resources).
-                        if let Some(a) =
-                            super::drawing_resources::sheet_format_rows(ui, *format, &title_name)
-                        {
+                        if let Some(a) = super::drawing_resources::sheet_format_rows(ui, format) {
                             format_action = Some((i, a));
                         }
                     });
@@ -2652,6 +2618,9 @@ impl CadCraftApp {
         }
         if let Some((i, a)) = format_action {
             self.format_action(i, a);
+        }
+        if let Some(a) = res_action {
+            self.res_action(a);
         }
         if let Some(i) = delete_sheet {
             let deleted = self.edit_drawing("Delete Sheet", |d| d.delete_sheet(i));

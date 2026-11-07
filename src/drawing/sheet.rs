@@ -322,9 +322,24 @@ pub fn frame(sheet: &Sheet) -> ([f64; 2], [f64; 2]) {
     ([left, bottom], [w - right, h - top])
 }
 
-/// The title block's rectangle (lower left, upper right), when shown.
+/// The title block's rectangle on `sheet` of `doc` (lower left, upper
+/// right), when shown: the user's block (spec 4.13) or the standard's.
+pub fn title_rect_in(doc: &DrawingDocument, sheet: &Sheet) -> Option<([f64; 2], [f64; 2])> {
+    if let Some(def) = super::resources::title_of(doc, sheet) {
+        let (lo, hi) = def.extent()?;
+        let off = super::resources::title_offset(def, sheet)?;
+        return Some((
+            [lo[0] + off[0], lo[1] + off[1]],
+            [hi[0] + off[0], hi[1] + off[1]],
+        ));
+    }
+    title_rect(sheet)
+}
+
+/// The standard title block's rectangle (lower left, upper right), when
+/// shown and the sheet has no title block of the user's.
 pub fn title_rect(sheet: &Sheet) -> Option<([f64; 2], [f64; 2])> {
-    if !sheet.title_block {
+    if !sheet.title_block || sheet.title_def.is_some() {
         return None;
     }
     let (lo, hi) = frame(sheet);

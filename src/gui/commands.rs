@@ -2932,7 +2932,8 @@ pub fn interface_only(a: Action) -> bool {
         Action::PartPlanned(p) => !Planned::Part(p).has_logic(),
         Action::AsmPlanned(p) => !Planned::Asm(p).has_logic(),
         Action::SmPlanned(k) => !k.has_logic(),
-        Action::Drawing(DrwCmd::Planned(_)) => true,
+        // Define Title Block has its logic (spec 4.13).
+        Action::Drawing(DrwCmd::Planned(p)) => p != Dp::DefineTitleBlock,
         _ => false,
     }
 }
