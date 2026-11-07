@@ -204,6 +204,51 @@ impl BRep {
         Ok(mesh)
     }
 
+    /// Whether face `id` comes out of the tessellation without a triangle (its own mesh, else
+    /// ours of its surface: [`Self::face_mesh`]). A face on a plane whose boundary lies on
+    /// that plane is answered without triangulating it: its polygon always gives triangles,
+    /// and triangulating a cap with a thousand holes took minutes at file open. A free-form
+    /// face carries a placeholder plane its boundary is not on, so it is still tessellated.
+    pub fn face_is_undrawable(&self, id: FaceId, opts: &TessellationOptions) -> bool {
+        let Some(face) = self.face(id) else {
+            return true;
+        };
+        if face.mesh.is_some() || self.boundary_on_its_plane(face, opts) {
+            return false;
+        }
+        self.face_mesh(id, opts)
+            .map_or(true, |m| m.triangles.is_empty())
+    }
+
+    /// Whether `face` lies on a plane and every sample of its boundary is on it (within a
+    /// millionth of the boundary's size from the plane's origin, as `smooth::free_form` tells a
+    /// placeholder plane).
+    fn boundary_on_its_plane(&self, face: &Face, opts: &TessellationOptions) -> bool {
+        let Some(Surface::Plane(plane)) = self.surface(face.surface) else {
+            return false;
+        };
+        let n = plane.normal.into_inner();
+        let mut points = Vec::new();
+        for lp in std::iter::once(&face.outer).chain(&face.inner) {
+            for ce in &lp.coedges {
+                match self.sample_edge(ce.edge, opts) {
+                    Ok(pts) => points.extend(pts),
+                    Err(_) => return false,
+                }
+            }
+        }
+        if points.is_empty() {
+            return false;
+        }
+        let size = points
+            .iter()
+            .map(|p| (p - plane.origin).norm())
+            .fold(1.0, Real::max);
+        points
+            .iter()
+            .all(|p| (p - plane.origin).dot(&n).abs() <= 1e-6 * size)
+    }
+
     /// Triangulates a single face (e.g. to highlight it under the mouse).
     pub fn face_mesh(&self, id: FaceId, opts: &TessellationOptions) -> KernelResult<TriangleMesh> {
         let face = self

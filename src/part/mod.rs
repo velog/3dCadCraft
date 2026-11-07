@@ -1099,13 +1099,15 @@ impl PartDocument {
 
     /// Whether a face of the body comes out of the tessellation without a triangle.
     pub fn has_undrawable_faces(&self) -> bool {
+        // Face by face (`BRep::face_is_undrawable`): a flat face is never triangulated here
+        // (a cap with a thousand holes took minutes at file open).
         let opts = crate::kernel::TessellationOptions::default();
-        self.body.solids().any(|(id, s)| {
+        self.body.solids().any(|(_, s)| {
             !s.mesh
-                && self
-                    .body
-                    .tessellate_solid(id, &opts)
-                    .is_ok_and(|m| m.face_triangles.iter().any(|(_, r)| r.is_empty()))
+                && s.shells
+                    .iter()
+                    .flat_map(|sh| sh.faces.iter())
+                    .any(|&f| self.body.face_is_undrawable(f, &opts))
         })
     }
 

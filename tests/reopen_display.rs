@@ -2,6 +2,8 @@
 //! are not saved, and a free-form face has no tessellation of its own (owner's scissors, whose
 //! blade opened with a hole in its spline wall, the back faces behind it red).
 
+mod common;
+
 use cadcraft3d::document::{DocumentData, Project};
 use cadcraft3d::part::*;
 
@@ -61,6 +63,48 @@ fn asking_every_part_stays_quick() {
     let ms = t.elapsed().as_secs_f64() * 1e3;
     assert!(
         ms < 50.0 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
+        "{ms} ms"
+    );
+}
+
+/// A plate with many holes is drawable after loading, and asking takes no triangulation of its
+/// caps: triangulating a cap with 1024 holes took minutes, so the file never opened.
+#[test]
+fn a_plate_with_many_holes_is_answered_without_triangulating_its_caps() {
+    use common::*;
+    let mut p = plate(100.0, 100.0, 3.0);
+    let t = top(&p, 3.0);
+    let j = sketch_on(&mut p, &t, |sk, at| {
+        sk.add_circle(at(2.5, 2.5, 3.0), 1.0).unwrap();
+    });
+    cut(&mut p, j, None, |rg: &cadcraft3d::sketch::Region| {
+        rg.holes.is_empty() && rg.area() < std::f64::consts::PI * 1.01
+    });
+    let mut pat = PatternFeature::rectangular();
+    pat.features = vec!["Extrusion2".into()];
+    let d = |i| PatternDirection {
+        dir: Some(PullRef::Line(LineRef::Origin(i))),
+        count: 20,
+        spacing: 5.0,
+        ..PatternDirection::new()
+    };
+    pat.kind = PatternKind::Rectangular {
+        first: d(0),
+        second: Some(d(1)),
+    };
+    p.add_pattern(pat).unwrap();
+    assert_eq!(p.body.faces().count(), 6 + 400);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("plate.3dcadcraft");
+    let mut project = Project::new("Plate");
+    project.add_document("Plate", DocumentData::Part(p));
+    project.save(&path).unwrap();
+    let back = Project::load(&path).unwrap();
+    let t = std::time::Instant::now();
+    assert!(!parts(&back)[0].has_undrawable_faces());
+    let ms = t.elapsed().as_secs_f64() * 1e3;
+    assert!(
+        ms < 200.0 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
         "{ms} ms"
     );
 }
