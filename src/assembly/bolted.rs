@@ -744,8 +744,13 @@ pub struct BoltedConnection {
     pub size: String,
     /// The fasteners, in stack order.
     pub fasteners: Vec<BoltFastener>,
-    /// The holes: feature ids (= body names) in the tools part.
+    /// The holes: feature ids (= body names) in the tools part (each bolt's
+    /// axis, which its fasteners mate to; they cut nothing).
     pub holes: Vec<String>,
+    /// The Hole features written into the plates' own parts: the part and
+    /// the feature's id (spec 6.2 §4, owner 2026-11-07).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drilled: Vec<(crate::document::DocRef, String)>,
 }
 
 fn is_zero(v: &u32) -> bool {
@@ -936,6 +941,84 @@ impl Instance {
     }
 }
 
+/// A Hole feature a connection writes into a plate's part: on `face` (the
+/// face the bolt enters by, part coordinates), one centre per bolt.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drill {
+    /// The plate's part.
+    pub component: crate::document::DocRef,
+    /// Its face the holes start on.
+    pub face: String,
+    /// The centres on that face (part coordinates).
+    pub centers: Vec<Point3>,
+    /// Clearance (Through All) or tapped (a depth).
+    pub spec: crate::part::hole::HoleSpec,
+}
+
+/// A clearance hole of `diameter` through the part.
+pub fn clearance_spec(diameter: Real) -> crate::part::hole::HoleSpec {
+    let mut s = crate::part::hole::HoleSpec::simple(diameter, 1.0);
+    s.hole_type = crate::part::hole::HoleType::Clearance;
+    s.termination = crate::part::hole::Termination::ThroughAll;
+    s
+}
+
+/// A tapped hole of size `size` of thread type `thread`, `depth` deep (a
+/// cosmetic thread over its whole depth).
+pub fn tapped_spec(
+    st: &Standards,
+    thread: &str,
+    size: &str,
+    depth: Real,
+) -> Option<crate::part::hole::HoleSpec> {
+    let designation = st
+        .thread_table(thread)?
+        .of_size(size)
+        .next()?
+        .designation
+        .clone();
+    let t = crate::part::hole::ThreadSpec::from_table(st, thread, &designation, true)?;
+    Some(crate::part::hole::HoleSpec::tapped(t, depth))
+}
+
+/// Writes `d` into `part` as one Hole feature (its own sketch of centre
+/// points on the face). Returns the feature's id; on failure the part is as
+/// it was.
+pub fn drill(part: &mut crate::part::PartDocument, d: &Drill) -> Result<String, String> {
+    use crate::part::hole::{HoleCenter, HoleFeature};
+    let before = part.clone();
+    let res = (|| {
+        let (i, ids) = part
+            .create_hole_sketch(&d.face, &d.centers)
+            .map_err(|e| e.to_string())?;
+        let mut def = HoleFeature::new(d.spec.clone());
+        def.sketch = part.sketches[i].id.clone();
+        def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+        part.add_hole(def).map_err(|e| e.to_string())
+    })();
+    if res.is_err() {
+        *part = before;
+    }
+    res
+}
+
+/// Removes Hole feature `id` (and its sketch) from `part`; later features
+/// that used its faces stay (and get health), as after a Delete.
+pub fn undrill(part: &mut crate::part::PartDocument, id: &str) -> Result<(), String> {
+    let Some(k) = part.features.iter().position(|f| f.id() == id) else {
+        return Ok(());
+    };
+    part.delete_features(
+        k,
+        crate::part::history::DeleteOptions {
+            consumed_sketches: true,
+            dependents: false,
+        },
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
 /// What [`make`] needs: each bolt's axis and holes, the planes the seats lie
 /// on (assembly coordinates, any sense) and the fasteners of one stack in
 /// stack order (placed on every bolt). `record` carries the inputs and the
@@ -945,6 +1028,10 @@ impl Instance {
 pub struct Making {
     /// Each bolt: its axis and holes.
     pub instances: Vec<Instance>,
+    /// The Hole features for the plates' parts of this project (a linked
+    /// part file is drilled by the caller, which lists it in
+    /// `record.drilled`).
+    pub drills: Vec<Drill>,
     /// The start plane (point, normal).
     pub start_plane: (Point3, Vector3),
     /// The termination (point, normal).
@@ -986,6 +1073,20 @@ fn make_in(
     }
     if m.fasteners.len() != m.record.fasteners.len() {
         return Err("the stack and its record differ".into());
+    }
+    // The holes in the plates' own parts.
+    for d in &m.drills {
+        if d.component.library.is_some() {
+            return Err("a linked part is drilled by the caller".into());
+        }
+        let Some(DocumentData::Part(part)) = project
+            .document_mut(d.component.document)
+            .map(|x| &mut x.data)
+        else {
+            return Err("a plate's part is missing".into());
+        };
+        let id = drill(part, d).map_err(|e| format!("the hole in the plate: {e}"))?;
+        m.record.drilled.push((d.component, id));
     }
     let (tools_occ, tools_doc) = super::features::ensure_tools(project, asm_id)?;
     // Each bolt's hole ids, in the order of its holes.
@@ -1084,9 +1185,16 @@ fn make_in(
             });
         }
     }
-    let id = a.bolts.iter().map(|b| b.id).max().unwrap_or(0) + 1;
+    // An Edit keeps the connection's id and name (its record says them).
+    let id = if m.record.id != 0 && !a.bolts.iter().any(|b| b.id == m.record.id) {
+        m.record.id
+    } else {
+        a.bolts.iter().map(|b| b.id).max().unwrap_or(0) + 1
+    };
     m.record.id = id;
-    m.record.name = format!("Bolted Connection {id}");
+    if m.record.name.is_empty() {
+        m.record.name = format!("Bolted Connection {id}");
+    }
     m.record.holes = ids.into_iter().flatten().collect();
     m.record.fasteners = placed;
     a.bolts.push(m.record);
@@ -1140,6 +1248,14 @@ fn remove_in(
             }
         }
         tp.regenerate().map_err(|e| e.to_string())?;
+    }
+    // The holes in the plates' parts of this project (linked ones: the caller).
+    for (c, id) in b.drilled.iter().filter(|(c, _)| c.library.is_none()) {
+        if let Some(DocumentData::Part(part)) =
+            project.document_mut(c.document).map(|d| &mut d.data)
+        {
+            undrill(part, id)?;
+        }
     }
     Ok(())
 }
@@ -1679,6 +1795,7 @@ mod tests {
                 })
                 .collect(),
             holes: Vec::new(),
+            drilled: Vec::new(),
         }
     }
 
@@ -1759,6 +1876,7 @@ mod tests {
             (Role::Nut, true),
         ];
         let m = Making {
+            drills: Vec::new(),
             instances: vec![Instance::new(
                 axis,
                 hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
@@ -1842,6 +1960,79 @@ mod tests {
         assert!(remove(&mut p, id, 99).is_err());
     }
 
+    /// Use case 17: the holes go into the plate's own part (owner
+    /// 2026-11-07): one Hole feature with a centre per bolt, Through All Ø9
+    /// from the face the bolt enters by; a tapped M8 hole 12 deep with its
+    /// thread; Delete takes them out again. The face names of the plate
+    /// stay.
+    #[test]
+    fn use_case_holes_written_into_the_plate() {
+        let vol = |p: &PartDocument| -> Real {
+            p.exact_bodies
+                .0
+                .iter()
+                .filter_map(|s| s.volume_at(1e-3))
+                .sum()
+        };
+        let mut plate = PartDocument::with_box("Box1", [120.0, 80.0, 10.0]).unwrap();
+        let v0 = vol(&plate);
+        let d = Drill {
+            component: DocRef::local(DocumentId::new_random()),
+            face: "Box1:Top".into(),
+            centers: vec![
+                Point3::new(20.0, 20.0, 10.0),
+                Point3::new(100.0, 20.0, 10.0),
+            ],
+            spec: clearance_spec(9.0),
+        };
+        let id = drill(&mut plate, &d).unwrap();
+        let cut = v0 - vol(&plate);
+        let want = 2.0 * std::f64::consts::PI * 4.5 * 4.5 * 10.0;
+        assert!((cut - want).abs() < 0.01 * want, "{cut} vs {want}");
+        assert_eq!(plate.holes().len(), 2);
+        assert!(
+            plate
+                .body
+                .faces()
+                .any(|(_, f)| f.name.as_deref() == Some("Box1:Top"))
+        );
+        // Tapped: the tap drill 12 mm deep with an M8 thread.
+        let st = Standards::global();
+        let spec = tapped_spec(st, ISO_METRIC, "M8", 12.0).unwrap();
+        assert_eq!(spec.tapped_thread().map(|t| t.major), Some(8.0));
+        let mut block = PartDocument::with_box("Box1", [120.0, 80.0, 40.0]).unwrap();
+        let b0 = vol(&block);
+        let t = Drill {
+            component: DocRef::local(DocumentId::new_random()),
+            face: "Box1:Top".into(),
+            centers: vec![Point3::new(30.0, 20.0, 40.0)],
+            spec,
+        };
+        drill(&mut block, &t).unwrap();
+        let r = spec_radius(&t.spec);
+        let cut = b0 - vol(&block);
+        assert!(cut > std::f64::consts::PI * r * r * 12.0 * 0.98, "{cut}");
+        assert!(
+            cut < std::f64::consts::PI * r * r * 12.0 * 1.2,
+            "{cut} (with the drill point)"
+        );
+        // A face the part does not have: refused, the part unchanged.
+        let before = format!("{:?}", plate.features.len());
+        let bad = Drill {
+            face: "Box1:Nowhere".into(),
+            ..d.clone()
+        };
+        assert!(drill(&mut plate, &bad).is_err());
+        assert_eq!(format!("{:?}", plate.features.len()), before);
+        undrill(&mut plate, &id).unwrap();
+        assert!((vol(&plate) - v0).abs() < 1e-6 * v0);
+        assert!(plate.holes().is_empty());
+    }
+
+    fn spec_radius(s: &crate::part::hole::HoleSpec) -> Real {
+        s.diameter / 2.0
+    }
+
     /// Use case 16: one connection, two bolts (a grid of 2): each bolt gets
     /// its own hole and its own stack held on that hole's axis; the second
     /// bolt's upper plate already has a hole there, so its hole cuts only the
@@ -1877,6 +2068,7 @@ mod tests {
             )
         };
         let m = Making {
+            drills: Vec::new(),
             instances: vec![
                 inst(30.0, &[vec![upper], vec![lower]]),
                 inst(90.0, &[vec![lower]]),
@@ -1976,6 +2168,7 @@ mod tests {
         assert_eq!(holes[1].1, HoleUse::Tapped);
         assert!((holes[1].0.diameter - 6.75).abs() < 1e-9);
         let m = Making {
+            drills: Vec::new(),
             instances: vec![Instance::new(axis, holes, &[vec![top]], &[vec![blk]])],
             start_plane: (Point3::new(0.0, 0.0, 50.0), Vector3::z()),
             end_plane: (Point3::new(0.0, 0.0, 40.0), Vector3::z()),

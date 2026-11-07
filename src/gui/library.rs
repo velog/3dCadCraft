@@ -39,6 +39,9 @@ pub(super) struct LibraryUi {
     meshes: HashMap<PathBuf, (Arc<PickMesh>, Vec<CosmeticThread>)>,
     shown: Option<PathBuf>,
     yaw: f32,
+    /// Opened by Bolted Connection's stack (Change, Library...): only its
+    /// kinds are listed and Use puts the family into the stack.
+    pub(super) bolt: Option<super::bolted::BoltPick>,
 }
 
 impl CadCraftApp {
@@ -60,6 +63,11 @@ impl CadCraftApp {
             return;
         }
         let catalog = Catalog::load(&root);
+        self.asm.library = Some(self.library_ui(catalog));
+    }
+
+    /// The window over `catalog` with the remembered filters.
+    fn library_ui(&self, catalog: Catalog) -> LibraryUi {
         let error = catalog.warnings.first().cloned();
         // A remembered filter whose families are gone must not hide everything.
         let standard = self
@@ -67,7 +75,7 @@ impl CadCraftApp {
             .clone()
             .filter(|s| catalog.standards().contains(s));
         let thumbnail_rx = spawn_thumbnails(catalog.clone());
-        self.asm.library = Some(LibraryUi {
+        LibraryUi {
             catalog,
             category: String::new(),
             family: None,
@@ -82,7 +90,29 @@ impl CadCraftApp {
             meshes: HashMap::new(),
             shown: None,
             yaw: 0.6,
-        });
+            bolt: None,
+        }
+    }
+
+    /// The window for Bolted Connection's stack: its kinds only, the current
+    /// family (Change) picked, Use instead of Place.
+    pub(super) fn library_for_bolt(&mut self, pick: super::bolted::BoltPick) {
+        let Some(root) = crate::components::root_dir() else {
+            self.file_status = Some(Err(
+                "Bolted Connection: no user folder for the library".into()
+            ));
+            return;
+        };
+        let mut lib = self.library_ui(Catalog::load(&root));
+        lib.smart = false;
+        lib.category = pick.category.clone();
+        if let Some(name) = &pick.current {
+            lib.family = lib.catalog.families.iter().position(|f| &f.name == name);
+            lib.member = lib.family.map(|f| size_member(&lib.catalog, f, &pick.size));
+        }
+        lib.bolt = Some(pick);
+        self.library_select(&mut lib);
+        self.asm.library = Some(lib);
     }
 
     /// The member picked in the window: its file and the mesh of its part.
@@ -127,7 +157,12 @@ impl CadCraftApp {
         let mut picked: Option<(usize, usize)> = None;
         let mut redo = false;
         lib.take_thumbnails(ctx);
-        let w = egui::Window::new("Place from Library")
+        let title = if lib.bolt.is_some() {
+            "Bolted Connection: choose from the Library"
+        } else {
+            "Place from Library"
+        };
+        let w = egui::Window::new(title)
             .open(&mut open)
             .resizable(true)
             .collapsible(false)
@@ -180,8 +215,17 @@ impl CadCraftApp {
                         .on_hover_text("The size follows the hole or shaft under the cursor; a click places it with its relationships.")
                         .on_disabled_hover_text("This family is placed by hand");
                         ui.add_space(12.0);
+                        let (label, tip) = if lib.bolt.is_some() {
+                            ("Use", "Puts this family into the stack; its size follows the connection's diameter")
+                        } else {
+                            ("Place", "Places the size picked")
+                        };
                         if ui
-                            .add_enabled(lib.shown.is_some(), egui::Button::new("Place"))
+                            .add_enabled(
+                                lib.family.is_some() && (lib.bolt.is_some() || lib.shown.is_some()),
+                                egui::Button::new(label),
+                            )
+                            .on_hover_text(tip)
                             .clicked()
                         {
                             place = true;
@@ -277,6 +321,7 @@ impl CadCraftApp {
                                 .search(&lib.search)
                                 .into_iter()
                                 .filter(|(f, _)| lib.catalog.in_standard(*f, standard.as_deref()))
+                                .filter(|(f, _)| bolt_kind_ok(&lib, *f))
                                 .collect();
 
                                     if hits.is_empty() {
@@ -349,6 +394,14 @@ impl CadCraftApp {
         if redo {
             self.library_select(&mut lib);
         }
+        // Bolted Connection's Use: the family goes into the stack.
+        if place && let Some(pick) = lib.bolt.clone() {
+            if let Some(f) = lib.family.and_then(|f| lib.catalog.families.get(f)) {
+                let (name, category) = (f.name.clone(), f.category.clone());
+                self.bolt_use_family(&pick, &name, &category);
+            }
+            return;
+        }
         self.library_standard = lib.standard.clone();
         self.library_detail = lib.detail.label().to_owned();
         self.library_manual = !lib.smart;
@@ -385,6 +438,7 @@ fn members_by_family(ui: &mut egui::Ui, lib: &mut LibraryUi, picked: &mut Option
         .in_category(&lib.category)
         .into_iter()
         .filter(|f| lib.catalog.in_standard(*f, standard.as_deref()))
+        .filter(|f| bolt_kind_ok(lib, *f))
         .collect();
 
     if list.is_empty() {
@@ -423,6 +477,10 @@ fn members_by_family(ui: &mut egui::Ui, lib: &mut LibraryUi, picked: &mut Option
                 }
             }
         });
+        // Bolted Connection: the family itself is the choice (its size follows).
+        if toggle && let Some(pick) = &lib.bolt {
+            *picked = Some((f, size_member(&lib.catalog, f, &pick.size)));
+        }
         if toggle {
             let mut s =
                 egui::collapsing_header::CollapsingState::load_with_default_open(&ctx, id, only);
@@ -430,6 +488,35 @@ fn members_by_family(ui: &mut egui::Ui, lib: &mut LibraryUi, picked: &mut Option
             s.store(&ctx);
         }
     }
+}
+
+/// Whether family `f` is of a kind Bolted Connection's place takes (any
+/// family when the window was not opened for it).
+fn bolt_kind_ok(lib: &LibraryUi, f: usize) -> bool {
+    lib.bolt.as_ref().is_none_or(|b| {
+        lib.catalog
+            .families
+            .get(f)
+            .and_then(|x| super::bolted::Role::of(&x.category))
+            .is_some_and(|r| b.roles.contains(&r))
+    })
+}
+
+/// The member of family `f` for nominal size `size` (`M8` also matches a
+/// washer's `8` and a bolt's `M8 x 30`), else its first.
+fn size_member(c: &Catalog, f: usize, size: &str) -> usize {
+    let plain = size.trim_start_matches('M');
+    c.families.get(f).map_or(0, |fam| {
+        fam.members
+            .iter()
+            .position(|m| m.size == size || m.size == plain)
+            .or_else(|| {
+                fam.members
+                    .iter()
+                    .position(|m| m.size.starts_with(&format!("{size} ")))
+            })
+            .unwrap_or(0)
+    })
 }
 
 /// Draws the family pictures one by one off the interface's thread. Dropping

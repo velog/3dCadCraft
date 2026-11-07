@@ -522,6 +522,8 @@ impl CadCraftApp {
         self.asm_refresh_status();
         self.follow_patterns();
         self.follow_frames();
+        // Bolted connections follow their holes and plates (spec 6.2 §4).
+        self.bolts_follow(false);
         // Derived parts follow their sources (spec 3.10 §3.5, §3.6).
         self.make_follow();
         self.derive_follow();

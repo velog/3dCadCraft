@@ -21,6 +21,7 @@ use crate::components::fit::{self, Fit, Target};
 use crate::components::samples::{Detail, Kind};
 use crate::document::{DocumentData, DocumentId};
 use crate::kernel::Real;
+use crate::part::standards::Standards;
 
 /// Plates closer than this to a plane are on it (mm).
 const ON: Real = 0.05;
@@ -49,8 +50,10 @@ struct Piece {
 /// Everything OK needs, found before anything changes.
 struct Plan {
     kind: BoltKind,
-    /// Each bolt: its axis, its holes and what they cut.
+    /// Each bolt: its axis and its axis hole (cutting nothing).
     instances: Vec<bolted::Instance>,
+    /// The Hole features for the plates' parts.
+    drills: Vec<bolted::Drill>,
     pieces: Vec<Piece>,
     record: BoltedConnection,
     bolt_length: Real,
@@ -121,17 +124,14 @@ fn member_name(c: &Catalog, f: usize, m: usize) -> String {
 impl CadCraftApp {
     /// OK of Bolted Connection: `true` when the connection was made.
     pub(super) fn bolted_ok(&mut self, d: &PartDialog) -> bool {
-        let res = self.bolted_plan(d).and_then(|plan| {
+        // Check first: a plan that cannot be made changes nothing.
+        let res = self.bolted_plan(d).and_then(|_| {
             self.checkpoint("Bolted Connection");
-            let before = self.project.clone();
-            match self.bolted_apply(plan, d.bolt.editing) {
-                Ok(msg) => Ok(msg),
-                Err(e) => {
-                    self.project = before;
-                    self.history.cancel();
-                    Err(e)
-                }
+            let r = self.bolted_commit(d);
+            if r.is_err() {
+                self.history.cancel();
             }
+            r
         });
         match res {
             Ok(msg) => {
@@ -144,6 +144,139 @@ impl CadCraftApp {
                 false
             }
         }
+    }
+
+    /// Makes the connection of panel `d` (Edit: the old one goes first and
+    /// the plates are found again without its holes). No Undo step; on
+    /// failure the project is put back.
+    fn bolted_commit(&mut self, d: &PartDialog) -> Result<String, String> {
+        let before = self.project.clone();
+        let saved = self.part_planned.clone();
+        let res = (|| {
+            let old = d.bolt.editing.and_then(|id| {
+                self.assembly()?
+                    .bolts
+                    .iter()
+                    .find(|b| b.id == id)
+                    .map(|b| (b.id, b.name.clone()))
+            });
+            let d = match d.bolt.editing {
+                Some(id) => {
+                    self.bolt_remove(id)?;
+                    let mut fresh = d.clone();
+                    fresh.bolt.key.clear();
+                    fresh.bolt.view_key.clear();
+                    fresh.bolt.editing = None;
+                    self.part_planned = Some(fresh);
+                    self.bolt_follow();
+                    self.part_planned.clone().ok_or("the panel closed")?
+                }
+                None => d.clone(),
+            };
+            let mut plan = self.bolted_plan(&d)?;
+            if let Some((id, name)) = old {
+                plan.record.id = id;
+                plan.record.name = name;
+            }
+            self.bolted_apply(plan)
+        })();
+        self.part_planned = saved;
+        if res.is_err() {
+            self.project = before;
+        }
+        res
+    }
+
+    /// Connection `id` made again from its own inputs (its holes, plates or
+    /// references changed): the Edit panel's OK without the panel. No Undo
+    /// step (it follows a change that has its own).
+    pub(super) fn bolt_regenerate(&mut self, id: u32) -> Result<String, String> {
+        let saved = self.part_planned.take();
+        let status = self.file_status.clone();
+        self.bolt_edit(id);
+        let res = match self.part_planned.clone() {
+            Some(mut d) => {
+                d.bolt.key.clear();
+                d.bolt.view_key.clear();
+                self.part_planned = Some(d);
+                self.bolt_follow();
+                match self.part_planned.clone() {
+                    Some(d) => self.bolted_commit(&d),
+                    None => Err("the connection could not be opened".into()),
+                }
+            }
+            None => Err("the connection no longer exists".into()),
+        };
+        self.part_planned = saved;
+        self.file_status = status;
+        res
+    }
+
+    /// A hash of what connection `b` is made from: its references'
+    /// components (their geometry and places) and the parts it drilled.
+    fn bolt_inputs_key(&self, b: &BoltedConnection) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let Some(a) = self.assembly() else {
+            return 0;
+        };
+        let refs = std::iter::once(&b.start)
+            .chain(&b.references)
+            .chain(std::iter::once(&b.end));
+        for g in refs {
+            if let Some(o) = a.find(g.occurrence()) {
+                format!("{:?}", o.transform).hash(&mut h);
+                self.with_part(o.component, |p| p.body_signature())
+                    .hash(&mut h);
+            }
+        }
+        for (c, _) in &b.drilled {
+            self.with_part(*c, |p| p.body_signature()).hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// Connections follow their holes and plates (spec 6.2 §4): one whose
+    /// inputs changed since last seen (`all`: every one, Rebuild All) is made
+    /// again. A connection seen for the first time is only remembered. The
+    /// number made again.
+    pub(super) fn bolts_follow(&mut self, all: bool) -> usize {
+        let asm = self.part_id;
+        let Some(list) = self.assembly().map(|a| a.bolts.clone()) else {
+            return 0;
+        };
+        let mut made = 0;
+        for b in &list {
+            let key = self.bolt_inputs_key(b);
+            let seen = self.bolt_keys.get(&(asm, b.id)).copied();
+            if !all && seen.is_none_or(|k| k == key) {
+                self.bolt_keys.insert((asm, b.id), key);
+                continue;
+            }
+            match self.bolt_regenerate(b.id) {
+                Ok(_) => {
+                    made += 1;
+                    // Its inputs as they are now (with its new holes).
+                    if let Some(nb) = self
+                        .assembly()
+                        .and_then(|a| a.bolts.iter().find(|x| x.id == b.id).cloned())
+                    {
+                        let k = self.bolt_inputs_key(&nb);
+                        self.bolt_keys.insert((asm, nb.id), k);
+                    }
+                }
+                Err(e) => {
+                    self.bolt_keys.insert((asm, b.id), key);
+                    log::warn!("{}: {e}", b.name);
+                    self.file_status =
+                        Some(Err(format!("{}: cannot follow its holes ({e})", b.name)));
+                }
+            }
+        }
+        if made > 0 {
+            self.scene_dirty = true;
+        }
+        made
     }
 
     /// What the preview shows of the plan: each member's file, side and
@@ -201,6 +334,8 @@ impl CadCraftApp {
         // plane and the termination (not one already drilled there), a blind
         // one's tapped hole the plate at the termination.
         let mut cuts: Vec<(Paths, Paths)> = Vec::new();
+        // The plates each bolt drills: (clearance rows, the tapped row).
+        let mut rows: Vec<(Vec<panel::PlateRow>, Option<panel::PlateRow>)> = Vec::new();
         let mut last_t = Real::INFINITY;
         let grip_of = |plates: &[panel::PlateRow]| {
             plates
@@ -244,6 +379,14 @@ impl CadCraftApp {
             if let Some(l) = last {
                 last_t = last_t.min(l.thickness);
             }
+            rows.push((
+                clearance
+                    .iter()
+                    .filter(|p| p.solid)
+                    .map(|p| (*p).clone())
+                    .collect(),
+                last.filter(|p| p.solid).cloned(),
+            ));
             cuts.push((
                 clearance
                     .iter()
@@ -361,13 +504,58 @@ impl CadCraftApp {
             });
         }
         let depth = bolted::tapped_depth(bolt_length, &lay, axis.length, h.major, last_t);
+        // Each bolt's axis body in the tools part cuts nothing: the holes go
+        // into the plates' own parts (owner 2026-11-07), one Hole feature per
+        // part and face with a centre per bolt.
         let instances: Vec<bolted::Instance> = axes
             .iter()
-            .zip(&cuts)
-            .map(|(a, (clearance, tapped))| {
-                bolted::Instance::new(*a, bolted::hole_ops(a, kind, &h, depth), clearance, tapped)
+            .map(|a| {
+                let mut ops = bolted::hole_ops(a, BoltKind::ThroughAll, &h, 0.0);
+                ops.truncate(1);
+                bolted::Instance::new(*a, ops, &[], &[])
             })
             .collect();
+        let tapped = bolted::tapped_spec(Standards::global(), &thread, &size, depth);
+        let mut drills: Vec<bolted::Drill> = Vec::new();
+        let mut add = |r: &panel::PlateRow, tap: bool| -> Result<(), String> {
+            let face = r
+                .face
+                .clone()
+                .ok_or_else(|| format!("{}: the face the bolt enters by has no name", r.name))?;
+            let spec = if tap {
+                tapped
+                    .clone()
+                    .ok_or_else(|| format!("no tapped hole for {size}"))?
+            } else {
+                bolted::clearance_spec(h.clearance)
+            };
+            match drills
+                .iter_mut()
+                .find(|x| x.component == r.component && x.face == face && x.spec == spec)
+            {
+                Some(x) => {
+                    if !x.centers.iter().any(|c| (c - r.local).norm() < 1e-6) {
+                        x.centers.push(r.local);
+                    }
+                }
+                None => drills.push(bolted::Drill {
+                    component: r.component,
+                    face,
+                    centers: vec![r.local],
+                    spec,
+                }),
+            }
+            Ok(())
+        };
+        for (clearance, last) in &rows {
+            for r in clearance {
+                add(r, false)?;
+            }
+            if let Some(r) = last {
+                add(r, true)?;
+            }
+        }
+        let _ = &cuts;
         let placement = panel::placement(d);
         let references: Vec<GeomRef> = panel::reference_keys(placement)
             .iter()
@@ -419,10 +607,12 @@ impl CadCraftApp {
                 })
                 .collect(),
             holes: Vec::new(),
+            drilled: Vec::new(),
         };
         Ok(Plan {
             kind,
             instances,
+            drills,
             pieces,
             record,
             bolt_length,
@@ -452,11 +642,29 @@ impl CadCraftApp {
     }
 
     /// Makes the connection of `plan` (replacing connection `editing`).
-    fn bolted_apply(&mut self, plan: Plan, editing: Option<u32>) -> Result<String, String> {
+    fn bolted_apply(&mut self, plan: Plan) -> Result<String, String> {
         let asm = self.part_id;
-        if let Some(id) = editing {
-            self.bolt_remove(id)?;
+        // The holes in linked part files: their edits (saved with this file).
+        let (local, linked): (Vec<_>, Vec<_>) = plan
+            .drills
+            .iter()
+            .cloned()
+            .partition(|d| d.component.library.is_none());
+        let mut drilled = Vec::new();
+        for d in &linked {
+            let (Some(lib), Some(mut part)) = (
+                d.component.library,
+                self.with_part(d.component, |p| p.clone()),
+            ) else {
+                return Err("a plate's part file cannot be read".into());
+            };
+            let id =
+                bolted::drill(&mut part, d).map_err(|e| format!("the hole in the plate: {e}"))?;
+            self.edit_linked_part(lib, d.component.document, part);
+            drilled.push((d.component, id));
         }
+        let mut record = plan.record.clone();
+        record.drilled = drilled;
         // The member files, linked.
         let owner = PathBuf::from(self.file_path.trim());
         let mut resolver = crate::document::Resolver::new();
@@ -480,10 +688,11 @@ impl CadCraftApp {
         let grip = plan.instances.first().map_or(0.0, |i| i.axis.length);
         let making = bolted::Making {
             instances: plan.instances.clone(),
+            drills: local,
             start_plane: plane(self.bolt_world(&plan.record.start))?,
             end_plane: plane(self.bolt_world(&plan.record.end))?,
             fasteners,
-            record: plan.record.clone(),
+            record,
         };
         let id = bolted::make(&mut self.project, asm, making)?;
         let mut a = self.assembly().ok_or("no assembly")?.clone();
@@ -530,6 +739,24 @@ impl CadCraftApp {
     /// Removes connection `id` from the active assembly: its fasteners
     /// (with their relationships), its holes and its record. No checkpoint.
     pub(super) fn bolt_remove(&mut self, id: u32) -> Result<(), String> {
+        // The holes in linked part files first (this file's edits of them).
+        let linked: Vec<(crate::document::DocRef, String)> = self
+            .assembly()
+            .and_then(|a| a.bolts.iter().find(|b| b.id == id))
+            .map(|b| {
+                b.drilled
+                    .iter()
+                    .filter(|(c, _)| c.library.is_some())
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (c, hole) in linked {
+            if let (Some(lib), Some(mut part)) = (c.library, self.with_part(c, |p| p.clone())) {
+                bolted::undrill(&mut part, &hole)?;
+                self.edit_linked_part(lib, c.document, part);
+            }
+        }
         bolted::remove(&mut self.project, self.part_id, id)?;
         self.scene_dirty = true;
         Ok(())

@@ -69,6 +69,29 @@ pub(super) struct PlateRow {
     /// The axis meets material in it (`false`: it already has a hole there,
     /// which is not cut again).
     pub solid: bool,
+    /// Its part, the face the bolt enters it by and where (part coordinates):
+    /// the hole written into the part starts there.
+    pub component: crate::document::DocRef,
+    pub face: Option<String>,
+    pub local: Point3,
+}
+
+/// The Component Library window opened for the stack: which place, whether
+/// it replaces the fastener there, what it lists.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct BoltPick {
+    pub side: Side,
+    pub at: usize,
+    /// Change: the fastener at `at` is replaced (else one is inserted there).
+    pub replace: bool,
+    /// The kinds that may go there.
+    pub roles: Vec<Role>,
+    /// The category the window opens on (`Fasteners/Bolts`).
+    pub category: String,
+    /// The family shown first (Change: the current one).
+    pub current: Option<String>,
+    /// The connection's size (`M8`): the member picked in the window.
+    pub size: String,
 }
 
 /// One fastener of the preview: the member's triangles at its seat.
@@ -140,6 +163,10 @@ pub(super) struct BoltPanel {
     pub menu: Option<(Side, usize, Pos2)>,
     /// The length arrow held: the length and the pointer when it was pressed.
     pub grip: Option<(f64, Pos2)>,
+    /// The panel asks for the Component Library window.
+    pub library: Option<BoltPick>,
+    /// Follow Pattern was applied to these picks (found again when they change).
+    pub followed: Option<String>,
 }
 
 impl std::fmt::Debug for Ghost {
@@ -248,7 +275,7 @@ pub(super) fn row_hidden(d: &PartDialog, ti: usize, label: &str) -> bool {
                 placement(d) != Placement::Linear
             }
             "Count" | "Radius" | "Angle" | "Span" => placement(d) != Placement::Circular,
-            "Follow Pattern" => placement(d) != Placement::ByHole,
+            "Follow Pattern" => !matches!(placement(d), Placement::ByHole | Placement::Concentric),
             _ => false,
         }
 }
@@ -326,10 +353,8 @@ pub(super) fn row_off(d: &PartDialog, ti: usize, label: &str) -> Option<&'static
     if ti > 0 {
         return Some(CALC_TIP);
     }
-    match label {
-        "Follow Pattern" => Some("Comes with the logic: needs a hole of a pattern (spec 6.2 §3.2)"),
-        _ => None,
-    }
+    let _ = label;
+    None
 }
 
 /// The family of the library named `name` (`ISO 4017`), if it fits `role`.
@@ -497,6 +522,85 @@ pub(super) fn stack_problems(d: &PartDialog) -> Vec<String> {
 
 // ---- the panel ---------------------------------------------------------------
 
+/// The library window's request for place `at` of `side`.
+fn pick_for(d: &PartDialog, side: Side, at: usize, replace: bool) -> BoltPick {
+    let roles: Vec<Role> = if replace {
+        let list = match side {
+            Side::Head => &d.bolt.head,
+            Side::Nut => &d.bolt.nut,
+        };
+        match list.get(at).map(|x| x.role) {
+            Some(Role::Bolt) => vec![Role::Bolt],
+            Some(_) if side == Side::Head => vec![Role::Washer],
+            _ => vec![Role::Washer, Role::Nut],
+        }
+    } else {
+        slot_roles(d, side, at).to_vec()
+    };
+    let current = if replace {
+        let list = match side {
+            Side::Head => &d.bolt.head,
+            Side::Nut => &d.bolt.nut,
+        };
+        list.get(at)
+            .and_then(|x| d.bolt.catalog.as_ref()?.families.get(x.family))
+            .map(|f| f.name.clone())
+    } else {
+        None
+    };
+    let category = match roles.as_slice() {
+        [Role::Bolt] => "Fasteners/Bolts",
+        [Role::Washer] => "Fasteners/Washers",
+        [Role::Nut] => "Fasteners/Nuts",
+        _ => "Fasteners",
+    };
+    BoltPick {
+        side,
+        at,
+        replace,
+        roles,
+        category: category.into(),
+        current,
+        size: choice(d, "Diameter").unwrap_or_default(),
+    }
+}
+
+/// Puts library family `name` into the stack where `pick` says.
+pub(super) fn use_family(
+    d: &mut PartDialog,
+    pick: &BoltPick,
+    name: &str,
+    category: &str,
+) -> Result<(), String> {
+    let role = Role::of(category).ok_or("that is no bolt, washer or nut")?;
+    if !pick.roles.contains(&role) {
+        return Err(format!("a {} cannot go there", role.title().to_lowercase()));
+    }
+    let c = d
+        .bolt
+        .catalog
+        .clone()
+        .ok_or("the Component Library could not be read")?;
+    let family =
+        family_named(&c, name, role).ok_or_else(|| format!("{name} is not in the library"))?;
+    let item = StackItem { family, role };
+    let list = match pick.side {
+        Side::Head => &mut d.bolt.head,
+        Side::Nut => &mut d.bolt.nut,
+    };
+    if role == Role::Bolt {
+        d.bolt.length = None;
+    }
+    if pick.replace && pick.at < list.len() {
+        list[pick.at] = item;
+    } else {
+        insert_at(list, pick.side, pick.at, item);
+    }
+    d.bolt.adding = None;
+    d.bolt.menu = None;
+    Ok(())
+}
+
 /// What a click in the stack asks for.
 enum Act {
     Remove(Side, usize),
@@ -504,6 +608,7 @@ enum Act {
     Open(Side, usize),
     Add(StackItem),
     Length(Option<f64>),
+    Library(BoltPick),
 }
 
 /// A row's icon: the library category's picture (rule 23).
@@ -673,6 +778,7 @@ fn apply_act(d: &mut PartDialog, act: Act) {
             d.bolt.menu = None;
         }
         Act::Length(l) => d.bolt.length = l,
+        Act::Library(p) => d.bolt.library = Some(p),
     }
 }
 
@@ -704,8 +810,19 @@ fn plus_row(
             Stroke::new(1.0, c),
         );
     });
-    if open && let Some(item) = library_list(d, ui, slot_roles(d, side, at), ("panel", side, at)) {
-        *act = Some(Act::Add(item));
+    if open {
+        if ui
+            .button("Library...")
+            .on_hover_text(
+                "Choose in the Component Library window (search, categories, standards, preview)",
+            )
+            .clicked()
+        {
+            *act = Some(Act::Library(pick_for(d, side, at, false)));
+        }
+        if let Some(item) = library_list(d, ui, slot_roles(d, side, at), ("panel", side, at)) {
+            *act = Some(Act::Add(item));
+        }
     }
 }
 
@@ -742,6 +859,7 @@ fn item_row(
             {
                 *act = Some(Act::Remove(side, k));
             }
+
             if ui
                 .add_enabled_ui(down_ok, |ui| theme::glyph(ui, Glyph::Down))
                 .inner
@@ -759,12 +877,21 @@ fn item_row(
                 *act = Some(Act::Move(side, k, true));
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add(egui::Label::new(RichText::new(name.clone()).strong()).truncate())
+                // The name is the Change button: the Component Library window.
+                let r = ui
+                    .add(
+                        egui::Button::new(RichText::new(name.clone()).strong())
+                            .frame(false)
+                            .truncate(),
+                    )
                     .on_hover_text(format!(
-                        "{}: {name} ({})",
+                        "{}: {name} ({}). Click: change it in the Component Library (search, categories, preview)",
                         item.role.title(),
                         category_name(category)
                     ));
+                if r.clicked() {
+                    *act = Some(Act::Library(pick_for(d, side, k, true)));
+                }
             });
         });
     });
@@ -1030,6 +1157,16 @@ impl CadCraftApp {
     /// not the user's) the termination, when the panel's inputs changed; then
     /// what OK would place.
     pub(super) fn bolt_follow(&mut self) {
+        // The stack asked for the Component Library window.
+        if let Some(pick) = self
+            .part_planned
+            .as_mut()
+            .filter(|d| is_bolted(d))
+            .and_then(|d| d.bolt.library.take())
+        {
+            self.library_for_bolt(pick);
+        }
+        self.bolt_follow_pattern();
         let Some(d) = self.part_planned.as_ref().filter(|d| is_bolted(d)) else {
             return;
         };
@@ -1122,6 +1259,9 @@ impl CadCraftApp {
                             .collect(),
                         from: p.from,
                         solid: bolted::solid_on_axis(&list, a, p),
+                        component: part.component,
+                        face: self.face_name_pub(part, p.entry),
+                        local: part.place.inverse() * (a.at + a.dir * p.from),
                     }
                 })
                 .collect();
@@ -1184,6 +1324,100 @@ impl CadCraftApp {
         d.bolt.axes = axes;
         // With the found termination in: the same inputs next frame.
         d.bolt.key = Self::bolt_key(d);
+    }
+
+    /// The Component Library window's Use: the family goes into the stack.
+    pub(super) fn bolt_use_family(&mut self, pick: &BoltPick, name: &str, category: &str) {
+        let Some(d) = self.part_planned.as_mut().filter(|d| is_bolted(d)) else {
+            self.file_status = Some(Err("Bolted Connection: the panel is closed".into()));
+            return;
+        };
+        if let Err(e) = use_family(d, pick, name, category) {
+            self.file_status = Some(Err(format!("Bolted Connection: {e}")));
+        }
+    }
+
+    /// Follow Pattern (spec 6.2 §3.2): every hole of the first one's size on
+    /// its face becomes a reference too (a bolt in each); found again when
+    /// the first pick changes, and only the first stays when it is turned off.
+    fn bolt_follow_pattern(&mut self) {
+        let Some(d) = self.part_planned.as_ref().filter(|d| is_bolted(d)) else {
+            return;
+        };
+        let key = match placement(d) {
+            Placement::ByHole => "hole",
+            Placement::Concentric => "circle",
+            _ => return,
+        };
+        let on = d.check(0, "Follow Pattern");
+        let first = d.refs.get(key).and_then(|v| v.first()).cloned();
+        let state = on.then(|| format!("{key}|{first:?}"));
+        if state == d.bolt.followed {
+            return;
+        }
+        let Some(first) = first else {
+            if let Some(d) = self.part_planned.as_mut() {
+                d.bolt.followed = state;
+            }
+            return;
+        };
+        let label = self.geom_label(&first);
+        let mut all = vec![(label, first.clone())];
+        if on {
+            all.extend(self.bolt_same_holes(&first));
+        }
+        let Some(d) = self.part_planned.as_mut() else {
+            return;
+        };
+        d.clear_ref(key);
+        for (l, g) in all {
+            d.add_ref(key, l, g);
+        }
+        d.bolt.followed = state;
+    }
+
+    /// The other holes of `first`'s size whose rims lie in the plane of its
+    /// rim (a rim: its circle; a wall: the rim on the start plane), one edge
+    /// per hole.
+    fn bolt_same_holes(&self, first: &GeomRef) -> Vec<(String, GeomRef)> {
+        let d = self.part_planned.as_ref();
+        let plane = d.and_then(|d| self.bolt_geom(d, "start"));
+        let (c0, n0, r0) = match (self.bolt_world(first), plane) {
+            (Some(Geom::Circle { c, n, r }), _) => (c, n, r),
+            (Some(Geom::Cylinder { p, d: ax, r }), Some(Geom::Plane { p: q, n })) => {
+                let t = (q - p).dot(&n) / ax.dot(&n);
+                (p + ax * t, n, r)
+            }
+            _ => return Vec::new(),
+        };
+        let mut out: Vec<(String, GeomRef)> = Vec::new();
+        let mut centres = vec![c0];
+        for part in self.pick_parts() {
+            let Some(edges) = self.asm_edges_pub(part.component) else {
+                continue;
+            };
+            for (e, pts) in edges.iter() {
+                if pts.len() <= 2 {
+                    continue;
+                }
+                let g = GeomRef::Edge {
+                    occurrence: part.top,
+                    sub: part.sub.clone(),
+                    edge: e.clone(),
+                };
+                let Some(Geom::Circle { c, n, r }) = self.bolt_world(&g) else {
+                    continue;
+                };
+                let same = (r - r0).abs() < 1e-3
+                    && n.cross(&n0).norm() < 1e-3
+                    && (c - c0).dot(&n0).abs() < 1e-3;
+                if same && !centres.iter().any(|x| (x - c).norm() < 1e-3) {
+                    centres.push(c);
+                    out.push((self.geom_label(&g), g));
+                }
+            }
+        }
+        out
     }
 
     /// What OK would place: the plan's members as see-through triangles.

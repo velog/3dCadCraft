@@ -3420,6 +3420,7 @@ fn bolted_r66() -> Project {
         (nut, "ISO 4032 M8", Role::Nut, true, lay.nut[1]),
     ];
     let m = Making {
+        drills: Vec::new(),
         instances: vec![bolted::Instance::new(
             axis,
             bolted::hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
@@ -3464,6 +3465,7 @@ fn bolted_r66() -> Project {
                 })
                 .collect(),
             holes: Vec::new(),
+            drilled: Vec::new(),
         },
     };
     bolted::make(&mut p, asm, m).unwrap();

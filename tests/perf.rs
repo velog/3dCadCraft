@@ -5479,6 +5479,7 @@ fn bolted_connection_within_budget() {
         hint: [60.0, 40.0, 0.0],
     };
     let m = Making {
+        drills: Vec::new(),
         instances: vec![bolted::Instance::new(
             axis,
             bolted::hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
@@ -5505,6 +5506,7 @@ fn bolted_connection_within_budget() {
             size: "M8".into(),
             fasteners: Vec::new(),
             holes: Vec::new(),
+            drilled: Vec::new(),
         },
     };
     let t = std::time::Instant::now();

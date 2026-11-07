@@ -678,6 +678,9 @@ struct CadCraftApp {
     library_detail: String,
     /// Place from Library places by hand instead of Smart Drop.
     library_manual: bool,
+    /// Bolted Connections' inputs as last seen (assembly, connection → a hash of
+    /// their components' geometry and places): a change makes them again.
+    bolt_keys: std::collections::HashMap<(crate::document::DocumentId, u32), u64>,
     /// The command search field (Alt+S, `cmd_search`).
     cmd_search: cmd_search::CmdSearch,
     /// The Extrude command, while its dialog is open.
@@ -1093,6 +1096,7 @@ impl CadCraftApp {
             library_standard: None,
             library_detail: String::new(),
             library_manual: false,
+            bolt_keys: Default::default(),
             cmd_search: Default::default(),
             dim_display: Default::default(),
             viewport_rect: egui::Rect::NOTHING,
@@ -2036,6 +2040,15 @@ impl CadCraftApp {
     /// recomputed from scratch, without the build cache; the status bar
     /// tells how long it took and how many features failed.
     pub(super) fn rebuild_all(&mut self) {
+        // An assembly: its bolted connections are made again from their inputs.
+        if self.is_assembly() {
+            let n = self.bolts_follow(true);
+            self.file_status = Some(Ok(format!(
+                "Rebuild All: {n} bolted connection(s) made again"
+            )));
+            self.scene_dirty = true;
+            return;
+        }
         let t = std::time::Instant::now();
         let part = self.part_mut();
         part.build_cache = Default::default();
