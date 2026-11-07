@@ -72,6 +72,29 @@ pub struct DesignProject {
     pub owner: String,
 }
 
+/// `path` relative to `base` when it lies inside it (Windows: letters in any
+/// case, `\\?\` prefixes ignored), else `None`.
+fn relative_inside(path: &Path, base: &Path) -> Option<PathBuf> {
+    let clean = |p: &Path| super::library::without_verbatim(p.to_path_buf());
+    let (path, base) = (clean(path), clean(base));
+    let key = |c: Component| {
+        let s = c.as_os_str().to_string_lossy().into_owned();
+        if cfg!(windows) { s.to_lowercase() } else { s }
+    };
+    let mut rest = path.components().filter(|c| *c != Component::CurDir);
+    for b in base.components().filter(|c| *c != Component::CurDir) {
+        match rest.next() {
+            Some(c) if key(c) == key(b) => {}
+            _ => return None,
+        }
+    }
+    let rel: PathBuf = rest.collect();
+    if rel.components().any(|c| c == Component::ParentDir) {
+        return None;
+    }
+    Some(rel)
+}
+
 fn dot() -> PathBuf {
     PathBuf::from(".")
 }
@@ -172,6 +195,60 @@ impl DesignProject {
             }
         }
         out
+    }
+
+    /// Every folder of the project with what it is (`Workspace`, `Library
+    /// Fasteners`, `Templates`…), mutable.
+    fn folders_mut(&mut self) -> Vec<(String, &mut PathBuf)> {
+        let mut out: Vec<(String, &mut PathBuf)> = vec![("Workspace".into(), &mut self.workspace)];
+        for l in &mut self.libraries {
+            out.push((format!("Library {}", l.name), &mut l.path));
+        }
+        for s in &mut self.shortcuts {
+            out.push((format!("Subfolder {}", s.name), &mut s.path));
+        }
+        for (what, p) in [
+            ("Templates", &mut self.templates),
+            ("Styles", &mut self.styles),
+            ("Component Library", &mut self.content_center),
+        ] {
+            if let Some(p) = p.as_mut() {
+                out.push((what.into(), p));
+            }
+        }
+        out
+    }
+
+    /// Writes every absolute folder inside the project file's folder `base`
+    /// as a path relative to it, so a copy of the project folder works where
+    /// it lands (spec 0.6a §3.2). Folders outside stay as they are.
+    pub fn make_relative(&mut self, base: &Path) {
+        for (_, p) in self.folders_mut() {
+            if !p.is_absolute() {
+                continue;
+            }
+            if let Some(rel) = relative_inside(p, base) {
+                *p = if rel.as_os_str().is_empty() {
+                    dot()
+                } else {
+                    rel
+                };
+            }
+        }
+    }
+
+    /// The folders a copy of the project folder would not carry along:
+    /// absolute paths and relative ones leading out of `base` (`../lib`).
+    /// Each is `(what, path as written)`.
+    pub fn outside(&self, base: &Path) -> Vec<(String, PathBuf)> {
+        let mut copy = self.clone();
+        copy.folders_mut()
+            .into_iter()
+            .filter(|(_, p)| {
+                p.is_absolute() || relative_inside(&Self::resolve(base, p), base).is_none()
+            })
+            .map(|(what, p)| (what, p.clone()))
+            .collect()
     }
 
     /// The workspace folder (absolute) of a project stored in `base`.
@@ -458,6 +535,43 @@ mod tests {
         assert_eq!(a.workspace(), docs.join("3DCadCraft"));
         list.remove(&f);
         assert_eq!(list, ProjectList::default());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_copied_project_keeps_its_folders() {
+        let d = tmp("copy");
+        let base = d.join("Pump");
+        let mut p = DesignProject::new("Pump");
+        p.workspace = base.join("Work");
+        p.templates = Some(base.clone());
+        p.libraries.push(NamedPath {
+            name: "Own".into(),
+            path: base.join("Lib").join("Bolts"),
+        });
+        p.libraries.push(NamedPath {
+            name: "Shared".into(),
+            path: "../Shared".into(),
+        });
+        p.styles = Some(d.join("Styles"));
+        p.make_relative(&base);
+        assert_eq!(p.workspace, PathBuf::from("Work"));
+        assert_eq!(p.templates, Some(dot()));
+        assert_eq!(p.libraries[0].path, Path::new("Lib").join("Bolts"));
+        assert_eq!(p.libraries[1].path, PathBuf::from("../Shared"));
+        assert_eq!(p.styles, Some(d.join("Styles")));
+        let out: Vec<String> = p.outside(&base).into_iter().map(|(w, _)| w).collect();
+        assert_eq!(out, ["Library Shared", "Styles"]);
+        // The copy resolves its own folders, not the original's.
+        let moved = d.join("Elsewhere").join("Pump");
+        assert_eq!(p.workspace_dir(&moved), moved.join("Work"));
+        #[cfg(windows)]
+        {
+            let mut q = DesignProject::new("Q");
+            q.workspace = PathBuf::from(r"\\?\C:\X\PUMP\work");
+            q.make_relative(Path::new(r"c:\x\Pump"));
+            assert_eq!(q.workspace, PathBuf::from("work"));
+        }
         let _ = fs::remove_dir_all(&d);
     }
 

@@ -508,8 +508,13 @@ impl CadCraftApp {
                                 .add_enabled(can_save, egui::Button::new("Save"))
                                 .on_hover_text("Write the settings into the project file")
                                 .clicked()
-                                && let (Some(f), Some(d)) = (&ed.selected, &ed.draft)
+                                && let (Some(f), Some(d)) = (&ed.selected, &mut ed.draft)
                             {
+                                // Folders inside the project's folder go in as
+                                // relative paths: a copy of the folder works.
+                                if let Some(b) = f.parent() {
+                                    d.make_relative(b);
+                                }
                                 match d.save(f) {
                                     Ok(()) => {
                                         ed.changed = false;
@@ -788,6 +793,29 @@ fn project_settings(
                 ui.end_row();
             });
         });
+    // What a copy of the project folder would leave behind.
+    if let Some(b) = base {
+        let outside = d.outside(b);
+        if !outside.is_empty() {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(
+                    "Outside the project folder: a copy of the project does not carry these",
+                )
+                .color(super::theme::tokens().warning),
+            )
+            .on_hover_text(
+                "Folders inside the project's folder are saved as relative paths, so a copied \
+                 project works where it lands; these point elsewhere",
+            );
+            for (what, p) in outside {
+                ui.add(
+                    egui::Label::new(RichText::new(format!("{what}: {}", p.display())).weak())
+                        .truncate(),
+                );
+            }
+        }
+    }
     changed
 }
 
