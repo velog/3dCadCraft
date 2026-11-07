@@ -290,6 +290,8 @@ pub(super) struct DrwUi {
     pub tool: Option<DrwTool>,
     pub dialog: Option<ViewDialog>,
     pub sheet_dialog: Option<SheetDialog>,
+    /// Edit Drawing Border Parameters (spec 4.13).
+    pub border_dialog: Option<super::drawing_resources::BorderDialog>,
     /// Finished lines.
     done: Arc<Mutex<HashMap<LinesKey, Arc<ViewLines>>>>,
     /// Jobs started (finished ones stay until the cache is cleared).
@@ -542,35 +544,6 @@ fn resources_tree(ui: &mut egui::Ui, title_name: &str) {
         "§3.2",
     );
     folder(ui, "Sketched Symbols", &["Define New Symbol"], &[], "§3.4");
-}
-
-/// The border and title block rows under a sheet (spec 4.13 §4).
-fn sheet_format_rows(ui: &mut egui::Ui, [border, title]: [bool; 2], title_name: &str) {
-    for (on, name, items) in [
-        (
-            border,
-            "Default Border",
-            &["Edit Instance", "Edit Field Text", "Delete"][..],
-        ),
-        (
-            title,
-            title_name,
-            &["Edit Definition", "Edit Field Text", "Delete"][..],
-        ),
-    ] {
-        if !on {
-            continue;
-        }
-        ui.horizontal(|ui| {
-            super::panels::tree_icon(ui, Icon::Drawing);
-            ui.selectable_label(false, name).context_menu(|ui| {
-                for item in items {
-                    ui.add_enabled(false, egui::Button::new(*item))
-                        .on_disabled_hover_text("Planned: spec 4.13 §3.2–3.5");
-                }
-            });
-        });
-    }
 }
 
 /// A sheet in the browser: name, size, views, its own sketches, border and
@@ -2064,6 +2037,7 @@ impl CadCraftApp {
             self.chamfer_window(ctx, &views);
         }
         self.sheet_dialog_window(ctx);
+        self.border_dialog_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);
         self.planned_window(ctx);
@@ -2414,6 +2388,7 @@ impl CadCraftApp {
             .collect();
         let mut activate = None;
         let mut edit_sheet = None;
+        let mut format_action = None;
         let mut delete_sheet = None;
         let mut new_sheet = false;
         let mut select = None;
@@ -2564,8 +2539,12 @@ impl CadCraftApp {
                             }
                         }
                         // Its border and title block (spec 4.13: instances of
-                        // Drawing Resources; the menus are interface only).
-                        sheet_format_rows(ui, *format, &title_name);
+                        // Drawing Resources).
+                        if let Some(a) =
+                            super::drawing_resources::sheet_format_rows(ui, *format, &title_name)
+                        {
+                            format_action = Some((i, a));
+                        }
                     });
                 if header.header_response.clicked() && i != active {
                     activate = Some(i);
@@ -2667,6 +2646,9 @@ impl CadCraftApp {
         }
         if let Some(i) = edit_sheet {
             self.open_sheet_dialog(i);
+        }
+        if let Some((i, a)) = format_action {
+            self.format_action(i, a);
         }
         if let Some(i) = delete_sheet {
             let deleted = self.edit_drawing("Delete Sheet", |d| d.delete_sheet(i));

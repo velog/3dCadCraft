@@ -25,6 +25,7 @@ pub mod hole_table;
 pub mod parts;
 pub mod pdf;
 pub mod render;
+pub mod resources;
 pub mod revision;
 pub mod rich;
 pub mod sheet;
@@ -172,6 +173,10 @@ pub struct Sheet {
     /// them out).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sketches: Vec<view_sketch::DrawingSketch>,
+    /// This sheet's border parameters (zones, labels, margins; spec 4.13
+    /// §3.3); `None` = the standard's default border. Old builds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_params: Option<resources::ZoneParams>,
 }
 
 fn yes() -> bool {
@@ -193,6 +198,7 @@ impl Sheet {
             views: Vec::new(),
             annotations: Vec::new(),
             sketches: Vec::new(),
+            border_params: None,
         }
     }
 

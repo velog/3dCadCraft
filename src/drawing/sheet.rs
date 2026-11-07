@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::resources::{Delimit, LabelFrom, ZoneParams};
 use super::{DrawingDocument, Sheet, scale_text};
 
 /// Paper sizes (ISO 216 and ANSI Y14.1).
@@ -284,13 +285,27 @@ impl TitleField {
     }
 }
 
-/// The frame's margin (ISO: 10 mm on every side, 20 mm on A0 and A1).
+/// The standard's frame margin (ISO: 10 mm on every side, 20 mm on A0 and A1).
 pub fn margin(sheet: &Sheet) -> f64 {
     if matches!(sheet.size, SheetSize::A0 | SheetSize::A1) {
         20.0
     } else {
         10.0
     }
+}
+
+/// The sheet's border parameters: its own (spec 4.13 §3.3), else the default.
+pub fn border_params(sheet: &Sheet) -> ZoneParams {
+    sheet
+        .border_params
+        .as_ref()
+        .map(ZoneParams::clamped)
+        .unwrap_or_default()
+}
+
+/// The margins top, bottom, left, right (mm).
+pub fn margins(sheet: &Sheet) -> [f64; 4] {
+    border_params(sheet).margins.unwrap_or([margin(sheet); 4])
 }
 /// Title block width (Inventor's ISO title block: 170 × 30 mm).
 pub const TITLE_W: f64 = 170.0;
@@ -303,8 +318,8 @@ pub const ZONES: (usize, usize) = (6, 4);
 /// The inner frame (lower left, upper right) of a sheet.
 pub fn frame(sheet: &Sheet) -> ([f64; 2], [f64; 2]) {
     let (w, h) = sheet.dims();
-    let m = margin(sheet);
-    ([m, m], [w - m, h - m])
+    let [top, bottom, left, right] = margins(sheet);
+    ([left, bottom], [w - right, h - top])
 }
 
 /// The title block's rectangle (lower left, upper right), when shown.
@@ -315,6 +330,127 @@ pub fn title_rect(sheet: &Sheet) -> Option<([f64; 2], [f64; 2])> {
     let (lo, hi) = frame(sheet);
     let w = TITLE_W.min(hi[0] - lo[0]);
     Some(([hi[0] - w, lo[1]], [hi[0], lo[1] + TITLE_H]))
+}
+
+/// The frame, zones and centring marks of `sheet` (spec 4.13 §3.3).
+fn border_prims(out: &mut Vec<Prim>, sheet: &Sheet) {
+    let p = border_params(sheet);
+    let (w, h) = sheet.dims();
+    let (lo, hi) = frame(sheet);
+    let [mt, mb, ml, mr] = margins(sheet);
+    let line = |out: &mut Vec<Prim>, a: [f64; 2], b: [f64; 2], weight| {
+        out.push(Prim::Line { a, b, weight });
+    };
+    let text = |out: &mut Vec<Prim>, at: [f64; 2], t: String| {
+        out.push(Prim::Text {
+            at: [at[0], at[1] - 1.75],
+            height: 3.5,
+            text: t,
+            anchor: Anchor::Center,
+            angle: 0.0,
+        });
+    };
+    // A delimiter at `at` on the frame, `out_dir` pointing into the margin
+    // `m` deep.
+    let delimit = |out: &mut Vec<Prim>, at: [f64; 2], out_dir: [f64; 2], m: f64| {
+        if m <= 0.0 {
+            return;
+        }
+        match p.delimit {
+            Delimit::Line => line(
+                out,
+                at,
+                [at[0] + out_dir[0] * m, at[1] + out_dir[1] * m],
+                Weight::Thin,
+            ),
+            Delimit::Arrowhead => {
+                let len = (m * 0.6).min(5.0);
+                let half = len * 0.3;
+                let base = [at[0] + out_dir[0] * len, at[1] + out_dir[1] * len];
+                let side = [out_dir[1] * half, -out_dir[0] * half];
+                out.push(Prim::Fill {
+                    pts: vec![
+                        at,
+                        [base[0] + side[0], base[1] + side[1]],
+                        [base[0] - side[0], base[1] - side[1]],
+                    ],
+                });
+            }
+        }
+    };
+    let rect = [lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]];
+    for k in 0..4 {
+        line(out, rect[k], rect[(k + 1) % 4], Weight::Thick);
+    }
+    if p.zones {
+        // Inventor's default border: numbers along the top and bottom counted
+        // from the right, letters up the sides from the bottom (Label Zones
+        // From Bottom/Right); Top/Left counts from the other corner.
+        let from_br = p.from == LabelFrom::BottomRight;
+        let (nx, ny) = (p.horizontal, p.vertical);
+        let zx = (hi[0] - lo[0]) / nx as f64;
+        let zy = (hi[1] - lo[1]) / ny as f64;
+        for k in 0..nx {
+            let x = lo[0] + zx * k as f64;
+            if k > 0 {
+                delimit(out, [x, lo[1]], [0.0, -1.0], mb);
+                delimit(out, [x, hi[1]], [0.0, 1.0], mt);
+            }
+            let index = if from_br { nx - 1 - k } else { k };
+            if let Some(t) = p.h_label.text(index) {
+                let mid = x + zx * 0.5;
+                if mb > 0.0 {
+                    text(out, [mid, lo[1] - mb * 0.5], t.clone());
+                }
+                if mt > 0.0 {
+                    text(out, [mid, hi[1] + mt * 0.5], t);
+                }
+            }
+        }
+        for k in 0..ny {
+            let y = lo[1] + zy * k as f64;
+            if k > 0 {
+                delimit(out, [lo[0], y], [-1.0, 0.0], ml);
+                delimit(out, [hi[0], y], [1.0, 0.0], mr);
+            }
+            let index = if from_br { k } else { ny - 1 - k };
+            if let Some(t) = p.v_label.text(index) {
+                let mid = y + zy * 0.5;
+                if ml > 0.0 {
+                    text(out, [lo[0] - ml * 0.5, mid], t.clone());
+                }
+                if mr > 0.0 {
+                    text(out, [hi[0] + mr * 0.5, mid], t);
+                }
+            }
+        }
+    }
+    if p.center_marks {
+        // Centring marks: a line from the paper's edge to the frame and an
+        // open triangle pointing into the drawing area.
+        let (mid_x, mid_y) = (w * 0.5, h * 0.5);
+        for (edge, apex, inward, m) in [
+            ([mid_x, 0.0], [mid_x, lo[1]], [0.0, 1.0], mb),
+            ([mid_x, h], [mid_x, hi[1]], [0.0, -1.0], mt),
+            ([0.0, mid_y], [lo[0], mid_y], [1.0, 0.0], ml),
+            ([w, mid_y], [hi[0], mid_y], [-1.0, 0.0], mr),
+        ] {
+            if m <= 0.0 {
+                continue;
+            }
+            line(out, edge, apex, Weight::Thin);
+            let t = (m * 0.5).min(5.0);
+            let base = [apex[0] - inward[0] * t, apex[1] - inward[1] * t];
+            let side = [inward[1] * t * 0.6, -inward[0] * t * 0.6];
+            let (l, r) = (
+                [base[0] + side[0], base[1] + side[1]],
+                [base[0] - side[0], base[1] - side[1]],
+            );
+            line(out, apex, l, Weight::Thin);
+            line(out, l, r, Weight::Thin);
+            line(out, r, apex, Weight::Thin);
+        }
+    }
 }
 
 /// The border and title block of sheet `i` of `doc`; `value` gives a field's
@@ -348,71 +484,8 @@ pub fn format_prims(
         line(out, hi, [lo[0], hi[1]], weight);
         line(out, [lo[0], hi[1]], lo, weight);
     };
-    let (w, h) = sheet.dims();
     if sheet.border {
-        let (lo, hi) = frame(sheet);
-        rect(&mut out, lo, hi, Weight::Thick);
-        // Zones (Inventor's default border): numbers along the top and
-        // bottom counted from the right, letters up the sides from the bottom.
-        let m = margin(sheet);
-        let (nx, ny) = ZONES;
-        let zx = (hi[0] - lo[0]) / nx as f64;
-        let zy = (hi[1] - lo[1]) / ny as f64;
-        for k in 0..nx {
-            let x = lo[0] + zx * k as f64;
-            if k > 0 {
-                line(&mut out, [x, lo[1]], [x, lo[1] - m], Weight::Thin);
-                line(&mut out, [x, hi[1]], [x, hi[1] + m], Weight::Thin);
-            }
-            let mid = x + zx * 0.5;
-            let n = format!("{}", nx - k);
-            text(
-                &mut out,
-                [mid, lo[1] - m * 0.5 - 1.75],
-                3.5,
-                &n,
-                Anchor::Center,
-            );
-            text(
-                &mut out,
-                [mid, hi[1] + m * 0.5 - 1.75],
-                3.5,
-                &n,
-                Anchor::Center,
-            );
-        }
-        for k in 0..ny {
-            let y = lo[1] + zy * k as f64;
-            if k > 0 {
-                line(&mut out, [lo[0], y], [lo[0] - m, y], Weight::Thin);
-                line(&mut out, [hi[0], y], [hi[0] + m, y], Weight::Thin);
-            }
-            let letter = (b'A' + (k as u8).min(25)) as char;
-            let s = letter.to_string();
-            let mid = y + zy * 0.5 - 1.75;
-            text(&mut out, [lo[0] - m * 0.5, mid], 3.5, &s, Anchor::Center);
-            text(&mut out, [hi[0] + m * 0.5, mid], 3.5, &s, Anchor::Center);
-        }
-        // Centring marks: a line from the paper's edge to the frame and an
-        // open triangle pointing into the drawing area.
-        let t = (m * 0.5).min(5.0);
-        for (edge, apex, inward) in [
-            ([w * 0.5, 0.0], [w * 0.5, lo[1]], [0.0, 1.0]),
-            ([w * 0.5, h], [w * 0.5, hi[1]], [0.0, -1.0]),
-            ([0.0, h * 0.5], [lo[0], h * 0.5], [1.0, 0.0]),
-            ([w, h * 0.5], [hi[0], h * 0.5], [-1.0, 0.0]),
-        ] {
-            line(&mut out, edge, apex, Weight::Thin);
-            let base = [apex[0] - inward[0] * t, apex[1] - inward[1] * t];
-            let side = [inward[1] * t * 0.6, -inward[0] * t * 0.6];
-            let (l, r) = (
-                [base[0] + side[0], base[1] + side[1]],
-                [base[0] - side[0], base[1] - side[1]],
-            );
-            line(&mut out, apex, l, Weight::Thin);
-            line(&mut out, l, r, Weight::Thin);
-            line(&mut out, r, apex, Weight::Thin);
-        }
+        border_prims(&mut out, sheet);
     }
     if let Some((lo, hi)) = title_rect(sheet) {
         // Inventor's ISO title block (170 × 30 mm, three 10 mm rows): the
