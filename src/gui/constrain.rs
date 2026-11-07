@@ -1040,8 +1040,15 @@ impl CadCraftApp {
             Some(p) if joint => self.joint_snap_under(p, rect, shift_down(painter)),
             Some(p) if vertices => self
                 .asm_vertex_under(p, rect)
-                .or_else(|| self.geom_under(p, rect)),
-            Some(p) => self.geom_under(p, rect),
+                .or_else(|| self.asm_work_under(p, rect, false))
+                .or_else(|| self.geom_under(p, rect))
+                .or_else(|| self.asm_work_under(p, rect, true)),
+            // The assembly's work points and axes beat faces (they lie on
+            // them); its work planes are taken where no face is.
+            Some(p) => self
+                .asm_work_under(p, rect, false)
+                .or_else(|| self.geom_under(p, rect))
+                .or_else(|| self.asm_work_under(p, rect, true)),
             None => None,
         };
         // The face held by Shift, and the snaps offered on it.
@@ -1822,7 +1829,16 @@ impl CadCraftApp {
         let Ok(local) = self.asm_local_geom(g) else {
             return;
         };
-        let (t, size) = if g.occurrence() == relation::ASSEMBLY {
+        // The assembly's own origin and its work features (the hidden tools
+        // part at the origin, spec 3.10 T0) are sized by the assembly, and
+        // a plane is drawn about the assembly's centre.
+        let whole = g.occurrence() == relation::ASSEMBLY
+            || Some(g.occurrence()) == self.asm_tools_occurrence();
+        let centre = whole
+            .then(|| self.assembly_box())
+            .flatten()
+            .map(|(lo, hi)| nalgebra::center(&lo, &hi));
+        let (t, size) = if whole {
             let size = self
                 .assembly_box()
                 .map_or(60.0, |(lo, hi)| (hi - lo).norm() * 0.4);
@@ -1849,6 +1865,7 @@ impl CadCraftApp {
         let pr = |p: Point3| self.camera.project(&p, rect);
         match geom {
             Geom::Plane { p, n } => {
+                let p = centre.map_or(p, |c| c - n * (c - p).dot(&n));
                 let u = if n.x.abs() < 0.9 {
                     n.cross(&crate::kernel::Vector3::x())
                 } else {

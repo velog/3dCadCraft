@@ -133,6 +133,9 @@ impl CadCraftApp {
             .occurrences
             .iter()
             .filter(|o| a.pattern_of(o.id).is_none())
+            // The hidden tools part (assembly features, sketches and work
+            // features) is no component: its contents have rows of their own.
+            .filter(|o| a.features.as_ref().is_none_or(|f| f.occurrence != o.id))
             // Frame members are listed under their frame.
             .filter(|o| {
                 !a.frames

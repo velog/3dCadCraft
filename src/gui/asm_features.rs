@@ -48,6 +48,7 @@ impl CadCraftApp {
     /// component's face becomes a cross-part reference; Finish Sketch (or
     /// Esc before a plane is picked) returns to the assembly.
     pub(super) fn asm_start_sketch(&mut self) {
+        let face = self.asm_selected_face();
         if !self.asm_open_tools("Start 2D Sketch") {
             return;
         }
@@ -57,6 +58,79 @@ impl CadCraftApp {
             "Start 2D Sketch: pick a planar face of a component or an origin plane (Esc returns to the assembly)"
                 .into(),
         ));
+        // A face selected before is the sketch plane (rule 17).
+        if let Some(g) = face
+            && let Some((c, _)) = self.asm_face_context(&g)
+        {
+            self.asm.pending_context = Some(c);
+            self.plane_picked(crate::part::PlaneRef::Context(String::new()));
+        }
+    }
+
+    /// The one face selected in the assembly (Select: Faces and Edges), if
+    /// that is the whole selection.
+    fn asm_selected_face(&self) -> Option<crate::assembly::relation::GeomRef> {
+        use crate::assembly::relation::GeomRef;
+        match self.asm.sub.as_slice() {
+            [super::asm_select::AsmSub::Geom(g @ GeomRef::Face { .. })] => Some(g.clone()),
+            _ => None,
+        }
+    }
+
+    /// The face `g` of a component as a cross-part reference of the part
+    /// edited in place now (the tools part), with its highlight; `None`
+    /// when it is not planar.
+    fn asm_face_context(
+        &self,
+        g: &crate::assembly::relation::GeomRef,
+    ) -> Option<(
+        crate::part::context::ContextRef,
+        super::assembly::ContextHover,
+    )> {
+        use crate::assembly::relation::GeomRef;
+        use crate::assembly::tree;
+        use crate::part::context::{ContextRef, ContextSource};
+        let GeomRef::Face {
+            occurrence,
+            sub,
+            name,
+            hint,
+        } = g
+        else {
+            return None;
+        };
+        let ip = self.in_place_now()?;
+        if ip.linked.is_some() {
+            return None;
+        }
+        let linked = self.linked();
+        let a = tree::assembly_of(&self.project, &linked, DocRef::local(ip.assembly))?;
+        let n = tree::nested(&self.project, &linked, a, *occurrence, sub).ok()?;
+        let world = a.find(*occurrence)?.transform * n.at;
+        let mut path = vec![*occurrence];
+        path.extend(sub);
+        let mut target = vec![ip.top];
+        target.extend(&ip.sub);
+        let source = ContextSource {
+            assembly: ip.assembly,
+            target,
+            path,
+            face: name.clone(),
+            edge: None,
+            hint: *hint,
+            label: format!("{} face", n.name),
+        };
+        let geom = crate::assembly::context::current(&self.project, &linked, a, &source).ok()?;
+        let f = self.with_part(n.component, |p| p.body.find_face(name))??;
+        let hover = (n.component, f, ip.place.inverse() * world);
+        Some((
+            ContextRef {
+                id: String::new(),
+                source,
+                geom,
+            },
+            hover,
+        ))
     }
 
     /// Assemble › Work Features (spec 3.10 T0): a work plane, axis, point
@@ -66,13 +140,24 @@ impl CadCraftApp {
     /// the assembly.
     pub(super) fn asm_work(&mut self, kind: super::work::WorkKind) {
         let title = kind.title();
+        let face = self.asm_selected_face();
         self.asm.work_box.set(self.assembly_box());
         if !self.asm_open_tools(title) {
             return;
         }
         self.asm.sketch_return = true;
         self.asm.work_contexts.clear();
-        self.work_draft = Some(super::work::WorkDraft::new(kind));
+        let mut draft = super::work::WorkDraft::new(kind);
+        // A face selected before is the first input (rule 17).
+        if let Some(g) = face
+            && let Some(ch) = self.asm_face_context(&g)
+        {
+            self.asm.work_contexts.push(ch);
+            draft.pick(super::work::WpInput::Plane(crate::part::PlaneRef::Context(
+                "?0".into(),
+            )));
+        }
+        self.work_draft = Some(draft);
         self.file_status = Some(Ok(format!(
             "{title}: pick faces of the components, the assembly's origin or its work features (Esc returns to the assembly)"
         )));
@@ -113,6 +198,34 @@ impl CadCraftApp {
                 .collect()
         })
         .unwrap_or_default()
+    }
+
+    /// The assembly's visible work feature under `pos` (spec 3.10 T0): a
+    /// work point or axis within a few pixels, or (`planes`) a work plane
+    /// the eye ray meets — as a relationship's input. A UCS element is
+    /// its own input (`UCS1:XY`).
+    pub(super) fn asm_work_under(
+        &self,
+        pos: eframe::egui::Pos2,
+        rect: eframe::egui::Rect,
+        planes: bool,
+    ) -> Option<crate::assembly::relation::GeomRef> {
+        use crate::part::{LineRef, PointRef};
+        let occ = self.asm_tools_occurrence()?;
+        let doc = self.asm_tools_doc()?;
+        let id = self.with_part(doc, |part| {
+            match self.work_axis_or_point_under_in(part, pos, rect) {
+                Some(super::work::WpInput::Point(PointRef::Work(id)))
+                | Some(super::work::WpInput::Line(LineRef::Work(id))) => Some(id),
+                _ if planes => self.work_plane_under_in(part, pos, rect).map(|(id, _)| id),
+                _ => None,
+            }
+        })??;
+        Some(crate::assembly::relation::GeomRef::Work {
+            sub: Vec::new(),
+            occurrence: occ,
+            id,
+        })
     }
 
     /// The occurrence of the active assembly's tools part.

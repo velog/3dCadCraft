@@ -939,13 +939,8 @@ impl CadCraftApp {
         }
     }
 
-    /// Work features drawn now: shown on their own and their kind switched
-    /// on in View → Object Visibility.
-    fn visible_work(&self) -> impl Iterator<Item = &crate::part::WorkFeature> {
-        self.visible_work_in(self.part())
-    }
-
-    /// [`Self::visible_work`] of `part`.
+    /// Work features of `part` drawn now: shown on their own and their kind
+    /// switched on in View → Object Visibility.
     fn visible_work_in<'a>(
         &self,
         part: &'a crate::part::PartDocument,
@@ -978,12 +973,21 @@ impl CadCraftApp {
 
     /// The visible work plane hit by the eye ray at `pos`: (id, ray t).
     pub(super) fn work_plane_under(&self, pos: Pos2, rect: Rect) -> Option<(String, Real)> {
+        self.work_plane_under_in(self.part(), pos, rect)
+    }
+
+    /// [`Self::work_plane_under`] among the work features of `part`.
+    pub(super) fn work_plane_under_in(
+        &self,
+        part: &crate::part::PartDocument,
+        pos: Pos2,
+        rect: Rect,
+    ) -> Option<(String, Real)> {
         if !self.cat_on(crate::command::selection::Category::WorkPlane) {
             return None;
         }
         let (origin, dir) = self.camera.ray(pos, rect)?;
-        let part = self.part();
-        self.visible_work()
+        self.visible_work_in(part)
             .flat_map(Self::items)
             .filter_map(|it| {
                 let plane = part.work.planes.get(&it.id)?;
@@ -995,14 +999,24 @@ impl CadCraftApp {
 
     /// The visible work point (8 px) or work axis (6 px) under `pos`.
     pub(super) fn work_axis_or_point_under(&self, pos: Pos2, rect: Rect) -> Option<WpInput> {
-        let part = self.part();
+        self.work_axis_or_point_under_in(self.part(), pos, rect)
+    }
+
+    /// [`Self::work_axis_or_point_under`] among the work features of `part`
+    /// (drawn in view coordinates).
+    pub(super) fn work_axis_or_point_under_in(
+        &self,
+        part: &crate::part::PartDocument,
+        pos: Pos2,
+        rect: Rect,
+    ) -> Option<WpInput> {
         let mut best: Option<(f32, WpInput)> = None;
         use crate::command::selection::Category;
         let (points, axes) = (
             self.cat_on(Category::WorkPoint),
             self.cat_on(Category::WorkAxis),
         );
-        for it in self.visible_work().flat_map(Self::items) {
+        for it in self.visible_work_in(part).flat_map(Self::items) {
             let cand = if let Some(p) = part.work.points.get(&it.id) {
                 if !points {
                     continue;
