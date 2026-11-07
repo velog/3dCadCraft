@@ -530,7 +530,10 @@ pub(crate) fn nearest_face(body: &Body, p: Vec3) -> Result<usize> {
     let mut best: Option<(f64, u32)> = None;
     for (t, f) in m.triangles.iter().zip(&m.tri_face) {
         let Some([a, b, c]) = m.tri(t) else { continue };
-        let d = ((a + b + c) / 3.0).dist(p).min(a.dist(p)).min(b.dist(p)).min(c.dist(p));
+        // The distance to the triangle itself: a curved face's few large triangles of this coarse
+        // mesh lie far from their corners and centres, so a neighbour's corner won (a loft's ruled
+        // side resolved to its bottom face).
+        let d = solidcraft_geom::compare::closest_on_triangle(p, a, b, c).dist(p);
         if best.is_none_or(|(x, _)| d < x) {
             best = Some((d, *f));
         }

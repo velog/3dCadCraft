@@ -550,3 +550,41 @@ fn revolved_eggs_of_any_angle() {
         );
     }
 }
+
+/// A ruled side of a solid loft (a rectangle's edge to a quarter of a circle) is the face that
+/// thickens: the kernel found faces by the corners and centres of its coarse triangles, and this
+/// side's few large triangles lost to the bottom face's corners (the bottom grew 2 mm instead).
+#[test]
+fn the_ruled_side_of_a_solid_loft_is_the_face_thickened() {
+    let mut p = PartDocument::default();
+    let a = at_height(&mut p, 0.0, |s: &mut Sketch| {
+        s.add_rectangle_two_point(Point2::new(-22.0, -16.6), Point2::new(22.0, 16.6))
+            .unwrap();
+    });
+    let b = at_height(&mut p, 30.0, |s: &mut Sketch| {
+        s.add_circle(Point2::new(0.0, 0.0), 14.8).unwrap();
+    });
+    p.add_loft(LoftFeature::new(vec![section(&p, a), section(&p, b)]))
+        .unwrap();
+    // The side on the rectangle's edge at x = -22.
+    let side = all_faces(&p)
+        .into_iter()
+        .filter(|r| r.face.contains(":Side:"))
+        .min_by(|u, v| u.hint[0].total_cmp(&v.hint[0]))
+        .unwrap();
+    let mut t = ThickenOp::new();
+    t.faces.push(side.clone());
+    t.automatic_face_chain = false;
+    t.distance = 2.0;
+    p.add_body_op(BodyOpFeature::new(BodyOp::Thicken(t)))
+        .unwrap_or_else(|e| panic!("thicken {}: {e}", side.face));
+    healthy(&p);
+    let (lo, hi) = p.body.bounding_box().unwrap();
+    assert!(lo.z.abs() < 1e-6, "the bottom stays at z = 0, not {}", lo.z);
+    assert!(lo.x < -23.0, "the side grew outwards: x from {}", lo.x);
+    assert!((hi.x - 22.0).abs() < 1e-6, "the other sides stay: {}", hi.x);
+    assert!(
+        p.body.find_face("Loft1:Start").is_some(),
+        "the bottom keeps its name"
+    );
+}
