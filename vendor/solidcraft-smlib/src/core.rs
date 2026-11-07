@@ -169,6 +169,7 @@ pub(crate) fn fixes() -> UpstreamFixes {
     f.ssi_singular_start_inside_direction = true;
     f.found_torus_sphere_keep_tested_nurb = true;
     f.boolean_skips_faces_apart = true;
+    f.face_classify_skips_loops_apart = true;
     f.uv_trim_checks_on_surface = true;
     f.loop_orientation_floor_from_loop_box = true;
     f.offset_extends_cones_as_themselves = true;
