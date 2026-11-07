@@ -283,6 +283,13 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
   is updated *before* the key is taken. Work features are not cached.
 - **Many profiles in one cut**: `exact::union_apart` joins tools apart from each other into one
   (SolidCraft's fast path); never cut a body once per tool (36 holes took 30 s).
+- **Cuts straight through a prism** (spec 0.19 §3.2, Application Options › Part, on by default): an untapered
+  extrusion keeps its `through_cut::Prism` (plane, caps, region, face indices); a Cut whose tools pass through both
+  caps, apart from one another, the outline and the holes, is the extrusion of the region with the tools' sections
+  as holes (`exact::cut_through`, also in the pattern loop before `join_apart`) — no Boolean, the same names
+  (`tests/through_cut.rs` compares every case with the general path). `transformed` keeps the prism only when the
+  names are unchanged. Long jobs report through `part::progress` (`Reporter::install` per worker job,
+  `progress::feature` / `stage`), drawn in the status bar after 1 s (`panels::progress_bar`).
 - **Regions:** coincident pieces (a curve on a projected edge, squares on the plate outline)
   are deduplicated in `Sketch::regions`; two edges between the same vertices lost regions.
 - **Circular pattern through its centre**: `copy_geometry_keeping(.., Some(center))` keeps the
@@ -443,7 +450,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   views keep the old order (the back faces are the section). Red that remains means no front face there: a real hole.
 - **Display triangles are not saved** and a free-form face has no tessellation of its own: a part that is not the active
   document opened with its spline wall missing (a hole, red behind it). `Project::rebuild_unmeshed_parts` rebuilds only
-  such parts at open (`PartDocument::has_undrawable_faces`); rebuilding all would slow a large assembly.
+  such parts at open (`PartDocument::has_undrawable_faces`); rebuilding all would slow a large assembly. Never triangulate a flat face to ask (`BRep::face_is_undrawable` answers a plane whose boundary lies
+  on it at once): a saved plate's cap with 1024 holes went through our ear clipping and the file did not open in 7 minutes.
 - **`<Command>: OK (n ms)` in the log counts from when the command opened**, not the kernel's work: never read it as speed.
 - **Linked files load off the main thread where they can** (`LibCache::prefetch`, `ready`; `part_file` takes the worker's
   result or waits for it): a large file's parts took a second to rebuild (one part 0.77 s), so threads per part hardly
