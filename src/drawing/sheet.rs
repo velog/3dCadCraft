@@ -327,24 +327,29 @@ pub fn frame(sheet: &Sheet) -> ([f64; 2], [f64; 2]) {
 pub fn title_rect_in(doc: &DrawingDocument, sheet: &Sheet) -> Option<([f64; 2], [f64; 2])> {
     if let Some(def) = super::resources::title_of(doc, sheet) {
         let (lo, hi) = def.extent()?;
-        let off = super::resources::title_offset(def, sheet)?;
+        let off = super::resources::title_offset(doc, def, sheet)?;
         return Some((
             [lo[0] + off[0], lo[1] + off[1]],
             [hi[0] + off[0], hi[1] + off[1]],
         ));
     }
-    title_rect(sheet)
+    title_rect(doc, sheet)
 }
 
 /// The standard title block's rectangle (lower left, upper right), when
-/// shown and the sheet has no title block of the user's.
-pub fn title_rect(sheet: &Sheet) -> Option<([f64; 2], [f64; 2])> {
+/// shown and the sheet has no title block of the user's: its corner on the
+/// border's connection point (`resources::title_anchor`), else on the
+/// frame's lower right corner.
+pub fn title_rect(doc: &DrawingDocument, sheet: &Sheet) -> Option<([f64; 2], [f64; 2])> {
     if !sheet.title_block || sheet.title_def.is_some() {
         return None;
     }
     let (lo, hi) = frame(sheet);
     let w = TITLE_W.min(hi[0] - lo[0]);
-    Some(([hi[0] - w, lo[1]], [hi[0], lo[1] + TITLE_H]))
+    let (at, [right, top]) = super::resources::title_anchor(doc, sheet);
+    let x0 = if right { at[0] - w } else { at[0] };
+    let y0 = if top { at[1] - TITLE_H } else { at[1] };
+    Some(([x0, y0], [x0 + w, y0 + TITLE_H]))
 }
 
 /// The frame, zones and centring marks of `sheet` (spec 4.13 §3.3).
@@ -499,10 +504,13 @@ pub fn format_prims(
         line(out, hi, [lo[0], hi[1]], weight);
         line(out, [lo[0], hi[1]], lo, weight);
     };
-    if sheet.border {
+    // A custom border draws only its sketch (`resources::border_def_prims`);
+    // a zone border its zones too.
+    let custom = super::resources::border_of(doc, sheet).is_some_and(|b| b.zones.is_none());
+    if sheet.border && !custom {
         border_prims(&mut out, sheet);
     }
-    if let Some((lo, hi)) = title_rect(sheet) {
+    if let Some((lo, hi)) = title_rect(doc, sheet) {
         // Inventor's ISO title block (170 × 30 mm, three 10 mm rows): the
         // first row holds who and when, the left of rows 2–3 the company, the
         // last row the title, edition and sheet. The part number, scale and

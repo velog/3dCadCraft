@@ -21,11 +21,15 @@ pub(super) enum FormatAction {
     EditTitle,
     /// Edit Field Text: its prompted entries' values on this sheet.
     EditFields,
+    /// Edit Definition of the sheet's own border.
+    EditBorderDef,
+    /// Edit Field Text of the sheet's own border.
+    EditBorderFields,
 }
 
 /// What a Drawing Resources row asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum TitleAction {
+pub(super) enum ResAction {
     /// Define New Title Block.
     Define,
     /// Insert title block `Some(name)` (`None`: the standard's) on the
@@ -35,31 +39,69 @@ pub(super) enum TitleAction {
     Edit(String),
     /// Delete title block `name`.
     Delete(String),
+    /// Define New Border (`true`: Define New Zone Border).
+    DefineBorder(bool),
+    /// Insert border `Some(name)` (`None`: the default border) on the
+    /// active sheet.
+    InsertBorder(Option<String>),
+    /// Edit border `name`.
+    EditBorder(String),
+    /// Delete border `name`.
+    DeleteBorder(String),
+}
+
+/// One border / title block row under a sheet.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FormatRow {
+    pub name: String,
+    /// The user's definition (not the built-in one).
+    pub user: bool,
+    /// It has prompted entries.
+    pub prompts: bool,
+    /// A border with zones (Edit Instance sets them).
+    pub zones: bool,
 }
 
 /// A sheet's border and title block rows in the browser.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct SheetFormat {
-    pub border: bool,
-    /// The title block's name, whether it is the user's, whether it has
-    /// prompted entries.
-    pub title: Option<(String, bool, bool)>,
+    pub border: Option<FormatRow>,
+    pub title: Option<FormatRow>,
 }
 
 impl SheetFormat {
     /// The rows of `sheet` of `d`.
     pub fn of(d: &crate::drawing::DrawingDocument, sheet: &crate::drawing::Sheet) -> Self {
-        let title =
-            sheet
-                .title_block
-                .then(|| match crate::drawing::resources::title_of(d, sheet) {
-                    Some(def) => (def.name.clone(), true, !def.prompts().is_empty()),
-                    None => (d.standard.kind.label().to_string(), false, false),
-                });
-        Self {
-            border: sheet.border,
-            title,
-        }
+        use crate::drawing::resources::{DEFAULT_BORDER, border_of, title_of};
+        let title = sheet.title_block.then(|| match title_of(d, sheet) {
+            Some(def) => FormatRow {
+                name: def.name.clone(),
+                user: true,
+                prompts: !def.prompts().is_empty(),
+                zones: false,
+            },
+            None => FormatRow {
+                name: d.standard.kind.label().to_string(),
+                user: false,
+                prompts: false,
+                zones: false,
+            },
+        });
+        let border = sheet.border.then(|| match border_of(d, sheet) {
+            Some(b) => FormatRow {
+                name: b.def.name.clone(),
+                user: true,
+                prompts: !b.def.prompts().is_empty(),
+                zones: b.zones.is_some(),
+            },
+            None => FormatRow {
+                name: DEFAULT_BORDER.to_string(),
+                user: false,
+                prompts: false,
+                zones: true,
+            },
+        });
+        Self { border, title }
     }
 }
 
@@ -71,6 +113,9 @@ pub(super) struct BorderDialog {
     pub params: ZoneParams,
     /// Margins top, bottom, left, right.
     margins: [f64; 4],
+    /// Insert of this zone border: OK puts it on the sheet with these
+    /// parameters (`None`: Edit Instance).
+    pub insert: Option<String>,
 }
 
 /// The name asked when a new title block is saved.
@@ -78,6 +123,8 @@ pub(super) struct BorderDialog {
 pub(super) struct TitleSave {
     pub name: String,
     pub def: crate::drawing::resources::Definition,
+    /// A border (`Some(zone border)`), else a title block.
+    pub border: Option<bool>,
     focused: bool,
 }
 
@@ -86,8 +133,10 @@ pub(super) struct TitleSave {
 pub(super) struct PromptDialog {
     /// Sheet index.
     pub sheet: usize,
-    /// The title block.
+    /// The title block or border.
     pub name: String,
+    /// The border's entries (else the title block's).
+    pub border: bool,
     /// Entry title and value, in the definition's order.
     pub values: Vec<(String, String)>,
 }
@@ -95,20 +144,42 @@ pub(super) struct PromptDialog {
 /// The sheet's border and title block under it in the browser.
 pub(super) fn sheet_format_rows(ui: &mut egui::Ui, f: &SheetFormat) -> Option<FormatAction> {
     let mut action = None;
-    if f.border {
+    if let Some(b) = &f.border {
         ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Drawing);
-            let r = ui.selectable_label(false, "Default Border");
+            let r = ui.selectable_label(false, b.name.as_str());
             if r.double_clicked() {
-                action = Some(FormatAction::EditBorder);
+                if b.zones {
+                    action = Some(FormatAction::EditBorder);
+                } else if b.prompts {
+                    action = Some(FormatAction::EditBorderFields);
+                }
             }
             r.context_menu(|ui| {
-                if ui.button("Edit Instance...").clicked() {
+                if ui
+                    .add_enabled(b.zones, egui::Button::new("Edit Instance..."))
+                    .on_disabled_hover_text("A border without zones: Edit Definition...")
+                    .clicked()
+                {
                     action = Some(FormatAction::EditBorder);
                     ui.close();
                 }
-                ui.add_enabled(false, egui::Button::new("Edit Field Text"))
-                    .on_disabled_hover_text("The default border has no prompted entries");
+                if ui
+                    .add_enabled(b.user, egui::Button::new("Edit Definition..."))
+                    .on_disabled_hover_text("The default border: define your own (DBR)")
+                    .clicked()
+                {
+                    action = Some(FormatAction::EditBorderDef);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(b.prompts, egui::Button::new("Edit Field Text..."))
+                    .on_disabled_hover_text("This border has no prompted entries")
+                    .clicked()
+                {
+                    action = Some(FormatAction::EditBorderFields);
+                    ui.close();
+                }
                 if ui.button("Delete").clicked() {
                     action = Some(FormatAction::DeleteBorder);
                     ui.close();
@@ -116,7 +187,13 @@ pub(super) fn sheet_format_rows(ui: &mut egui::Ui, f: &SheetFormat) -> Option<Fo
             });
         });
     }
-    if let Some((name, user, prompts)) = &f.title {
+    if let Some(FormatRow {
+        name,
+        user,
+        prompts,
+        ..
+    }) = &f.title
+    {
         ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Drawing);
             let r = ui.selectable_label(false, name.as_str());
@@ -156,7 +233,7 @@ fn title_row(
     ui: &mut egui::Ui,
     label: &str,
     user: Option<&String>,
-    action: &mut Option<TitleAction>,
+    action: &mut Option<ResAction>,
 ) {
     ui.horizontal(|ui| {
         super::panels::tree_icon(ui, Icon::Drawing);
@@ -167,21 +244,21 @@ fn title_row(
         };
         let r = ui.selectable_label(false, label).on_hover_text(tip);
         if r.double_clicked() {
-            *action = Some(TitleAction::Insert(user.cloned()));
+            *action = Some(ResAction::Insert(user.cloned()));
         }
         r.context_menu(|ui| {
             if ui.button("Insert").clicked() {
-                *action = Some(TitleAction::Insert(user.cloned()));
+                *action = Some(ResAction::Insert(user.cloned()));
                 ui.close();
             }
             match user {
                 Some(n) => {
                     if ui.button("Edit...").clicked() {
-                        *action = Some(TitleAction::Edit(n.clone()));
+                        *action = Some(ResAction::Edit(n.clone()));
                         ui.close();
                     }
                     if ui.button("Delete").clicked() {
-                        *action = Some(TitleAction::Delete(n.clone()));
+                        *action = Some(ResAction::Delete(n.clone()));
                         ui.close();
                     }
                 }
@@ -198,13 +275,62 @@ fn title_row(
     });
 }
 
+/// One border row of Drawing Resources (`user`: the user's border of that
+/// name; `None`: the default border).
+fn border_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    user: Option<&String>,
+    action: &mut Option<ResAction>,
+) {
+    ui.horizontal(|ui| {
+        super::panels::tree_icon(ui, Icon::Drawing);
+        let tip = if user.is_some() {
+            "Double-click: put it on the active sheet"
+        } else {
+            "Built in: zones, margins and centre marks; each sheet's Edit Instance sets them. Double-click: put it on the active sheet"
+        };
+        let r = ui.selectable_label(false, label).on_hover_text(tip);
+        if r.double_clicked() {
+            *action = Some(ResAction::InsertBorder(user.cloned()));
+        }
+        r.context_menu(|ui| {
+            if ui.button("Insert").clicked() {
+                *action = Some(ResAction::InsertBorder(user.cloned()));
+                ui.close();
+            }
+            match user {
+                Some(n) => {
+                    if ui.button("Edit...").clicked() {
+                        *action = Some(ResAction::EditBorder(n.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Delete").clicked() {
+                        *action = Some(ResAction::DeleteBorder(n.clone()));
+                        ui.close();
+                    }
+                }
+                None => {
+                    ui.add_enabled(false, egui::Button::new("Edit..."))
+                        .on_disabled_hover_text("Built in: define your own border (DBR)");
+                }
+            }
+            for item in ["Copy", "Rename"] {
+                ui.add_enabled(false, egui::Button::new(item))
+                    .on_disabled_hover_text("Planned: spec 4.13 §3.1");
+            }
+        });
+    });
+}
+
 /// Drawing Resources in the browser: the folders, the built-in border and
-/// title block, the user's title blocks (`blocks`).
+/// title block, the user's title blocks (`blocks`) and borders (`borders`).
 pub(super) fn resources_tree(
     ui: &mut egui::Ui,
     title_name: &str,
     blocks: &[String],
-) -> Option<TitleAction> {
+    borders: &[String],
+) -> Option<ResAction> {
     let mut action = None;
     let off = |ui: &mut egui::Ui, label: &str, row: &str| {
         ui.add_enabled(false, egui::Button::new(label))
@@ -222,18 +348,25 @@ pub(super) fn resources_tree(
     })
     .context_menu(|ui| off(ui, "Create New Sheet Format", "§3.1 (templates: spec 4)"));
     header(ui, "Borders", &mut |ui| {
-        ui.horizontal(|ui| {
-            super::panels::tree_icon(ui, Icon::Drawing);
-            ui.selectable_label(false, "Default Border")
-                .on_hover_text(
-                    "Built in: zones, margins and centre marks; each sheet's Edit Instance sets them",
-                )
-                .context_menu(|ui| off(ui, "Edit", "§3.3"));
-        });
+        border_row(
+            ui,
+            crate::drawing::resources::DEFAULT_BORDER,
+            None,
+            &mut action,
+        );
+        for b in borders {
+            border_row(ui, b, Some(b), &mut action);
+        }
     })
     .context_menu(|ui| {
-        off(ui, "Define New Border", "§3.3");
-        off(ui, "Define New Zone Border", "§3.3");
+        if ui.button("Define New Border").clicked() {
+            action = Some(ResAction::DefineBorder(false));
+            ui.close();
+        }
+        if ui.button("Define New Zone Border").clicked() {
+            action = Some(ResAction::DefineBorder(true));
+            ui.close();
+        }
     });
     header(ui, "Title Blocks", &mut |ui| {
         title_row(ui, title_name, None, &mut action);
@@ -243,7 +376,7 @@ pub(super) fn resources_tree(
     })
     .context_menu(|ui| {
         if ui.button("Define New Title Block").clicked() {
-            action = Some(TitleAction::Define);
+            action = Some(ResAction::Define);
             ui.close();
         }
         off(ui, "Sort by Name", "§3.1");
@@ -333,8 +466,20 @@ impl CadCraftApp {
                     sheet: i,
                     margins,
                     params,
+                    insert: None,
                 });
             }
+            FormatAction::EditBorderDef => {
+                let name = self
+                    .drawing()
+                    .and_then(|d| d.sheets.get(i))
+                    .and_then(|s| s.border_def.as_ref())
+                    .map(|p| p.name.clone());
+                if let Some(n) = name {
+                    self.edit_border_definition(&n);
+                }
+            }
+            FormatAction::EditBorderFields => self.open_prompt_dialog(i, true),
             FormatAction::DeleteBorder => {
                 self.edit_drawing("Delete Border", |d| {
                     if let Some(s) = d.sheets.get_mut(i) {
@@ -359,21 +504,21 @@ impl CadCraftApp {
                     self.edit_title_definition(&n);
                 }
             }
-            FormatAction::EditFields => self.open_prompt_dialog(i),
+            FormatAction::EditFields => self.open_prompt_dialog(i, false),
         }
     }
 
     /// A Drawing Resources row's action.
-    pub(super) fn res_action(&mut self, a: TitleAction) {
+    pub(super) fn res_action(&mut self, a: ResAction) {
         let i = self.drawing().map_or(0, |d| d.active_sheet);
         match a {
-            TitleAction::Define => self.define_title_block(),
-            TitleAction::Insert(None) => {
+            ResAction::Define => self.define_title_block(),
+            ResAction::Insert(None) => {
                 self.edit_drawing("Insert Title Block", |d| {
                     d.set_title_block(i, None, Vec::new())
                 });
             }
-            TitleAction::Insert(Some(n)) => {
+            ResAction::Insert(Some(n)) => {
                 let prompts = self
                     .drawing()
                     .and_then(|d| d.resources.title_blocks.iter().find(|b| b.name == n))
@@ -389,17 +534,144 @@ impl CadCraftApp {
                     self.drw.prompt_dialog = Some(PromptDialog {
                         sheet: i,
                         name: n,
+                        border: false,
                         values: prompts.into_iter().map(|t| (t, String::new())).collect(),
                     });
                 }
             }
-            TitleAction::Edit(n) => self.edit_title_definition(&n),
-            TitleAction::Delete(n) => {
+            ResAction::Edit(n) => self.edit_title_definition(&n),
+            ResAction::Delete(n) => {
                 let r = self.edit_drawing("Delete Title Block", |d| d.delete_title_block(&n));
                 if let Some(Err(e)) = r {
                     self.history.cancel();
                     self.file_status = Some(Err(e));
                 }
+            }
+            ResAction::DefineBorder(zones) => self.define_border(zones),
+            ResAction::InsertBorder(None) => {
+                self.edit_drawing("Insert Border", |d| d.set_border(i, None, Vec::new(), None));
+            }
+            ResAction::InsertBorder(Some(n)) => {
+                let Some((zones, prompts)) = self.drawing().and_then(|d| {
+                    let b = d.resources.borders.iter().find(|b| b.def.name == n)?;
+                    Some((b.zones.clone(), b.def.prompts()))
+                }) else {
+                    return;
+                };
+                if let Some(params) = zones {
+                    // A zone border: Edit Drawing Border Parameters first
+                    // (Inventor's Insert with parameters).
+                    let margins = params.margins.unwrap_or_else(|| {
+                        self.drawing()
+                            .and_then(|d| d.sheets.get(i))
+                            .map_or([10.0; 4], |s| [crate::drawing::sheet::margin(s); 4])
+                    });
+                    self.drw.border_dialog = Some(BorderDialog {
+                        sheet: i,
+                        params,
+                        margins,
+                        insert: Some(n),
+                    });
+                } else if prompts.is_empty() {
+                    self.edit_drawing("Insert Border", |d| {
+                        d.set_border(i, Some(&n), Vec::new(), None)
+                    });
+                } else {
+                    self.drw.prompt_dialog = Some(PromptDialog {
+                        sheet: i,
+                        name: n,
+                        border: true,
+                        values: prompts.into_iter().map(|t| (t, String::new())).collect(),
+                    });
+                }
+            }
+            ResAction::EditBorder(n) => self.edit_border_definition(&n),
+            ResAction::DeleteBorder(n) => {
+                let r = self.edit_drawing("Delete Border", |d| d.delete_border(&n));
+                if let Some(Err(e)) = r {
+                    self.history.cancel();
+                    self.file_status = Some(Err(e));
+                }
+            }
+        }
+    }
+
+    /// Define Border (DBR) / Define New Zone Border: a sheet sketch whose
+    /// Finish saves a border definition (sheet mm as drawn).
+    pub(super) fn define_border(&mut self, zones: bool) {
+        self.open_view_sketch(
+            super::drawing_sketch::SHEET,
+            super::drawing_sketch::SketchFor::Border,
+            Default::default(),
+        );
+        if let Some(s) = self.drw.sketch.as_mut() {
+            s.zones = zones;
+        }
+        self.drw.sel = None;
+        self.file_status = Some(Ok(
+            "Define Border: sketch the border with lines and texts; select points › right-click › Connection Point marks where the title block attaches; Finish Sketch saves it"
+                .into(),
+        ));
+    }
+
+    /// Edit of border `name`: its sketch opens where it was drawn; Finish
+    /// Sketch changes every sheet using it.
+    pub(super) fn edit_border_definition(&mut self, name: &str) {
+        let Some(b) = self.drawing().and_then(|d| {
+            d.resources
+                .borders
+                .iter()
+                .find(|b| b.def.name == name)
+                .cloned()
+        }) else {
+            return;
+        };
+        self.open_view_sketch(
+            super::drawing_sketch::SHEET,
+            super::drawing_sketch::SketchFor::Border,
+            b.def.sketch,
+        );
+        if let Some(s) = self.drw.sketch.as_mut() {
+            s.texts = b.def.texts;
+            s.resource = Some(name.to_string());
+            s.zones = b.zones.is_some();
+            s.mark_connections(&b.def.connections);
+        }
+        self.drw.sel = None;
+    }
+
+    /// Finish Sketch of a border definition: a new one asks for its name,
+    /// an edited one changes every sheet using it.
+    pub(super) fn finish_border_sketch(
+        &mut self,
+        def: crate::drawing::resources::Definition,
+        resource: Option<String>,
+        zones: bool,
+    ) {
+        if def.extent().is_none() {
+            self.file_status = Some(Err(
+                "Define Border: the border is empty (nothing saved)".into()
+            ));
+            return;
+        }
+        match resource {
+            Some(n) => {
+                if self.edit_drawing("Edit Border", |d| d.update_border(&n, def)) != Some(true) {
+                    self.history.cancel();
+                }
+                self.history.break_coalescing();
+            }
+            None => {
+                let name = self
+                    .drawing()
+                    .map(|d| d.next_border_name())
+                    .unwrap_or_default();
+                self.drw.title_save = Some(TitleSave {
+                    name,
+                    def,
+                    border: Some(zones),
+                    focused: false,
+                });
             }
         }
     }
@@ -456,11 +728,11 @@ impl CadCraftApp {
         texts: Vec<crate::drawing::view_sketch::DrawingText>,
         resource: Option<String>,
     ) {
-        let def = crate::drawing::resources::Definition {
-            name: resource.clone().unwrap_or_default(),
+        let def = crate::drawing::resources::Definition::new(
+            resource.clone().unwrap_or_default(),
             sketch,
             texts,
-        };
+        );
         if def.extent().is_none() {
             self.file_status = Some(Err(
                 "Define Title Block: the title block is empty (nothing saved)".into(),
@@ -486,18 +758,29 @@ impl CadCraftApp {
                 self.drw.title_save = Some(TitleSave {
                     name,
                     def,
+                    border: None,
                     focused: false,
                 });
             }
         }
     }
 
-    /// Edit Property Fields of the title block on sheet `i`.
-    pub(super) fn open_prompt_dialog(&mut self, i: usize) {
+    /// Edit Property Fields of the title block (`border`: the border) on
+    /// sheet `i`.
+    pub(super) fn open_prompt_dialog(&mut self, i: usize, border: bool) {
         let Some((name, values)) = self.drawing().and_then(|d| {
             let s = d.sheets.get(i)?;
-            let def = crate::drawing::resources::title_of(d, s)?;
-            let placed = s.title_def.as_ref()?;
+            let (def, placed) = if border {
+                (
+                    &crate::drawing::resources::border_of(d, s)?.def,
+                    s.border_def.as_ref()?,
+                )
+            } else {
+                (
+                    crate::drawing::resources::title_of(d, s)?,
+                    s.title_def.as_ref()?,
+                )
+            };
             let values = def
                 .prompts()
                 .into_iter()
@@ -513,6 +796,7 @@ impl CadCraftApp {
         self.drw.prompt_dialog = Some(PromptDialog {
             sheet: i,
             name,
+            border,
             values,
         });
     }
@@ -522,7 +806,12 @@ impl CadCraftApp {
         if let Some(mut t) = self.drw.title_save.clone() {
             let mut open = true;
             let (mut ok, mut cancel) = (false, false);
-            let win = egui::Window::new("Save Title Block")
+            let (title, what, folder) = match t.border {
+                Some(_) => ("Save Border", "Define Border", "Borders"),
+                None => ("Save Title Block", "Define Title Block", "Title Blocks"),
+            };
+            let win = egui::Window::new(title)
+                .id(egui::Id::new("title_save"))
                 .open(&mut open)
                 .resizable(false)
                 .collapsible(false);
@@ -537,9 +826,14 @@ impl CadCraftApp {
                             t.focused = true;
                         }
                     });
-                    ui.weak(
-                        "Double-click it in Drawing Resources › Title Blocks to put it on a sheet",
-                    );
+                    if let Some(z) = t.border.as_mut() {
+                        ui.checkbox(z, "Zone Border").on_hover_text(
+                            "The zones, margins and centre marks are drawn under the sketch; Insert asks their parameters",
+                        );
+                    }
+                    ui.weak(format!(
+                        "Double-click it in Drawing Resources › {folder} to put it on a sheet"
+                    ));
                     ui.separator();
                     ui.horizontal(|ui| {
                         let can = !t.name.trim().is_empty();
@@ -557,14 +851,21 @@ impl CadCraftApp {
                 });
             if cancel || !open {
                 self.drw.title_save = None;
-                self.file_status = Some(Ok("Define Title Block: not saved".into()));
+                self.file_status = Some(Ok(format!("{what}: not saved")));
             } else if ok {
                 let def = crate::drawing::resources::Definition {
                     name: t.name.trim().to_string(),
                     ..t.def.clone()
                 };
                 let name = def.name.clone();
-                match self.edit_drawing("Define Title Block", |d| d.add_title_block(def)) {
+                let border = t.border;
+                match self.edit_drawing(what, |d| match border {
+                    Some(z) => d.add_border(crate::drawing::resources::BorderDef {
+                        def,
+                        zones: z.then(ZoneParams::default),
+                    }),
+                    None => d.add_title_block(def),
+                }) {
                     Some(Err(e)) => {
                         self.history.cancel();
                         self.file_status = Some(Err(e));
@@ -572,9 +873,8 @@ impl CadCraftApp {
                     }
                     _ => {
                         self.drw.title_save = None;
-                        self.file_status = Some(Ok(format!(
-                            "Define Title Block: {name} saved in Drawing Resources"
-                        )));
+                        self.file_status =
+                            Some(Ok(format!("{what}: {name} saved in Drawing Resources")));
                     }
                 }
             } else {
@@ -627,9 +927,15 @@ impl CadCraftApp {
                     .filter(|(_, v)| !v.is_empty())
                     .cloned()
                     .collect();
-                let (i, name) = (p.sheet, p.name.clone());
+                let (i, name, border) = (p.sheet, p.name.clone(), p.border);
                 self.edit_drawing("Edit Field Text", |d| {
-                    d.set_title_block(i, Some(&name), values)
+                    if border {
+                        // The sheet keeps its zone parameters.
+                        let params = d.sheets.get(i).and_then(|s| s.border_params.clone());
+                        d.set_border(i, Some(&name), values, params)
+                    } else {
+                        d.set_title_block(i, Some(&name), values)
+                    }
                 });
                 self.drw.prompt_dialog = None;
             } else {
@@ -685,14 +991,29 @@ impl CadCraftApp {
             let mut p = dlg.params.clone();
             p.margins = (dlg.margins != [standard; 4]).then_some(dlg.margins);
             let p = p.clamped();
-            let own = (p != ZoneParams::default()).then_some(p);
             let i = dlg.sheet;
+            self.drw.border_dialog = None;
+            if let Some(n) = dlg.insert {
+                self.edit_drawing("Insert Border", |d| {
+                    d.set_border(i, Some(&n), Vec::new(), Some(p))
+                });
+                let prompts = self.drawing().is_some_and(|d| {
+                    d.resources
+                        .borders
+                        .iter()
+                        .any(|b| b.def.name == n && !b.def.prompts().is_empty())
+                });
+                if prompts {
+                    self.open_prompt_dialog(i, true);
+                }
+                return;
+            }
+            let own = (p != ZoneParams::default()).then_some(p);
             self.edit_drawing("Edit Border", |d| {
                 if let Some(s) = d.sheets.get_mut(i) {
                     s.border_params = own;
                 }
             });
-            self.drw.border_dialog = None;
             return;
         }
         self.drw.border_dialog = Some(dlg);

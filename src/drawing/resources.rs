@@ -3,6 +3,9 @@
 //! (`Sheet::border_params`; `None` = the standard's default border); the
 //! user's title blocks are definitions in [`Resources`], placed on a sheet
 //! by name (`Sheet::title_def`; `None` = the standard's title block).
+//! The user's borders are definitions in sheet mm as drawn (`BorderDef`),
+//! placed by name (`Sheet::border_def`); a title block sits on a border's
+//! connection point.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,12 +20,27 @@ pub struct Resources {
     /// Title blocks, in browser order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub title_blocks: Vec<Definition>,
+    /// Borders, in browser order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub borders: Vec<BorderDef>,
+}
+
+/// A border definition (spec 4.13 §3.3): a sketch in sheet mm as it was
+/// drawn; a zone border also draws its zones (`zones`), a custom border
+/// only the sketch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BorderDef {
+    /// Its sketch, texts and connection points.
+    pub def: Definition,
+    /// The default parameters of a zone border (`None`: a custom border).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zones: Option<ZoneParams>,
 }
 
 impl Resources {
     /// No definitions.
     pub fn is_empty(&self) -> bool {
-        self.title_blocks.is_empty()
+        self.title_blocks.is_empty() && self.borders.is_empty()
     }
 }
 
@@ -37,9 +55,23 @@ pub struct Definition {
     /// Texts and fields.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<DrawingText>,
+    /// Connection points (sheet mm): where a title block's corner attaches
+    /// (a border's).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<[f64; 2]>,
 }
 
 impl Definition {
+    /// A definition of `sketch` and `texts` without connection points.
+    pub fn new(name: impl Into<String>, sketch: ViewSketch, texts: Vec<DrawingText>) -> Self {
+        Self {
+            name: name.into(),
+            sketch,
+            texts,
+            connections: Vec::new(),
+        }
+    }
+
     /// As a drawing sketch (to draw it and take its extent).
     fn as_sketch(&self) -> DrawingSketch {
         DrawingSketch {
@@ -89,6 +121,9 @@ impl Definition {
         self.sketch.translate(d);
         for t in &mut self.texts {
             t.at = [t.at[0] + d[0], t.at[1] + d[1]];
+        }
+        for c in &mut self.connections {
+            *c = [c[0] + d[0], c[1] + d[1]];
         }
     }
 
@@ -144,13 +179,102 @@ pub fn title_of<'a>(doc: &'a DrawingDocument, sheet: &Sheet) -> Option<&'a Defin
     doc.resources.title_blocks.iter().find(|d| d.name == p.name)
 }
 
-/// How far a definition is moved onto sheet `sheet`: its lower right corner
-/// on the frame's (Inventor anchors the block's outermost corner on the
-/// border's corner).
-pub fn title_offset(def: &Definition, sheet: &Sheet) -> Option<[f64; 2]> {
-    let (lo, hi) = def.extent()?;
+/// The border definition sheet `sheet` uses, when it is the user's.
+pub fn border_of<'a>(doc: &'a DrawingDocument, sheet: &Sheet) -> Option<&'a BorderDef> {
+    if !sheet.border {
+        return None;
+    }
+    let p = sheet.border_def.as_ref()?;
+    doc.resources.borders.iter().find(|d| d.def.name == p.name)
+}
+
+/// Where a title block attaches on sheet `sheet` and which of its corners
+/// goes there (`[right, top]`): the border's connection point farthest from
+/// the sheet's centre in the lower right quarter (else the farthest of all,
+/// the block's corner on that point's side); a custom border without one:
+/// its lower right corner; else the frame's lower right corner.
+pub fn title_anchor(doc: &DrawingDocument, sheet: &Sheet) -> ([f64; 2], [bool; 2]) {
     let (flo, fhi) = super::sheet::frame(sheet);
-    Some([fhi[0] - hi[0], flo[1] - lo[1]])
+    let corner = ([fhi[0], flo[1]], [true, false]);
+    let Some(b) = border_of(doc, sheet) else {
+        return corner;
+    };
+    let (w, h) = sheet.dims();
+    let c = [w * 0.5, h * 0.5];
+    let far = |pts: &mut dyn Iterator<Item = [f64; 2]>| {
+        pts.max_by(|a, b| {
+            let d = |q: &[f64; 2]| (q[0] - c[0]).hypot(q[1] - c[1]);
+            d(a).total_cmp(&d(b))
+        })
+    };
+    let cs = &b.def.connections;
+    let best = far(&mut cs.iter().copied().filter(|q| q[0] >= c[0] && q[1] <= c[1]))
+        .or_else(|| far(&mut cs.iter().copied()));
+    if let Some(q) = best {
+        return (q, [q[0] >= c[0], q[1] > c[1]]);
+    }
+    if b.zones.is_none()
+        && let Some((lo, hi)) = b.def.extent()
+    {
+        return ([hi[0], lo[1]], [true, false]);
+    }
+    corner
+}
+
+/// How far a title block definition is moved onto sheet `sheet` of `doc`:
+/// its corner on the anchor (Inventor anchors the block's outermost corner
+/// on the border's connection point or corner).
+pub fn title_offset(doc: &DrawingDocument, def: &Definition, sheet: &Sheet) -> Option<[f64; 2]> {
+    let (lo, hi) = def.extent()?;
+    let (at, [right, top]) = title_anchor(doc, sheet);
+    let x = if right { hi[0] } else { lo[0] };
+    let y = if top { hi[1] } else { lo[1] };
+    Some([at[0] - x, at[1] - y])
+}
+
+/// A definition's curves and texts as primitives, moved by `off`, at the
+/// border layer's weight; fields from `props`, the sheet and `placed`.
+fn def_prims(
+    doc: &DrawingDocument,
+    i: usize,
+    def: &Definition,
+    off: [f64; 2],
+    placed: Option<&PlacedTitle>,
+    props: &dyn Fn(&Field) -> Option<String>,
+) -> Vec<Prim> {
+    let mv = |q: [f64; 2]| [q[0] + off[0], q[1] + off[1]];
+    let weight = doc.styles.layer(&doc.styles.defaults.border_layer).weight;
+    let mut out = Vec::new();
+    for (pts, look) in def.as_sketch().curves() {
+        out.push(Prim::Path {
+            pts: pts.into_iter().map(mv).collect(),
+            width: weight,
+            dashed: look == super::view_sketch::CurveLook::Chain,
+        });
+    }
+    for t in &def.texts {
+        let prompt = |title: &str| placed.and_then(|p| p.prompt(title));
+        let text = fields::expand(&t.pieces, doc, i, props, &prompt);
+        out.extend(super::render::text_prim(&text, t, mv(t.at)));
+    }
+    out
+}
+
+/// The user's border of sheet `i` as primitives (empty when the sheet shows
+/// the default border): its sketch where it was drawn, fields filled in.
+/// A zone border's zones are drawn by `sheet::format_prims`.
+pub fn border_def_prims(
+    doc: &DrawingDocument,
+    i: usize,
+    props: &dyn Fn(&Field) -> Option<String>,
+) -> Vec<Prim> {
+    let Some(sheet) = doc.sheets.get(i) else {
+        return Vec::new();
+    };
+    let Some(b) = border_of(doc, sheet) else {
+        return Vec::new();
+    };
+    def_prims(doc, i, &b.def, [0.0, 0.0], sheet.border_def.as_ref(), props)
 }
 
 /// The user's title block of sheet `i` as primitives (empty when the sheet
@@ -167,26 +291,10 @@ pub fn title_prims(
     let Some(def) = title_of(doc, sheet) else {
         return Vec::new();
     };
-    let Some(off) = title_offset(def, sheet) else {
+    let Some(off) = title_offset(doc, def, sheet) else {
         return Vec::new();
     };
-    let placed = sheet.title_def.clone();
-    let mv = |q: [f64; 2]| [q[0] + off[0], q[1] + off[1]];
-    let weight = doc.styles.layer(&doc.styles.defaults.border_layer).weight;
-    let mut out = Vec::new();
-    for (pts, look) in def.as_sketch().curves() {
-        out.push(Prim::Path {
-            pts: pts.into_iter().map(mv).collect(),
-            width: weight,
-            dashed: look == super::view_sketch::CurveLook::Chain,
-        });
-    }
-    for t in &def.texts {
-        let prompt = |title: &str| placed.as_ref().and_then(|p| p.prompt(title));
-        let text = fields::expand(&t.pieces, doc, i, props, &prompt);
-        out.extend(super::render::text_prim(&text, t, mv(t.at)));
-    }
-    out
+    def_prims(doc, i, def, off, sheet.title_def.as_ref(), props)
 }
 
 impl DrawingDocument {
@@ -277,6 +385,105 @@ impl DrawingDocument {
         Ok(())
     }
 
+    /// Adds border definition `b` (Save Border); refused when its name is
+    /// empty or taken.
+    pub fn add_border(&mut self, mut b: BorderDef) -> Result<(), String> {
+        let name = b.def.name.trim().to_string();
+        if name.is_empty() {
+            return Err("Define Border: the border needs a name".into());
+        }
+        if name == DEFAULT_BORDER || self.resources.borders.iter().any(|d| d.def.name == name) {
+            return Err(format!("Define Border: a border named {name} exists"));
+        }
+        b.def.name = name;
+        self.resources.borders.push(b);
+        Ok(())
+    }
+
+    /// Replaces the sketch, texts and connection points of border `name`
+    /// (Edit): every sheet using it changes; prompted values of entries
+    /// that left it are dropped.
+    pub fn update_border(&mut self, name: &str, def: Definition) -> bool {
+        let Some(b) = self
+            .resources
+            .borders
+            .iter_mut()
+            .find(|d| d.def.name == name)
+        else {
+            return false;
+        };
+        b.def = Definition {
+            name: name.to_string(),
+            ..def
+        };
+        let kept = b.def.prompts();
+        for s in &mut self.sheets {
+            if let Some(p) = s.border_def.as_mut().filter(|p| p.name == name) {
+                p.prompts.retain(|(t, _)| kept.contains(t));
+            }
+        }
+        true
+    }
+
+    /// Puts border `name` on sheet `i` (`None`: the default border), with
+    /// the prompted values `prompts`; a zone border brings its parameters
+    /// (`params`: the sheet's own, from Insert's Edit Drawing Border
+    /// Parameters, else the definition's). False when there is no such
+    /// sheet or definition. Inventor keeps one border per sheet: the old
+    /// one goes.
+    pub fn set_border(
+        &mut self,
+        i: usize,
+        name: Option<&str>,
+        prompts: Vec<(String, String)>,
+        params: Option<ZoneParams>,
+    ) -> bool {
+        let zones = match name {
+            Some(n) => match self.resources.borders.iter().find(|d| d.def.name == n) {
+                Some(b) => b.zones.clone(),
+                None => return false,
+            },
+            None => None,
+        };
+        let Some(s) = self.sheets.get_mut(i) else {
+            return false;
+        };
+        s.border = true;
+        s.border_def = name.map(|n| PlacedTitle {
+            name: n.to_string(),
+            prompts,
+        });
+        if name.is_some() {
+            s.border_params = params.or(zones).filter(|p| *p != ZoneParams::default());
+        }
+        true
+    }
+
+    /// Deletes border definition `name`; refused while a sheet uses it.
+    pub fn delete_border(&mut self, name: &str) -> Result<(), String> {
+        if let Some(s) = self
+            .sheets
+            .iter()
+            .find(|s| s.border_def.as_ref().is_some_and(|p| p.name == name))
+        {
+            return Err(format!("Delete: {} uses border {name}", s.name));
+        }
+        let before = self.resources.borders.len();
+        self.resources.borders.retain(|d| d.def.name != name);
+        if self.resources.borders.len() == before {
+            return Err(format!("Delete: no border named {name}"));
+        }
+        Ok(())
+    }
+
+    /// A free border name (`Border1`, `Border2` …).
+    pub fn next_border_name(&self) -> String {
+        (1..)
+            .map(|k| format!("Border{k}"))
+            .find(|n| !self.resources.borders.iter().any(|d| &d.def.name == n))
+            .unwrap_or_default()
+    }
+
     /// A free title block name (`Title Block1`, `Title Block2` …).
     pub fn next_title_block_name(&self) -> String {
         (1..)
@@ -285,6 +492,9 @@ impl DrawingDocument {
             .unwrap_or_default()
     }
 }
+
+/// The built-in border's name in Drawing Resources.
+pub const DEFAULT_BORDER: &str = "Default Border";
 
 /// How the zones along one side are labelled.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -582,7 +792,152 @@ mod tests {
                 angle: 0.0,
                 pieces: fields::parse("<Model: Part Number> / <?Order> / <Sheet Number>"),
             }],
+            connections: Vec::new(),
         }
+    }
+
+    /// A custom border: a rectangle 5 mm in from an A3 sheet's edges and a
+    /// text with a prompted entry.
+    fn custom_border() -> BorderDef {
+        use crate::drawing::view_sketch::TextAnchor;
+        let mut sk = crate::sketch::Sketch::default();
+        let p = |x, y| crate::sketch::Point2::new(x, y);
+        let a = sk.add_point(p(5.0, 5.0));
+        let b = sk.add_point(p(415.0, 5.0));
+        let c = sk.add_point(p(415.0, 292.0));
+        let d = sk.add_point(p(5.0, 292.0));
+        for (u, v) in [(a, b), (b, c), (c, d), (d, a)] {
+            let _ = sk.add_line_between(u, v);
+        }
+        let mut def = Definition::new(
+            "Frame",
+            ViewSketch(sk),
+            vec![DrawingText {
+                at: [10.0, 285.0],
+                height: 3.5,
+                anchor: TextAnchor::Left,
+                angle: 0.0,
+                pieces: fields::parse("Project <?Project>"),
+            }],
+        );
+        def.connections = vec![[395.0, 25.0], [210.0, 148.0]];
+        BorderDef { def, zones: None }
+    }
+
+    #[test]
+    fn a_custom_border_replaces_the_frame_and_holds_the_title_block() {
+        use crate::drawing::sheet::Prim;
+        let mut d = DrawingDocument::default();
+        assert!(d.add_border(custom_border()).is_ok());
+        assert!(d.add_border(custom_border()).is_err(), "names are unique");
+        let mut named = custom_border();
+        named.def.name = DEFAULT_BORDER.into();
+        assert!(d.add_border(named).is_err(), "the built-in name is taken");
+        assert_eq!(d.next_border_name(), "Border1");
+        assert!(!d.set_border(0, Some("Nope"), Vec::new(), None));
+        assert!(d.set_border(
+            0,
+            Some("Frame"),
+            vec![("Project".into(), "X7".into())],
+            None
+        ));
+        // The default frame and zones are gone: only the title block's lines
+        // remain in the format.
+        d.sheets[0].title_block = false;
+        let format = crate::drawing::sheet::format_prims(&d, 0, &|_| String::new());
+        assert!(format.is_empty(), "{format:?}");
+        let prims = border_def_prims(&d, 0, &|_| None);
+        assert_eq!(
+            prims
+                .iter()
+                .filter(|p| matches!(p, Prim::Path { .. }))
+                .count(),
+            4
+        );
+        assert!(prims.iter().any(
+            |p| matches!(p, Prim::Text { text, at, .. } if text == "Project X7" && *at == [10.0, 285.0])
+        ));
+        // The title block's lower right corner on the connection point
+        // farthest out in the lower right quarter: the standard's block
+        // (170 × 30) and the user's.
+        d.sheets[0].title_block = true;
+        let rect = crate::drawing::sheet::title_rect_in(&d, &d.sheets[0]);
+        assert_eq!(rect, Some(([225.0, 25.0], [395.0, 55.0])));
+        assert!(d.add_title_block(block().normalised()).is_ok());
+        assert!(d.set_title_block(0, Some("Company"), Vec::new()));
+        let rect = crate::drawing::sheet::title_rect_in(&d, &d.sheets[0]);
+        assert_eq!(rect, Some(([295.0, 25.0], [395.0, 45.0])));
+        // Without connection points: the border's own lower right corner.
+        let mut def = custom_border().def;
+        def.connections.clear();
+        assert!(d.update_border("Frame", def));
+        assert!(
+            d.sheets[0]
+                .border_def
+                .as_ref()
+                .is_some_and(|p| p.prompts.len() == 1),
+            "Project is still asked"
+        );
+        let rect = crate::drawing::sheet::title_rect_in(&d, &d.sheets[0]);
+        assert_eq!(rect, Some(([315.0, 5.0], [415.0, 25.0])));
+        // A single point in the upper left: the block's upper left corner.
+        let mut def = custom_border().def;
+        def.connections = vec![[20.0, 280.0]];
+        assert!(d.update_border("Frame", def));
+        let rect = crate::drawing::sheet::title_rect_in(&d, &d.sheets[0]);
+        assert_eq!(rect, Some(([20.0, 260.0], [120.0, 280.0])));
+        // In use: no Delete. Back to the default border, then Delete.
+        assert!(d.delete_border("Frame").is_err());
+        assert!(d.set_border(0, None, Vec::new(), None));
+        assert!(d.sheets[0].border_def.is_none());
+        let rect = crate::drawing::sheet::title_rect_in(&d, &d.sheets[0]);
+        assert_eq!(rect, Some(([310.0, 10.0], [410.0, 30.0])));
+        assert!(d.delete_border("Frame").is_ok());
+        assert!(d.delete_border("Frame").is_err());
+    }
+
+    #[test]
+    fn a_zone_border_brings_its_parameters_and_round_trips() {
+        let mut d = DrawingDocument::default();
+        let mut b = custom_border();
+        b.def.name = "Zones".into();
+        b.zones = Some(ZoneParams {
+            horizontal: 8,
+            margins: Some([5.0, 5.0, 20.0, 5.0]),
+            ..ZoneParams::default()
+        });
+        assert!(d.add_border(b.clone()).is_ok());
+        assert!(d.set_border(0, Some("Zones"), Vec::new(), None));
+        assert_eq!(d.sheets[0].border_params, b.zones);
+        // The zones are drawn under the sketch.
+        let format = crate::drawing::sheet::format_prims(&d, 0, &|_| String::new());
+        assert!(
+            format.iter().any(
+                |p| matches!(p, crate::drawing::sheet::Prim::Text { text, .. } if text == "8")
+            )
+        );
+        // Insert with parameters: the sheet's own win.
+        let own = ZoneParams {
+            vertical: 6,
+            ..ZoneParams::default()
+        };
+        assert!(d.set_border(0, Some("Zones"), Vec::new(), Some(own.clone())));
+        assert_eq!(d.sheets[0].border_params, Some(own));
+        let json = serde_json::to_string(&d).unwrap_or_default();
+        let back: DrawingDocument = serde_json::from_str(&json).unwrap_or_default();
+        assert_eq!(back.resources, d.resources);
+        assert_eq!(back.sheets[0].border_def, d.sheets[0].border_def);
+        // An old drawing (no resources) reads as before.
+        let old: crate::drawing::Sheet = serde_json::from_str(
+            &serde_json::to_string(&crate::drawing::Sheet::new(
+                "Sheet:1",
+                crate::drawing::sheet::SheetSize::A3,
+                crate::drawing::sheet::Orientation::Landscape,
+            ))
+            .unwrap_or_default(),
+        )
+        .unwrap_or_else(|_| d.sheets[0].clone());
+        assert!(old.border_def.is_none());
     }
 
     #[test]

@@ -186,6 +186,10 @@ pub struct Sheet {
     /// standard's. Old builds ignore it and show the standard's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_def: Option<resources::PlacedTitle>,
+    /// The user's border on this sheet (spec 4.13 §3.3; name and prompted
+    /// values); `None` = the default border. Old builds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_def: Option<resources::PlacedTitle>,
 }
 
 fn yes() -> bool {
@@ -209,6 +213,7 @@ impl Sheet {
             sketches: Vec::new(),
             border_params: None,
             title_def: None,
+            border_def: None,
         }
     }
 

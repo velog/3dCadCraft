@@ -75,6 +75,7 @@ pub fn sheet_list_with(
     if let Some(pen) = st.pen(&st.defaults.border_layer) {
         out.push(pen);
         out.extend(sheet::format_prims(doc, i, title));
+        out.extend(super::resources::border_def_prims(doc, i, props));
         out.extend(super::resources::title_prims(doc, i, props));
     }
     let Some(sheet) = doc.sheets.get(i) else {

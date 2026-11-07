@@ -975,7 +975,8 @@ Used for handing models to suppliers without revealing the details.
 visual check. 🟡 2026-11-07: the user's own title blocks, borders and sketched symbols as Drawing Resources
 ([spec/4.13-drawing-resources.md](spec/4.13-drawing-resources.md)): browser folders and rows drawn; a
 sheet's border parameters (zones, labels, corner, line / arrowhead, centre marks, margins) through Edit
-Instance; Delete of the sheet's border / title block; definitions still interface only.
+Instance; Delete of the sheet's border / title block; the user's title blocks (Define Title Block, prompted
+entries) and borders (Define Border, connection points); sketched symbols still interface only.
 
 **What it does.** Sheets A4–A0 (or ANSI A–E), a border, a **title block** with fields filled in automatically from the model's properties (name, material, mass, drafter, date, revision).
 

@@ -52,6 +52,9 @@ pub(super) enum SketchFor {
     /// A title block definition (spec 4.13): a new one, or the one named in
     /// `DrwSketch::resource`.
     TitleBlock,
+    /// A border definition (spec 4.13 §3.3): a new one, or the one named in
+    /// `DrwSketch::resource`; sheet mm as drawn.
+    Border,
 }
 
 /// A view sketch being edited.
@@ -86,6 +89,10 @@ pub(super) struct DrwSketch {
     pub text_edit: Option<super::drawing_text::TextDraft>,
     /// The definition a resource sketch edits (`None`: a new one).
     pub resource: Option<String>,
+    /// A border sketch's connection points (marked sketch points).
+    pub connections: Vec<PointId>,
+    /// A border sketch saves a zone border (its zones drawn under it).
+    pub zones: bool,
 }
 
 /// The tools of a view sketch's toolbar, in Inventor's Sketch tab order.
@@ -129,6 +136,49 @@ impl DrwSketch {
             text_sel: None,
             text_edit: None,
             resource: None,
+            connections: Vec::new(),
+            zones: false,
+        }
+    }
+
+    /// The connection points' positions (sheet mm), of points still there.
+    pub(super) fn connection_positions(&self) -> Vec<[f64; 2]> {
+        self.connections
+            .iter()
+            .filter_map(|id| self.ps.sketch.point(*id))
+            .map(|q| [q.position.x, q.position.y])
+            .collect()
+    }
+
+    /// Marks the sketch points at `pts` as connection points (a point is
+    /// added where there is none).
+    pub(super) fn mark_connections(&mut self, pts: &[[f64; 2]]) {
+        for q in pts {
+            let near = self
+                .ps
+                .sketch
+                .points()
+                .find(|(_, p)| (p.position.x - q[0]).hypot(p.position.y - q[1]) < 1e-6)
+                .map(|(id, _)| id);
+            let id = near.unwrap_or_else(|| self.ps.sketch.add_point(Point2::new(q[0], q[1])));
+            if !self.connections.contains(&id) {
+                self.connections.push(id);
+            }
+        }
+    }
+
+    /// Connection Point: the selected points become connection points, or
+    /// stop being ones when all of them are.
+    pub(super) fn toggle_connections(&mut self) {
+        let sel = self.tools.selected_points.clone();
+        if sel.iter().all(|p| self.connections.contains(p)) {
+            self.connections.retain(|p| !sel.contains(p));
+        } else {
+            for p in sel {
+                if !self.connections.contains(&p) {
+                    self.connections.push(p);
+                }
+            }
         }
     }
 
@@ -283,6 +333,8 @@ impl DrwSketch {
             SketchFor::BreakOutDepth => "Break Out depth: sketch one straight line",
             SketchFor::TitleBlock if self.resource.is_some() => "Edit Title Block",
             SketchFor::TitleBlock => "Define Title Block",
+            SketchFor::Border if self.resource.is_some() => "Edit Border",
+            SketchFor::Border => "Define Border",
         };
         let tool = if self.tools.tool == Tool::Text {
             "Text: click where the text's baseline starts; double-click a text with Select to edit it"
@@ -436,6 +488,19 @@ impl CadCraftApp {
                 self.finish_title_sketch(sketch, texts, resource);
                 return true;
             }
+            SketchFor::Border => {
+                let (resource, zones) = (s.resource.clone(), s.zones);
+                let connections = s.connection_positions();
+                self.end_drawing_sketch(s.view);
+                let mut def = crate::drawing::resources::Definition::new(
+                    resource.clone().unwrap_or_default(),
+                    sketch,
+                    texts,
+                );
+                def.connections = connections;
+                self.finish_border_sketch(def, resource, zones);
+                return true;
+            }
             SketchFor::Sketch(id) => {
                 let same = self
                     .drawing()
@@ -529,6 +594,7 @@ impl CadCraftApp {
             | SketchFor::BreakOutDepth
             | SketchFor::NewSketch
             | SketchFor::TitleBlock
+            | SketchFor::Border
             | SketchFor::Sketch(_) => {}
             SketchFor::Section(id) => {
                 let pl = views
@@ -692,6 +758,16 @@ impl CadCraftApp {
         };
         overlay::draw_sketch(painter, &proj, rect, &s.ps, &style);
         s.paint_texts(painter, &cam, rect, &pl);
+        // Connection points: a ring with a cross.
+        let mark = Color32::from_rgb(220, 120, 0);
+        for q in s.connection_positions() {
+            if let Some(c) = proj.project(&Point3::new(q[0], q[1], 0.0), rect) {
+                let st = Stroke::new(1.5, mark);
+                painter.circle_stroke(c, 6.0, st);
+                painter.line_segment([c - egui::vec2(9.0, 0.0), c + egui::vec2(9.0, 0.0)], st);
+                painter.line_segment([c - egui::vec2(0.0, 9.0), c + egui::vec2(0.0, 9.0)], st);
+            }
+        }
         super::drawing_section::paint_guides(
             painter,
             |q| cam.to_screen(rect, q),
@@ -785,11 +861,23 @@ impl CadCraftApp {
                 s.tools.selected_points.clear();
             }
             s.text_sel = None;
-            let curve = overlay::pick_entity(&proj, rect, &s.ps.sketch, p, overlay::CURVE_SNAP_PX);
-            if curve.is_none()
+            // A point first (a lone point has no curve to pick it by).
+            let point =
+                overlay::pick_any_point(&proj, rect, &s.ps.sketch, p, overlay::POINT_PICK_PX);
+            let curve = overlay::pick_entity(&proj, rect, &s.ps.sketch, p, overlay::CURVE_SNAP_PX)
+                .filter(|_| point.is_none());
+            if point.is_none()
+                && curve.is_none()
                 && let Some(k) = s.text_at(&pl, cam.to_sheet(rect, p))
             {
                 s.text_sel = Some(k);
+            }
+            if let Some(id) = point {
+                if let Some(k) = s.tools.selected_points.iter().position(|x| *x == id) {
+                    s.tools.selected_points.remove(k);
+                } else {
+                    s.tools.selected_points.push(id);
+                }
             }
             if let Some((e, _)) = curve {
                 if let Some(k) = s.tools.selected.iter().position(|x| *x == e) {
@@ -846,6 +934,18 @@ impl CadCraftApp {
             }
         }
 
+        // A right click on a point not selected selects it (rule 17).
+        if s.tools.tool == Tool::Select
+            && response.secondary_clicked()
+            && let Some(p) = pointer
+            && let Some(id) =
+                overlay::pick_any_point(&proj, rect, &s.ps.sketch, p, overlay::POINT_PICK_PX)
+            && !s.tools.selected_points.contains(&id)
+        {
+            s.tools.selected.clear();
+            s.tools.selected_points = vec![id];
+        }
+
         // The right-click menu (with the toolbar off, every tool of it).
         let mut toolbar = self.sketch_toolbar;
         response.context_menu(|ui| {
@@ -882,6 +982,17 @@ impl CadCraftApp {
                 }
                 if ui.button("Delete (Delete)").clicked() {
                     s.delete_selected();
+                    ui.close();
+                }
+            }
+            if s.owner == SketchFor::Border {
+                let any = !s.tools.selected_points.is_empty();
+                if ui
+                    .add_enabled(any, egui::Button::new("Connection Point"))
+                    .on_disabled_hover_text("Select sketch points first (Point tool, then Select)")
+                    .clicked()
+                {
+                    s.toggle_connections();
                     ui.close();
                 }
             }

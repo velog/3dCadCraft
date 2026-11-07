@@ -671,6 +671,11 @@ impl CadCraftApp {
                 self.drw.dialog = None;
                 self.define_title_block();
             }
+            DrwCmd::Planned(super::drawing_planned::Planned::DefineBorder) => {
+                self.drw.tool = None;
+                self.drw.dialog = None;
+                self.define_border(false);
+            }
             DrwCmd::Planned(p) => {
                 self.drw.tool = None;
                 self.drw.dialog = None;
@@ -1560,14 +1565,15 @@ impl CadCraftApp {
                 .unwrap_or_default()
         };
         let mut out = fmt::format_prims(d, i, &get);
-        // A title block definition being edited draws itself.
-        let editing = self
-            .drw
-            .sketch
-            .as_ref()
-            .is_some_and(|s| s.owner == super::drawing_sketch::SketchFor::TitleBlock);
-        if !editing {
-            let props = self.field_props(d, i);
+        // A definition being edited draws itself.
+        let editing = self.drw.sketch.as_ref().map(|s| s.owner);
+        let props = self.field_props(d, i);
+        if editing != Some(super::drawing_sketch::SketchFor::Border) {
+            out.extend(crate::drawing::resources::border_def_prims(d, i, &|f| {
+                props.get(f)
+            }));
+        }
+        if editing != Some(super::drawing_sketch::SketchFor::TitleBlock) {
             out.extend(crate::drawing::resources::title_prims(d, i, &|f| {
                 props.get(f)
             }));
@@ -2307,6 +2313,12 @@ impl CadCraftApp {
             .iter()
             .map(|b| b.name.clone())
             .collect();
+        let borders: Vec<String> = d
+            .resources
+            .borders
+            .iter()
+            .map(|b| b.def.name.clone())
+            .collect();
         let tree_sketches = |l: &[crate::drawing::view_sketch::DrawingSketch]| -> Vec<TreeSketch> {
             l.iter()
                 .map(|k| (k.id, k.name.clone(), k.visible))
@@ -2375,7 +2387,12 @@ impl CadCraftApp {
                 .id_salt("drw_resources")
                 .default_open(false)
                 .show(ui, |ui| {
-                    res_action = super::drawing_resources::resources_tree(ui, &title_name, &blocks);
+                    res_action = super::drawing_resources::resources_tree(
+                        ui,
+                        &title_name,
+                        &blocks,
+                        &borders,
+                    );
                 });
             for (i, (sname, size, views, sheet_sketches, format)) in sheets.iter().enumerate() {
                 let label = RichText::new(format!("{sname} ({size})"));
