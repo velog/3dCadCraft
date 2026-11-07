@@ -4208,6 +4208,7 @@ impl CadCraftApp {
                         self.asm_refresh_status();
                         self.follow_patterns();
                         self.follow_frames();
+                        self.bolts_follow(false);
                         self.fit_view();
                         Ok(msg)
                     }

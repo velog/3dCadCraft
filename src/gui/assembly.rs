@@ -658,6 +658,10 @@ impl CadCraftApp {
                 (None, Some(m)) => self.keep_view(view, m),
                 _ => {}
             }
+            // Bolted connections follow the edited part file's holes.
+            if self.is_assembly() {
+                self.bolts_follow(false);
+            }
             self.scene_dirty = true;
             return;
         }

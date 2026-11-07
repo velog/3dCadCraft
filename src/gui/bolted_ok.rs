@@ -135,6 +135,9 @@ impl CadCraftApp {
         });
         match res {
             Ok(msg) => {
+                // What it is made from now: a later change of its holes or
+                // plates is told from this.
+                self.bolts_remember();
                 self.file_status = Some(Ok(msg));
                 self.scene_dirty = true;
                 true
@@ -234,6 +237,19 @@ impl CadCraftApp {
             self.with_part(*c, |p| p.body_signature()).hash(&mut h);
         }
         h.finish()
+    }
+
+    /// Every connection's inputs as they are now, so only a later change
+    /// makes it again.
+    pub(super) fn bolts_remember(&mut self) {
+        let asm = self.part_id;
+        let Some(list) = self.assembly().map(|a| a.bolts.clone()) else {
+            return;
+        };
+        for b in &list {
+            let k = self.bolt_inputs_key(b);
+            self.bolt_keys.insert((asm, b.id), k);
+        }
     }
 
     /// Connections follow their holes and plates (spec 6.2 §4): one whose
