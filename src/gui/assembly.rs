@@ -160,6 +160,16 @@ pub(super) struct AsmUi {
     /// An assembly sketch is open (spec 3.10 T0): the tools part is edited
     /// in place for it, and the sketch's end returns to the assembly.
     pub sketch_return: bool,
+    /// Faces of components an open work feature command picked in place
+    /// (`PlaneRef::Context("?k")` = entry `k`), added to the part at OK
+    /// after its Undo checkpoint; with their highlight.
+    pub work_contexts: Vec<(crate::part::context::ContextRef, ContextHover)>,
+    /// The assembly's box when its work features are drawn or made: the
+    /// tools part has no body of its own to size them by.
+    pub work_box: std::cell::Cell<Option<(Point3, Point3)>>,
+    /// The assembly work feature whose browser row is hovered (lit in the
+    /// view on the next frame).
+    pub work_hover: std::cell::RefCell<Option<String>>,
     /// The features of the part edited in place seen so far (*Features are
     /// initially adaptive*).
     pub in_place_features: Option<(DocumentId, Vec<String>)>,

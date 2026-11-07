@@ -120,24 +120,37 @@ fn copies(
         return (Vec::new(), sick);
     };
     let mut writes = Vec::new();
-    for leaf in tree::leaves(project, linked, crate::document::DocRef::local(asm_id), asm) {
+    let mut targets: Vec<(crate::document::DocRef, Vec<u32>)> =
+        tree::leaves(project, linked, crate::document::DocRef::local(asm_id), asm)
+            .into_iter()
+            .map(|l| (l.component, l.path))
+            .collect();
+    // The hidden tools part (assembly sketches and work features, spec 3.10
+    // T0) is no shown leaf, but its references follow the components too.
+    if let Some(f) = &asm.features
+        && let Some(o) = asm.find(f.occurrence)
+        && !o.suppressed
+        && !targets.iter().any(|(_, p)| *p == [o.id])
+    {
+        targets.push((o.component, vec![o.id]));
+    }
+    for (component, path) in targets {
         // Parts of this file and of the part files it links itself (their
         // copies become edits of those files, saved with this one).
-        if leaf
-            .component
+        if component
             .library
             .is_some_and(|l| project.library(l).is_none())
         {
             continue;
         }
-        let Some(part) = part_in(project, linked, leaf.component) else {
+        let Some(part) = part_in(project, linked, component) else {
             continue;
         };
         let mut copies = Vec::new();
         for c in part
             .context
             .iter()
-            .filter(|c| c.source.assembly == asm_id && c.source.target == leaf.path)
+            .filter(|c| c.source.assembly == asm_id && c.source.target == path)
         {
             match current(project, linked, asm, &c.source) {
                 Ok(g) if changed && g.same_as(&c.geom) => {}
@@ -146,7 +159,7 @@ fn copies(
             }
         }
         if !copies.is_empty() {
-            writes.push((leaf.component, copies));
+            writes.push((component, copies));
         }
     }
     (writes, sick)

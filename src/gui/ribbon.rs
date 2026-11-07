@@ -66,6 +66,9 @@ pub enum Action {
     AsmFeatures,
     /// Assemble › Start 2D Sketch: a sketch of the assembly (spec 3.10 T0).
     AsmStartSketch,
+    /// Assemble › Work Features: a work plane / axis / point / UCS of the
+    /// assembly (spec 3.10 T0), made in its tools part.
+    AsmWork(super::work::WorkKind),
     /// Assemble › Free Rotate.
     AsmFreeRotate,
     /// Assemble › Grounded: toggle on the selected occurrences.

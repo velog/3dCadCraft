@@ -4362,6 +4362,7 @@ impl CadCraftApp {
             Action::Drawing(c) => self.drw_apply(c),
             Action::AsmFeatures => self.asm_features_edit(),
             Action::AsmStartSketch => self.asm_start_sketch(),
+            Action::AsmWork(k) => self.asm_work(k),
             Action::AsmPlace | Action::AsmJoint | Action::AsmConstrain
                 if self.reps_refuse_structure() => {}
             Action::AsmPlace
@@ -6083,12 +6084,25 @@ impl CadCraftApp {
             (Some(d), Some(p), None) => self.wp_input_under(p, rect, d.kind),
             _ => None,
         };
+        if self.work_draft.is_some() && self.in_place_now().is_some() {
+            // Another component's face under the cursor: its highlight.
+            self.asm.context_hover = match (&wp_hover, pointer) {
+                (Some(work::WpInput::Plane(PlaneRef::Context(_))), Some(p)) => {
+                    self.context_face_under(p, rect).map(|(_, _, h)| h)
+                }
+                _ => None,
+            };
+        }
         if self.work_draft.is_some()
             && response.clicked_by(PointerButton::Primary)
             && let Some(input) = wp_hover.clone()
-            && let Some(d) = self.work_draft.as_mut()
         {
-            d.pick(input);
+            if let Some(p) = pointer {
+                self.work_context_pick(&input, p, rect);
+            }
+            if let Some(d) = self.work_draft.as_mut() {
+                d.pick(input);
+            }
         }
         // --- Edit Form of a Freeform: its cage takes the pointer ---
         let ff_took = self.ff_view_input(ui, &response, rect);

@@ -222,6 +222,7 @@ impl CadCraftApp {
             // Assembly features with their participants (spec 3.10 §3.8).
             if query.is_empty() {
                 self.asm_sketches_tree(ui);
+                self.asm_works_tree(ui);
                 self.asm_features_tree(ui);
             }
             if !opts.hide_work && query.is_empty() {

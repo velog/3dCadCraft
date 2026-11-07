@@ -2243,22 +2243,30 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["]"])
         .at(&[A_WORK])
         .env(ASSEMBLY)
-        .todo("2.10"),
+        .run(Action::AsmWork(super::work::WorkKind::Plane))
+        .tip("A work plane of the assembly: on components' faces, the assembly's origin planes or its work features")
+        .spec("3.10-top-down.md"),
     c("asm.work_axis", "Axis", "Работна ос", Icon::WorkAxis)
         .alias(&["/"])
         .at(&[A_WORK])
         .env(ASSEMBLY)
-        .todo("2.10"),
+        .run(Action::AsmWork(super::work::WorkKind::Axis))
+        .tip("A work axis of the assembly: where two planes or faces of components meet, or on its work points")
+        .spec("3.10-top-down.md"),
     c("asm.work_point", "Point", "Работна точка", Icon::WorkPoint)
         .alias(&["."])
         .at(&[A_WORK])
         .env(ASSEMBLY)
-        .todo("2.10"),
+        .run(Action::AsmWork(super::work::WorkKind::Point))
+        .tip("A work point of the assembly: where three planes or faces meet, or on its work axes")
+        .spec("3.10-top-down.md"),
     c("asm.ucs", "UCS", "Потребителска координатна система", Icon::Ucs)
         .alias(&["UCS"])
         .at(&[A_WORK])
         .env(ASSEMBLY)
-        .todo("2.10"),
+        .run(Action::AsmWork(super::work::WorkKind::Ucs))
+        .tip("A user coordinate system of the assembly: at its origin with offsets and angles, or by three work points")
+        .spec("3.10-top-down.md"),
     ap("asm.make_layout", "Make Layout", "Създаване на оформление", Icon::MakeLayout, Ap::MakeLayout)
         .alias(&["MKL"])
         .at(&[A_PRODUCTIVITY]),

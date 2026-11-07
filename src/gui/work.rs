@@ -886,7 +886,14 @@ fn kind_shown(vis: &super::layout::ObjectVisibility, def: &WorkDef) -> bool {
 impl CadCraftApp {
     /// Centre of the model and the half size of drawn work features.
     fn work_extent(&self) -> (Point3, Real) {
-        let (c, half) = match self.part().body.bounding_box() {
+        // The tools part of an assembly (its work features, spec 3.10 T0)
+        // has no body: the assembly's box sizes them.
+        let bb = self.part().body.bounding_box().or_else(|| {
+            (self.is_assembly() || self.in_place_now().is_some())
+                .then(|| self.asm.work_box.get())
+                .flatten()
+        });
+        let (c, half) = match bb {
             Some((lo, hi)) => (nalgebra::center(&lo, &hi), (hi - lo).norm() * 0.42),
             None => (Point3::origin(), 30.0),
         };
@@ -935,8 +942,16 @@ impl CadCraftApp {
     /// Work features drawn now: shown on their own and their kind switched
     /// on in View → Object Visibility.
     fn visible_work(&self) -> impl Iterator<Item = &crate::part::WorkFeature> {
+        self.visible_work_in(self.part())
+    }
+
+    /// [`Self::visible_work`] of `part`.
+    fn visible_work_in<'a>(
+        &self,
+        part: &'a crate::part::PartDocument,
+    ) -> impl Iterator<Item = &'a crate::part::WorkFeature> + use<'a> {
         let vis = self.obj_vis;
-        self.part().features.iter().filter_map(move |f| match f {
+        part.features.iter().filter_map(move |f| match f {
             Feature::Work(w) if w.visible && kind_shown(&vis, &w.def) => Some(w),
             _ => None,
         })
@@ -1128,6 +1143,9 @@ impl CadCraftApp {
             }
             return Some(WpInput::Curve(name));
         }
+        if let Some(c) = self.work_context_under(pos, rect) {
+            return Some(WpInput::Plane(PlaneRef::Context(c)));
+        }
         let plane = self.plane_under(pos, rect, true)?;
         if let PlaneRef::Face(name) = &plane {
             // A curved analytic face.
@@ -1178,39 +1196,8 @@ impl CadCraftApp {
             let fill = super::theme::with_alpha(super::theme::canvas().command_preview, 70);
             self.draw_plane_rect(painter, rect, &plane, fill, true, &pw.name, false);
         }
-        for w in self.visible_work() {
-            if dragged.as_ref().is_some_and(|pw| pw.id == w.id)
-                && matches!(w.def, WorkDef::Plane(_))
-            {
-                continue;
-            }
-            let hot = hovered == Some(w.id.as_str()) || selected.as_deref() == Some(w.id.as_str());
-            for it in Self::items(w) {
-                let color = if it.ucs {
-                    ucs_color(&it.id)
-                } else {
-                    super::theme::canvas().work_feature
-                };
-                if let Some(plane) = part.work.planes.get(&it.id) {
-                    // Only the outline while a sketch is edited (no tint).
-                    let fill = if self.editing.is_some() {
-                        Color32::TRANSPARENT
-                    } else if hot {
-                        super::theme::canvas().work_hot
-                    } else {
-                        super::theme::canvas().work_fill
-                    };
-                    let label = if it.ucs { "" } else { it.label.as_str() };
-                    self.draw_plane_rect(painter, rect, plane, fill, hot, label, it.ucs);
-                } else if let Some((p, d)) = part.work.axes.get(&it.id) {
-                    self.draw_axis(painter, rect, p, d, hot, &it.label, color, it.ucs);
-                } else if let Some(p) = part.work.points.get(&it.id) {
-                    let grounded = matches!(w.def, WorkDef::Point(WorkPointDef::Fixed { .. }));
-                    let label = if it.ucs { w.name.as_str() } else { &it.label };
-                    self.draw_point(painter, rect, p, hot, label, grounded);
-                }
-            }
-        }
+        let skip = dragged.as_ref().map(|pw| pw.id.as_str());
+        self.draw_work_of(painter, rect, part, hovered, selected.as_deref(), skip);
         if let Some(d) = &self.work_draft
             && let Some(Ok(r)) = self.preview_draft(d)
         {
@@ -1247,9 +1234,107 @@ impl CadCraftApp {
         }
     }
 
+    /// Draws the visible work features of `part` (in view coordinates);
+    /// `skip` is a work plane drawn elsewhere (dragged).
+    pub(super) fn draw_work_of(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        part: &crate::part::PartDocument,
+        hovered: Option<&str>,
+        selected: Option<&str>,
+        skip: Option<&str>,
+    ) {
+        for w in self.visible_work_in(part) {
+            if skip == Some(w.id.as_str()) && matches!(w.def, WorkDef::Plane(_)) {
+                continue;
+            }
+            let hot = hovered == Some(w.id.as_str()) || selected == Some(w.id.as_str());
+            for it in Self::items(w) {
+                let color = if it.ucs {
+                    ucs_color(&it.id)
+                } else {
+                    super::theme::canvas().work_feature
+                };
+                if let Some(plane) = part.work.planes.get(&it.id) {
+                    // Only the outline while a sketch is edited (no tint).
+                    let fill = if self.editing.is_some() {
+                        Color32::TRANSPARENT
+                    } else if hot {
+                        super::theme::canvas().work_hot
+                    } else {
+                        super::theme::canvas().work_fill
+                    };
+                    let label = if it.ucs { "" } else { it.label.as_str() };
+                    self.draw_plane_rect(painter, rect, plane, fill, hot, label, it.ucs);
+                } else if let Some((p, d)) = part.work.axes.get(&it.id) {
+                    self.draw_axis(painter, rect, p, d, hot, &it.label, color, it.ucs);
+                } else if let Some(p) = part.work.points.get(&it.id) {
+                    let grounded = matches!(w.def, WorkDef::Point(WorkPointDef::Fixed { .. }));
+                    let label = if it.ucs { w.name.as_str() } else { &it.label };
+                    self.draw_point(painter, rect, p, hot, label, grounded);
+                }
+            }
+        }
+    }
+
     /// Computes a definition against the current part (preview, checks).
     pub(super) fn compute_work(&self, def: &WorkDef) -> Result<WorkResult, String> {
-        self.compute_work_in(def, &self.part().work)
+        self.compute_work_in(def, &self.work_geom_now())
+    }
+
+    /// The part's work geometry with the faces of other components the
+    /// open command picked (`?k`, see [`Self::work_context_under`]).
+    pub(super) fn work_geom_now(&self) -> Cow<'_, crate::part::placement::WorkGeom> {
+        if self.asm.work_contexts.is_empty() {
+            return Cow::Borrowed(&self.part().work);
+        }
+        let mut w = self.part().work.clone();
+        for (k, (c, _)) in self.asm.work_contexts.iter().enumerate() {
+            w.add_context(&format!("?{k}"), &c.geom);
+        }
+        Cow::Owned(w)
+    }
+
+    /// While a part is edited in place: the planar face of another
+    /// component under the cursor, in front of the part's own faces and
+    /// work planes, as the id `?k` of a picked reference (`k` = the next
+    /// entry of `AsmUi::work_contexts` when it is new).
+    fn work_context_under(&self, pos: Pos2, rect: Rect) -> Option<String> {
+        self.in_place_now()?;
+        let (t, c, _) = self.context_face_under(pos, rect)?;
+        let (o, d) = self.camera.ray(pos, rect)?;
+        let scale = d.norm();
+        let d = d.normalize();
+        let own = self.face_hit(&o, &d).map(|(_, t)| t);
+        let work = self.work_plane_under(pos, rect).map(|(_, t)| t * scale);
+        if own.is_some_and(|o| o <= t) || work.is_some_and(|w| w <= t) {
+            return None;
+        }
+        let k = self
+            .asm
+            .work_contexts
+            .iter()
+            .position(|(x, _)| x.source == c.source)
+            .unwrap_or(self.asm.work_contexts.len());
+        Some(format!("?{k}"))
+    }
+
+    /// A click of the work feature command on a new face of another
+    /// component (`input` from [`Self::wp_input_under`]): keeps the
+    /// reference until OK.
+    pub(super) fn work_context_pick(&mut self, input: &WpInput, pos: Pos2, rect: Rect) {
+        let WpInput::Plane(PlaneRef::Context(id)) = input else {
+            return;
+        };
+        if id.strip_prefix('?').and_then(|k| k.parse::<usize>().ok())
+            != Some(self.asm.work_contexts.len())
+        {
+            return;
+        }
+        if let Some((_, c, h)) = self.context_face_under(pos, rect) {
+            self.asm.work_contexts.push((c, h));
+        }
     }
 
     fn compute_work_in(
@@ -1284,7 +1369,7 @@ impl CadCraftApp {
         let r = if inline.is_empty() {
             self.compute_work(&def)
         } else {
-            let mut works = self.part().work.clone();
+            let mut works = self.work_geom_now().into_owned();
             for (k, idef) in &inline {
                 match self.compute_work_in(idef, &works) {
                     Ok(r) => rename(r, inline_id(*k)).store(&mut works),
@@ -1494,8 +1579,18 @@ impl CadCraftApp {
                     super::overlay::draw_face_fill(painter, &self.camera, rect, &mesh, color);
                 }
             }
+            WpInput::Plane(PlaneRef::Context(id)) if id.starts_with('?') => {
+                let k = id[1..].parse::<usize>().ok();
+                let hover = k
+                    .and_then(|k| self.asm.work_contexts.get(k).map(|(_, h)| *h))
+                    .or(self.asm.context_hover);
+                if let Some(mesh) = hover.and_then(|h| self.context_mesh(h)) {
+                    super::overlay::draw_face_fill(painter, &self.camera, rect, &mesh, color);
+                }
+            }
             WpInput::Plane(r) => {
-                if let Ok(plane) = crate::part::placement::plane_of(r, body, &part.work) {
+                if let Ok(plane) = crate::part::placement::plane_of(r, body, &self.work_geom_now())
+                {
                     let fill = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
                     let ucs = matches!(r, PlaneRef::Work(id) if id.contains(':'));
                     self.draw_plane_rect(painter, rect, &plane, fill, true, "", ucs);
@@ -1577,6 +1672,18 @@ impl CadCraftApp {
         d: &WorkDraft,
         inline: Vec<(usize, WorkDef)>,
     ) -> Result<(), String> {
+        // Faces of other components picked in place become the part's
+        // cross-part references (after the caller's checkpoint).
+        let mut d = d.clone();
+        for p in &mut d.picks {
+            if let WpInput::Plane(PlaneRef::Context(id)) = p
+                && let Some(k) = id.strip_prefix('?').and_then(|k| k.parse::<usize>().ok())
+                && let Some((c, _)) = self.asm.work_contexts.get(k).cloned()
+            {
+                *id = self.part_mut().add_context(c);
+            }
+        }
+        let d = &d;
         let mut ids: Vec<(usize, String)> = Vec::new();
         for (k, idef) in inline {
             let mut w = WorkFeature::new(idef);

@@ -59,6 +59,67 @@ impl CadCraftApp {
         ));
     }
 
+    /// Assemble › Work Features (spec 3.10 T0): a work plane, axis, point
+    /// or UCS of the assembly, made in the tools part edited in place, so
+    /// it takes the components' faces (cross-part references), the
+    /// assembly's origin and its other work features; OK or Esc returns to
+    /// the assembly.
+    pub(super) fn asm_work(&mut self, kind: super::work::WorkKind) {
+        let title = kind.title();
+        self.asm.work_box.set(self.assembly_box());
+        if !self.asm_open_tools(title) {
+            return;
+        }
+        self.asm.sketch_return = true;
+        self.asm.work_contexts.clear();
+        self.work_draft = Some(super::work::WorkDraft::new(kind));
+        self.file_status = Some(Ok(format!(
+            "{title}: pick faces of the components, the assembly's origin or its work features (Esc returns to the assembly)"
+        )));
+    }
+
+    /// Redefine of the assembly's work feature `id` (browser).
+    pub(super) fn asm_redefine_work(&mut self, id: &str) {
+        self.asm.work_box.set(self.assembly_box());
+        if !self.asm_open_tools("Redefine Feature") {
+            return;
+        }
+        let Some(k) = self.part().features.iter().position(|f| f.id() == id) else {
+            return;
+        };
+        self.asm.sketch_return = true;
+        self.asm.work_contexts.clear();
+        self.redefine_work(k);
+    }
+
+    /// The assembly's work features: the tools part's (id, name, kind,
+    /// visible).
+    pub(super) fn asm_works(&self) -> Vec<(String, String, super::work::WorkKind, bool)> {
+        let Some(p) = self.asm_tools_doc() else {
+            return Vec::new();
+        };
+        self.with_part(p, |part| {
+            part.features
+                .iter()
+                .filter_map(|f| match f {
+                    crate::part::Feature::Work(w) => Some((
+                        w.id.clone(),
+                        w.name.clone(),
+                        super::work::WorkKind::of(&w.def),
+                        w.visible,
+                    )),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// The occurrence of the active assembly's tools part.
+    pub(super) fn asm_tools_occurrence(&self) -> Option<u32> {
+        self.assembly()?.features.as_ref().map(|f| f.occurrence)
+    }
+
     /// Edit Sketch of the assembly's sketch `id` (browser).
     pub(super) fn asm_edit_sketch(&mut self, id: &str) {
         if !self.asm_open_tools("Edit Sketch") {
@@ -102,12 +163,14 @@ impl CadCraftApp {
             return;
         }
         let open = self.editing.is_some()
+            || self.work_draft.is_some()
             || matches!(self.mode, super::Mode::PickPlane(_))
             || self.asm.pending_context.is_some();
         if open {
             return;
         }
         self.asm.sketch_return = false;
+        self.asm.work_contexts.clear();
         if self.in_place_now().is_some() {
             self.return_to_assembly();
         }
@@ -160,9 +223,20 @@ impl CadCraftApp {
             highlighted: None,
             selected: Vec::new(),
         };
+        let hovered = self.asm.work_hover.borrow_mut().take();
         self.with_part(p, |part| {
             for ps in part.sketches.iter().filter(|s| s.visible) {
                 super::overlay::draw_sketch(painter, &self.camera, rect, ps, &style);
+            }
+            // Its work features (the tools part has no body: the
+            // assembly's box sizes them).
+            if part
+                .features
+                .iter()
+                .any(|f| matches!(f, crate::part::Feature::Work(w) if w.visible))
+            {
+                self.asm.work_box.set(self.assembly_box());
+                self.draw_work_of(painter, rect, part, hovered.as_deref(), None, None);
             }
         });
     }
@@ -217,6 +291,92 @@ impl CadCraftApp {
         }
         if let Some(id) = edit {
             self.asm_edit_sketch(&id);
+        }
+    }
+
+    /// The assembly's work features in the browser: a click picks one for
+    /// an open relationship (like a component's work features); the menu
+    /// has Redefine Feature and Visibility.
+    pub(super) fn asm_works_tree(&mut self, ui: &mut eframe::egui::Ui) {
+        use super::work::WorkKind;
+        let works = self.asm_works();
+        let Some(occ) = self.asm_tools_occurrence() else {
+            return;
+        };
+        let mut redefine: Option<String> = None;
+        let mut toggle: Option<String> = None;
+        let mut pick: Option<crate::assembly::relation::GeomRef> = None;
+        for (id, name, kind, visible) in &works {
+            let icon = match kind {
+                WorkKind::Plane => super::icons::Icon::WorkPlane,
+                WorkKind::Axis => super::icons::Icon::WorkAxis,
+                WorkKind::Point => super::icons::Icon::WorkPoint,
+                WorkKind::Ucs => super::icons::Icon::Ucs,
+            };
+            let g = crate::assembly::relation::GeomRef::Work {
+                sub: Vec::new(),
+                occurrence: occ,
+                id: id.clone(),
+            };
+            let picked = self.cons.draft.as_ref().is_some_and(|d| d.has(&g));
+            let r = ui
+                .horizontal(|ui| {
+                    super::panels::tree_icon(ui, icon);
+                    let text = if *visible {
+                        eframe::egui::RichText::new(name)
+                    } else {
+                        eframe::egui::RichText::new(name).weak()
+                    };
+                    ui.selectable_label(picked, text)
+                })
+                .inner;
+            if r.hovered() {
+                *self.asm.work_hover.borrow_mut() = Some(id.clone());
+                self.cons.browser_hover = Some(g.clone());
+            }
+            if r.clicked() && (self.cons.draft.is_some() || self.part_planned.is_some()) {
+                pick = Some(g);
+            }
+            if r.double_clicked() {
+                redefine = Some(id.clone());
+            }
+            r.context_menu(|ui| {
+                if ui.button("Redefine Feature").clicked() {
+                    redefine = Some(id.clone());
+                    ui.close();
+                }
+                let mut v = *visible;
+                if ui.checkbox(&mut v, "Visibility").clicked() {
+                    toggle = Some(id.clone());
+                    ui.close();
+                }
+            });
+        }
+        if let Some(g) = pick {
+            if self.part_planned.is_some() {
+                self.planned_take_ref(g);
+            } else {
+                self.constrain_pick(g);
+            }
+        }
+        if let Some(id) = toggle
+            && let Some(DocRef {
+                document,
+                library: None,
+                ..
+            }) = self.asm_tools_doc()
+        {
+            self.checkpoint("Visibility");
+            if let Some(DocumentData::Part(p)) =
+                self.project.document_mut(document).map(|d| &mut d.data)
+                && let Some(crate::part::Feature::Work(w)) =
+                    p.features.iter_mut().find(|f| f.id() == id)
+            {
+                w.visible = !w.visible;
+            }
+        }
+        if let Some(id) = redefine {
+            self.asm_redefine_work(&id);
         }
     }
 

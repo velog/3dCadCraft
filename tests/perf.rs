@@ -3084,6 +3084,76 @@ fn speed_budgets() {
         ));
     }
 
+    // Assembly work features (spec 3.10 T0): Update of the hidden tools
+    // part's cross-part references after a component moved — four work
+    // planes on faces of a base, regenerated (every solve outside a drag
+    // ends in it).
+    {
+        use cadcraft3d::assembly::{context, features, tree::Linked};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData};
+        use cadcraft3d::kernel::Transform3;
+        use cadcraft3d::part::context::{ContextRef, ContextSource};
+        use cadcraft3d::part::{PlaneRef, WorkDef, WorkFeature, WorkPlaneDef};
+        let mut p = cadcraft3d::document::Project::new("Perf");
+        let base = p.add_document(
+            "Base",
+            DocumentData::Part(PartDocument::with_box("Box1", [100.0, 60.0, 20.0]).unwrap()),
+        );
+        let mut a = AssemblyDocument::default();
+        let b = a.place(DocRef::local(base), "Base", Transform3::identity(), true);
+        let asm = p.add_document("Top", DocumentData::Assembly(a));
+        let (occ, tools) = features::ensure_tools(&mut p, asm).unwrap();
+        let linked = Linked::new();
+        for (face, hint) in [
+            ("Box1:Top", [50.0, 30.0, 20.0]),
+            ("Box1:Bottom", [50.0, 30.0, 0.0]),
+            ("Box1:Front", [50.0, 0.0, 10.0]),
+            ("Box1:Back", [50.0, 60.0, 10.0]),
+        ] {
+            let source = ContextSource {
+                assembly: asm,
+                target: vec![occ],
+                path: vec![b],
+                face: face.into(),
+                edge: None,
+                hint,
+                label: format!("Base:1 {face}"),
+            };
+            let Some(DocumentData::Assembly(a)) = p.document(asm).map(|d| &d.data) else {
+                panic!()
+            };
+            let geom = context::current(&p, &linked, a, &source).unwrap();
+            let Some(DocumentData::Part(tp)) = p.document_mut(tools).map(|d| &mut d.data) else {
+                panic!()
+            };
+            let id = tp.add_context(ContextRef {
+                id: String::new(),
+                source,
+                geom,
+            });
+            tp.add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Context(id),
+                distance: 5.0,
+            })))
+            .unwrap();
+        }
+        let mut z = 0.0;
+        rows.push((
+            "assembly: Update of four assembly work planes after a component moved",
+            5.0,
+            median_ms(5, || {
+                z += 1.0;
+                if let Some(DocumentData::Assembly(a)) = p.document_mut(asm).map(|d| &mut d.data)
+                    && let Some(o) = a.find_mut(b)
+                {
+                    o.transform = Transform3::translation(0.0, 0.0, z);
+                }
+                let r = context::update(&mut p, &linked, asm);
+                assert!(r.changed.contains(&tools), "{:?}", r.sick);
+            }),
+        ));
+    }
+
     // Derive (spec 3.10 §3.5): a plate with 36 holes derived into a new
     // part (its bodies → STEP text → read back), and an Update after the
     // source grew (text again, faces matched to keep their names).
