@@ -159,7 +159,8 @@ pub fn entry(start: &Geom, reference: &Reference) -> Result<Axis, String> {
         Reference::Through(g) => {
             let c = match *g {
                 Geom::Circle { c, .. } => c,
-                Geom::Point { p } => p,
+                // A vertex is a frame on its face: its point.
+                Geom::Point { p } | Geom::Frame { p, .. } => p,
                 Geom::Axis { p, d } | Geom::Cylinder { p, d, .. } => {
                     if d.cross(&n).norm() > 1e-4 {
                         return Err("the hole must be square to the start plane".into());
@@ -211,6 +212,154 @@ pub fn entry(start: &Geom, reference: &Reference) -> Result<Axis, String> {
         dir,
         length: 0.0,
     })
+}
+
+/// How many bolts one connection places from its reference (spec 6.2 §3.2c).
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub enum Spread {
+    /// One bolt per reference.
+    #[default]
+    One,
+    /// Linear as a pattern: `count[0]` bolts `spacing[0]` apart along Linear
+    /// Edge 1 (away from Edge 2), `count[1]` along Edge 2 (away from Edge 1).
+    Grid {
+        /// Bolts in each direction (at least 1).
+        count: [u32; 2],
+        /// Their spacing in each direction.
+        spacing: [Real; 2],
+    },
+    /// Circular: `count` bolts on a circle of `radius` about the reference's
+    /// centre, the first at `angle` (radians, from the start plane's local X,
+    /// counter-clockwise seen from outside the material), spread evenly round
+    /// the circle when `span` is a full turn, else the first and the last
+    /// `span` apart.
+    Circle {
+        /// Bolts.
+        count: u32,
+        /// Bolt circle radius.
+        radius: Real,
+        /// The first bolt's angle.
+        angle: Real,
+        /// Full turn or the first-to-last angle.
+        span: Real,
+    },
+}
+
+/// The start plane's local X (the world X projected onto it; the world Y on a
+/// plane square to X): the zero of a bolt circle's angle.
+pub fn plane_x(n: &Vector3) -> Vector3 {
+    let x = Vector3::x() - n * n.dot(&Vector3::x());
+    if x.norm() > 1e-3 {
+        x.normalize()
+    } else {
+        (Vector3::y() - n * n.dot(&Vector3::y())).normalize()
+    }
+}
+
+/// Every bolt's entry of `reference` spread by `spread` (the first is
+/// [`entry`]'s). Linear's grid steps along its edges, away from the other
+/// edge; a circle goes round the reference's centre.
+pub fn entries(start: &Geom, reference: &Reference, spread: &Spread) -> Result<Vec<Axis>, String> {
+    let first = entry(start, reference)?;
+    let Geom::Plane { n, .. } = *start else {
+        return Err("the start plane must be a planar face or a work plane".into());
+    };
+    match (*spread, reference) {
+        (Spread::One, _) => Ok(vec![first]),
+        (Spread::Grid { count, spacing }, Reference::Linear { e1, e2, .. }) => {
+            let dir = |g: &Geom| match *g {
+                Geom::Axis { d, .. } => Ok((d - n * n.dot(&d)).normalize()),
+                _ => Err("Linear needs two straight edges".to_string()),
+            };
+            let (mut u1, mut u2) = (dir(e1)?, dir(e2)?);
+            // Away from the other edge: towards where the first bolt is from
+            // the other edge's line.
+            let away = |u: Vector3, g: &Geom| match *g {
+                Geom::Axis { p, .. } if (first.at - p).dot(&u) < 0.0 => -u,
+                _ => u,
+            };
+            u1 = away(u1, e2);
+            u2 = away(u2, e1);
+            if count[0] == 0 || count[1] == 0 {
+                return Err("a count must be 1 or more".into());
+            }
+            let mut v = Vec::new();
+            for j in 0..count[1] {
+                for i in 0..count[0] {
+                    let at = first.at
+                        + u1 * (spacing[0] * f64::from(i))
+                        + u2 * (spacing[1] * f64::from(j));
+                    v.push(Axis { at, ..first });
+                }
+            }
+            Ok(v)
+        }
+        (Spread::Grid { .. }, _) => Err("a grid needs the Linear placement".into()),
+        (
+            Spread::Circle {
+                count,
+                radius,
+                angle,
+                span,
+            },
+            _,
+        ) => {
+            if count == 0 {
+                return Err("a count must be 1 or more".into());
+            }
+            if radius <= 1e-6 {
+                return Err("the bolt circle needs a radius".into());
+            }
+            let x = plane_x(&n);
+            let y = n.cross(&x);
+            let full = (span.abs() - std::f64::consts::TAU).abs() < 1e-6;
+            let step = if full {
+                std::f64::consts::TAU / f64::from(count)
+            } else if count > 1 {
+                span / f64::from(count - 1)
+            } else {
+                0.0
+            };
+            Ok((0..count)
+                .map(|k| {
+                    let a = angle + step * f64::from(k);
+                    Axis {
+                        at: first.at + (x * a.cos() + y * a.sin()) * radius,
+                        ..first
+                    }
+                })
+                .collect())
+        }
+    }
+}
+
+/// Every bolt's axis: [`entries`] of each reference, all ending on the
+/// termination (parallel planes: the same length for each).
+pub fn axes(
+    start: &Geom,
+    references: &[Reference],
+    spread: &Spread,
+    end: &Geom,
+) -> Result<Vec<Axis>, String> {
+    let mut v = Vec::new();
+    for r in references {
+        let a = axis(start, r, end)?;
+        for e in entries(start, r, spread)? {
+            v.push(Axis {
+                length: a.length,
+                ..e
+            });
+        }
+    }
+    if v.is_empty() {
+        return Err("pick the reference".into());
+    }
+    for (i, a) in v.iter().enumerate() {
+        if v[..i].iter().any(|b| (b.at - a.at).norm() < 1e-3) {
+            return Err("two bolts would stand on the same axis".into());
+        }
+    }
+    Ok(v)
 }
 
 // ---- the plate stack along the axis --------------------------------------
@@ -353,6 +502,20 @@ pub fn stack_along(
     best
 }
 
+/// Whether the axis itself runs through material of plate `p` (of component
+/// `parts[p.part]`): `false` means the plate already has a hole there, which
+/// the connection does not cut again.
+pub fn solid_on_axis(parts: &[(Triangles<'_>, Transform3)], axis: &Axis, p: &Plate) -> bool {
+    let Some((tris, place)) = parts.get(p.part) else {
+        return false;
+    };
+    let inv = place.inverse();
+    let eps = 1e-3;
+    intervals(p.part, crossings(tris, &(inv * axis.at), &(inv * axis.dir)))
+        .iter()
+        .any(|q| q.from < p.to - eps && q.to > p.from + eps)
+}
+
 /// The termination a stack gives when none is picked: the last plate's exit
 /// face (Through All), or the last plate's entry face, where its threaded
 /// hole starts (Blind: two plates at least). The plate's index, the face
@@ -394,6 +557,8 @@ pub enum Placement {
     OnPoint,
     /// An existing hole.
     ByHole,
+    /// A bolt circle about a circular reference (ours, for flanges).
+    Circular,
 }
 
 impl Placement {
@@ -403,7 +568,8 @@ impl Placement {
             0 => Placement::Linear,
             1 => Placement::Concentric,
             2 => Placement::OnPoint,
-            _ => Placement::ByHole,
+            3 => Placement::ByHole,
+            _ => Placement::Circular,
         }
     }
 
@@ -451,6 +617,12 @@ pub fn route(placement: Placement, active: &str, what: Clicked, edge1_set: bool)
         ("start", C::CircularEdge) if placement == Placement::ByHole => {
             keep(vec!["start*", "hole"])
         }
+        // Circular: a rim or a boss's wall is the bolt circle's centre.
+        ("start", C::CircularEdge) if placement == Placement::Circular => {
+            keep(vec!["start*", "circle"])
+        }
+        ("start", C::RoundFace) if placement == Placement::Circular => keep(vec!["circle"]),
+        ("circle", C::RoundFace) if placement == Placement::Circular => keep(vec!["circle"]),
         ("start", C::CircularEdge) => to(Placement::Concentric, vec!["start*", "circle"]),
         ("start", C::RoundFace) => to(Placement::ByHole, vec!["hole"]),
         ("start", C::StraightEdge) if placement == Placement::Linear => {
@@ -512,6 +684,9 @@ impl Role {
 pub struct BoltFastener {
     /// Its occurrence.
     pub occurrence: u32,
+    /// Which bolt of the connection (0 = the first; spec 6.2 §3.2c).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub instance: u32,
     /// On the nut side (below the termination), else the head side.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub nut_side: bool,
@@ -549,6 +724,15 @@ pub struct BoltedConnection {
     /// Linear's distances from the two edges.
     #[serde(default)]
     pub distances: [Real; 2],
+    /// How many bolts the references give (a grid, a bolt circle).
+    #[serde(default, skip_serializing_if = "is_one")]
+    pub spread: Spread,
+    /// The clearance holes' fit.
+    #[serde(default, skip_serializing_if = "is_normal")]
+    pub fit: FastenerFit,
+    /// The bolt length the user chose (`None`: the shortest that works).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<Real>,
     /// The termination (Through All) or the blind start plane.
     pub end: GeomRef,
     /// The termination was found along the axis (not picked).
@@ -562,6 +746,18 @@ pub struct BoltedConnection {
     pub fasteners: Vec<BoltFastener>,
     /// The holes: feature ids (= body names) in the tools part.
     pub holes: Vec<String>,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
+}
+
+fn is_one(s: &Spread) -> bool {
+    *s == Spread::One
+}
+
+fn is_normal(f: &FastenerFit) -> bool {
+    *f == FastenerFit::Normal
 }
 
 /// What a hole of a connection cuts.
@@ -703,20 +899,52 @@ pub struct Placing {
     pub offset: Real,
 }
 
-/// What [`make`] needs: the axis and the holes, which plates each hole
-/// cuts, the planes the seats lie on (assembly coordinates, any sense) and
-/// the fasteners in stack order. `record` carries the inputs; its id, name,
-/// occurrences and holes are filled in.
+/// One bolt of a connection: its axis and its holes, each with the
+/// occurrence paths it cuts (a plate already drilled there is left out; the
+/// clearance hole is made even when it cuts nothing: the fasteners mate to
+/// its wall).
 #[derive(Clone, Debug)]
-pub struct Making {
+pub struct Instance {
     /// The axis.
     pub axis: Axis,
-    /// The holes and what each cuts.
-    pub holes: Vec<(BoltHoleOp, HoleUse)>,
-    /// Occurrence paths the clearance hole cuts.
-    pub clearance: Vec<Vec<u32>>,
-    /// Occurrence path the tapped hole cuts (Blind).
-    pub tapped: Vec<Vec<u32>>,
+    /// The clearance hole first, then a blind connection's tapped one.
+    pub holes: Vec<(BoltHoleOp, Vec<Vec<u32>>)>,
+}
+
+impl Instance {
+    /// A bolt of `axis` with the holes of [`hole_ops`]: the clearance hole
+    /// cuts `clearance`, the tapped one `tapped`.
+    pub fn new(
+        axis: Axis,
+        holes: Vec<(BoltHoleOp, HoleUse)>,
+        clearance: &[Vec<u32>],
+        tapped: &[Vec<u32>],
+    ) -> Self {
+        Instance {
+            axis,
+            holes: holes
+                .into_iter()
+                .map(|(op, used)| {
+                    let paths = match used {
+                        HoleUse::Clearance => clearance.to_vec(),
+                        HoleUse::Tapped => tapped.to_vec(),
+                    };
+                    (op, paths)
+                })
+                .collect(),
+        }
+    }
+}
+
+/// What [`make`] needs: each bolt's axis and holes, the planes the seats lie
+/// on (assembly coordinates, any sense) and the fasteners of one stack in
+/// stack order (placed on every bolt). `record` carries the inputs and the
+/// stack's fasteners once; its id, name, holes and the fasteners of every
+/// bolt (with their occurrences) are filled in.
+#[derive(Clone, Debug)]
+pub struct Making {
+    /// Each bolt: its axis and holes.
+    pub instances: Vec<Instance>,
     /// The start plane (point, normal).
     pub start_plane: (Point3, Vector3),
     /// The termination (point, normal).
@@ -753,8 +981,15 @@ fn make_in(
 ) -> Result<u32, String> {
     use super::relation::{Constraint, ConstraintKind, OriginItem};
     use crate::document::DocumentData;
+    if m.instances.is_empty() {
+        return Err("no bolt to place".into());
+    }
+    if m.fasteners.len() != m.record.fasteners.len() {
+        return Err("the stack and its record differ".into());
+    }
     let (tools_occ, tools_doc) = super::features::ensure_tools(project, asm_id)?;
-    let mut ids = Vec::new();
+    // Each bolt's hole ids, in the order of its holes.
+    let mut ids: Vec<Vec<String>> = Vec::new();
     {
         let Some(DocumentData::Part(tp)) = project.document_mut(tools_doc).map(|d| &mut d.data)
         else {
@@ -763,89 +998,97 @@ fn make_in(
         if tp.exact_bodies.0.is_empty() && !tp.features.is_empty() {
             tp.regenerate().map_err(|e| e.to_string())?;
         }
-        for (op, _) in &m.holes {
-            let f = crate::part::BodyOpFeature::new(crate::part::BodyOp::BoltHole(op.clone()));
-            ids.push(tp.add_body_op(f).map_err(|e| format!("the hole: {e}"))?);
+        for inst in &m.instances {
+            let mut v = Vec::new();
+            for (op, _) in &inst.holes {
+                let f = crate::part::BodyOpFeature::new(crate::part::BodyOp::BoltHole(op.clone()));
+                v.push(tp.add_body_op(f).map_err(|e| format!("the hole: {e}"))?);
+            }
+            ids.push(v);
         }
     }
     let Some(DocumentData::Assembly(a)) = project.document_mut(asm_id).map(|d| &mut d.data) else {
         return Err("not an assembly".into());
     };
     if let Some(f) = a.features.as_mut() {
-        for ((_, used), id) in m.holes.iter().zip(&ids) {
-            let paths = match used {
-                HoleUse::Clearance => m.clearance.clone(),
-                HoleUse::Tapped => m.tapped.clone(),
-            };
-            f.participants.insert(id.clone(), paths);
+        for (inst, v) in m.instances.iter().zip(&ids) {
+            for ((_, paths), id) in inst.holes.iter().zip(v) {
+                f.participants.insert(id.clone(), paths.clone());
+            }
         }
     }
-    let ax = m.axis;
-    let r = m.holes.first().map_or(1.0, |(op, _)| op.diameter / 2.0);
-    let side = if ax.dir.x.abs() < 0.9 {
-        ax.dir.cross(&Vector3::x())
-    } else {
-        ax.dir.cross(&Vector3::y())
-    }
-    .normalize();
-    let wall_at = ax.at + ax.dir * (ax.length / 2.0) + side * r;
-    let axis_ref = GeomRef::Face {
-        occurrence: tools_occ,
-        sub: Vec::new(),
-        name: format!("{}:Wall", ids.first().ok_or("no hole was made")?),
-        hint: [wall_at.x, wall_at.y, wall_at.z],
-    };
-    if m.fasteners.len() != m.record.fasteners.len() {
-        return Err("the stack and its record differ".into());
-    }
-    let bottom = ax.at + ax.dir * ax.length;
-    for (k, p) in m.fasteners.iter().enumerate() {
-        // Out of the material: up from the start plane, down from the end.
-        let (z, seat, plane, (q, n)) = if p.nut_side {
-            (
-                ax.dir,
-                bottom + ax.dir * p.offset,
-                m.record.end.clone(),
-                m.end_plane,
-            )
+    let stack = std::mem::take(&mut m.record.fasteners);
+    let mut placed = Vec::new();
+    for (i, (inst, v)) in m.instances.iter().zip(&ids).enumerate() {
+        let ax = inst.axis;
+        let r = inst.holes.first().map_or(1.0, |(op, _)| op.diameter / 2.0);
+        let side = if ax.dir.x.abs() < 0.9 {
+            ax.dir.cross(&Vector3::x())
         } else {
-            (
-                -ax.dir,
-                ax.at - ax.dir * p.offset,
-                m.record.start.clone(),
-                m.start_plane,
-            )
-        };
-        let t = crate::components::fit::seat_transform(seat, z, 0.0, false);
-        let id = a.place(p.component, &p.name, t, false);
-        let origin = |item: OriginItem| GeomRef::Origin {
-            occurrence: id,
+            ax.dir.cross(&Vector3::y())
+        }
+        .normalize();
+        let wall_at = ax.at + ax.dir * (ax.length / 2.0) + side * r;
+        let axis_ref = GeomRef::Face {
+            occurrence: tools_occ,
             sub: Vec::new(),
-            item,
+            name: format!("{}:Wall", v.first().ok_or("no hole was made")?),
+            hint: [wall_at.x, wall_at.y, wall_at.z],
         };
-        a.add_constraint(Constraint::new(
-            ConstraintKind::Mate,
-            axis_ref.clone(),
-            origin(OriginItem::ZAxis),
-        ));
-        let mut c = Constraint::new(
-            if z.dot(&n) > 0.0 {
-                ConstraintKind::Flush
+        let bottom = ax.at + ax.dir * ax.length;
+        for (p, template) in m.fasteners.iter().zip(&stack) {
+            // Out of the material: up from the start plane, down from the end.
+            let (z, seat, plane, (q, n)) = if p.nut_side {
+                (
+                    ax.dir,
+                    bottom + ax.dir * p.offset,
+                    m.record.end.clone(),
+                    m.end_plane,
+                )
             } else {
-                ConstraintKind::Mate
-            },
-            plane,
-            origin(OriginItem::XyPlane),
-        );
-        // Along the plane's own normal; `0.0 +` keeps "-0" out of the panel.
-        c.value = 0.0 + (seat - q).dot(&n);
-        a.add_constraint(c);
-        m.record.fasteners[k].occurrence = id;
+                (
+                    -ax.dir,
+                    ax.at - ax.dir * p.offset,
+                    m.record.start.clone(),
+                    m.start_plane,
+                )
+            };
+            let t = crate::components::fit::seat_transform(seat, z, 0.0, false);
+            let id = a.place(p.component, &p.name, t, false);
+            let origin = |item: OriginItem| GeomRef::Origin {
+                occurrence: id,
+                sub: Vec::new(),
+                item,
+            };
+            a.add_constraint(Constraint::new(
+                ConstraintKind::Mate,
+                axis_ref.clone(),
+                origin(OriginItem::ZAxis),
+            ));
+            let mut c = Constraint::new(
+                if z.dot(&n) > 0.0 {
+                    ConstraintKind::Flush
+                } else {
+                    ConstraintKind::Mate
+                },
+                plane,
+                origin(OriginItem::XyPlane),
+            );
+            // Along the plane's own normal; `0.0 +` keeps "-0" out of the panel.
+            c.value = 0.0 + (seat - q).dot(&n);
+            a.add_constraint(c);
+            placed.push(BoltFastener {
+                occurrence: id,
+                instance: i as u32,
+                ..template.clone()
+            });
+        }
     }
     let id = a.bolts.iter().map(|b| b.id).max().unwrap_or(0) + 1;
     m.record.id = id;
     m.record.name = format!("Bolted Connection {id}");
-    m.record.holes = ids;
+    m.record.holes = ids.into_iter().flatten().collect();
+    m.record.fasteners = placed;
     a.bolts.push(m.record);
     Ok(id)
 }
@@ -964,6 +1207,105 @@ mod tests {
         );
     }
 
+    /// Use case 14: Linear as a pattern — 3 x 2 bolts stepping along each
+    /// edge away from the other one, on whichever corner the start face was
+    /// picked; all end on the termination.
+    #[test]
+    fn use_case_linear_grid_steps_away_from_the_edges() {
+        let start = plane([30.0, 30.0, 40.0], [0.0, 0.0, 1.0]);
+        let end = plane([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
+        let edge = |d: [Real; 3]| Geom::Axis {
+            p: Point3::new(0.0, 0.0, 40.0),
+            d: Vector3::from(d),
+        };
+        let grid = Spread::Grid {
+            count: [3, 2],
+            spacing: [20.0, 25.0],
+        };
+        for (toward, sx) in [(30.0, 1.0), (-30.0, -1.0)] {
+            let r = Reference::Linear {
+                e1: edge([1.0, 0.0, 0.0]),
+                e2: edge([0.0, -1.0, 0.0]),
+                d1: 12.0,
+                d2: 15.0,
+                toward: Point3::new(toward, 30.0, 40.0),
+            };
+            let v = axes(&start, &[r], &grid, &end).unwrap();
+            assert_eq!(v.len(), 6);
+            let want = [
+                (15.0, 12.0),
+                (35.0, 12.0),
+                (55.0, 12.0),
+                (15.0, 37.0),
+                (35.0, 37.0),
+                (55.0, 37.0),
+            ];
+            for (a, (x, y)) in v.iter().zip(want) {
+                assert!(
+                    (a.at - Point3::new(sx * x, y, 40.0)).norm() < 1e-9,
+                    "{:?}",
+                    a.at
+                );
+                assert!((a.length - 40.0).abs() < 1e-9);
+            }
+        }
+        let bad = Spread::Grid {
+            count: [0, 1],
+            spacing: [1.0, 1.0],
+        };
+        let r = Reference::Through(Geom::Point {
+            p: Point3::new(1.0, 1.0, 40.0),
+        });
+        assert!(entries(&start, &r, &bad).is_err(), "a grid needs Linear");
+    }
+
+    /// Use case 15: a flange's bolt circle — 6 bolts evenly round, or 3 over
+    /// 90°; the angle counts from the plane's X; several references give a
+    /// bolt each and two on one axis are refused.
+    #[test]
+    fn use_case_bolt_circle_and_several_references() {
+        let start = plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]);
+        let end = plane([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
+        let c = Reference::Through(Geom::Circle {
+            c: Point3::new(100.0, 0.0, 10.0),
+            n: Vector3::z(),
+            r: 20.0,
+        });
+        let six = Spread::Circle {
+            count: 6,
+            radius: 40.0,
+            angle: 0.0,
+            span: std::f64::consts::TAU,
+        };
+        let v = axes(&start, std::slice::from_ref(&c), &six, &end).unwrap();
+        assert_eq!(v.len(), 6);
+        assert!((v[0].at - Point3::new(140.0, 0.0, 10.0)).norm() < 1e-9);
+        assert!((v[1].at - Point3::new(120.0, 40.0 * 0.75_f64.sqrt(), 10.0)).norm() < 1e-9);
+        assert!((v[3].at - Point3::new(60.0, 0.0, 10.0)).norm() < 1e-9);
+        let three = Spread::Circle {
+            count: 3,
+            radius: 40.0,
+            angle: std::f64::consts::FRAC_PI_2,
+            span: std::f64::consts::FRAC_PI_2,
+        };
+        let v = axes(&start, std::slice::from_ref(&c), &three, &end).unwrap();
+        assert!((v[0].at - Point3::new(100.0, 40.0, 10.0)).norm() < 1e-9);
+        assert!((v[2].at - Point3::new(60.0, 0.0, 10.0)).norm() < 1e-9);
+        // The X of a plane square to the world X is the world Y.
+        assert!((plane_x(&Vector3::x()) - Vector3::y()).norm() < 1e-12);
+        // One bolt per picked point; the same point twice is refused.
+        let p = |x: Real| {
+            Reference::Through(Geom::Point {
+                p: Point3::new(x, 5.0, 3.0),
+            })
+        };
+        let v = axes(&start, &[p(0.0), p(30.0)], &Spread::One, &end).unwrap();
+        assert_eq!(v.len(), 2);
+        assert!((v[1].at - Point3::new(30.0, 5.0, 10.0)).norm() < 1e-9);
+        assert!(axes(&start, &[p(0.0), p(0.0)], &Spread::One, &end).is_err());
+        assert!(axes(&start, &[], &Spread::One, &end).is_err());
+    }
+
     #[test]
     fn a_centre_is_projected_and_bad_terminations_are_refused() {
         let start = plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]);
@@ -1058,6 +1400,9 @@ mod tests {
         let s = stack_along(&parts, &axis, 6.0, 0.05);
         assert_eq!(s.iter().map(|x| x.part).collect::<Vec<_>>(), vec![2, 1, 0]);
         assert!((s[2].to - 30.0).abs() < 1e-9);
+        // The drilled plate is not cut again; the others are.
+        let solid: Vec<bool> = s.iter().map(|p| solid_on_axis(&parts, &axis, p)).collect();
+        assert_eq!(solid, vec![false, true, true]);
     }
 
     /// Use case 3: Blind, a 10 mm plate on a 40 mm block: the threaded hole
@@ -1315,6 +1660,9 @@ mod tests {
             start,
             references: Vec::new(),
             distances: [10.0, 10.0],
+            spread: Spread::One,
+            fit: FastenerFit::Normal,
+            length: None,
             end,
             end_auto: true,
             thread: ISO_METRIC.into(),
@@ -1323,6 +1671,7 @@ mod tests {
                 .iter()
                 .map(|(role, nut_side)| BoltFastener {
                     occurrence: 0,
+                    instance: 0,
                     nut_side: *nut_side,
                     role: *role,
                     family: String::new(),
@@ -1410,10 +1759,12 @@ mod tests {
             (Role::Nut, true),
         ];
         let m = Making {
-            axis,
-            holes: hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
-            clearance: vec![vec![upper], vec![lower]],
-            tapped: Vec::new(),
+            instances: vec![Instance::new(
+                axis,
+                hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
+                &[vec![upper], vec![lower]],
+                &[],
+            )],
             start_plane: (Point3::new(0.0, 0.0, 20.0), Vector3::z()),
             end_plane: (Point3::new(0.0, 0.0, 0.0), -Vector3::z()),
             fasteners,
@@ -1484,11 +1835,99 @@ mod tests {
         assert!(a.features.as_ref().unwrap().participants.is_empty());
         // A connection that cannot be made changes nothing.
         let mut bad = m;
-        bad.holes[0].0.diameter = 0.0;
+        bad.instances[0].holes[0].0.diameter = 0.0;
         let snapshot = format!("{:?}", asm(&p, id));
         assert!(make(&mut p, id, bad).is_err());
         assert_eq!(format!("{:?}", asm(&p, id)), snapshot);
         assert!(remove(&mut p, id, 99).is_err());
+    }
+
+    /// Use case 16: one connection, two bolts (a grid of 2): each bolt gets
+    /// its own hole and its own stack held on that hole's axis; the second
+    /// bolt's upper plate already has a hole there, so its hole cuts only the
+    /// lower plate. Delete removes both bolts and both holes.
+    #[test]
+    fn use_case_two_bolts_in_one_connection() {
+        let (mut p, id, [lower, upper]) = two_plates();
+        let h = hole_sizes(Standards::global(), ISO_METRIC, "M8", FastenerFit::Normal).unwrap();
+        let (bolt, _) = member(&mut p, "ISO 4017", "M8 x 30");
+        let (nut, nk) = member(&mut p, "ISO 4032", "M8");
+        let lay = layout(
+            BoltKind::ThroughAll,
+            20.0,
+            0.0,
+            8.0,
+            &[0.0],
+            0.0,
+            &[thick(nk)],
+        );
+        let start = face(upper, "Box1:Top", [30.0, 40.0, 10.0]);
+        let end = face(lower, "Box1:Bottom", [30.0, 40.0, 0.0]);
+        let at = |x: Real| Axis {
+            at: Point3::new(x, 40.0, 20.0),
+            dir: -Vector3::z(),
+            length: 20.0,
+        };
+        let inst = |x: Real, cut: &[Vec<u32>]| {
+            Instance::new(
+                at(x),
+                hole_ops(&at(x), BoltKind::ThroughAll, &h, 0.0),
+                cut,
+                &[],
+            )
+        };
+        let m = Making {
+            instances: vec![
+                inst(30.0, &[vec![upper], vec![lower]]),
+                inst(90.0, &[vec![lower]]),
+            ],
+            start_plane: (Point3::new(0.0, 0.0, 20.0), Vector3::z()),
+            end_plane: (Point3::origin(), -Vector3::z()),
+            fasteners: vec![
+                Placing {
+                    component: bolt,
+                    name: "ISO 4017 M8 x 30".into(),
+                    nut_side: false,
+                    offset: lay.head[0],
+                },
+                Placing {
+                    component: nut,
+                    name: "ISO 4032 M8".into(),
+                    nut_side: true,
+                    offset: lay.nut[0],
+                },
+            ],
+            record: record(
+                BoltKind::ThroughAll,
+                start,
+                end,
+                &[(Role::Bolt, false), (Role::Nut, true)],
+            ),
+        };
+        let made = make(&mut p, id, m).unwrap();
+        let s = solve_in(&mut p, id);
+        assert!(s.converged, "{:?}", s.sick);
+        let a = asm(&p, id).clone();
+        let b = &a.bolts[0];
+        assert_eq!(b.holes.len(), 2);
+        assert_eq!(b.fasteners.len(), 4);
+        assert_eq!(
+            b.fasteners.iter().map(|f| f.instance).collect::<Vec<_>>(),
+            vec![0, 0, 1, 1]
+        );
+        assert_eq!(a.constraints.len(), 8);
+        // Each stack on its own axis: the bolts' heads at z 20, the nuts at 0.
+        let o = |k: usize| origin_of(&p, id, b.fasteners[k].occurrence).0;
+        assert!(close(o(0), [30.0, 40.0, 20.0]), "{:?}", o(0));
+        assert!(close(o(2), [90.0, 40.0, 20.0]), "{:?}", o(2));
+        assert!(close(o(3), [90.0, 40.0, 0.0]), "{:?}", o(3));
+        let f = a.features.clone().unwrap();
+        assert_eq!(f.participants[&b.holes[0]], vec![vec![upper], vec![lower]]);
+        assert_eq!(f.participants[&b.holes[1]], vec![vec![lower]]);
+        remove(&mut p, id, made).unwrap();
+        let a = asm(&p, id);
+        assert!(a.bolts.is_empty() && a.constraints.is_empty());
+        assert!(a.features.as_ref().unwrap().participants.is_empty());
     }
 
     /// Use case 13: a 10 mm plate on a 40 mm block, Blind: the clearance hole
@@ -1537,10 +1976,7 @@ mod tests {
         assert_eq!(holes[1].1, HoleUse::Tapped);
         assert!((holes[1].0.diameter - 6.75).abs() < 1e-9);
         let m = Making {
-            axis,
-            holes,
-            clearance: vec![vec![top]],
-            tapped: vec![vec![blk]],
+            instances: vec![Instance::new(axis, holes, &[vec![top]], &[vec![blk]])],
             start_plane: (Point3::new(0.0, 0.0, 50.0), Vector3::z()),
             end_plane: (Point3::new(0.0, 0.0, 40.0), Vector3::z()),
             fasteners: vec![

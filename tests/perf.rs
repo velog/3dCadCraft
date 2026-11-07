@@ -5479,10 +5479,12 @@ fn bolted_connection_within_budget() {
         hint: [60.0, 40.0, 0.0],
     };
     let m = Making {
-        axis,
-        holes: bolted::hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
-        clearance: vec![vec![upper], vec![lower]],
-        tapped: Vec::new(),
+        instances: vec![bolted::Instance::new(
+            axis,
+            bolted::hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
+            &[vec![upper], vec![lower]],
+            &[],
+        )],
         start_plane: (Point3::new(0.0, 0.0, 20.0), Vector3::z()),
         end_plane: (Point3::origin(), -Vector3::z()),
         fasteners: Vec::new(),
@@ -5494,6 +5496,9 @@ fn bolted_connection_within_budget() {
             start: face(upper, "Box1:Top"),
             references: Vec::new(),
             distances: [0.0; 2],
+            spread: bolted::Spread::One,
+            fit: Default::default(),
+            length: None,
             end: face(lower, "Box1:Bottom"),
             end_auto: true,
             thread: ISO_METRIC.into(),

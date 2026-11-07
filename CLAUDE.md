@@ -223,6 +223,13 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     reported, its `debug`, `release` and `doc` folders go (`cargo clean --profile dev`, `--release`, `--doc`), wherever the target
     directory is. Screenshots, logs and saved files next to them stay. Never while a build or another session uses that directory.
 
+23. **Every pick is marked, items are shown with an icon and a text** (owner's rule, 2026-11-07): whatever a command's
+    selector holds is drawn in the view in that selector's colour for as long as the command is open (a face tinted,
+    an edge thick, a point or a circle's centre marked, a distance as a dimension), and what it would take is lit under
+    the cursor (rule 19). Lists and rows of things (fasteners, components, families, members) show the thing's icon
+    beside its description wherever an icon exists (`icons::paint_category` for library families), so a list is read at
+    a glance. A command panel that shows a pick only as text is not done.
+
 23. **Check solidcore for updates before kernel work** (owner's rule, 2026-11-06): before starting kernel work (a speed
     fix, a kernel bug, a pin move) and at least once a day while it goes on, fetch `tangency-labs/solidcore` main and
     `tangency-labs/solidcraft` main. On new solidcore commits: list those that touch `crates/solidcore/src` (tests and

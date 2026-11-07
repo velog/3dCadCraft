@@ -3420,10 +3420,12 @@ fn bolted_r66() -> Project {
         (nut, "ISO 4032 M8", Role::Nut, true, lay.nut[1]),
     ];
     let m = Making {
-        axis,
-        holes: bolted::hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
-        clearance: vec![vec![upper], vec![lower]],
-        tapped: Vec::new(),
+        instances: vec![bolted::Instance::new(
+            axis,
+            bolted::hole_ops(&axis, BoltKind::ThroughAll, &h, 0.0),
+            &[vec![upper], vec![lower]],
+            &[],
+        )],
         start_plane: (Point3::new(0.0, 0.0, 20.0), Vector3::z()),
         end_plane: (Point3::new(0.0, 0.0, 0.0), -Vector3::z()),
         fasteners: parts
@@ -3443,6 +3445,9 @@ fn bolted_r66() -> Project {
             start: face(upper, "Box1:Top", 10.0),
             references: Vec::new(),
             distances: [10.0, 10.0],
+            spread: bolted::Spread::One,
+            fit: Default::default(),
+            length: None,
             end: face(lower, "Box1:Bottom", 0.0),
             end_auto: true,
             thread: ISO_METRIC.into(),
@@ -3451,6 +3456,7 @@ fn bolted_r66() -> Project {
                 .iter()
                 .map(|(_, name, role, nut_side, _)| BoltFastener {
                     occurrence: 0,
+                    instance: 0,
                     nut_side: *nut_side,
                     role: *role,
                     family: name.rsplit_once(' ').map_or(*name, |x| x.0).to_owned(),

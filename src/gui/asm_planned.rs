@@ -25,7 +25,6 @@ use Row::{Button, Check, Combo, Head, Note, Num, Radio, Sel, Text};
 const COMPONENTS: &[PickKind] = &[PickKind::Body];
 const PLANE: &[PickKind] = &[PickKind::PlanarFace, PickKind::Plane];
 const EDGE: &[PickKind] = &[PickKind::Edge, PickKind::StraightEdge];
-const CIRCLE: &[PickKind] = &[PickKind::Edge];
 const LINE: &[PickKind] = &[PickKind::StraightEdge, PickKind::Axis];
 const CYLINDER: &[PickKind] = &[PickKind::Face];
 /// Bolted Connection's start plane: a planar face, or an edge whose face it
@@ -35,6 +34,8 @@ const BOLT_START: &[PickKind] = &[PickKind::PlanarFace, PickKind::Plane, PickKin
 const BOLT_HOLE: &[PickKind] = &[PickKind::Face, PickKind::Edge];
 /// On Point: points, or a circular edge (its centre: Concentric).
 const BOLT_POINT: &[PickKind] = &[PickKind::Point, PickKind::Edge];
+/// Bolted Connection's centre: a rim or a round face (Circular: a boss).
+const BOLT_CIRCLE: &[PickKind] = &[PickKind::Edge, PickKind::Face];
 /// The termination: a planar face or a work plane.
 const BOLT_END: &[PickKind] = &[PickKind::PlanarFace, PickKind::Plane];
 /// A face or edge of a feature (its feature pattern).
@@ -77,7 +78,7 @@ const GEOMETRY: &[PickKind] = &[
 ];
 
 const BOM: &[&str] = &["Normal", "Phantom", "Reference", "Purchased", "Inseparable"];
-const PLACEMENT: &[&str] = &["Linear", "Concentric", "On Point", "By Hole"];
+const PLACEMENT: &[&str] = &["Linear", "Concentric", "On Point", "By Hole", "Circular"];
 const MODEL: &[&str] = &["Component", "Feature", "No Model"];
 const STATUS: &[&str] = &["Mirror", "Reuse", "Exclude"];
 const DEST: &[&str] = &["Insert in Assembly", "Open in New Window"];
@@ -885,12 +886,20 @@ impl AsmPlanned {
                             EDGE,
                         ),
                         Num("Distance 2", 10.0, " mm"),
+                        Num("Count 1", 1.0, ""),
+                        Num("Spacing 1", 30.0, " mm"),
+                        Num("Count 2", 1.0, ""),
+                        Num("Spacing 2", 30.0, " mm"),
                         Sel(
                             "circle",
                             "Circular Reference",
-                            "select a circular edge for the centre",
-                            CIRCLE,
+                            "select circular edges (a bolt in each centre)",
+                            BOLT_CIRCLE,
                         ),
+                        Num("Count", 4.0, ""),
+                        Num("Radius", 40.0, " mm"),
+                        Num("Angle", 0.0, "°"),
+                        Num("Span", 360.0, "°"),
                         Sel(
                             "point",
                             "Point",
@@ -900,7 +909,7 @@ impl AsmPlanned {
                         Sel(
                             "hole",
                             "Existing Hole",
-                            "select an existing hole (its wall or its rim)",
+                            "select existing holes (their wall or rim; a bolt in each)",
                             BOLT_HOLE,
                         ),
                         Check("Follow Pattern", false),
@@ -919,6 +928,7 @@ impl AsmPlanned {
                         Head("Thread"),
                         Combo("Thread", &["ISO Metric profile"], 0),
                         Combo("Diameter", &["M8"], 0),
+                        Combo("Hole Fit", &["Close", "Normal", "Loose"], 1),
                         Head("Fasteners"),
                         Combo("Standard", &["All"], 0),
                         Combo("Category", &["All"], 0),

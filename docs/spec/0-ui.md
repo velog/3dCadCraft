@@ -101,6 +101,7 @@ The look of everything around the view has one source. New panels take colours f
 |---|---|---|
 | Trim | under the cursor only the piece that would go is marked, solid and in the "not solved" colour of the scheme; the rest of the curve stays as it is; no snap glyph | 🟡 waiting for the owner's check |
 | Extend, Split | the curve under the cursor is marked; no snap glyph | 🟡 waiting for the owner's check |
+| Every command's picks (rule 23, owner 2026-11-07) | each selector's picks stay drawn in the view in its colour while the command is open (faces tinted, edges thick, points and circle centres marked, distances as dimensions); rows of items show the item's icon beside its text | 🟡 Bolted Connection first (spec 6.2 §3.2d) |
 
 ### 2.6 Properties panel (modelled on Inventor)
 

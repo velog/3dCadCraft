@@ -14,7 +14,7 @@ use eframe::egui;
 use super::CadCraftApp;
 use super::bolted::{self as panel, Role, StackItem};
 use super::part_planned::PartDialog;
-use crate::assembly::bolted::{self, BoltFastener, BoltKind, BoltedConnection, HoleUse, Placement};
+use crate::assembly::bolted::{self, BoltFastener, BoltKind, BoltedConnection, Spread};
 use crate::assembly::relation::{Geom, GeomRef};
 use crate::components::catalog::{Catalog, Source};
 use crate::components::fit::{self, Fit, Target};
@@ -27,6 +27,12 @@ const ON: Real = 0.05;
 
 /// A connection in the browser: id, title, its fasteners (occurrence, name).
 type BoltRow = (u32, String, Vec<(u32, String)>);
+
+/// A preview member: its file, on the nut side, its seat.
+type GhostAt = (PathBuf, bool, Real);
+
+/// Occurrence paths a hole cuts.
+type Paths = Vec<Vec<u32>>;
 
 /// One fastener as it will be placed.
 struct Piece {
@@ -42,15 +48,19 @@ struct Piece {
 
 /// Everything OK needs, found before anything changes.
 struct Plan {
-    axis: bolted::Axis,
     kind: BoltKind,
-    holes: Vec<(crate::part::bolt_hole::BoltHoleOp, HoleUse)>,
-    /// Occurrence paths cut by the clearance hole and by the tapped one.
-    clearance: Vec<Vec<u32>>,
-    tapped: Vec<Vec<u32>>,
+    /// Each bolt: its axis, its holes and what they cut.
+    instances: Vec<bolted::Instance>,
     pieces: Vec<Piece>,
     record: BoltedConnection,
     bolt_length: Real,
+    /// The lengths of the bolt's family that work for this grip.
+    lengths: Vec<Real>,
+    /// Each head-side seat above the start plane, each nut-side seat below
+    /// the termination, where the nut side ends.
+    head_seats: Vec<Real>,
+    nut_seats: Vec<Real>,
+    nut_end: Real,
 }
 
 /// A washer's or a nut's thickness along its axis, from its table.
@@ -136,15 +146,48 @@ impl CadCraftApp {
         }
     }
 
+    /// What the preview shows of the plan: each member's file, side and
+    /// seat, and the panel's numbers.
+    pub(super) fn bolted_plan_pub(
+        &self,
+        d: &PartDialog,
+    ) -> Result<(Vec<GhostAt>, panel::View), String> {
+        let plan = self.bolted_plan(d)?;
+        let ghosts = plan
+            .pieces
+            .iter()
+            .map(|p| (p.file.clone(), p.nut_side, p.offset))
+            .collect();
+        Ok((
+            ghosts,
+            panel::View {
+                ghosts: Vec::new(),
+                length: plan.bolt_length,
+                lengths: plan.lengths,
+                bolt: plan
+                    .pieces
+                    .first()
+                    .map_or_else(String::new, |p| p.name.clone()),
+                head_seats: plan.head_seats,
+                nut_seats: plan.nut_seats,
+                nut_end: plan.nut_end,
+            },
+        ))
+    }
+
     /// The plan of the panel's connection, or why there is none (nothing changes).
-    fn bolted_plan(&mut self, d: &PartDialog) -> Result<Plan, String> {
-        let axis = match &d.bolt.axis {
-            Some(Ok(a)) => *a,
+    fn bolted_plan(&self, d: &PartDialog) -> Result<Plan, String> {
+        let axes = match &d.bolt.axes {
+            Some(Ok(a)) if !a.is_empty() => a.clone(),
             Some(Err(e)) => return Err(e.clone()),
-            None => return Err("pick the start plane, the reference and the termination".into()),
+            _ => return Err("pick the start plane, the reference and the termination".into()),
         };
+        let axis = axes[0];
         if let Some(p) = panel::stack_problems(d).into_iter().next() {
             return Err(p);
+        }
+        if d.bolt.head.is_empty() {
+            return Err("Head side: add a bolt".into());
         }
         let kind = panel::kind(d);
         let catalog = d
@@ -154,28 +197,70 @@ impl CadCraftApp {
             .ok_or("the Component Library could not be read")?;
         let (size, h) = panel::holes(d).ok_or("there is no clearance hole for this size")?;
         let thread = panel::choice(d, "Thread").unwrap_or_default();
-        // The plates the clearance hole goes through, and a blind one's last.
-        let clearance: Vec<Vec<u32>> = d
-            .bolt
-            .plates
-            .iter()
-            .filter(|p| p.from < axis.length - ON)
-            .map(|p| p.path.clone())
-            .collect();
-        if clearance.is_empty() {
-            return Err("no component between the start plane and the termination".into());
-        }
-        let last = match kind {
-            BoltKind::ThroughAll => None,
-            BoltKind::Blind => Some(
-                d.bolt
-                    .plates
-                    .iter()
-                    .find(|p| (p.from - axis.length).abs() <= ON)
-                    .ok_or("a blind connection needs a component at the blind start plane")?,
-            ),
+        // Each bolt's plates: the clearance hole cuts those between the start
+        // plane and the termination (not one already drilled there), a blind
+        // one's tapped hole the plate at the termination.
+        let mut cuts: Vec<(Paths, Paths)> = Vec::new();
+        let mut last_t = Real::INFINITY;
+        let grip_of = |plates: &[panel::PlateRow]| {
+            plates
+                .iter()
+                .filter(|p| p.from < axis.length - ON)
+                .map(|p| p.from + p.thickness)
+                .fold(0.0, Real::max)
         };
-        let last_t = last.map_or(0.0, |p| p.thickness);
+        let first_grip = d.bolt.plates.first().map_or(0.0, |p| grip_of(p));
+        for (i, plates) in d.bolt.plates.iter().enumerate() {
+            let clearance: Vec<&panel::PlateRow> = plates
+                .iter()
+                .filter(|p| p.from < axis.length - ON)
+                .collect();
+            if clearance.is_empty() {
+                return Err(if i == 0 {
+                    "no component between the start plane and the termination".into()
+                } else {
+                    format!(
+                        "bolt {}: no component between the start plane and the termination",
+                        i + 1
+                    )
+                });
+            }
+            let grip = grip_of(plates);
+            if (grip - axis.length).abs() > ON {
+                return Err(format!(
+                    "the bolts would go through different thicknesses ({:.2} mm and {grip:.2} mm): make two connections",
+                    if i == 0 { axis.length } else { first_grip }
+                ));
+            }
+            let last = match kind {
+                BoltKind::ThroughAll => None,
+                BoltKind::Blind => Some(
+                    plates
+                        .iter()
+                        .find(|p| (p.from - axis.length).abs() <= ON)
+                        .ok_or("a blind connection needs a component at the blind start plane")?,
+                ),
+            };
+            if let Some(l) = last {
+                last_t = last_t.min(l.thickness);
+            }
+            cuts.push((
+                clearance
+                    .iter()
+                    .filter(|p| p.solid)
+                    .map(|p| p.path.clone())
+                    .collect(),
+                last.filter(|p| p.solid)
+                    .map(|p| vec![p.path.clone()])
+                    .unwrap_or_default(),
+            ));
+        }
+        if cuts.len() != axes.len() {
+            return Err("the plates are still being found".into());
+        }
+        if !last_t.is_finite() {
+            last_t = 0.0;
+        }
         let head = &d.bolt.head;
         let nut: &[StackItem] = if kind == BoltKind::Blind {
             &[]
@@ -214,11 +299,27 @@ impl CadCraftApp {
         let sink = bolts.first().map_or(0.0, |b| b.2);
         let lay = bolted::layout(kind, axis.length, last_t, h.major, &head_t, sink, &nut_t);
         let lengths: Vec<Real> = bolts.iter().map(|b| b.1).collect();
+        let mut fitting: Vec<Real> = lengths
+            .iter()
+            .copied()
+            .filter(|l| {
+                *l >= lay.min_length - 1e-6 && lay.max_length.is_none_or(|m| *l <= m + 1e-6)
+            })
+            .collect();
+        fitting.sort_by(Real::total_cmp);
+        fitting.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
         let bolt_name = catalog
             .families
             .get(bolt.family)
             .map_or_else(String::new, |f| f.name.clone());
-        let Some(k) = bolted::choose_length(&lengths, lay.min_length, lay.max_length) else {
+        let chosen = d
+            .bolt
+            .length
+            .and_then(|want| lengths.iter().position(|l| (l - want).abs() < 1e-6))
+            .filter(|k| fitting.iter().any(|l| (l - lengths[*k]).abs() < 1e-6));
+        let Some(k) =
+            chosen.or_else(|| bolted::choose_length(&lengths, lay.min_length, lay.max_length))
+        else {
             return Err(match lay.max_length {
                 Some(max) => format!(
                     "no {bolt_name} {size} from {:.1} to {:.1} mm long",
@@ -260,7 +361,13 @@ impl CadCraftApp {
             });
         }
         let depth = bolted::tapped_depth(bolt_length, &lay, axis.length, h.major, last_t);
-        let holes = bolted::hole_ops(&axis, kind, &h, depth);
+        let instances: Vec<bolted::Instance> = axes
+            .iter()
+            .zip(&cuts)
+            .map(|(a, (clearance, tapped))| {
+                bolted::Instance::new(*a, bolted::hole_ops(a, kind, &h, depth), clearance, tapped)
+            })
+            .collect();
         let placement = panel::placement(d);
         let references: Vec<GeomRef> = panel::reference_keys(placement)
             .iter()
@@ -292,6 +399,9 @@ impl CadCraftApp {
                 d.num(0, "Distance 1").unwrap_or(10.0),
                 d.num(0, "Distance 2").unwrap_or(10.0),
             ],
+            spread: panel::spread(d),
+            fit: panel::fit(d),
+            length: d.bolt.length,
             end,
             end_auto: d.bolt.auto_end,
             thread,
@@ -300,6 +410,7 @@ impl CadCraftApp {
                 .iter()
                 .map(|p| BoltFastener {
                     occurrence: 0,
+                    instance: 0,
                     nut_side: p.nut_side,
                     role: p.item.role,
                     family: family_of(p.item.family).map_or_else(String::new, |f| f.name.clone()),
@@ -310,14 +421,15 @@ impl CadCraftApp {
             holes: Vec::new(),
         };
         Ok(Plan {
-            axis,
             kind,
-            holes,
-            clearance,
-            tapped: last.map(|p| vec![p.path.clone()]).unwrap_or_default(),
+            instances,
             pieces,
             record,
             bolt_length,
+            lengths: fitting,
+            nut_end: nut_t.iter().sum(),
+            head_seats: lay.head,
+            nut_seats: lay.nut,
         })
     }
 
@@ -364,11 +476,10 @@ impl CadCraftApp {
             Some(Geom::Plane { p, n }) => Ok((p, n)),
             _ => Err("the start plane or the termination is no plane".to_owned()),
         };
+        let n = plan.instances.len();
+        let grip = plan.instances.first().map_or(0.0, |i| i.axis.length);
         let making = bolted::Making {
-            axis: plan.axis,
-            holes: plan.holes.clone(),
-            clearance: plan.clearance.clone(),
-            tapped: plan.tapped.clone(),
+            instances: plan.instances.clone(),
             start_plane: plane(self.bolt_world(&plan.record.start))?,
             end_plane: plane(self.bolt_world(&plan.record.end))?,
             fasteners,
@@ -400,7 +511,12 @@ impl CadCraftApp {
         self.asm.sel = placed;
         self.context_follow();
         Ok(format!(
-            "Bolted Connection {id}: {} {:.0} mm{}, grip {:.2} mm",
+            "Bolted Connection {id}: {}{} {:.0} mm{}, grip {:.2} mm",
+            if n > 1 {
+                format!("{n} x ")
+            } else {
+                String::new()
+            },
             plan.pieces.first().map_or("", |p| p.name.as_str()),
             plan.bolt_length,
             if plan.kind == BoltKind::Blind {
@@ -408,7 +524,7 @@ impl CadCraftApp {
             } else {
                 " with nut"
             },
-            plan.axis.length
+            grip
         ))
     }
 
@@ -465,6 +581,36 @@ impl CadCraftApp {
         }
         d.set_num(0, "Distance 1", b.distances[0]);
         d.set_num(0, "Distance 2", b.distances[1]);
+        match b.spread {
+            Spread::One => {}
+            Spread::Grid { count, spacing } => {
+                d.set_num(0, "Count 1", f64::from(count[0]));
+                d.set_num(0, "Count 2", f64::from(count[1]));
+                d.set_num(0, "Spacing 1", spacing[0]);
+                d.set_num(0, "Spacing 2", spacing[1]);
+            }
+            Spread::Circle {
+                count,
+                radius,
+                angle,
+                span,
+            } => {
+                d.set_num(0, "Count", f64::from(count));
+                d.set_num(0, "Radius", radius);
+                d.set_num(0, "Angle", angle.to_degrees());
+                d.set_num(0, "Span", span.to_degrees());
+            }
+        }
+        d.set_index(
+            0,
+            "Hole Fit",
+            match b.fit {
+                crate::part::hole::FastenerFit::Close => 0,
+                crate::part::hole::FastenerFit::Normal => 1,
+                crate::part::hole::FastenerFit::Loose => 2,
+            },
+        );
+        d.bolt.length = b.length;
         let label = |g: &GeomRef| {
             labels
                 .iter()
@@ -475,7 +621,7 @@ impl CadCraftApp {
         let keys = panel::reference_keys(b.placement);
         for (k, g) in b.references.iter().enumerate() {
             let key = keys.get(k).copied().unwrap_or(keys[keys.len() - 1]);
-            if b.placement == Placement::OnPoint {
+            if panel::multi(d, key) {
                 d.add_ref(key, label(g), g.clone());
             } else {
                 d.set_ref(key, label(g), g.clone());
@@ -496,7 +642,7 @@ impl CadCraftApp {
                 .and_then(|c| c.families.iter().position(|f| f.name == name))
         };
         let (mut head, mut nut) = (Vec::new(), Vec::new());
-        for f in &b.fasteners {
+        for f in b.fasteners.iter().filter(|f| f.instance == 0) {
             if let Some(i) = family(&f.family) {
                 let item = StackItem {
                     family: i,

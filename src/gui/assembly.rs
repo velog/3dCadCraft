@@ -2217,7 +2217,10 @@ impl CadCraftApp {
 
         // --- drags: Free Rotate's circle, moving a component ---
         let circle = self.rotate_circle(rect);
+        // Bolted Connection's length arrow takes its own drag.
+        let bolt_grip = !on_cube && !modal && self.bolt_grip(ui, response, rect);
         if response.drag_started_by(PointerButton::Primary)
+            && !bolt_grip
             && !on_cube
             && !modal
             && !constraining
@@ -2241,7 +2244,7 @@ impl CadCraftApp {
             }
         }
         self.asm_box_gesture(ui, response, rect);
-        let mut busy = self.asm.drag.is_some() || self.box_select.is_some();
+        let mut busy = bolt_grip || self.asm.drag.is_some() || self.box_select.is_some();
         if let (Some(d), Some(now)) = (self.asm.drag, response.interact_pointer_pos())
             && response.dragged_by(PointerButton::Primary)
         {
@@ -2371,7 +2374,8 @@ impl CadCraftApp {
         self.asm_sub_overlay(&painter, rect);
         self.asm_sketch_overlay(&painter, rect);
         self.bolt_follow();
-        self.bolt_preview(&painter, rect);
+        self.bolt_preview(&painter, rect, pointer.filter(|_| on_view));
+        self.bolt_view_menu(&ctx);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_select_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_corner_overlay(&painter, rect, pointer.filter(|_| on_view));

@@ -668,6 +668,24 @@ impl CadCraftApp {
     /// The face or edge of a component under the cursor (an edge within a
     /// few pixels wins over the face behind it).
     fn geom_under(&self, pos: Pos2, rect: Rect) -> Option<GeomRef> {
+        self.geom_under_with(pos, rect, &|_| true, true)
+    }
+
+    /// The vertex under the cursor (as a point of one of its planar faces).
+    pub(super) fn asm_vertex_under_pub(&self, pos: Pos2, rect: Rect) -> Option<GeomRef> {
+        self.asm_vertex_under(pos, rect)
+    }
+
+    /// [`Self::geom_under`] for an input that takes only some edges (`edge_ok`
+    /// sees each edge's sampled points: a straight one has two) and maybe no
+    /// faces (rule 19: what it does not take is never in the way).
+    pub(super) fn geom_under_with(
+        &self,
+        pos: Pos2,
+        rect: Rect,
+        edge_ok: &dyn Fn(&[Point3]) -> bool,
+        faces: bool,
+    ) -> Option<GeomRef> {
         let parts = self.pick_parts();
         let face = self.part_hit_in(&parts, pos, rect);
         let (o, dir) = self.camera.ray(pos, rect)?;
@@ -678,6 +696,9 @@ impl CadCraftApp {
                 continue;
             };
             for (r, pts) in edges.iter() {
+                if !edge_ok(pts) {
+                    continue;
+                }
                 for w in pts.windows(2) {
                     let (p, q) = (part.place * w[0], part.place * w[1]);
                     let (Some(sp), Some(sq)) =
@@ -714,6 +735,9 @@ impl CadCraftApp {
         }
         if let Some((_, g)) = best {
             return Some(g);
+        }
+        if !faces {
+            return None;
         }
         let (part, f, t) = face?;
         let name = self.face_name(&part, f)?;
