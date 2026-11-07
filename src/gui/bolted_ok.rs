@@ -511,14 +511,13 @@ impl CadCraftApp {
         self.asm.sel = placed;
         self.context_follow();
         Ok(format!(
-            "Bolted Connection {id}: {}{} {:.0} mm{}, grip {:.2} mm",
+            "Bolted Connection {id}: {}{}{}, grip {:.2} mm",
             if n > 1 {
                 format!("{n} x ")
             } else {
                 String::new()
             },
             plan.pieces.first().map_or("", |p| p.name.as_str()),
-            plan.bolt_length,
             if plan.kind == BoltKind::Blind {
                 " into a tapped hole"
             } else {

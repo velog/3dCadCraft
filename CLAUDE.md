@@ -573,6 +573,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `theme::scene_rgb`; changing a scheme needs `scene_dirty`. A see-through colour must be valid premultiplied (r, g, b <= a).
 - **Pictures of the view are gamma data** (`theme::read_picture`, `ViewportRenderer::set_picture`): the shader returns them without `to_gamma`, and samples with `textureSampleLevel` (a plain sample is not allowed after a `discard` branch's non-uniform flow). Hover on the view through `theme::hover_edge()` (nothing with Prehighlight off), a pick that stays lit through `canvas().hover_edge`.
 - **A command panel's OK row goes through `theme::panel_footer`**: it stays on the bottom edge while the panel scrolls.
+- **`gui_win.py launch --beside` can leave the window's bottom under the taskbar** (outer y 182 on a 1032 px work area): clicks on
+  OK / Cancel went to the taskbar while `shot` (PrintWindow) still showed the buttons. Check `info` and `place X Y` first.
 - **`gui_win.py`'s input is global, even with an explicit HWND**: it focuses the window, then sends keys and clicks to
   whatever is in front. Another session's window that came forward in between gets them (a scripted `r` opened Revolve there).
 - **Drag start:** egui reports a drag only after a few pixels of travel — pick the

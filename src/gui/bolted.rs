@@ -759,13 +759,12 @@ fn item_row(
                 *act = Some(Act::Move(side, k, true));
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(format!("{} · {name}", item.role.title())).strong(),
-                    )
-                    .truncate(),
-                )
-                .on_hover_text(format!("{name} ({})", category_name(category)));
+                ui.add(egui::Label::new(RichText::new(name.clone()).strong()).truncate())
+                    .on_hover_text(format!(
+                        "{}: {name} ({})",
+                        item.role.title(),
+                        category_name(category)
+                    ));
             });
         });
     });
@@ -1080,7 +1079,9 @@ impl CadCraftApp {
             (Some(s), Some(r)) => Some(
                 r.first()
                     .ok_or_else(|| "pick the reference".to_owned())
-                    .and_then(|r| bolted::entry(s, r)),
+                    // The first bolt itself (a bolt circle's is off its centre).
+                    .and_then(|r| bolted::entries(s, r, &spread))
+                    .and_then(|v| v.first().copied().ok_or_else(|| "no bolt".to_owned())),
             ),
             _ => None,
         };
@@ -1346,8 +1347,11 @@ impl CadCraftApp {
         for (k, (label, r)) in route.keys.iter().zip(labels) {
             let key = if *k == "start*" { "start" } else { k };
             if multi(d, key) {
+                // A selector of several picks stays active for the next one
+                // (the termination is found by itself; Next goes on).
                 d.add_ref(key, label, r);
-                stay = d.active == Some(key);
+                d.set_active(key);
+                stay = true;
             } else {
                 d.set_ref(key, label, r);
             }
