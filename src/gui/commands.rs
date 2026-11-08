@@ -1885,10 +1885,10 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("Solves every positional representation and says which ones fail")
         .spec("3.9-representations.md"),
-    c("asm.return_parent", "Return", "Връщане", Icon::Home)
+    c("asm.return_parent", "Return", "Връщане", Icon::ReturnUp)
         .run(Action::App(AppCmd::Return))
         .key("Ctrl+Equals")
-        .at(&[KEY])
+        .at(&[Place::Ribbon("3D Model", "Return"), KEY])
         .tip("Back from Edit in place to the assembly")
         .spec("3.10-top-down.md"),
     c("asm.promote", "Promote", "Издигане", Icon::Assembly)

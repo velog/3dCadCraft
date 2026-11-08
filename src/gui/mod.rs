@@ -38,6 +38,7 @@ mod blend;
 mod bolted;
 mod bolted_ok;
 mod bom;
+mod bom_thumbs;
 mod breadcrumb;
 mod browser_edit;
 mod camera;
@@ -5463,6 +5464,20 @@ impl CadCraftApp {
                 self.delete_selection();
             }
         }
+        // With nothing left for Esc to end, it leaves Edit in place (spec 3.10).
+        let esc_returns = pressed(Key::Escape)
+            && self.in_place_now().is_some()
+            && self.editing.is_none()
+            && self.open_state().command.is_none()
+            && self.sel.is_empty()
+            && self.sel_menu.is_none()
+            && self.constraint_menu.is_none()
+            && matches!(self.mode, Mode::Normal)
+            && self.layout.escape_target(ctx).is_none();
+        if esc_returns {
+            self.return_to_assembly();
+            return;
+        }
         // Esc first closes the selection menu (Shift + right-click).
         if pressed(Key::Escape)
             && self.sel_menu.take().is_none()
@@ -6632,6 +6647,12 @@ impl CadCraftApp {
                 {
                     self.mode = Mode::PickPlane(PickPurpose::NewSketch);
                     self.plane_picked(plane.clone());
+                    ui.close();
+                }
+                if self.in_place_now().is_some()
+                    && icons::menu_item(ui, Some(icons::Icon::ReturnUp), "Return", true).clicked()
+                {
+                    self.return_to_assembly();
                     ui.close();
                 }
                 if icons::menu_item(ui, Some(icons::Icon::Home), "Home View (F6)", true).clicked() {

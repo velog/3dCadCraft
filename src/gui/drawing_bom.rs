@@ -301,7 +301,7 @@ impl CadCraftApp {
     /// this file and of linked files, spec 3.1a): its top-level occurrence
     /// (balloons and parts lists count those), its component in this file's
     /// terms and its placement. `None`: `model` is no assembly.
-    fn drawing_leaves(
+    pub(super) fn drawing_leaves(
         &self,
         model: DocRef,
         reps: crate::drawing::ViewReps,

@@ -1331,6 +1331,7 @@ impl CadCraftApp {
                 center_point: self.tools.center_point,
                 assembly: self.is_assembly(),
                 drawing: self.is_drawing(),
+                in_place: self.in_place_now().is_some(),
                 drawing_sketch: vsk.is_some(),
                 asm_tool: self.asm_tool_action(),
                 rel_sick: self.cons.glyphs.sick,

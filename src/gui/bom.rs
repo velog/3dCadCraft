@@ -29,7 +29,14 @@ pub(super) struct BomWin {
     /// The item number being typed: part number and text (it applies when the field
     /// is left: an emptied field would turn back into a number under the fingers).
     typing: Option<(String, String)>,
+    /// The Thumbnail column is shown.
+    thumbnails: bool,
+    /// Its pictures.
+    thumbs: super::bom_thumbs::BomThumbs,
 }
+
+/// The side of a row's picture, in points.
+const THUMB_SIDE: f32 = 36.0;
 
 /// The Item Renumber row.
 struct RenumberUi {
@@ -57,6 +64,8 @@ impl Default for BomWin {
             picked: Default::default(),
             renumber: None,
             typing: None,
+            thumbnails: true,
+            thumbs: Default::default(),
         }
     }
 }
@@ -230,8 +239,11 @@ impl CadCraftApp {
                         step: 1.0,
                     });
                 }
-                if !customs.is_empty() {
-                    ui.menu_button("Columns", |ui| {
+                ui.menu_button("Columns", |ui| {
+                    ui.checkbox(&mut w.thumbnails, "Thumbnail")
+                        .on_hover_text("A picture of each component");
+                    if !customs.is_empty() {
+                        ui.separator();
                         ui.label("Custom Properties");
                         for c in &customs {
                             let mut on = w.extra.contains(c);
@@ -243,8 +255,8 @@ impl CadCraftApp {
                                 }
                             }
                         }
-                    });
-                }
+                    }
+                });
             });
             if w.view == BomView::Structured {
                 ui.horizontal(|ui| {
@@ -295,7 +307,10 @@ impl CadCraftApp {
             }
             ui.separator();
             egui::ScrollArea::both().auto_shrink([false, true]).show(ui, |ui| {
-                egui::Grid::new("bom_grid").striped(true).num_columns(COLS.len() + w.extra.len() + 1).show(ui, |ui| {
+                egui::Grid::new("bom_grid").striped(true).num_columns(COLS.len() + w.extra.len() + 2).show(ui, |ui| {
+                    if w.thumbnails {
+                        ui.label(RichText::new("Thumbnail").strong());
+                    }
                     if model {
                         ui.label(RichText::new("Component").strong());
                     }
@@ -322,6 +337,9 @@ impl CadCraftApp {
                     ui.end_row();
                     for (ri, r) in rows.iter().enumerate() {
                         let doc = r.components.first().copied();
+                        if w.thumbnails {
+                            self.bom_thumb(ui, &mut w.thumbs, doc, THUMB_SIDE);
+                        }
                         // Components of this file can be edited here.
                         let local = r.components.iter().all(|c| c.library.is_none()) && !r.missing;
                         let tip = "A linked part file: open the part to change its Properties";

@@ -307,6 +307,8 @@ pub struct State {
     pub assembly: bool,
     /// The active document is a drawing.
     pub drawing: bool,
+    /// A component is being edited in place (Return is offered).
+    pub in_place: bool,
     /// A drawing's view sketch is open: the Sketch tab is shown.
     pub drawing_sketch: bool,
     /// The view shows the flat pattern.
@@ -560,6 +562,15 @@ fn panel(title: &'static str, cmds: Vec<Cmd>) -> PanelDef {
 }
 
 fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
+    let mut all = tab_panels(tab, st);
+    if st.in_place && tab == Tab::Model {
+        all.push(panel("Return", vec![c("asm.return_parent").large()]));
+    }
+    all
+}
+
+/// The panels of a tab, whatever is being edited.
+fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
     let in_sketch = "Only while editing a sketch";
     let constraints = if st.labels_shown {
         "sketch.hide_constraints"
@@ -1430,6 +1441,7 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 drawing_sketch: false,
                 assembly,
                 drawing,
+                in_place: !assembly && !drawing,
                 asm_tool: None,
                 rel_sick: false,
                 asm_dof: false,
@@ -1595,7 +1607,7 @@ const COLLAPSE_FIRST: &[&str] = &[
     "Author",
     "Format",
 ];
-const COLLAPSE_LAST: &[&str] = &["Sketch", "Create", "Modify", "Constrain", "Exit"];
+const COLLAPSE_LAST: &[&str] = &["Sketch", "Create", "Modify", "Constrain", "Exit", "Return"];
 
 /// Which panels are shown collapsed so that the row fits `avail`: starting
 /// from everything folded, panels open by importance — the everyday ones
