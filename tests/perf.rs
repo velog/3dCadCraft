@@ -2755,6 +2755,7 @@ fn speed_budgets() {
         let aid = project.add_document("Top", DocumentData::Assembly(asm.clone()));
         for (k, &d) in parts.iter().enumerate() {
             let source = ContextSource {
+                vertex: None,
                 assembly: aid,
                 target: vec![k as u32 + 2],
                 path: vec![1],
@@ -2871,6 +2872,7 @@ fn speed_budgets() {
             .iter()
             .map(|e| {
                 let source = ContextSource {
+                    vertex: None,
                     assembly: aid,
                     target: vec![2],
                     path: vec![1],
@@ -2909,6 +2911,7 @@ fn speed_budgets() {
         // The same outline as one click: Project Geometry of the flange's
         // whole top face (every edge of its 17 loops, one reference each).
         let top = ContextSource {
+            vertex: None,
             assembly: aid,
             target: vec![2],
             path: vec![1],
@@ -3138,6 +3141,7 @@ fn speed_budgets() {
             ("Box1:Back", [50.0, 60.0, 10.0]),
         ] {
             let source = ContextSource {
+                vertex: None,
                 assembly: asm,
                 target: vec![occ],
                 path: vec![b],
@@ -3164,9 +3168,66 @@ fn speed_budgets() {
             })))
             .unwrap();
         }
+        // An axis on one of its edges and a point on one of its vertices too.
+        {
+            use cadcraft3d::part::context::ContextGeom;
+            use cadcraft3d::part::{LineRef, PointRef, WorkAxisDef, WorkPointDef};
+            let Some(DocumentData::Part(bp)) = p.document(base).map(|d| &d.data) else {
+                panic!()
+            };
+            let (e, _) = bp.body.edges().next().unwrap();
+            let edge = cadcraft3d::part::blend::edge_ref(&bp.body, e).unwrap();
+            let vertex = bp
+                .body
+                .vertices()
+                .find_map(|(_, v)| v.name.clone())
+                .unwrap();
+            let Some(DocumentData::Assembly(a)) = p.document(asm).map(|d| &d.data) else {
+                panic!()
+            };
+            let mut refs: Vec<(ContextSource, ContextGeom)> = Vec::new();
+            for (edge, vertex) in [(Some(edge), None), (None, Some(vertex))] {
+                let source = ContextSource {
+                    vertex: vertex.clone(),
+                    assembly: asm,
+                    target: vec![occ],
+                    path: vec![b],
+                    face: edge.as_ref().map_or_else(
+                        || vertex.clone().unwrap_or_default(),
+                        |x| x.faces[0].clone(),
+                    ),
+                    hint: edge.as_ref().map_or([0.0; 3], |x| x.hint),
+                    edge,
+                    label: "Base:1".into(),
+                };
+                let geom = context::current(&p, &linked, a, &source).unwrap();
+                refs.push((source, geom));
+            }
+            let Some(DocumentData::Part(tp)) = p.document_mut(tools).map(|d| &mut d.data) else {
+                panic!()
+            };
+            for (source, geom) in refs {
+                let on_point = source.vertex.is_some();
+                let id = tp.add_context(ContextRef {
+                    id: String::new(),
+                    source,
+                    geom,
+                });
+                let def = if on_point {
+                    WorkDef::Point(WorkPointDef::OnPoint {
+                        point: PointRef::Context(id),
+                    })
+                } else {
+                    WorkDef::Axis(WorkAxisDef::OnLine {
+                        line: LineRef::Context(id),
+                    })
+                };
+                tp.add_work(WorkFeature::new(def)).unwrap();
+            }
+        }
         let mut z = 0.0;
         rows.push((
-            "assembly: Update of four assembly work planes after a component moved",
+            "assembly: Update of four assembly work planes, an axis and a point after a component moved",
             5.0,
             median_ms(5, || {
                 z += 1.0;

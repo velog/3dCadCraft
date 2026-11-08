@@ -96,6 +96,9 @@ pub enum PointRef {
     EdgeMid(String),
     /// A work point, by the id of its feature.
     Work(String),
+    /// A vertex of another component: a cross-part reference's copy
+    /// (format revision 68).
+    Context(String),
 }
 
 /// Complete definition of a sketch's plane and coordinate system.
@@ -177,6 +180,8 @@ pub struct WorkGeom {
     /// The curves of the cross-part references (edges of other components
     /// projected into sketches).
     pub context_curves: std::collections::HashMap<String, super::link::Shape3>,
+    /// The points of the cross-part references (vertices of other components).
+    pub context_points: std::collections::HashMap<String, Point3>,
 }
 
 impl WorkGeom {
@@ -192,6 +197,9 @@ impl WorkGeom {
         }
         if let Some(c) = g.curve() {
             self.context_curves.insert(id.to_owned(), c.shape());
+        }
+        if let Some(p) = g.point() {
+            self.context_points.insert(id.to_owned(), *p);
         }
     }
 }
@@ -256,6 +264,11 @@ pub fn point_of(r: &PointRef, body: &BRep, works: &WorkGeom) -> Result<Point3, P
             .get(id)
             .copied()
             .ok_or_else(|| PlacementError::WorkFeatureMissing(id.clone())),
+        PointRef::Context(id) => works
+            .context_points
+            .get(id)
+            .copied()
+            .ok_or_else(|| PlacementError::WorkFeatureMissing(id.clone())),
     }
 }
 
@@ -267,6 +280,7 @@ impl PointRef {
             PointRef::Vertex(v) => format!("Vertex {v}"),
             PointRef::EdgeMid(e) => format!("Midpoint of {e}"),
             PointRef::Work(id) => id.replace("WorkPoint", "Work Point"),
+            PointRef::Context(_) => "Vertex of another component".to_owned(),
         }
     }
 }

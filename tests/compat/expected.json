@@ -490,5 +490,12 @@
     "features": 1,
     "sketches": 0,
     "exact": true
+  },
+  "r68/work_context_r68.3dcadcraft": {
+    "volume": 4000.000000000003,
+    "faces": 6,
+    "features": 3,
+    "sketches": 0,
+    "exact": true
   }
 }

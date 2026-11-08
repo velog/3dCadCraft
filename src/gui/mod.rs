@@ -5473,6 +5473,7 @@ impl CadCraftApp {
             && self.sel_menu.is_none()
             && self.constraint_menu.is_none()
             && matches!(self.mode, Mode::Normal)
+            && !egui::Popup::is_any_open(ctx)
             && self.layout.escape_target(ctx).is_none();
         if esc_returns {
             self.return_to_assembly();

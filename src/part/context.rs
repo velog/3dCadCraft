@@ -42,6 +42,10 @@ pub struct ContextSource {
     /// The edge, when the reference is an edge projected into a sketch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge: Option<super::EdgeRef>,
+    /// The vertex's persistent name, when the reference is a vertex
+    /// (format revision 68).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertex: Option<String>,
     /// A point on the face (the part's coordinates of the source).
     pub hint: [f64; 3],
     /// Shown name, `Base:1 face`.
@@ -62,6 +66,11 @@ pub enum ContextGeom {
     Curve {
         /// The curve.
         curve: ContextCurve,
+    },
+    /// A vertex (format revision 68), an input of work features.
+    Point {
+        /// The point.
+        point: Point3,
     },
 }
 
@@ -332,7 +341,7 @@ impl ContextGeom {
     pub fn plane(&self) -> Option<&Plane> {
         match self {
             ContextGeom::Plane { plane } => Some(plane),
-            ContextGeom::Curve { .. } => None,
+            _ => None,
         }
     }
 
@@ -340,7 +349,15 @@ impl ContextGeom {
     pub fn curve(&self) -> Option<&ContextCurve> {
         match self {
             ContextGeom::Curve { curve } => Some(curve),
-            ContextGeom::Plane { .. } => None,
+            _ => None,
+        }
+    }
+
+    /// The point of a vertex reference.
+    pub fn point(&self) -> Option<&Point3> {
+        match self {
+            ContextGeom::Point { point } => Some(point),
+            _ => None,
         }
     }
 
@@ -354,6 +371,9 @@ impl ContextGeom {
                     && (a.x_axis.into_inner() - b.x_axis.into_inner()).norm() < tol.angular
             }
             (ContextGeom::Curve { curve: a }, ContextGeom::Curve { curve: b }) => a.same_as(b),
+            (ContextGeom::Point { point: a }, ContextGeom::Point { point: b }) => {
+                tol.points_coincide(a, b)
+            }
             _ => false,
         }
     }
@@ -594,6 +614,7 @@ impl super::PartDocument {
             self.context.retain(|c| c.id != id);
             self.work.context.remove(&id);
             self.work.context_curves.remove(&id);
+            self.work.context_points.remove(&id);
         }
     }
 
@@ -643,6 +664,7 @@ mod tests {
         ContextRef {
             id: String::new(),
             source: ContextSource {
+                vertex: None,
                 assembly: assembly(),
                 target: vec![2],
                 path: vec![1],

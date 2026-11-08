@@ -46,7 +46,7 @@ fn line_text(l: &LineRef) -> String {
     match l {
         LineRef::Origin(k) => format!("{} Axis", ["X", "Y", "Z"][(*k).min(2)]),
         LineRef::Edge(n) => format!("edge {n}"),
-        LineRef::Work(id) => id.clone(),
+        LineRef::Work(id) | LineRef::Context(id) => id.clone(),
     }
 }
 

@@ -165,7 +165,10 @@ pub(super) struct AsmUi {
     /// Faces of components an open work feature command picked in place
     /// (`PlaneRef::Context("?k")` = entry `k`), added to the part at OK
     /// after its Undo checkpoint; with their highlight.
-    pub work_contexts: Vec<(crate::part::context::ContextRef, ContextHover)>,
+    pub work_contexts: Vec<(crate::part::context::ContextRef, Option<ContextHover>)>,
+    /// The edge or vertex of another component under the cursor while a
+    /// work feature command is open: `?k` for `k` = the next entry.
+    pub work_new_context: std::cell::RefCell<Option<crate::part::context::ContextRef>>,
     /// The assembly's box when its work features are drawn or made: the
     /// tools part has no body of its own to size them by.
     pub work_box: std::cell::Cell<Option<(Point3, Point3)>>,
@@ -933,6 +936,7 @@ impl CadCraftApp {
         let label = crate::assembly::tree::nested(&self.project, &linked, a, top, sub)
             .map_or_else(|_| "?".to_owned(), |n| n.name);
         let source = ContextSource {
+            vertex: None,
             assembly: ip.assembly,
             target: edited,
             path,
@@ -1015,6 +1019,7 @@ impl CadCraftApp {
         let label = crate::assembly::tree::nested(&self.project, &linked, a, top, sub)
             .map_or_else(|_| "?".to_owned(), |n| n.name);
         let source = ContextSource {
+            vertex: None,
             assembly: ip.assembly,
             target: edited,
             path,
@@ -1031,6 +1036,100 @@ impl CadCraftApp {
                 geom,
             },
             pts,
+        ))
+    }
+
+    /// The vertex of another component under the cursor while editing in
+    /// place, as a reference, and its point in the edited part's frame.
+    pub(super) fn context_vertex_under(
+        &self,
+        pos: Pos2,
+        rect: Rect,
+    ) -> Option<(crate::part::context::ContextRef, Point3)> {
+        use crate::part::context::{ContextRef, ContextSource};
+        if !self.cat_on(crate::command::selection::Category::Vertex) {
+            return None;
+        }
+        let ip = self.in_place_now()?;
+        if ip.linked.is_some() {
+            return None;
+        }
+        let linked = self.linked();
+        let asm = DocRef::local(ip.assembly);
+        let a = crate::assembly::tree::assembly_of(&self.project, &linked, asm)?;
+        let mut edited = vec![ip.top];
+        edited.extend(&ip.sub);
+        let inv = ip.place.inverse();
+        let leaves: Vec<_> = crate::assembly::tree::leaves(&self.project, &linked, asm, a)
+            .into_iter()
+            .filter(|l| l.path != edited && l.occurrence.pickable())
+            .collect();
+        // Seen along the ray through its own pixel, past the part's faces
+        // and every other component's.
+        let visible = |p: &Point3, s: Pos2| {
+            let Some((o, d)) = self.camera.ray(s, rect) else {
+                return false;
+            };
+            let Some(d) = d.try_normalize(1e-12) else {
+                return false;
+            };
+            let t = (p - o).dot(&d);
+            let limit = t - 0.01 * t.abs().max(1.0);
+            if self.picker().pick(&o, &d).is_some_and(|(_, f)| f < limit) {
+                return false;
+            }
+            !leaves.iter().any(|l| {
+                let to_leaf = (inv * l.world).inverse();
+                self.asm_mesh(l.component)
+                    .and_then(|m| m.hit(&(to_leaf * o), &(to_leaf * d)))
+                    .is_some_and(|(_, f)| f < limit)
+            })
+        };
+        let mut best: Option<(f32, Vec<u32>, String, Point3)> = None;
+        for l in &leaves {
+            let t = inv * l.world;
+            self.with_part(l.component, |p| {
+                for (_, v) in p.body.vertices() {
+                    let Some(name) = &v.name else {
+                        continue;
+                    };
+                    let q = t * v.point;
+                    let Some(s) = self.camera.project(&q, rect) else {
+                        continue;
+                    };
+                    let dist = s.distance(pos);
+                    if dist <= 8.0 && best.as_ref().is_none_or(|b| dist < b.0) && visible(&q, s) {
+                        best = Some((dist, l.path.clone(), name.clone(), q));
+                    }
+                }
+            });
+        }
+        let (_, path, name, point) = best?;
+        if crate::assembly::context::would_loop(&self.project, &linked, ip.assembly, &edited, &path)
+        {
+            return None;
+        }
+        let (&top, sub) = path.split_first()?;
+        let label = crate::assembly::tree::nested(&self.project, &linked, a, top, sub)
+            .map_or_else(|_| "?".to_owned(), |n| n.name);
+        let source = ContextSource {
+            vertex: Some(name.clone()),
+            assembly: ip.assembly,
+            target: edited,
+            path,
+            face: name,
+            edge: None,
+            hint: [point.x, point.y, point.z],
+            label: format!("{label} vertex"),
+        };
+        let geom = crate::assembly::context::current(&self.project, &linked, a, &source).ok()?;
+        Some((
+            ContextRef {
+                id: String::new(),
+                source,
+                geom,
+            },
+            point,
         ))
     }
 
@@ -1200,6 +1299,7 @@ impl CadCraftApp {
         let mut edited = vec![ip.top];
         edited.extend(&ip.sub);
         let source = ContextSource {
+            vertex: None,
             assembly: ip.assembly,
             target: edited,
             path: le.leaves[k].path.clone(),
@@ -3342,6 +3442,7 @@ fn linked_face_under(
     let mut edited = vec![ip.top];
     edited.extend(&ip.sub);
     let source = ContextSource {
+        vertex: None,
         assembly: ip.assembly,
         target: edited,
         path: le.leaves[k].path.clone(),

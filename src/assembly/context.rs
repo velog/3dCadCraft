@@ -63,6 +63,16 @@ pub fn geom_from(
     source: &ContextSource,
     m: &Transform3,
 ) -> Result<ContextGeom, String> {
+    if let Some(v) = &source.vertex {
+        let at = part
+            .body
+            .find_vertex(v)
+            .and_then(|id| part.body.vertex(id))
+            .ok_or_else(|| format!("the vertex {v} no longer exists"))?;
+        return Ok(ContextGeom::Point {
+            point: m * at.point,
+        });
+    }
     if let Some(edge) = &source.edge {
         let curve = ContextCurve::of(&edge_shape(&part.body, edge)?)?;
         return Ok(ContextGeom::Curve {
@@ -379,6 +389,7 @@ fn edge_refs(
         let edge = crate::part::blend::edge_ref(body, e)
             .ok_or_else(|| format!("an edge of {} has no name", like.face))?;
         let source = ContextSource {
+            vertex: None,
             face: edge.faces[0].clone(),
             hint: edge.hint,
             edge: Some(edge),
@@ -483,6 +494,7 @@ mod tests {
         );
         let aid = p.add_document("Top", DocumentData::Assembly(a.clone()));
         let source = ContextSource {
+            vertex: None,
             assembly: aid,
             target: vec![2],
             path: vec![1],

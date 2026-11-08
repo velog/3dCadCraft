@@ -1719,5 +1719,13 @@
     "BoltHole1:End",
     "BoltHole1:Start",
     "BoltHole1:Wall"
+  ],
+  "r68/work_context_r68.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top"
   ]
 }

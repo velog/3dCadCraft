@@ -184,7 +184,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 67: drawing sketched symbols (`AnnotationKind::Symbol`,
 ///   `Resources::symbols`) (2026-11-08; 66 is taken by the bolted connection's
 ///   holes).
-pub const FORMAT_REVISION: u32 = 67;
+/// - 68: edges and vertices of other components as inputs of work features
+///   (`LineRef::Context`, `PointRef::Context`, `ContextGeom::Point`) (2026-11-08).
+pub const FORMAT_REVISION: u32 = 68;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

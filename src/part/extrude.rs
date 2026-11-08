@@ -92,6 +92,7 @@ impl TargetRef {
             TargetRef::Point(PointRef::PartOrigin) => "Center Point".into(),
             TargetRef::Point(PointRef::Vertex(n)) => n.clone(),
             TargetRef::Point(PointRef::EdgeMid(n)) => format!("{n} (midpoint)"),
+            TargetRef::Point(PointRef::Context(id)) => format!("{id} (another component)"),
         }
     }
 

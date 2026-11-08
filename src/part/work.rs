@@ -152,6 +152,9 @@ pub enum LineRef {
     Edge(String),
     /// A work axis, by the id of its feature.
     Work(String),
+    /// A straight edge of another component: a cross-part reference's copy
+    /// (format revision 68).
+    Context(String),
 }
 
 impl LineRef {
@@ -179,6 +182,14 @@ impl LineRef {
                 .get(id)
                 .copied()
                 .ok_or_else(|| format!("work feature '{id}' is not available")),
+            LineRef::Context(id) => match works.context_curves.get(id) {
+                Some(super::link::Shape3::Line(a, b)) => (b - a)
+                    .try_normalize(1e-12)
+                    .map(|d| (*a, d))
+                    .ok_or_else(|| format!("the edge of '{id}' has no length")),
+                Some(_) => Err(format!("the edge of '{id}' is not straight")),
+                None => Err(format!("the reference '{id}' no longer exists")),
+            },
         }
     }
 
@@ -188,6 +199,7 @@ impl LineRef {
             LineRef::Origin(k) => format!("{} Axis", ["X", "Y", "Z"][(*k).min(2)]),
             LineRef::Edge(n) => format!("Edge {n}"),
             LineRef::Work(id) => id.replace("WorkAxis", "Work Axis"),
+            LineRef::Context(_) => "Edge of another component".to_owned(),
         }
     }
 }

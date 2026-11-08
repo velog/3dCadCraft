@@ -1277,6 +1277,7 @@ fn context_curve_r47() -> PartDocument {
         ContextRef {
             id: String::new(),
             source: ContextSource {
+                vertex: None,
                 assembly: DocumentId::new_random(),
                 target: vec![2],
                 path: vec![1],
@@ -1333,6 +1334,7 @@ fn context_spline_r51() -> PartDocument {
         ContextRef {
             id: String::new(),
             source: ContextSource {
+                vertex: None,
                 assembly: DocumentId::new_random(),
                 target: vec![2],
                 path: vec![1],
@@ -1372,6 +1374,7 @@ fn context_r44() -> PartDocument {
     let id = p.add_context(ContextRef {
         id: String::new(),
         source: ContextSource {
+            vertex: None,
             assembly: DocumentId::new_random(),
             target: vec![2],
             path: vec![1],
@@ -3040,6 +3043,51 @@ fn text_r63() -> PartDocument {
     part
 }
 
+/// Revision 67: a work axis on another component's edge and a work point on its vertex.
+fn work_context_r68() -> PartDocument {
+    use cadcraft3d::document::DocumentId;
+    use cadcraft3d::kernel::Point3;
+    use cadcraft3d::part::context::{ContextCurve, ContextGeom, ContextRef, ContextSource};
+    use cadcraft3d::part::{LineRef, PointRef, WorkAxisDef, WorkDef, WorkFeature, WorkPointDef};
+    let mut part = PartDocument::with_box("Box1", [20.0, 20.0, 10.0]).unwrap();
+    let source = |vertex: Option<&str>| ContextSource {
+        vertex: vertex.map(str::to_owned),
+        assembly: DocumentId::new_random(),
+        target: vec![2],
+        path: vec![1],
+        face: "Box1:Top".into(),
+        edge: None,
+        hint: [0.0, 0.0, 30.0],
+        label: "Base:1".into(),
+    };
+    let line = part.add_context(ContextRef {
+        id: String::new(),
+        source: source(None),
+        geom: ContextGeom::Curve {
+            curve: ContextCurve::Line {
+                a: Point3::new(0.0, 0.0, 30.0),
+                b: Point3::new(50.0, 0.0, 30.0),
+            },
+        },
+    });
+    let point = part.add_context(ContextRef {
+        id: String::new(),
+        source: source(Some("Box1:V101")),
+        geom: ContextGeom::Point {
+            point: Point3::new(50.0, 40.0, 30.0),
+        },
+    });
+    part.add_work(WorkFeature::new(WorkDef::Axis(WorkAxisDef::OnLine {
+        line: LineRef::Context(line),
+    })))
+    .unwrap();
+    part.add_work(WorkFeature::new(WorkDef::Point(WorkPointDef::OnPoint {
+        point: PointRef::Context(point),
+    })))
+    .unwrap();
+    part
+}
+
 /// Revision 64: a wall with a thread boss, a snap fit hook, a rest and a grill, then a rule fillet.
 fn plastic_r64() -> PartDocument {
     use cadcraft3d::part::plastic::boss::BossOp;
@@ -4036,6 +4084,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             bolted_r66().save(&f).unwrap();
+        }
+        let f = root().join("r68/work_context_r68.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("WorkContextR68");
+            project.add_document("Part1", DocumentData::Part(work_context_r68()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r64/plastic_r64.3dcadcraft");
         if !f.exists() {

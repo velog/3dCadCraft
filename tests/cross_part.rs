@@ -133,6 +133,7 @@ fn project_and_extrude(
         .iter()
         .map(|e| {
             let source = ContextSource {
+                vertex: None,
                 assembly: aid,
                 target: vec![2],
                 path: vec![1],
@@ -348,6 +349,7 @@ fn a_post_extruded_to_a_cover_follows_it_up() {
     );
     let a = asm(&p, aid);
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![2],
         path: vec![1],
@@ -426,6 +428,7 @@ fn break_link_of_a_sketch_on_another_face_keeps_its_place() {
     );
     let a = asm(&p, aid);
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![2],
         path: vec![1],
@@ -486,6 +489,7 @@ fn project_face_and_extrude(
 ) -> usize {
     let a = asm(p, aid);
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![2],
         path: vec![1],
@@ -710,6 +714,7 @@ fn a_spline_edge_projected_alone_survives_save_and_reload() {
         .find(|e| {
             let a = asm(&p, aid);
             let src = ContextSource {
+                vertex: None,
                 assembly: aid,
                 target: vec![2],
                 path: vec![1],
@@ -743,6 +748,7 @@ fn a_spline_edge_projected_alone_survives_save_and_reload() {
 fn project_and_extrude_open(p: &mut Project, aid: DocumentId, t: DocumentId, edge: &EdgeRef) {
     let a = asm(p, aid);
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![2],
         path: vec![1],
@@ -778,6 +784,7 @@ fn projecting_a_face_is_all_or_nothing() {
     );
     let a = asm(&p, aid);
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![2],
         path: vec![1],
@@ -816,6 +823,7 @@ fn a_pipe_rim_projected_onto_an_inclined_sketch_is_an_ellipse() {
         .iter()
         .map(|e| {
             let source = ContextSource {
+                vertex: None,
                 assembly: aid,
                 target: vec![2],
                 path: vec![1],
@@ -870,6 +878,7 @@ fn project_loop(
         .expect("an edge");
     let a = asm(p, aid);
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![2],
         path: vec![1],
@@ -953,6 +962,7 @@ fn the_loop_is_taken_on_the_face_parallel_to_the_sketch() {
         .unwrap();
     let a = asm(&p, aid);
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![2],
         path: vec![1],
@@ -1018,6 +1028,7 @@ fn linked_gasket(
     let aid = top.add_document("Top", DocumentData::Assembly(a.clone()));
     // In place: the flange's top face projected into the gasket's sketch.
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![2],
         path: vec![1],
@@ -1159,6 +1170,7 @@ fn a_loop_through_a_third_part_is_found() {
     let a = asm(&p, aid);
     let face = face_at(part(&p, t), 2.0);
     let source = ContextSource {
+        vertex: None,
         assembly: aid,
         target: vec![3],
         path: vec![2],

@@ -3535,7 +3535,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         let line = |l: &crate::part::LineRef| match l {
             crate::part::LineRef::Origin(k) => format!("{} Axis", ["X", "Y", "Z"][(*k).min(2)]),
             crate::part::LineRef::Edge(n) => n.clone(),
-            crate::part::LineRef::Work(id) => id.clone(),
+            crate::part::LineRef::Work(id) | crate::part::LineRef::Context(id) => id.clone(),
         };
         psection(ui, "draft_type", "Draft Type", |ui| {
             plabel(ui, "Type");

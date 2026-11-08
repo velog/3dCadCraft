@@ -77,6 +77,61 @@ impl CadCraftApp {
         }
     }
 
+    /// The one edge selected in the assembly, if that is the selection.
+    fn asm_selected_edge(&self) -> Option<crate::assembly::relation::GeomRef> {
+        use crate::assembly::relation::GeomRef;
+        match self.asm.sub.as_slice() {
+            [super::asm_select::AsmSub::Geom(g @ GeomRef::Edge { .. })] => Some(g.clone()),
+            _ => None,
+        }
+    }
+
+    /// The straight edge `g` of a component as a cross-part reference of the
+    /// part edited in place now (the tools part).
+    fn asm_edge_context(
+        &self,
+        g: &crate::assembly::relation::GeomRef,
+    ) -> Option<crate::part::context::ContextRef> {
+        use crate::assembly::relation::GeomRef;
+        use crate::assembly::tree;
+        use crate::part::context::{ContextCurve, ContextRef, ContextSource};
+        let GeomRef::Edge {
+            occurrence,
+            sub,
+            edge,
+        } = g
+        else {
+            return None;
+        };
+        let ip = self.in_place_now()?;
+        if ip.linked.is_some() {
+            return None;
+        }
+        let linked = self.linked();
+        let a = tree::assembly_of(&self.project, &linked, DocRef::local(ip.assembly))?;
+        let n = tree::nested(&self.project, &linked, a, *occurrence, sub).ok()?;
+        let mut path = vec![*occurrence];
+        path.extend(sub);
+        let mut target = vec![ip.top];
+        target.extend(&ip.sub);
+        let source = ContextSource {
+            vertex: None,
+            assembly: ip.assembly,
+            target,
+            path,
+            face: edge.faces[0].clone(),
+            hint: edge.hint,
+            edge: Some(edge.clone()),
+            label: format!("{} edge", n.name),
+        };
+        let geom = crate::assembly::context::current(&self.project, &linked, a, &source).ok()?;
+        matches!(geom.curve(), Some(ContextCurve::Line { .. })).then_some(ContextRef {
+            id: String::new(),
+            source,
+            geom,
+        })
+    }
+
     /// The face `g` of a component as a cross-part reference of the part
     /// edited in place now (the tools part), with its highlight; `None`
     /// when it is not planar.
@@ -112,6 +167,7 @@ impl CadCraftApp {
         let mut target = vec![ip.top];
         target.extend(&ip.sub);
         let source = ContextSource {
+            vertex: None,
             assembly: ip.assembly,
             target,
             path,
@@ -141,25 +197,36 @@ impl CadCraftApp {
     pub(super) fn asm_work(&mut self, kind: super::work::WorkKind) {
         let title = kind.title();
         let face = self.asm_selected_face();
+        let edge = self.asm_selected_edge();
         self.asm.work_box.set(self.assembly_box());
         if !self.asm_open_tools(title) {
             return;
         }
         self.asm.sketch_return = true;
         self.asm.work_contexts.clear();
+        self.asm.work_new_context.replace(None);
         let mut draft = super::work::WorkDraft::new(kind);
         // A face selected before is the first input (rule 17).
         if let Some(g) = face
             && let Some(ch) = self.asm_face_context(&g)
         {
-            self.asm.work_contexts.push(ch);
+            self.asm.work_contexts.push((ch.0, Some(ch.1)));
             draft.pick(super::work::WpInput::Plane(crate::part::PlaneRef::Context(
+                "?0".into(),
+            )));
+        }
+        // So is an edge.
+        if let Some(g) = edge
+            && let Some(c) = self.asm_edge_context(&g)
+        {
+            self.asm.work_contexts.push((c, None));
+            draft.pick(super::work::WpInput::Line(crate::part::LineRef::Context(
                 "?0".into(),
             )));
         }
         self.work_draft = Some(draft);
         self.file_status = Some(Ok(format!(
-            "{title}: pick faces of the components, the assembly's origin or its work features (Esc returns to the assembly)"
+            "{title}: pick faces, edges or vertices of the components, the assembly's origin or its work features (Esc returns to the assembly)"
         )));
     }
 
@@ -174,6 +241,7 @@ impl CadCraftApp {
         };
         self.asm.sketch_return = true;
         self.asm.work_contexts.clear();
+        self.asm.work_new_context.replace(None);
         self.redefine_work(k);
     }
 
@@ -284,6 +352,7 @@ impl CadCraftApp {
         }
         self.asm.sketch_return = false;
         self.asm.work_contexts.clear();
+        self.asm.work_new_context.replace(None);
         if self.in_place_now().is_some() {
             self.return_to_assembly();
         }

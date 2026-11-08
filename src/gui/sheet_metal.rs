@@ -2700,7 +2700,8 @@ impl CadCraftApp {
                         let name = match &r {
                             crate::part::PointRef::Vertex(n)
                             | crate::part::PointRef::EdgeMid(n)
-                            | crate::part::PointRef::Work(n) => n.clone(),
+                            | crate::part::PointRef::Work(n)
+                            | crate::part::PointRef::Context(n) => n.clone(),
                             crate::part::PointRef::PartOrigin => "Center Point".into(),
                         };
                         let lines = cross(at);

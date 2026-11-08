@@ -1535,7 +1535,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Assembly Features tools part in place (`asm_open_tools`) and its plane pick; `AsmUi::sketch_return` + `asm_sketch_tick` (once a
   frame) return to the assembly when no sketch or plane pick is open any more. A new way to end a sketch needs nothing more.
   Assembly work features go the same way (`asm_work`: the part's Work command in the tools part); a component's face picked by
-  it waits as `PlaneRef::Context("?k")` in `AsmUi::work_contexts` (`work_geom_now` for previews) until OK adds it. The tools
+  it waits as `PlaneRef::Context("?k")` (`LineRef` / `PointRef` for an edge / vertex, revision 68) in `AsmUi::work_contexts` (`work_geom_now` for previews) until OK adds it. The tools
   occurrence is hidden, so it is no `tree::leaves` leaf: `context::copies` adds it by hand — a new walk over "every part with
   cross-part references" must too, or the assembly's sketches and work features stop following the components.
 - **Work geometry is not saved** (`PartDocument::work` is `serde(skip)`): a part of a design file opened from disk had no UCS / work

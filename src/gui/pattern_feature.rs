@@ -483,6 +483,6 @@ pub(super) fn describe_line(l: &LineRef) -> String {
     match l {
         LineRef::Origin(k) => format!("{} Axis", ["X", "Y", "Z"][(*k).min(2)]),
         LineRef::Edge(n) => n.clone(),
-        LineRef::Work(id) => id.clone(),
+        LineRef::Work(id) | LineRef::Context(id) => id.clone(),
     }
 }

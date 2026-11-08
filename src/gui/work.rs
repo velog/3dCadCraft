@@ -1157,8 +1157,8 @@ impl CadCraftApp {
             }
             return Some(WpInput::Curve(name));
         }
-        if let Some(c) = self.work_context_under(pos, rect) {
-            return Some(WpInput::Plane(PlaneRef::Context(c)));
+        if let Some(i) = self.work_context_under(pos, rect) {
+            return Some(i);
         }
         let plane = self.plane_under(pos, rect, true)?;
         if let PlaneRef::Face(name) = &plane {
@@ -1300,22 +1300,59 @@ impl CadCraftApp {
     /// The part's work geometry with the faces of other components the
     /// open command picked (`?k`, see [`Self::work_context_under`]).
     pub(super) fn work_geom_now(&self) -> Cow<'_, crate::part::placement::WorkGeom> {
-        if self.asm.work_contexts.is_empty() {
+        let hovered = self.asm.work_new_context.borrow();
+        if self.asm.work_contexts.is_empty() && hovered.is_none() {
             return Cow::Borrowed(&self.part().work);
         }
         let mut w = self.part().work.clone();
         for (k, (c, _)) in self.asm.work_contexts.iter().enumerate() {
             w.add_context(&format!("?{k}"), &c.geom);
         }
+        // The edge or vertex under the cursor, not picked yet.
+        if let Some(c) = hovered.as_ref() {
+            w.add_context(&format!("?{}", self.asm.work_contexts.len()), &c.geom);
+        }
         Cow::Owned(w)
     }
 
-    /// While a part is edited in place: the planar face of another
-    /// component under the cursor, in front of the part's own faces and
-    /// work planes, as the id `?k` of a picked reference (`k` = the next
-    /// entry of `AsmUi::work_contexts` when it is new).
-    fn work_context_under(&self, pos: Pos2, rect: Rect) -> Option<String> {
+    /// The index a reference gets among the command's picks: its own when
+    /// it is already picked, else the next one.
+    fn work_context_index(&self, c: &crate::part::context::ContextRef) -> usize {
+        self.asm
+            .work_contexts
+            .iter()
+            .position(|(x, _)| x.source == c.source)
+            .unwrap_or(self.asm.work_contexts.len())
+    }
+
+    /// While a part is edited in place: the vertex, the straight edge or
+    /// the planar face of another component under the cursor (spec 3.10
+    /// T0), a face only in front of the part's own faces and work planes,
+    /// as an input naming the reference `?k`.
+    fn work_context_under(&self, pos: Pos2, rect: Rect) -> Option<WpInput> {
+        use crate::command::selection::Category;
+        use crate::part::context::ContextCurve;
         self.in_place_now()?;
+        let found = self
+            .context_vertex_under(pos, rect)
+            .map(|(c, _)| c)
+            .or_else(|| {
+                self.cat_on(Category::Edge)
+                    .then(|| self.context_edge_under(pos, rect))
+                    .flatten()
+                    .map(|(c, _)| c)
+                    .filter(|c| matches!(c.geom.curve(), Some(ContextCurve::Line { .. })))
+            });
+        if let Some(c) = found {
+            let id = format!("?{}", self.work_context_index(&c));
+            let input = if c.geom.point().is_some() {
+                WpInput::Point(PointRef::Context(id))
+            } else {
+                WpInput::Line(LineRef::Context(id))
+            };
+            *self.asm.work_new_context.borrow_mut() = Some(c);
+            return Some(input);
+        }
         let (t, c, _) = self.context_face_under(pos, rect)?;
         let (o, d) = self.camera.ray(pos, rect)?;
         let scale = d.norm();
@@ -1325,29 +1362,35 @@ impl CadCraftApp {
         if own.is_some_and(|o| o <= t) || work.is_some_and(|w| w <= t) {
             return None;
         }
-        let k = self
-            .asm
-            .work_contexts
-            .iter()
-            .position(|(x, _)| x.source == c.source)
-            .unwrap_or(self.asm.work_contexts.len());
-        Some(format!("?{k}"))
+        let k = self.work_context_index(&c);
+        Some(WpInput::Plane(PlaneRef::Context(format!("?{k}"))))
     }
 
-    /// A click of the work feature command on a new face of another
-    /// component (`input` from [`Self::wp_input_under`]): keeps the
+    /// A click of the work feature command on a new face, edge or vertex of
+    /// another component (`input` from [`Self::wp_input_under`]): keeps the
     /// reference until OK.
     pub(super) fn work_context_pick(&mut self, input: &WpInput, pos: Pos2, rect: Rect) {
-        let WpInput::Plane(PlaneRef::Context(id)) = input else {
-            return;
+        let (id, face) = match input {
+            WpInput::Plane(PlaneRef::Context(id)) => (id, true),
+            WpInput::Line(LineRef::Context(id)) | WpInput::Point(PointRef::Context(id)) => {
+                (id, false)
+            }
+            _ => return,
         };
         if id.strip_prefix('?').and_then(|k| k.parse::<usize>().ok())
             != Some(self.asm.work_contexts.len())
         {
             return;
         }
-        if let Some((_, c, h)) = self.context_face_under(pos, rect) {
-            self.asm.work_contexts.push((c, h));
+        if face {
+            if let Some((_, c, h)) = self.context_face_under(pos, rect) {
+                self.asm.work_contexts.push((c, Some(h)));
+            }
+        } else {
+            let c = self.asm.work_new_context.borrow_mut().take();
+            if let Some(c) = c {
+                self.asm.work_contexts.push((c, None));
+            }
         }
     }
 
@@ -1549,7 +1592,7 @@ impl CadCraftApp {
         };
         match input {
             WpInput::Point(r) => {
-                if let Ok(p) = crate::part::placement::point_of(r, body, &part.work)
+                if let Ok(p) = crate::part::placement::point_of(r, body, &self.work_geom_now())
                     && let Some(s) = self.camera.project(&p, rect)
                 {
                     painter.circle_filled(s, 5.0, color);
@@ -1569,6 +1612,13 @@ impl CadCraftApp {
                     && let Ok(pts) = body.sample_edge(e, &opts)
                 {
                     poly(&pts);
+                }
+            }
+            WpInput::Line(LineRef::Context(id)) => {
+                if let Some(crate::part::link::Shape3::Line(a, b)) =
+                    self.work_geom_now().context_curves.get(id)
+                {
+                    poly(&[*a, *b]);
                 }
             }
             WpInput::Line(l) => {
@@ -1596,7 +1646,7 @@ impl CadCraftApp {
             WpInput::Plane(PlaneRef::Context(id)) if id.starts_with('?') => {
                 let k = id[1..].parse::<usize>().ok();
                 let hover = k
-                    .and_then(|k| self.asm.work_contexts.get(k).map(|(_, h)| *h))
+                    .and_then(|k| self.asm.work_contexts.get(k).and_then(|(_, h)| *h))
                     .or(self.asm.context_hover);
                 if let Some(mesh) = hover.and_then(|h| self.context_mesh(h)) {
                     super::overlay::draw_face_fill(painter, &self.camera, rect, &mesh, color);
@@ -1686,11 +1736,13 @@ impl CadCraftApp {
         d: &WorkDraft,
         inline: Vec<(usize, WorkDef)>,
     ) -> Result<(), String> {
-        // Faces of other components picked in place become the part's
+        // Faces, edges and vertices of other components picked in place become the part's
         // cross-part references (after the caller's checkpoint).
         let mut d = d.clone();
         for p in &mut d.picks {
-            if let WpInput::Plane(PlaneRef::Context(id)) = p
+            if let WpInput::Plane(PlaneRef::Context(id))
+            | WpInput::Line(LineRef::Context(id))
+            | WpInput::Point(PointRef::Context(id)) = p
                 && let Some(k) = id.strip_prefix('?').and_then(|k| k.parse::<usize>().ok())
                 && let Some((c, _)) = self.asm.work_contexts.get(k).cloned()
             {
