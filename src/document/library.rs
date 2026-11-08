@@ -257,6 +257,32 @@ pub(super) fn canonical(path: &Path) -> ProjectResult<PathBuf> {
         })
 }
 
+/// Where the file behind `link` of the file `owner` is (spec 0.6d §3.3):
+/// the stored relative path, the file's name next to `owner`, then the
+/// design project's folders (`project` = the project and its `.ccproj`
+/// folder; with Using Unique File Names also by name in their subfolders).
+/// A file found in the project's folders must be the linked design file
+/// (its project id).
+pub fn locate(
+    owner: &Path,
+    link: &LibraryLink,
+    project: Option<(&super::design_project::DesignProject, &Path)>,
+) -> Option<PathBuf> {
+    let dir = owner.parent()?;
+    let stored = dir.join(&link.path);
+    if stored.exists() {
+        return Some(stored);
+    }
+    let flat = dir.join(Path::new(&link.path).file_name()?);
+    if flat.exists() {
+        return Some(flat);
+    }
+    let (p, base) = project?;
+    p.link_candidates(base, Path::new(&link.path))
+        .into_iter()
+        .find(|c| super::format::read_preview(c).is_ok_and(|f| f.id == Some(link.project)))
+}
+
 /// `path` without the Windows verbatim prefix that `canonicalize` adds
 /// (`\\?\C:\x` → `C:\x`, `\\?\UNC\srv\share` → `\\srv\share`): the plain
 /// form is what users read, and a verbatim path written with `/` (library

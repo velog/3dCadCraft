@@ -74,7 +74,7 @@ pub struct DesignProject {
 
 /// `path` relative to `base` when it lies inside it (Windows: letters in any
 /// case, `\\?\` prefixes ignored), else `None`.
-fn relative_inside(path: &Path, base: &Path) -> Option<PathBuf> {
+pub(super) fn relative_inside(path: &Path, base: &Path) -> Option<PathBuf> {
     let clean = |p: &Path| super::library::without_verbatim(p.to_path_buf());
     let (path, base) = (clean(path), clean(base));
     let key = |c: Component| {
@@ -93,6 +93,35 @@ fn relative_inside(path: &Path, base: &Path) -> Option<PathBuf> {
         return None;
     }
     Some(rel)
+}
+
+/// Files named `name` under `dir` (subfolders to a depth of 16; folders
+/// starting with `.` and `OldVersions` are skipped). Windows: any case.
+fn find_named(dir: &Path, name: &std::ffi::OsStr, depth: usize, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let same = |a: &std::ffi::OsStr| {
+        if cfg!(windows) {
+            a.to_string_lossy().to_lowercase() == name.to_string_lossy().to_lowercase()
+        } else {
+            a == name
+        }
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        let file_name = e.file_name();
+        match e.file_type() {
+            Ok(t) if t.is_dir() => {
+                let n = file_name.to_string_lossy();
+                if depth < 16 && !n.starts_with('.') && n != "OldVersions" {
+                    find_named(&p, name, depth + 1, out);
+                }
+            }
+            Ok(t) if t.is_file() && same(&file_name) => out.push(p),
+            _ => {}
+        }
+    }
 }
 
 fn dot() -> PathBuf {
@@ -269,6 +298,44 @@ impl DesignProject {
             .into_iter()
             .map(|d| d.join(name))
             .find(|p| p.is_file())
+    }
+
+    /// Where a link whose stored path `stored` (relative to the linking
+    /// file) is gone may be now, in order (spec 0.6d §3.3): the path's own
+    /// folders under the workspace, then under each library; with
+    /// `unique_names`, then every file of that name in them and their
+    /// subfolders. Only files that exist; the caller checks identity.
+    pub fn link_candidates(&self, base: &Path, stored: &Path) -> Vec<PathBuf> {
+        // `../parts/a.ccpart` → `parts/a.ccpart`: the part below the climb.
+        let tail: PathBuf = stored
+            .components()
+            .filter(|c| matches!(c, Component::Normal(_)))
+            .collect();
+        let Some(name) = tail.file_name().map(|n| n.to_owned()) else {
+            return Vec::new();
+        };
+        let dirs = self.search_dirs(base);
+        let mut out: Vec<PathBuf> = Vec::new();
+        let push = |p: PathBuf, out: &mut Vec<PathBuf>| {
+            if p.is_file() && !out.contains(&p) {
+                out.push(p);
+            }
+        };
+        for d in &dirs {
+            push(d.join(&tail), &mut out);
+            push(d.join(&name), &mut out);
+        }
+        if self.unique_names {
+            for d in &dirs {
+                let mut found = Vec::new();
+                find_named(d, &name, 0, &mut found);
+                found.sort();
+                for p in found {
+                    push(p, &mut out);
+                }
+            }
+        }
+        out
     }
 
     /// Is `file` inside the workspace or a library of this project?

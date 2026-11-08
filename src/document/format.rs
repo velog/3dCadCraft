@@ -497,6 +497,10 @@ pub struct FilePreview {
     pub document: Option<(String, DocumentKind)>,
     /// Its Properties.
     pub properties: super::iprops::IProperties,
+    /// The file's project id (a link checks it).
+    pub id: Option<ProjectId>,
+    /// Its links to other files.
+    pub libraries: Vec<LibraryLink>,
 }
 
 /// Reads [`FilePreview`] of a packed or unpacked project: the manifest, the
@@ -554,7 +558,68 @@ fn preview_with(
             .collect(),
         document: entry.map(|e| (e.name.clone(), e.kind)),
         properties,
+        id: Some(manifest.project.id),
+        libraries: manifest.libraries,
     })
+}
+
+/// Copies the packed file `src` to `dst` (never over an existing file) with
+/// the paths of its links set by `paths` (link id → new path); every other
+/// entry is copied byte for byte (Pack and Go, spec 0.6d §3.2).
+pub fn copy_relinked(
+    src: &Path,
+    dst: &Path,
+    paths: &[(super::LibraryId, String)],
+) -> ProjectResult<()> {
+    if dst.exists() {
+        return Err(io_err(dst)(std::io::Error::from(
+            std::io::ErrorKind::AlreadyExists,
+        )));
+    }
+    let file = fs::File::open(src).map_err(io_err(src))?;
+    let mut zip = ZipArchive::new(BufReader::new(file))
+        .map_err(|e| corrupt(src, format!("not a 3DCadCraft archive ({e})")))?;
+    let tmp = temp_sibling(dst);
+    let result = (|| {
+        let out = fs::File::create(&tmp).map_err(io_err(&tmp))?;
+        let mut w = ZipWriter::new(BufWriter::new(out));
+        let base = SimpleFileOptions::default().last_modified_time(DateTime::default());
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).map_err(|e| corrupt(src, e))?;
+            let name = entry.name().map_err(|e| corrupt(src, e))?.to_string();
+            let method = entry.compression();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).map_err(io_err(src))?;
+            if name == MANIFEST_ENTRY {
+                let mut v: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|e| corrupt(src, e))?;
+                if let Some(list) = v.get_mut("libraries").and_then(|l| l.as_array_mut()) {
+                    for l in list {
+                        let id = l.get("id").and_then(|i| {
+                            serde_json::from_value::<super::LibraryId>(i.clone()).ok()
+                        });
+                        if let Some((_, p)) = paths.iter().find(|(k, _)| Some(*k) == id) {
+                            l["path"] = serde_json::Value::String(p.clone());
+                        }
+                    }
+                }
+                bytes = serde_json::to_vec_pretty(&v).map_err(|e| corrupt(src, e))?;
+            }
+            w.start_file(name, base.compression_method(method))
+                .map_err(|e| corrupt(&tmp, e))?;
+            w.write_all(&bytes).map_err(io_err(&tmp))?;
+        }
+        let writer = w.finish().map_err(|e| corrupt(&tmp, e))?;
+        let file = writer
+            .into_inner()
+            .map_err(|e| io_err(&tmp)(e.into_error()))?;
+        file.sync_all().map_err(io_err(&tmp))
+    })();
+    if let Err(e) = result {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    fs::rename(&tmp, dst).map_err(io_err(dst))
 }
 
 /// Logs the result of a save or open (`what`) of `path`.

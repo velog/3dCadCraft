@@ -111,6 +111,7 @@ mod move_bodies;
 mod nav;
 mod new_file;
 mod overlay;
+mod pack;
 mod panels;
 mod param_link;
 mod part_family;
@@ -755,6 +756,8 @@ struct CadCraftApp {
     home: home::HomeUi,
     /// Design projects and templates (spec 0.6a, 0.6c).
     projects: design_projects::ProjectsUi,
+    /// The open Pack and Go window (spec 0.6d).
+    pack: Option<pack::PackUi>,
     /// Manage › Documents: the Documents window, Rename (spec 0.6b).
     docs: documents::DocsUi,
     /// The Sheet Metal environment (`sheet_metal.rs`).
@@ -1133,6 +1136,7 @@ impl CadCraftApp {
             new_file: false,
             home: home::HomeUi::default(),
             projects: Default::default(),
+            pack: None,
             docs: documents::DocsUi::default(),
             sm: Default::default(),
             bom_export: None,
@@ -4534,6 +4538,7 @@ impl CadCraftApp {
             AppCmd::SaveAsFolder => self.open_dialog(files::DialogPurpose::SaveFolder),
             AppCmd::SaveTemplate => self.start_save_template(),
             AppCmd::Projects => self.open_projects_editor(),
+            AppCmd::PackAndGo => self.open_pack_and_go(),
             AppCmd::Export(f) => self.open_dialog(files::DialogPurpose::Export(f)),
             AppCmd::ExportFace => self.export_face_start(),
             AppCmd::Help => self.open_help(),
@@ -8616,7 +8621,9 @@ impl eframe::App for CadCraftApp {
         self.doc_settings_window(&ctx);
         self.iprops_window(&ctx);
         self.new_file_window(&ctx);
+        self.projects_load();
         self.projects_editor_window(&ctx);
+        self.pack_window(&ctx);
         self.sm_defaults_window(&ctx);
         if self.is_assembly() {
             self.bom_window(&ctx);

@@ -169,7 +169,7 @@ finds every command by its alias too):
   UIB / UIP / UIR / UIS / UIV / UIT Browser / Properties / Ribbon / Status Bar / ViewCube / Axis Triad,
   UIL Reset UI Layout, UIM Minimize Ribbon.
 - Assembly: FIX Grounded, UPD Update, BOM Bill of Materials.
-- File / Help: NDW New Drawing, NAS New Assembly, SVF Save as Folder, SAT Save Copy As Template, PJ Projects, FXF Export Face As, STL / STP / SGL Export STL / STEP /
+- File / Help: NDW New Drawing, NAS New Assembly, SVF Save as Folder, SAT Save Copy As Template, PG Pack and Go, PJ Projects, FXF Export Face As, STL / STP / SGL Export STL / STEP /
   GLB, SDG Save Diagnostics, SLG Open Logs Folder.
 
 E and H (3D Model) and L, D, O, X (sketch) have no longer alias starting with them, so they start at

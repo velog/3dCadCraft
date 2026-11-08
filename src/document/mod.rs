@@ -38,6 +38,7 @@ pub mod documents;
 pub mod filetype;
 pub mod format;
 pub mod library;
+pub mod pack;
 pub mod storage;
 pub mod templates;
 

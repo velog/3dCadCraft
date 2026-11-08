@@ -45,6 +45,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [0.6a-file-types-projects.md](0.6a-file-types-projects.md) | One extension per document kind (`.ccpart`, `.ccasm`, `.ccdrw`, `.ccpres`), design projects (`.ccproj`) |
 | [0.6b-multi-document-files.md](0.6b-multi-document-files.md) | Many documents in one design file (New Part / Assembly / Drawing in this file, Documents panel) and separate files (extract, embed, pack, unpack) |
 | [0.6c-templates.md](0.6c-templates.md) | Templates: the templates folder (per project), Create New File, a new document from a template, Save Copy As Template |
+| [0.6d-pack-and-go.md](0.6d-pack-and-go.md) | Pack and Go: a file and everything it links copied to one folder with links that work there; finding a moved link in the project |
 | [0.17-home.md](0.17-home.md) | Home: the start page — active project, New / Open, recent documents, learning links |
 | [0.18-themes-colours.md](0.18-themes-colours.md) | Themes and colour management: UI Theme, In-canvas Color Scheme, the Colors tab |
 | [0.19-long-operations.md](0.19-long-operations.md) | Long operations: progress in the status bar, fast path for many through cuts, work off the main thread |

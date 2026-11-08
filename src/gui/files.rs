@@ -55,6 +55,10 @@ pub(super) enum DialogPurpose {
     NewProject,
     /// File › Save Copy As Template (spec 0.6c §3.4): a file of the kind.
     SaveTemplate(crate::document::DocumentKind),
+    /// Pack and Go's Source File (spec 0.6d).
+    PackSource,
+    /// Pack and Go's Destination Folder.
+    PackDestination,
 }
 
 /// The files that hold documents (Open, Link File, Insert Document).
@@ -94,6 +98,8 @@ impl DialogPurpose {
             DialogPurpose::Open => "Open".into(),
             DialogPurpose::SaveAs => "Save As".into(),
             DialogPurpose::SaveFolder => "Save as Folder".into(),
+            DialogPurpose::PackSource => "Pack and Go: Source File".into(),
+            DialogPurpose::PackDestination => "Pack and Go: Destination Folder".into(),
             DialogPurpose::Export(f) => format!("Export {}", f.extension().to_uppercase()),
             DialogPurpose::Diagnostics => "Save Diagnostics".into(),
             DialogPurpose::ExportOptions => "Export Application Options".into(),
@@ -125,7 +131,9 @@ impl DialogPurpose {
     fn extensions(self) -> &'static [&'static str] {
         match self {
             DialogPurpose::Open => OPEN_EXTS,
-            DialogPurpose::LinkFile | DialogPurpose::InsertDocument => MODEL_EXTS,
+            DialogPurpose::LinkFile | DialogPurpose::InsertDocument | DialogPurpose::PackSource => {
+                MODEL_EXTS
+            }
             DialogPurpose::ImportCad => &["step", "stp", "stl", "obj"],
             // The active document's kind (`.ccpart`…) or the package.
             DialogPurpose::SaveAs => MODEL_EXTS,
@@ -136,7 +144,7 @@ impl DialogPurpose {
             DialogPurpose::SaveTemplate(crate::document::DocumentKind::Assembly) => &["ccasm"],
             DialogPurpose::SaveTemplate(crate::document::DocumentKind::Drawing) => &["ccdrw"],
             DialogPurpose::OpenProject | DialogPurpose::NewProject => &["ccproj"],
-            DialogPurpose::SaveFolder => &[],
+            DialogPurpose::SaveFolder | DialogPurpose::PackDestination => &[],
             DialogPurpose::Export(ExportFormat::Stl) => &["stl"],
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
             DialogPurpose::Export(ExportFormat::Glb) => &["glb"],
@@ -157,7 +165,9 @@ impl DialogPurpose {
     fn type_text(self) -> String {
         let kind = match self {
             DialogPurpose::Open => "3DCadCraft and STEP files",
-            DialogPurpose::LinkFile | DialogPurpose::InsertDocument => "3DCadCraft files",
+            DialogPurpose::LinkFile | DialogPurpose::InsertDocument | DialogPurpose::PackSource => {
+                "3DCadCraft files"
+            }
             DialogPurpose::ImportCad => "STEP",
             DialogPurpose::SaveAs => "Part, Assembly, Drawing (one document) or Package (all)",
             DialogPurpose::Extract(_, k) | DialogPurpose::SaveTemplate(k) => {
@@ -165,6 +175,7 @@ impl DialogPurpose {
             }
             DialogPurpose::OpenProject | DialogPurpose::NewProject => "Project",
             DialogPurpose::SaveFolder => return "3DCadCraft project folder".into(),
+            DialogPurpose::PackDestination => return "Folder".into(),
             DialogPurpose::Export(ExportFormat::Stl) => "STL",
             DialogPurpose::Export(ExportFormat::Step) => "STEP",
             DialogPurpose::Export(ExportFormat::Glb) => "glTF binary",
@@ -195,6 +206,7 @@ impl DialogPurpose {
                 | DialogPurpose::InsertDocument
                 | DialogPurpose::ImportCad
                 | DialogPurpose::OpenProject
+                | DialogPurpose::PackSource
         )
     }
 }
@@ -967,7 +979,9 @@ impl CadCraftApp {
             | DialogPurpose::LinkFile
             | DialogPurpose::InsertDocument
             | DialogPurpose::ImportCad
-            | DialogPurpose::OpenProject => String::new(),
+            | DialogPurpose::OpenProject
+            | DialogPurpose::PackSource => String::new(),
+            DialogPurpose::PackDestination => format!("{stem} Package"),
             DialogPurpose::NewProject => "MyProject.ccproj".to_owned(),
             DialogPurpose::SaveTemplate(k) => format!(
                 "{}.{}",
@@ -1480,6 +1494,8 @@ impl CadCraftApp {
             DialogPurpose::OpenProject => self.project_file_picked(&path, false),
             DialogPurpose::NewProject => self.project_file_picked(&path, true),
             DialogPurpose::SaveTemplate(_) => self.save_template_to(&path),
+            DialogPurpose::PackSource => self.pack_source_picked(&path),
+            DialogPurpose::PackDestination => self.pack_destination_picked(&path),
             DialogPurpose::ExportDxf => {
                 let text = self.sm.dxf.take().unwrap_or_default();
                 self.file_status = Some(
@@ -1645,6 +1661,16 @@ impl CadCraftApp {
             .clicked()
         {
             self.start_save_template();
+            ui.close();
+        }
+        if ui
+            .button("Pack and Go...")
+            .on_hover_text(
+                "This file and every file it links, copied to one folder that works anywhere",
+            )
+            .clicked()
+        {
+            self.open_pack_and_go();
             ui.close();
         }
         ui.separator();

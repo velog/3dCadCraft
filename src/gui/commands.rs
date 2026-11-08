@@ -146,6 +146,8 @@ pub enum AppCmd {
     SaveAsFolder,
     /// File → Save Copy As Template (spec 0.6c).
     SaveTemplate,
+    /// File → Pack and Go (spec 0.6d).
+    PackAndGo,
     /// File → Projects: the Projects editor (spec 0.6a).
     Projects,
     /// File → Export in a format.
@@ -2850,6 +2852,12 @@ pub static COMMANDS: &[Command] = &[
     .at(&[FILE])
     .tip("This document as a template in the templates folder; File › New lists it")
     .spec("0.6c-templates.md"),
+    c("file.pack_and_go", "Pack and Go", "Пакетиране", Icon::PackAndGo)
+        .alias(&["PG"])
+        .run(Action::App(AppCmd::PackAndGo))
+        .at(&[FILE])
+        .tip("This file and every file it links, copied to one folder with links that work there")
+        .spec("0.6d-pack-and-go.md"),
     c("file.projects", "Projects", "Проекти", Icon::Project)
         .alias(&["PJ"])
         .run(Action::App(AppCmd::Projects))

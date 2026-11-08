@@ -40,6 +40,9 @@ pub(super) struct ProjectsUi {
     /// Known projects and the active one.
     pub list: ProjectList,
     active: Option<ActiveProject>,
+    /// Links found (or not) in the project's folders: (file, stored path) →
+    /// when asked, the answer (`place.rs::link_path`).
+    pub(super) link_cache: std::cell::RefCell<LinkCache>,
     /// The last refusal or warning (shown on Home and in the dialogs).
     pub message: Option<String>,
     /// The Projects editor, when open.
@@ -81,6 +84,17 @@ pub(super) fn kind_about(k: DocumentKind) -> &'static str {
         DocumentKind::Drawing => {
             "Drawing: sheets with views, dimensions and tables of parts and assemblies"
         }
+    }
+}
+
+/// See [`ProjectsUi::link_cache`].
+type LinkCache =
+    std::collections::HashMap<(PathBuf, String), (std::time::Instant, Option<PathBuf>)>;
+
+impl ProjectsUi {
+    /// The project in force, once it has been read.
+    pub(super) fn active(&self) -> Option<&ActiveProject> {
+        self.active.as_ref()
     }
 }
 

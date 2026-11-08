@@ -62,18 +62,6 @@ type Loading = std::sync::Arc<std::sync::Mutex<Option<Result<Project, String>>>>
 /// The cached linked files: (file path, its library ids, the projects).
 type LinkedKey = (String, Vec<LibraryId>, Rc<asm::tree::Linked>);
 
-/// Where `link` of the file at `owner` leads (by its relative path, or by
-/// its name in the owner's folder).
-fn link_path(owner: &Path, link: &crate::document::LibraryLink) -> Option<PathBuf> {
-    let dir = owner.parent()?;
-    let stored = dir.join(&link.path);
-    if stored.exists() {
-        return Some(stored);
-    }
-    let flat = dir.join(Path::new(&link.path).file_name()?);
-    flat.exists().then_some(flat)
-}
-
 /// The open Place Component window.
 pub(super) struct PlaceDialog {
     dir: PathBuf,
@@ -291,9 +279,32 @@ impl CadCraftApp {
     /// Where the file of library link `lib` is (next to the assembly by its
     /// relative path, or by its name in the assembly's folder); a link of a
     /// loaded linked file (a subassembly's parts) is found next to that file.
+    /// Where `link` of the file at `owner` leads: its stored place, next to
+    /// the file, then the active project's folders (spec 0.6d §3.3).
+    fn link_path(&self, owner: &Path, link: &crate::document::LibraryLink) -> Option<PathBuf> {
+        use crate::document::library::locate;
+        if let Some(p) = locate(owner, link, None) {
+            return Some(p);
+        }
+        let a = self.projects.active()?;
+        let project = (&a.project, a.base()?);
+        // Asked every frame while a link is missing: the search walks
+        // folders, so its answer is kept for a few seconds (rule 20).
+        let key = (owner.to_path_buf(), link.path.clone());
+        let mut cache = self.projects.link_cache.borrow_mut();
+        if let Some((at, found)) = cache.get(&key)
+            && at.elapsed().as_secs() < 5
+        {
+            return found.clone();
+        }
+        let found = locate(owner, link, Some(project));
+        cache.insert(key, (Instant::now(), found.clone()));
+        found
+    }
+
     pub(super) fn library_path(&self, lib: LibraryId) -> Option<PathBuf> {
         match self.project.library(lib) {
-            Some(link) => link_path(Path::new(self.file_path.trim()), link),
+            Some(link) => self.link_path(Path::new(self.file_path.trim()), link),
             None => self.asm.libs.links.borrow().get(&lib).cloned(),
         }
     }
@@ -554,7 +565,7 @@ impl CadCraftApp {
             let owner = crate::document::library::without_verbatim(key.clone());
             let mut links = self.asm.libs.links.borrow_mut();
             for l in project.libraries() {
-                if let Some(p) = link_path(&owner, l) {
+                if let Some(p) = self.link_path(&owner, l) {
                     links.entry(l.id).or_insert(p);
                 }
             }

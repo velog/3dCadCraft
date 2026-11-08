@@ -237,6 +237,8 @@ pub enum Icon {
     /// File › Save Copy As Template: a sheet with a folded corner over a
     /// dashed copy (spec 0.6c).
     Template,
+    /// File › Pack and Go: a closed box with an arrow leaving it.
+    PackAndGo,
     SheetMetal,
     // sheet metal commands (one each)
     SmFace,
@@ -2501,6 +2503,18 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.line(&[(11.0, 4.0), (11.0, 7.5), (14.5, 7.5)], acc);
             p.line(&[(6.5, 10.0), (12.5, 10.0)], ink);
             p.line(&[(6.5, 12.5), (12.5, 12.5)], ink);
+        }
+        PackAndGo => {
+            // The box, its flaps closed.
+            let front = [(1.5, 7.5), (10.5, 7.5), (10.5, 14.5), (1.5, 14.5)];
+            p.fill(&front, soft);
+            p.closed(&front, ink);
+            p.line(&[(1.5, 7.5), (3.5, 4.5), (12.5, 4.5), (10.5, 7.5)], ink);
+            p.line(&[(12.5, 4.5), (12.5, 8.5)], ink);
+            p.line(&[(6.0, 7.5), (6.0, 10.0)], ink);
+            // On its way out.
+            p.line(&[(8.0, 11.5), (14.0, 11.5)], acc);
+            p.head((15.0, 11.5), (1.0, 0.0), acc);
         }
         Folder => {
             p.fill(
