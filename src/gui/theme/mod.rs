@@ -211,6 +211,8 @@ pub enum Glyph {
     Down,
     Check,
     Help,
+    /// A pencil: change this item.
+    Edit,
 }
 
 impl Glyph {
@@ -225,6 +227,7 @@ impl Glyph {
             Glyph::Down => "Down",
             Glyph::Check => "OK",
             Glyph::Help => "Help",
+            Glyph::Edit => "Edit",
         }
     }
 
@@ -239,6 +242,19 @@ impl Glyph {
             Glyph::Up => &[&[(-0.8, 0.35), (0.0, -0.45), (0.8, 0.35)]],
             Glyph::Down => &[&[(-0.8, -0.35), (0.0, 0.45), (0.8, -0.35)]],
             Glyph::Check => &[&[(-0.8, 0.05), (-0.25, 0.6), (0.8, -0.6)]],
+            // A pencil leaning right, its point at the bottom left.
+            Glyph::Edit => &[
+                &[
+                    (-0.85, 0.85),
+                    (-0.65, 0.25),
+                    (0.35, -0.75),
+                    (0.75, -0.35),
+                    (-0.25, 0.65),
+                    (-0.85, 0.85),
+                ],
+                &[(-0.65, 0.25), (-0.25, 0.65)],
+                &[(0.15, -0.55), (0.55, -0.15)],
+            ],
             // The curl and the dot of a question mark.
             Glyph::Help => &[
                 &[

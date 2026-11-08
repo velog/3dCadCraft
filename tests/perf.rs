@@ -5507,6 +5507,7 @@ fn bolted_connection_within_budget() {
             fasteners: Vec::new(),
             holes: Vec::new(),
             drilled: Vec::new(),
+            free_turn: false,
         },
     };
     let t = std::time::Instant::now();

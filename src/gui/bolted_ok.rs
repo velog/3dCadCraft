@@ -605,6 +605,7 @@ impl CadCraftApp {
             ],
             spread: panel::spread(d),
             fit: panel::fit(d),
+            free_turn: !d.check(0, "Lock Rotation"),
             length: d.bolt.length,
             end,
             end_auto: d.bolt.auto_end,
@@ -732,6 +733,9 @@ impl CadCraftApp {
         if let Some(cur) = self.assembly_mut() {
             *cur = a;
         }
+        if !plan.record.free_turn {
+            self.bolt_lock_turns(&placed);
+        }
         self.cons.last = s;
         self.asm.sel = placed;
         self.context_follow();
@@ -750,6 +754,33 @@ impl CadCraftApp {
             },
             grip
         ))
+    }
+
+    /// Lock Rotation: each fastener's Mate to its bolt axis holds the turn it
+    /// was placed at (spec 6.2 §3.2).
+    fn bolt_lock_turns(&mut self, placed: &[u32]) {
+        use crate::assembly::relation::{ConstraintKind, OriginItem};
+        let Some(a) = self.assembly() else {
+            return;
+        };
+        let turns: Vec<(u32, f64)> = a
+            .constraints
+            .iter()
+            .filter(|c| {
+                c.kind == ConstraintKind::Mate
+                    && matches!(&c.b, GeomRef::Origin { occurrence, item: OriginItem::ZAxis, .. }
+                        if placed.contains(occurrence))
+            })
+            .filter_map(|c| Some((c.id, self.relation_turn(c)?)))
+            .collect();
+        if let Some(a) = self.assembly_mut() {
+            for (id, v) in turns {
+                if let Some(c) = a.constraint_mut(id) {
+                    c.locked = true;
+                    c.value = v;
+                }
+            }
+        }
     }
 
     /// Removes connection `id` from the active assembly: its fasteners
@@ -852,6 +883,7 @@ impl CadCraftApp {
                 crate::part::hole::FastenerFit::Loose => 2,
             },
         );
+        d.set_check(0, "Lock Rotation", !b.free_turn);
         d.bolt.length = b.length;
         let label = |g: &GeomRef| {
             labels
@@ -937,48 +969,76 @@ impl CadCraftApp {
                 )
             })
             .collect();
-        let (mut edit, mut delete, mut select) = (None, None, None);
+        let visible = |occ: u32| {
+            self.assembly()
+                .and_then(|a| a.find(occ))
+                .is_some_and(|o| o.visible)
+        };
+        let shown: Vec<Vec<bool>> = rows
+            .iter()
+            .map(|(_, _, f)| f.iter().map(|(o, _)| visible(*o)).collect())
+            .collect();
+        let (mut edit, mut delete, mut select, mut hide) = (None, None, None, None);
         egui::CollapsingHeader::new("Bolted Connections")
             .id_salt("asm_bolts")
             .default_open(true)
             .show(ui, |ui| {
-                for (id, title, fasteners) in &rows {
-                    let r = egui::CollapsingHeader::new(title)
-                        .id_salt(("asm_bolt", *id))
-                        .show(ui, |ui| {
-                            for (occ, name) in fasteners {
+                for ((id, title, fasteners), shown) in rows.iter().zip(&shown) {
+                    let all: Vec<u32> = fasteners.iter().map(|f| f.0).collect();
+                    let on = shown.iter().any(|v| *v);
+                    let picked = !all.is_empty() && all.iter().all(|o| self.asm.sel.contains(o));
+                    let menu = |ui: &mut egui::Ui,
+                                edit: &mut Option<u32>,
+                                delete: &mut Option<u32>,
+                                hide: &mut Option<Vec<u32>>| {
+                        if ui.button("Edit Bolted Connection...").clicked() {
+                            *edit = Some(*id);
+                            ui.close();
+                        }
+                        let mut v = on;
+                        if ui.checkbox(&mut v, "Visibility").clicked() {
+                            *hide = Some(all.clone());
+                            ui.close();
+                        }
+                        if ui.button("Delete").clicked() {
+                            *delete = Some(*id);
+                            ui.close();
+                        }
+                    };
+                    super::asm_browser::fold(ui, ("asm_bolt", *id), false, |ui| {
+                        if super::asm_browser::visibility_button(ui, on) {
+                            hide = Some(all.clone());
+                        }
+                        super::panels::tree_icon(ui, super::icons::Icon::Bolt);
+                        let r = ui.selectable_label(picked, title);
+                        if r.clicked() {
+                            select = Some(all.clone());
+                        }
+                        if r.double_clicked() {
+                            edit = Some(*id);
+                        }
+                        r.context_menu(|ui| menu(ui, &mut edit, &mut delete, &mut hide));
+                    })
+                    .body(|ui| {
+                        for ((occ, name), v) in fasteners.iter().zip(shown) {
+                            ui.horizontal(|ui| {
+                                if super::asm_browser::visibility_button(ui, *v) {
+                                    hide = Some(vec![*occ]);
+                                }
                                 let sel = self.asm.sel.contains(occ);
                                 let r = ui.selectable_label(sel, name);
                                 if r.clicked() {
                                     select = Some(vec![*occ]);
                                 }
-                                r.context_menu(|ui| {
-                                    if ui.button("Edit Bolted Connection").clicked() {
-                                        edit = Some(*id);
-                                        ui.close();
-                                    }
-                                    if ui.button("Delete Bolted Connection").clicked() {
-                                        delete = Some(*id);
-                                        ui.close();
-                                    }
-                                });
-                            }
-                        });
-                    if r.header_response.clicked() {
-                        select = Some(fasteners.iter().map(|f| f.0).collect());
-                    }
-                    r.header_response.context_menu(|ui| {
-                        if ui.button("Edit Bolted Connection").clicked() {
-                            edit = Some(*id);
-                            ui.close();
-                        }
-                        if ui.button("Delete").clicked() {
-                            delete = Some(*id);
-                            ui.close();
+                                r.context_menu(|ui| menu(ui, &mut edit, &mut delete, &mut hide));
+                            });
                         }
                     });
                 }
             });
+        if let Some(ids) = hide {
+            self.toggle_visible(&ids);
+        }
         if let Some(s) = select {
             self.asm.sel = s;
             self.scene_dirty = true;
@@ -989,6 +1049,28 @@ impl CadCraftApp {
         if let Some(id) = delete {
             self.bolt_delete(id);
         }
+    }
+
+    /// What a click on occurrence `id` selects: every fastener of its bolted
+    /// connection (owner 2026-11-08: one click hides or edits them all), else
+    /// the occurrence alone.
+    pub(super) fn bolt_group(&self, id: u32) -> Vec<u32> {
+        self.assembly()
+            .and_then(|a| {
+                a.bolts
+                    .iter()
+                    .find(|b| b.fasteners.iter().any(|f| f.occurrence == id))
+            })
+            .map_or_else(
+                || vec![id],
+                |b| b.fasteners.iter().map(|f| f.occurrence).collect(),
+            )
+    }
+
+    /// The one connection all of `ids` belong to.
+    pub(super) fn bolt_of_all(&self, ids: &[u32]) -> Option<u32> {
+        let b = self.bolt_of(*ids.first()?)?;
+        ids.iter().all(|&i| self.bolt_of(i) == Some(b)).then_some(b)
     }
 
     /// The connection a fastener occurrence belongs to.

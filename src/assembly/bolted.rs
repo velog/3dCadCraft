@@ -751,6 +751,10 @@ pub struct BoltedConnection {
     /// the feature's id (spec 6.2 §4, owner 2026-11-07).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drilled: Vec<(crate::document::DocRef, String)>,
+    /// The fasteners may turn about their axis (Lock Rotation off). Off by
+    /// default: each fastener's axis Mate holds its turn (owner 2026-11-08).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub free_turn: bool,
 }
 
 fn is_zero(v: &u32) -> bool {
@@ -1796,6 +1800,7 @@ mod tests {
                 .collect(),
             holes: Vec::new(),
             drilled: Vec::new(),
+            free_turn: false,
         }
     }
 

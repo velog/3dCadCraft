@@ -3466,6 +3466,7 @@ fn bolted_r66() -> Project {
                 .collect(),
             holes: Vec::new(),
             drilled: Vec::new(),
+            free_turn: false,
         },
     };
     bolted::make(&mut p, asm, m).unwrap();

@@ -929,6 +929,7 @@ impl AsmPlanned {
                         Combo("Thread", &["ISO Metric profile"], 0),
                         Combo("Diameter", &["M8"], 0),
                         Combo("Hole Fit", &["Close", "Normal", "Loose"], 1),
+                        Check("Lock Rotation", true),
                         Head("Fasteners"),
                         Combo("Standard", &["All"], 0),
                         Combo("Category", &["All"], 0),

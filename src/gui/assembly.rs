@@ -2175,15 +2175,15 @@ impl CadCraftApp {
                 _ if sub_mode => self.asm_sub_click(sub_hit.clone(), ctrl),
                 _ => match hit {
                     Some((h, _)) if ctrl => {
-                        let id = h.occurrence;
-                        if let Some(k) = self.asm.sel.iter().position(|&i| i == id) {
-                            self.asm.sel.remove(k);
+                        let group = self.bolt_group(h.occurrence);
+                        if self.asm.sel.contains(&h.occurrence) {
+                            self.asm.sel.retain(|i| !group.contains(i));
                         } else {
-                            self.asm.sel.push(id);
+                            self.asm.sel.extend(group);
                         }
                     }
                     Some((h, _)) => {
-                        self.asm.sel = vec![h.occurrence];
+                        self.asm.sel = self.bolt_group(h.occurrence);
                         self.asm.sub.clear();
                         self.cons.selected = None;
                         self.cons.more.clear();
@@ -2739,7 +2739,7 @@ impl CadCraftApp {
         if let Some(id) = under
             && !self.asm.sel.contains(&id)
         {
-            self.asm.sel = vec![id];
+            self.asm.sel = self.bolt_group(id);
         }
         let ids = self.asm.sel.clone();
         if !ids.is_empty() {
@@ -2951,8 +2951,7 @@ impl CadCraftApp {
             self.apply(Action::App(super::commands::AppCmd::Measure));
             ui.close();
         }
-        if let [id] = ids
-            && let Some(b) = self.bolt_of(*id)
+        if let Some(b) = self.bolt_of_all(ids)
             && ui.button("Edit Bolted Connection...").clicked()
         {
             self.bolt_edit(b);

@@ -1082,7 +1082,7 @@ pub(super) fn fold<'a>(
 
 /// The eye at the start of a component row: open = visible. Returns whether
 /// it was clicked.
-fn visibility_button(ui: &mut egui::Ui, visible: bool) -> bool {
+pub(super) fn visibility_button(ui: &mut egui::Ui, visible: bool) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
     let palette = if visible {
         super::icons::Palette::enabled()

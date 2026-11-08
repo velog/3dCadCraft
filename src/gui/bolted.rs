@@ -876,6 +876,15 @@ fn item_row(
             {
                 *act = Some(Act::Move(side, k, true));
             }
+            if theme::glyph(ui, Glyph::Edit)
+                .on_hover_text(format!(
+                    "Change this {} (another standard or type) in the Component Library",
+                    item.role.title().to_lowercase()
+                ))
+                .clicked()
+            {
+                *act = Some(Act::Library(pick_for(d, side, k, true)));
+            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 // The name is the Change button: the Component Library window.
                 let r = ui
