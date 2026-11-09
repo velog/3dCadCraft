@@ -17,6 +17,7 @@ use crate::assembly::relation::GeomRef;
 use crate::document::iprops::{CustomProperty, PropValue};
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
 use crate::kernel::{Point3, Real, Transform3, Vector3};
+use crate::part::frame::stored_length;
 use crate::part::frame::{
     CUT_PROPERTIES, CapCorners, EndCut, LENGTH_PROPERTY, Library, NotchTool, Section,
 };
@@ -1515,7 +1516,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                     d.data = DocumentData::Part(part);
                     for c in &mut d.properties.custom {
                         if c.name == LENGTH_PROPERTY {
-                            c.value = crate::document::iprops::PropValue::Number(outer);
+                            c.value = PropValue::Number(stored_length(outer));
                         }
                     }
                 }
@@ -1638,6 +1639,14 @@ fn set_cut_details(project: &mut Project, doc: DocumentId, cuts: [Option<String>
         return;
     };
     let custom = &mut d.properties.custom;
+    // A length saved before it was rounded.
+    for c in custom.iter_mut().filter(|c| c.name == LENGTH_PROPERTY) {
+        if let PropValue::Number(l) = c.value
+            && stored_length(l) != l
+        {
+            c.value = PropValue::Number(stored_length(l));
+        }
+    }
     for (name, text) in CUT_PROPERTIES.iter().zip(cuts) {
         let now = custom.iter().position(|c| c.name == *name);
         match (now, text) {
@@ -4420,6 +4429,73 @@ mod tests {
         );
         delete_members(&mut p, &linked, aid, &r).unwrap();
         assert_eq!(p.documents().len(), n - 1);
+    }
+
+    fn length_of_member(p: &Project, a: DocumentId, occ: u32) -> Real {
+        let doc = asm_of(p, a).unwrap().find(occ).unwrap().component.document;
+        let c = p
+            .document(doc)
+            .unwrap()
+            .properties
+            .custom
+            .iter()
+            .find(|c| c.name == LENGTH_PROPERTY)
+            .unwrap();
+        match c.value {
+            PropValue::Number(l) => l,
+            _ => panic!("the length is no number"),
+        }
+    }
+
+    /// The length is stored clean: exactly 400, a mitred member its exact
+    /// outer length, a noisy value saved earlier is cleaned, a save keeps it.
+    #[test]
+    fn a_member_length_has_no_mesh_noise() {
+        let (mut p, aid, _) = project();
+        let linked = Linked::new();
+        let e = [
+            edge("Front", "Top", [200.0, 0.0, 200.0]),
+            edge("Right", "Top", [400.0, 150.0, 200.0]),
+        ];
+        let lib = Library::builtin();
+        let (_, m) = insert(&mut p, &linked, aid, &e, &opts(), lib, None).unwrap();
+        assert_eq!(length_of_member(&p, aid, m[0]), 400.0);
+        add_miter(
+            &mut p,
+            &linked,
+            aid,
+            &[(m[0], m[1])],
+            0.0,
+            MiterOffset::Default,
+        )
+        .unwrap();
+        assert_eq!(length_of_member(&p, aid, m[0]), 420.0);
+        assert_eq!(length_of_member(&p, aid, m[1]), 320.0);
+        // What an earlier build saved.
+        let doc = asm_of(&p, aid)
+            .unwrap()
+            .find(m[0])
+            .unwrap()
+            .component
+            .document;
+        let c = p
+            .document_mut(doc)
+            .unwrap()
+            .properties
+            .custom
+            .iter_mut()
+            .find(|c| c.name == LENGTH_PROPERTY)
+            .unwrap();
+        c.value = PropValue::Number(419.99999998);
+        solve(&mut p, &linked, aid).unwrap();
+        assert_eq!(length_of_member(&p, aid, m[0]), 420.0);
+        let dir = std::env::temp_dir().join(format!("cc3d_frame_gl_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("g.3dcadcraft");
+        p.save(&file).unwrap();
+        let q = Project::load(&file).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(length_of_member(&q, aid, m[0]), 420.0);
     }
 
     #[test]

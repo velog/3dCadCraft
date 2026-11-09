@@ -27,6 +27,13 @@ const BUILTIN: &str = include_str!("../../data/profiles/profiles.csv");
 
 /// The custom property holding a member's length (Inventor's `G_L`).
 pub const LENGTH_PROPERTY: &str = "G_L";
+
+/// A member length as it is stored in [`LENGTH_PROPERTY`]: to 0.001 mm. The
+/// value is read off a display mesh, so it carries noise (399.99999998).
+pub fn stored_length(l: Real) -> Real {
+    (l * 1000.0).round() / 1000.0
+}
+
 /// The custom properties with the cut of a member's start and end
 /// (Inventor's `CUTDETAIL<n>`; a square end has none).
 pub const CUT_PROPERTIES: [&str; 2] = ["CUTDETAIL1", "CUTDETAIL2"];
@@ -911,7 +918,7 @@ impl Section {
         p.set("description", &format!("{} {}", self.family, self.size));
         p.custom.push(CustomProperty {
             name: LENGTH_PROPERTY.into(),
-            value: PropValue::Number(length),
+            value: PropValue::Number(stored_length(length)),
         });
         p
     }
