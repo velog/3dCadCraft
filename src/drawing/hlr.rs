@@ -1034,9 +1034,13 @@ pub fn view_lines_simplified(
                     -(b2[1] - a2[1]) / len * aside,
                     (b2[0] - a2[0]) / len * aside,
                 );
+                // A model edge running almost along the line of sight (a cylinder's rim next to
+                // the silhouette) lies on walls seen nearly edge-on: their depth changes so fast
+                // across the view that a facet's sag covers the edge. Same test as a silhouette.
+                let grazing = len < GRAZING * (b - a).norm();
                 let hidden = behind_cap(m2, md)
                     || grid.as_ref().is_some_and(|g| {
-                        if !silhouette {
+                        if !silhouette && !grazing {
                             return g.hidden(m2, md, eps);
                         }
                         // Covered from much farther in front than a facet reaches it is another
@@ -2568,6 +2572,10 @@ fn silhouettes(model: &ViewModel, toward: &Vector3) -> Vec<Vec<Point3>> {
         .map(|e| vec![e.a, e.b])
         .collect()
 }
+
+/// A model edge whose view length is below this share of its true length is
+/// classified like a silhouette.
+const GRAZING: f64 = 0.3;
 
 /// An edge between two triangles of one curved face (they turn by less
 /// than ~45°): a silhouette where one faces the viewer and the other not.

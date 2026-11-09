@@ -2335,6 +2335,72 @@ fn detail_view_options_and_fence_edit() {
     );
 }
 
+/// A rim next to the silhouette runs almost along the line of sight, so it is classified with
+/// the tests of a silhouette: its own wall does not hide it (`hlr_cylinder_silhouettes`), but a
+/// wall standing just in front of the whole cylinder still does.
+#[test]
+fn a_rim_seen_edge_on_behind_a_wall_stays_hidden() {
+    use crate::kernel::Transform3;
+    let cylinder = primitive(
+        PrimitiveKind::Cylinder,
+        Point2::new(0.0, 0.0),
+        Point2::new(10.0, 0.0),
+        30.0,
+    );
+    let wall = PartDocument::with_box("Box1", [60.0, 60.0, 60.0]).unwrap();
+    let wall_model = hlr::part_model(&wall);
+    let positions: Vec<_> = wall_model
+        .meshes
+        .iter()
+        .flat_map(|m| m.faces.positions.iter().copied())
+        .collect();
+    let middle = |f: fn(&crate::kernel::Point3) -> f64| {
+        let lo = positions.iter().map(f).fold(f64::MAX, f64::min);
+        let hi = positions.iter().map(f).fold(f64::MIN, f64::max);
+        (lo + hi) / 2.0
+    };
+    let centre = [middle(|p| p.x), middle(|p| p.y), middle(|p| p.z)];
+    let frame = ViewOrientation::Front.frame();
+    // The wall's back face 0.2 mm in front of the cylinder, towards the viewer.
+    let at = frame.toward * (30.0 + 10.2);
+    let shift =
+        Transform3::translation(at.x - centre[0], at.y - centre[1], at.z + 15.0 - centre[2]);
+    let vm = hlr::assembly_model(
+        &[
+            hlr::Instance {
+                id: 1,
+                sub: Vec::new(),
+                transform: Transform3::identity(),
+                model: std::sync::Arc::new(hlr::part_model(&cylinder)),
+            },
+            hlr::Instance {
+                id: 2,
+                sub: Vec::new(),
+                transform: shift,
+                model: std::sync::Arc::new(wall_model),
+            },
+        ],
+        hlr::Simplify::default(),
+    );
+    let front = view_lines(&vm, &frame);
+    let (w, h) = front.size();
+    close(w, 60.0, 1e-6, "only the wall sets the view's size");
+    close(h, 60.0, 1e-6, "only the wall sets the view's size");
+    let centre = [(front.min[0] + w / 2.0), (front.min[1] + h / 2.0)];
+    let inside = |p: &[f64; 2]| (p[0] - centre[0]).abs() < 25.0 && (p[1] - centre[1]).abs() < 25.0;
+    let seen: Vec<_> = front
+        .visible
+        .iter()
+        .filter(|l| l.iter().any(inside))
+        .collect();
+    assert!(seen.is_empty(), "visible through the wall: {seen:?}");
+    assert!(
+        length(&front.hidden) > 2.0 * 30.0 + 2.0 * 20.0 - 0.2,
+        "hidden {}",
+        length(&front.hidden)
+    );
+}
+
 /// Parts inside a subassembly (spec 3.1a) keep their edges apart in an
 /// assembly view, and their edges still belong to the top-level occurrence
 /// (balloons and parts lists count those).
