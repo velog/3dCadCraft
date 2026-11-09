@@ -37,6 +37,7 @@ use solidcore::surface::cone::Cone;
 use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::brep::{p1 as brep_p1, p2 as brep_p2};
 use solidcore::topology::face::p2 as face_p2;
+use solidcore::topology::face::p4 as face_p4;
 use solidcore::topology::{Brep, BrepId, FaceId, FaceuseId};
 
 use super::blend::{Miss, on_copy, p3, pick, points_ok, status as blend_status, tolerance_ok};
@@ -321,6 +322,7 @@ pub(crate) fn shell(body: &Body, points: &[[f64; 3]], tolerance: f64, thickness:
             Err(m) => return Ok(Err(face_miss(m))),
         };
         let solid_in = brep_p2::is_manifold_solid(&w)?;
+        reseat_seams(k, &mut w, thickness)?;
         if thickness < 0.0 && solid_in && !leaves_cavity(k, &mut w, &picked, -thickness)? {
             return Ok(Err(Error::NoRoom));
         }
@@ -329,6 +331,94 @@ pub(crate) fn shell(body: &Body, points: &[[f64; 3]], tolerance: f64, thickness:
             Err(e) => Ok(Err(e)),
         }
     })
+}
+
+/// Points sampled along each edge of a cylinder's face to find the arc it leaves open.
+const SEAM_SAMPLES: usize = 64;
+
+/// Turns the parameters of a cylinder's face whose boundary lies on or near the cylinder's seam,
+/// so the seam stands in the middle of the arc the face leaves open. An offset moves such a
+/// boundary across the seam (a cylinder centred on a box's edge: 90..360 degrees, whose inner
+/// wall runs on to 369), and an edge over the seam of a closed curve is no interval of that
+/// curve, so its trim fails and the offset leaves a gap. The surface is the same, only its `u`
+/// starts elsewhere; the face's UV trim curves are made again from its edges. Only for a face of
+/// more than half a turn; a cylinder in several faces is left alone too: those faces already
+/// meet at its seam.
+fn reseat_seams(k: &Kernel, w: &mut Brep, distance: f64) -> solidcore::Result<()> {
+    use std::f64::consts::TAU;
+    let mut cylinders = Vec::new();
+    for f in brep_p1::faces(w, None)? {
+        let Some(surface) = w.face(f)?.surface.as_ref() else {
+            continue;
+        };
+        if let SurfaceKind::Cone(c) = surface.kind_with_nurb(k)? {
+            if c.is_cylinder() {
+                let canonical = c.canonical();
+                cylinders.push((f, canonical.origin, canonical.radius));
+            }
+        }
+    }
+    for (i, &(f, place, radius)) in cylinders.iter().enumerate() {
+        let (origin, axis) = (place.origin(), place.z_axis());
+        let shared = cylinders.iter().enumerate().any(|(j, (_, other, r))| {
+            let off = other.origin() - origin;
+            let across = off - axis * off.dot(axis);
+            j != i
+                && (r - radius).abs() < 1e-6
+                && other.z_axis().cross(axis).length() < 1e-6
+                && across.length() < 1e-6
+        });
+        if shared {
+            continue;
+        }
+        let mut angles = Vec::new();
+        for e in face_p4::edges(w, f, None, false, None)? {
+            let edge = w.edge(e)?;
+            let (Some(curve), interval) = (edge.curve.as_ref(), edge.interval) else {
+                continue;
+            };
+            for n in 0..=SEAM_SAMPLES {
+                let at = curve.evaluate_point(k, interval.evaluate(n as f64 / SEAM_SAMPLES as f64))?;
+                let d = at - origin;
+                angles.push(d.dot(place.y_axis()).atan2(d.dot(place.x_axis())).rem_euclid(TAU));
+            }
+        }
+        angles.sort_by(f64::total_cmp);
+        let (Some(&first), Some(&last)) = (angles.first(), angles.last()) else {
+            continue;
+        };
+        // The widest arc without boundary points: where the face is not.
+        let (mut from, mut gap) = (last, first + TAU - last);
+        for pair in angles.windows(2) {
+            if pair[1] - pair[0] > gap {
+                (from, gap) = (pair[0], pair[1] - pair[0]);
+            }
+        }
+        // A face reaching round the whole cylinder has no such arc, and one of at most half a
+        // turn (a round, whose edges are tangent to its neighbours) stays within its own span.
+        if gap <= TAU / SEAM_SAMPLES as f64 || gap >= TAU / 2.0 {
+            continue;
+        }
+        let past_start = (TAU - from).rem_euclid(TAU);
+        let from_end = (gap - past_start).abs().min(past_start);
+        let seam_in_gap = past_start <= gap + 1e-9 || past_start >= TAU - 1e-9;
+        let reach = (2.0 * distance.abs() / radius + 0.02).min(gap / 2.0);
+        if !seam_in_gap || from_end >= reach {
+            continue;
+        }
+        let Some(old) = w.face(f)?.surface.as_ref() else {
+            continue;
+        };
+        let mut turned = old.copy(k)?;
+        let mut turn = Axis2Placement::IDENTITY;
+        turn.rotate_about_axis_at_point(from + gap / 2.0, origin, axis);
+        turned.transform(k, &turn, None)?;
+        let mut state = brep_p2::RegionNotifyState::new(w);
+        let mut env = state.env();
+        let face_ref = brep_p2::region_only_key(EntityRef::Face(f));
+        brep_p2::replace_surface(k, w, &mut env, f, turned, face_ref, brep_p2::OldSurface::Delete, true)?;
+    }
+    Ok(())
 }
 
 /// `smlib_offset_faces`: its checks, the pick, the solid check, (moving faces in) the cavity

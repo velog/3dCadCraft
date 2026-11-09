@@ -679,9 +679,10 @@ fn edge_cylinder_shell_volume() -> Real {
     union - (inner_box + inner_cyl - quad * 45.5)
 }
 
-/// SolidCraft #1494: a box 47.5×45×30 joined with a cylinder r7.5 whose
-/// axis is the box's bottom front edge, shelled 1 with the top removed.
-fn c_shell_box_with_edge_cylinder() -> Result<PartDocument, String> {
+/// A box 47.5×45×30 joined with a cylinder r7.5 along X, its axis at
+/// (y, z). On an edge of the box the wall's boundary lies on the cylinder's
+/// seam.
+fn box_with_edge_cylinder(y: Real, z: Real) -> Result<PartDocument, String> {
     let mut part = plate(47.5, 45.0, 30.0)?;
     let j = part
         .create_sketch(
@@ -691,7 +692,7 @@ fn c_shell_box_with_edge_cylinder() -> Result<PartDocument, String> {
         .map_err(|e| e.to_string())?;
     part.sketches[j]
         .sketch
-        .add_circle(Point2::new(0.0, 0.0), 7.5)
+        .add_circle(Point2::new(y, z), 7.5)
         .map_err(|e| e.to_string())?;
     let reg = part.sketches[j].sketch.regions();
     let disc = reg
@@ -701,9 +702,25 @@ fn c_shell_box_with_edge_cylinder() -> Result<PartDocument, String> {
     let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(disc, disc.interior_point())], 47.5);
     ex.operation = Operation::Join;
     part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// SolidCraft #1494: the cylinder on the bottom front edge, shelled 1 with
+/// the top removed.
+fn c_shell_box_with_edge_cylinder() -> Result<PartDocument, String> {
     shell_of(
-        part,
+        box_with_edge_cylinder(0.0, 0.0)?,
         &[("Extrusion1:End", [20.0, 20.0, 30.0])],
+        1.0,
+        ShellDirection::Inside,
+    )
+}
+
+/// The same on the top front edge, closed: the mirror image of the bottom's.
+fn c_shell_closed_top_edge_cylinder() -> Result<PartDocument, String> {
+    shell_of(
+        box_with_edge_cylinder(0.0, 30.0)?,
+        &[],
         1.0,
         ShellDirection::Inside,
     )
@@ -2721,6 +2738,14 @@ fn cases() -> Vec<Case> {
             budget_ms: 1000.0,
             build: c_shell_box_with_edge_cylinder,
             want: Want::VolumeWithin(edge_cylinder_shell_volume(), 30.0),
+        },
+        Case {
+            level: "complex",
+            name: "shell 1, closed, cylinder on the top edge (#1494)",
+            budget_ms: 1000.0,
+            build: c_shell_closed_top_edge_cylinder,
+            // The open case and the 1 mm lid over its cavity.
+            want: Want::VolumeWithin(edge_cylinder_shell_volume() + 45.5 * 43.0, 30.0),
         },
         Case {
             level: "simple",
