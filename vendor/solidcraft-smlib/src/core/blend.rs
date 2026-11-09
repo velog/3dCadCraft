@@ -245,6 +245,80 @@ fn chamfer_radius(k: &Kernel, b: &mut Brep, e: EdgeId, distance: f64) -> solidco
     Ok((radius.is_finite() && radius > 0.0).then_some(radius))
 }
 
+/// The ends of `e` and the faces on its two sides, for [`one_radius_per_strip`]; `None` where an
+/// edge use, a vertex or a face is missing.
+fn edge_ends_and_faces(k: &Kernel, b: &mut Brep, e: EdgeId) -> solidcore::Result<Option<([VertexId; 2], [FaceId; 2])>> {
+    let Some(u0) = edge::blend_edgeuse(k, b, e)? else { return Ok(None) };
+    let Some(u1) = eu_p1::radial(b, u0)? else { return Ok(None) };
+    let start = |b: &Brep, u: EdgeuseId| -> solidcore::Result<Option<VertexId>> {
+        Ok(match eu_p1::vertexuse(b, u)? {
+            Some(vu) => b.vertexuse(vu)?.vertex,
+            None => None,
+        })
+    };
+    let face = |b: &Brep, u: EdgeuseId| -> solidcore::Result<Option<FaceId>> {
+        let fu = match eu_p1::loopuse(b, u)? {
+            Some(lu) => b.loopuse(lu)?.faceuse,
+            None => None,
+        };
+        Ok(match fu {
+            Some(fu) => b.faceuse(fu)?.face,
+            None => None,
+        })
+    };
+    let Some(mate) = eu_p1::mate(b, u0)? else { return Ok(None) };
+    let (Some(v0), Some(v1), Some(f0), Some(f1)) = (start(b, u0)?, start(b, mate)?, face(b, u0)?, face(b, u1)?) else {
+        return Ok(None);
+    };
+    Ok(Some(([v0, v1], if f0 <= f1 { [f0, f1] } else { [f1, f0] })))
+}
+
+/// Gives the picked edges of one chamfer strip one ball radius: edges that meet at a vertex
+/// between the same two faces (an ellipse the hole's wall cuts in a wall, split into pieces) are
+/// one strip, and [`chamfer_radius`] takes each edge's radius at its own midpoint. Where the angle
+/// between the faces changes along the strip (an inclined hole's exit) the pieces' radii differ,
+/// their chamfers do not meet at the joints and the result is no closed solid; they take the
+/// mean. Strips whose radii are already equal are unchanged.
+fn one_radius_per_strip(k: &Kernel, b: &mut Brep, picked: &[EdgeId], radii: &mut [f64]) -> solidcore::Result<()> {
+    let mut ends = Vec::with_capacity(picked.len());
+    for &e in picked {
+        ends.push(edge_ends_and_faces(k, b, e)?);
+    }
+    let mut group: Vec<usize> = (0..picked.len()).collect();
+    fn root(g: &mut [usize], mut i: usize) -> usize {
+        while g[i] != i {
+            g[i] = g[g[i]];
+            i = g[i];
+        }
+        i
+    }
+    for i in 0..picked.len() {
+        for j in i + 1..picked.len() {
+            let (Some((vi, fi)), Some((vj, fj))) = (&ends[i], &ends[j]) else { continue };
+            if fi == fj && vi.iter().any(|v| vj.contains(v)) {
+                let (a, c) = (root(&mut group, i), root(&mut group, j));
+                group[a] = c;
+            }
+        }
+    }
+    let mut sums: HashMap<usize, (f64, usize)> = HashMap::new();
+    for i in 0..picked.len() {
+        let r = root(&mut group, i);
+        let s = sums.entry(r).or_insert((0.0, 0));
+        s.0 += radii[i];
+        s.1 += 1;
+    }
+    for i in 0..picked.len() {
+        let r = root(&mut group, i);
+        if let Some(&(sum, n)) = sums.get(&r)
+            && n > 1
+        {
+            radii[i] = sum / n as f64;
+        }
+    }
+    Ok(())
+}
+
 /// What `round_edges` makes: the capi's kinds less the chamfer, which `chamfer_offsets` makes.
 #[derive(Clone, Copy, PartialEq)]
 enum Section<'a> {
@@ -945,6 +1019,7 @@ fn blend_call(
                         None => return Ok(Err(Error::Status(INVALID_INPUT))),
                     }
                 }
+                one_radius_per_strip(k, &mut w, &picked, &mut radii)?;
                 return Ok(match blend_edges(k, &mut w, &picked, &radii, Section::Chamfer(&radii), None, &[], None)? {
                     Ok(()) => finish(w, solid_in)?,
                     Err(Ok(_)) => Err(Error::Unsupported),

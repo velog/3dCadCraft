@@ -159,22 +159,26 @@ fn fillet_and_chamfer_the_exit_on_a_side_wall() {
 }
 
 #[test]
-fn the_exit_across_a_corner_is_refused_quickly() {
-    // r 4: the exit runs over the back wall and the bottom, through their edge; the ball
-    // would have to turn that corner, which the kernel's blend does not do yet. It used to try
-    // all 24 orders of the four edges (100-200 s, the window frozen); now it says so at once.
+fn the_exit_across_a_corner_is_rounded() {
+    // r 4: the exit runs over the back wall and the bottom, through their edge; the ball turns
+    // that corner (it used to be refused after trying all 24 orders of the edges, 100-200 s).
     let base = block_with_hole(R);
+    let v0 = volume(&base);
     let mut exit = hole_edges_on(&base, "Box1:Back");
     exit.extend(hole_edges_on(&base, "Box1:Bottom"));
     let mut p = base.clone();
     let t = std::time::Instant::now();
-    let r = p.add_blend(BlendFeature::fillet(exit, 1.0));
+    p.add_blend(BlendFeature::fillet(exit, 1.0))
+        .unwrap_or_else(|e| panic!("{e}"));
     let took = t.elapsed();
-    assert!(r.is_err(), "it works now: turn this into a volume check");
     assert!(took.as_secs_f64() < 30.0, "{took:?}");
-    assert_eq!(
-        p.features.len(),
-        base.features.len(),
-        "the part is unchanged"
+    assert!(
+        p.exact && p.feature_health.is_empty(),
+        "{:?}",
+        p.feature_health
     );
+    // A 1 mm round removes (1 - pi/4) r^2 = 0.21 mm^2 of section at a square edge, more where the
+    // wall meets the hole at 45 deg: about 19 mm^3 along this exit (measured 18.8).
+    let v = volume(&p);
+    assert!(v < v0 - 5.0 && v > v0 - 60.0, "{v0} -> {v}");
 }
