@@ -2505,6 +2505,9 @@ fn round_offset_corners(
     let edges = guarded("edges", || s.body.edges(size * 1e-3))?;
     let eps = (size * 1e-3).max(1e-4);
     let mut mids = Vec::new();
+    // Edges nearly flat (7 to 9 of the 16 directions in material): the kinks of a drafted wall,
+    // or seams between tangent faces, which the test cannot tell apart.
+    let mut near_flat = Vec::new();
     for e in &edges {
         let m = p3(e.mid);
         if skip
@@ -2548,13 +2551,25 @@ fn round_offset_corners(
         let take = if convex { inside < 7 } else { inside > 9 };
         if take {
             mids.push(m);
+        } else if (7..=9).contains(&inside) {
+            near_flat.push(m);
         }
     }
     if mids.is_empty() {
         return Ok(s.clone());
     }
-    fillet(s, &mids, r, &format!("{prefix}:Corner"))
-        .map_err(|e| format!("the corners cannot be rounded ({e})"))
+    let name = format!("{prefix}:Corner");
+    match fillet(s, &mids, r, &name) {
+        Ok(done) => Ok(done),
+        // A round that ends where a drafted wall kinks needs the kink rounded too (SMLib refuses
+        // it alone, status 1001); the offset of that kink is a round of the same radius anyway.
+        // Only after the corners alone failed: what built before stays as it was.
+        Err(e) if !near_flat.is_empty() => {
+            mids.extend(near_flat);
+            fillet(s, &mids, r, &name).map_err(|_| format!("the corners cannot be rounded ({e})"))
+        }
+        Err(e) => Err(format!("the corners cannot be rounded ({e})")),
+    }
 }
 
 /// Shell Inside where an open face meets rounds at least as large as the
