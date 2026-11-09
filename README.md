@@ -8,10 +8,11 @@ relearning. Parts, sheet metal, assemblies and drawings in one file, a feature
 history you can roll back and edit, and (planned) an API so AI agents can
 drive it.
 
-> **Status (October 2026): early, actively developed, not released yet.**
-> Part modelling, sheet metal, first assemblies and drawings work and are
-> tested every day; many features are implemented but still waiting for their
-> visual check. Expect rough edges — and please report them.
+> **Status (November 2026): early, actively developed, pre-release.**
+> Part modelling, surfaces, sheet metal, plastic parts, assemblies, frames, a
+> component library and drawings work and are tested every day; many features
+> are implemented but still waiting for their visual check. Expect rough
+> edges — and please report them.
 
 *Българска версия — по-долу.*
 
@@ -29,11 +30,20 @@ application: 12 features, 2 bodies, a valid closed solid.</sub>
 | **Sketch** — constraints, dimensions and the solver's DOF / redundancy report | **Sheet metal** — Face + Flanges with corner reliefs; flat pattern to DXF |
 | ![Assembly of a plate and three blocks](docs/images/assembly.png) | ![Drawing with base, projected, section and detail views and hole notes](docs/images/drawing-plate.png) |
 | **Assembly** — placed components, constraints and joints on one solver | **Drawing** — base, projected, section and detail views, hole notes, PDF |
+| ![A thin-walled housing with a grill, bosses, a snap fit, a rest and a lip](docs/images/part-plastic-housing.png) | ![A welded frame of square hollow sections with treated corners](docs/images/frame.png) |
+| **Plastic parts** — Grill, Boss, Rest, Snap Fit, Rule Fillet and Lip as features | **Frames** — section tables, members along a skeleton, corners, notches |
+| ![A freeform surface shaped through its control cage](docs/images/surface-freeform.png) | ![The Component Library window](docs/images/component-library.png) |
+| **Surfaces and Freeform** — a control cage shaped point by point; Stitch, Patch, Trim, Sculpt | **Component Library** — 160 families of standard parts, placed with Smart Drop |
 
 ![Assembly drawing with a parts list and a balloon](docs/images/drawing-parts-list.png)
 
 <sub>An assembly view with a parts list computed from the assembly and a balloon
 that follows its item number.</sub>
+
+![Bolted Connection: four bolts with washers previewed in the holes of two plates](docs/images/bolted-connection.png)
+
+<sub>Bolted Connection: one click on a hole's rim finds the plate stack, the
+length of the bolt and the washers; Follow Pattern puts one in every hole.</sub>
 
 ## Real cases
 
@@ -47,8 +57,14 @@ yourself and open it:
 | Hollow box | pocket + rounded inner edges (or chamfers) | `cargo run --example hollow_box -- hollow.3dcadcraft` |
 | Vent plate | 40 rectangles cut in one Extrude | `cargo run --example vent_plate -- vent.3dcadcraft` |
 | Radial grille | circular sketch pattern, cut every other sector | `cargo run --example grille -- grille.3dcadcraft` |
-| Large patterns | 5 041 holes in ~7 s, 10 000 in ~14 s (release) | `cargo run --release --no-default-features --example pattern_probe -- hole 71` |
+| Large patterns | thousands of holes in one feature | `cargo run --release --no-default-features --example pattern_probe -- hole 71` |
 | Large assembly | thousands of occurrences for speed tests | `cargo run --example big_assembly -- big.3dcadcraft 5000` |
+| Plastic housing | Grill, Boss, Snap Fit, Rest, Lip, Rule Fillet | `cargo run --example plastic_demo -- plastic.3dcadcraft built` |
+| Welded frame | twelve members along a skeleton, corners treated | `cargo run --example frame_demo -- frame.3dcadcraft` |
+| Freeform shell | a control cage with moved points | `cargo run --example freeform_demo -- freeform.3dcadcraft` |
+| Mechanisms | a delta robot and an arm as flexible subassemblies | `cargo run --example mechanisms_demo -- mech.3dcadcraft` |
+| Motion | motion links, a cam and a contact stop | `cargo run --example motion_demo -- motion.3dcadcraft` |
+| Bolted Connection | plates and holes ready for the command | `cargo run --example bolted_demo -- bolted.3dcadcraft` |
 
 Then `cargo run --release -- plate.3dcadcraft`. A part can be exported to
 STEP / STL / GLB (`cargo run --example export -- in.3dcadcraft out.step`) and a
@@ -63,39 +79,58 @@ sheet metal cut across a bend (`tests/data/*_journal.jsonl`).
 
 | Area | State | Notes |
 |---|---|---|
-| Sketching | ✅ | all Inventor line / circle / arc / rectangle / slot / polygon / spline variants, ~20 constraint and dimension kinds, sparse solver with DOF analysis, Modify tools, patterns, projected geometry |
-| Part features | 🟡 | Extrude, Revolve, Hole, Thread, Fillet, Chamfer, Shell, Face Draft, Pattern, Mirror, Sweep, Loft, Coil, Rib, Combine, Split, Thicken / Offset, work features, primitives — done; many waiting for their visual check |
-| History and parameters | ✅ | End of Part, reorder, suppress (also by condition), Edit Feature with live preview and drag handles, unit-aware expressions in every numeric field |
-| Sheet metal | 🟡 | Face, Flange, Contour Flange, Hem, Fold, Cut, Unfold / Refold, Corner Round / Chamfer, Convert, Flat Pattern, DXF; Bend, Rip, Corner Seam, Punch, Lofted Flange — interface only |
-| Assemblies | 🟡 | Place (also linked part files), Ground, Free Move / Rotate, Mate / Flush / Angle / Insert, joints with limits, BOM; patterns, interference, subassemblies — to do |
-| Drawings | 🟡 | sheets and title blocks, base / projected / section / detail / auxiliary views with hidden lines, dimensions, hole notes, parts lists, balloons, bend tables, PDF; Break / Crop, DXF — to do |
-| Interface | 🟡 | ribbon with the full Inventor command set (unimplemented commands disabled with their spec), ViewCube, visual styles, section views, selection filters, right-click menus by selection, aliases and command search (Alt+S), presets, materials and appearances |
-| Files and exchange | 🟡 | one `.3dcadcraft` file with many documents, Link / Append / Pack, autosave and crash recovery; export STEP / STL / GLB / PDF / DXF; **STEP import — to do** |
+| Sketching | ✅ | all Inventor line / circle / arc / rectangle / slot / polygon / spline variants, ~20 constraint and dimension kinds, sparse solver with DOF analysis, Modify tools, patterns, projected geometry, text with any installed font; 3D sketch — to do |
+| Part features | 🟡 | Extrude, Revolve, Hole, Thread, Fillet, Chamfer, Shell, Face Draft, Pattern, Mirror, Sweep, Loft, Coil, Rib, Combine, Split, Thicken / Offset, Delete Face, Move Bodies, Copy Object, Emboss / Engrave, Derive, work features, primitives — done; many waiting for their visual check |
+| Surfaces and Freeform | 🟡 | Stitch, Boundary Patch, Trim, Extend, Ruled Surface, Sculpt, Replace Face, Loft between surfaces; Freeform Plane / Cylinder with Edit Form; other Freeform primitives — interface only |
+| Plastic parts | 🟡 | Grill, Boss, Rest, Snap Fit, Rule Fillet, Lip, with live preview and editable section pictures |
+| History and parameters | ✅ | End of Part, reorder, suppress (also by condition), Edit Feature with live preview and drag handles, unit-aware expressions in every numeric field, linked parameters, part families and variants |
+| Sheet metal | 🟡 | Face, Flange (Further Bends, extents), Contour Flange, Contour Roll, Lofted Flange, Hem types, Fold, Bend, Rip, Cut, Unfold / Refold, Corner Round / Chamfer, Convert (also of imported sheets), Flat Pattern, DXF, rules as a spreadsheet; Punch — interface only |
+| Assemblies | 🟡 | Place (linked files, STEP), Mate / Flush / Angle / Insert, Assemble, joints with limits, subassemblies (also flexible), patterns, Replace / Copy / Mirror, Interference, Motion and Contact, exploded views, View / Position representations and Variants, BOM, edit in place, cross-part references, adaptivity, Derive, Make Components, assembly features, work features and sketches |
+| Frames | 🟡 | Insert Frame (EN and ANSI section tables, own profiles), Miter, Corner Joint, Trim / Extend, Lengthen / Shorten, Notch, Change, Edit Frame; End Cap, Reuse — interface only |
+| Component Library | 🟡 | 160 families with levels of detail, published part families, Smart Drop, Change Size, connections, Bolted Connection (through holes, blind, circular and linear layouts, follows the plates); the other Design Accelerator calculators — interface only |
+| Drawings | 🟡 | sheets, borders, title blocks and sketched symbols you define, base / projected / section (offset, aligned) / detail / auxiliary / break / break out / draft views, sheet and view sketches, dimensions (baseline, chain, ordinate, angular), hole, chamfer and bend notes, parts lists, balloons, hole, bend, revision and general tables, layers, PDF; Overlay, Slice, Crop, weld and GD&T symbols, DXF — to do |
+| Interface | 🟡 | Home page, ribbon with the full Inventor command set (commands without logic have a grey icon and their full panel), View Cube, visual styles, section views, dark and light themes with colour schemes, selection filters, right-click menus by selection, Next / Back in every command, the value next to the cursor, aliases, command search (Alt+S), your own keys and the import of Inventor's, presets, materials and appearances, progress for long operations |
+| Files and exchange | 🟡 | a `.3dcadcraft` design file or one file per document (`.ccpart` / `.ccasm` / `.ccdrw`), design projects and templates, Link / Append / Pack and Go, autosave and crash recovery; **import** STEP (parts and assemblies, Reference Model with Update), STL, OBJ; export STEP / STL / GLB / PDF / DXF / SVG; IGES and others — to do |
 | API for AI agents | ⬜ | JSON-RPC / MCP server — planned |
 
-Behind it: an exact B-Rep kernel, about 930 automated tests (including
-reference cases, file compatibility fixtures and speed budgets) and 58 feature
-specifications describing Inventor's behaviour option by option.
+Behind it: an exact B-Rep kernel, about 1 800 automated tests (including
+reference cases, file compatibility fixtures and speed budgets) and more than
+85 feature specifications describing Inventor's behaviour option by option.
+
+## Being worked on now
+
+In progress on development branches on 9 November 2026, before it reaches `main`:
+
+- **Drawings:** more dimension types; title blocks and borders checked in the app.
+- **Frames:** a frame as a subassembly of its own (Inventor's model), Create New Frame.
+- **Long operations:** OK and Rebuild All on a worker thread, so the window
+  stays responsive; OK takes the part its preview has already built.
+- **Assemblies:** edges and vertices of components as inputs of work features,
+  a picture column in the BOM.
+- **Hard surface cases:** symmetric Thicken of an egg, Split Face of a guided
+  patch, rounded Shell corners on drafted walls, the chamfer of an inclined hole's exit.
+- **Drawing views:** a rim seen almost end-on is not hidden by its own wall.
+- **Speed of the new kernel:** one Extrude of a plate with 5 041 holes takes
+  about 32 s today, and we keep working on it.
 
 ## What is left
 
 The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md); the main open items:
 
-1. **Critical fixes first:** slow picking and Slice Graphics on parts with a
-   modeled thread, countersinks at other angles than 90°, a slow fillet test
-   under load (ROADMAP "⚠ Critical fixes").
-2. **Visual check** of everything implemented but not yet confirmed in the
-   running app (shell, draft, patterns, materials, assemblies, sheet metal…).
-3. **Part commands still without logic:** Delete Face, Move
-   Bodies, Copy Object, Emboss, Sketch Driven Pattern, surfaces (Stitch, Sculpt,
-   Patch, Trim, Extend), Derive, plastic part, freeform.
-4. **Assemblies:** Tangent / Symmetry, Drive and Animate, component patterns,
-   interference, subassemblies, Replace, edit in place.
-5. **Drawings:** Break / Break Out / Crop views, angular dimensions, DXF export.
-6. **Exchange:** STEP import.
+1. **Visual check** of everything implemented but not yet confirmed in the
+   running app.
+2. **Speed:** many-hole parts, long operations off the main thread, modeled
+   threads and countersinks (ROADMAP "⚠ Critical fixes").
+3. **Modelling:** 3D sketch, Sketch Driven Pattern, Bend Part, Decal, direct
+   editing, the other Freeform primitives, surface analyses, feature templates.
+4. **Assemblies:** simplification, Make Layout, the Design Accelerator
+   calculators (shafts, gears, bearings, springs…).
+5. **Drawings:** Overlay / Slice / Crop views, weld and GD&T symbols, automated
+   centrelines, DXF export.
+6. **Exchange:** IGES and other formats.
 7. **Automation:** the command API and the MCP server for AI agents, batch
    processing from the command line.
-8. Later: frame generator, standard components, weldments, FEA, rendering.
+8. Later: weldments, tube and pipe, FEA, rendering.
 
 ## Download
 
@@ -120,9 +155,9 @@ cargo xtask ci                               # every check CI runs
 Use `--release`: geometry is much slower in debug builds. Settings live in
 `%APPDATA%\3dcadcraft` (Linux: `~/.config/3dcadcraft`).
 
-Geometry runs on an exact B-Rep kernel ([SolidCraft](https://github.com/bherbruck/solidcraft)
-on [truck](https://github.com/ricosjp/truck), MIT/Apache), with a few local
-fixes kept in `vendor/`.
+Geometry runs on an exact B-Rep kernel: [SolidCraft](https://github.com/tangency-labs/solidcraft)
+(MIT/Apache) on [solidcore](https://github.com/tangency-labs/solidcore) (Apache-2.0), with
+our fixes kept in `vendor/` and in [a fork of solidcore](https://github.com/velog/solidcore).
 
 ## Contributing
 
@@ -156,11 +191,13 @@ code, text, icons or file formats.
 
 ## На български
 
-Параметрична 3D CAD система с отворен код, написана изцяло на Rust. Интерфейсът следва Autodesk Inventor за лесна миграция; детайли, ламарина, сглобки и чертежи в един файл; история на операциите с End of Part; API за AI агенти (предстои).
+Параметрична 3D CAD система с отворен код, написана изцяло на Rust. Интерфейсът следва Autodesk Inventor за лесна миграция; детайли, повърхнини, ламарина, пластмасови детайли, сглобки, рамки, библиотека от стандартни части и чертежи; история на операциите с End of Part; API за AI агенти (предстои).
 
-**Докъде е (октомври 2026):** скицирането е завършено; повечето операции за детайли (Extrude, Revolve, Hole, Thread, Fillet, Chamfer, Shell, Draft, масиви, Sweep, Loft, Coil, Rib, Combine, Split) работят; ламарина с разгъвка и DXF; първи сглобки (връзки, шарнири, спецификация); чертежи с изгледи, разрези, детайли, коти, бележки за отвори, таблица на частите, балони и PDF. Много от тях чакат визуална проверка. Снимките по-горе са от реални модели, които всеки може да построи с `cargo run --example …` (вижте таблицата „Real cases“).
+**Докъде е (ноември 2026):** скицирането е завършено, включително текст с всеки инсталиран шрифт. Работят повечето операции за детайли, повърхнините (Stitch, Patch, Trim, Sculpt, Freeform) и пластмасовите детайли (Grill, Boss, Rest, Snap Fit, Rule Fillet, Lip). Ламарината е с разгъвка и DXF, а сглобките — с подсглобки, масиви, колизии, движение и контакт, Variants, редакция на място и адаптивност. Има рамки (Frame Generator), библиотека от 160 фамилии стандартни части със Smart Drop, Bolted Connection, внос на STEP / STL / OBJ и Pack and Go. Чертежите са с разрези, Break и Break Out, скици, собствени рамки и антетки, таблици и PDF. Много от тях чакат визуална проверка. Снимките по-горе са от реални модели, които всеки може да построи с `cargo run --example …` (вижте таблицата „Real cases“).
 
-**Какво остава:** спешните поправки за бързина (резба, зенкери), визуалната проверка, логиката на останалите команди за детайли (Delete Face, повърхнини, Derive…), сглобки (масиви от компоненти, колизии, подсглобки), чертежи (Break/Crop, DXF), внос на STEP, API/MCP за AI агенти. Пълният план: [docs/ROADMAP.md](docs/ROADMAP.md).
+**В процес на работа (9 ноември 2026):** нови видове коти в чертежите; рамката като отделна подсглобка; OK и Rebuild All във фонов режим, за да не спира прозорецът; ръбове и върхове на компоненти като вход за работни равнини и оси; колона със снимка в спецификацията; трудни случаи с повърхнини; бързина на новото ядро при хиляди отвори.
+
+**Какво остава:** визуалната проверка, 3D скица, Sketch Driven Pattern, Decal, директна редакция, останалите Freeform примитиви, анализи на повърхнини, калкулаторите на Design Accelerator, Overlay / Slice / Crop и символи за заварки и GD&T в чертежите, DXF на чертежи, IGES, API/MCP за AI агенти. Пълният план: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Готови версии за Windows и Linux: [Releases](https://github.com/velog/3dCadCraft/releases). Или от изходния код:
 
