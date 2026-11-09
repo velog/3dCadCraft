@@ -882,6 +882,7 @@ impl CadCraftApp {
             } => {
                 d.set_num(0, "Count", f64::from(count));
                 d.set_num(0, "Radius", radius);
+                d.bolt.keep_radius = true;
                 d.set_num(0, "Angle", angle.to_degrees());
                 d.set_num(0, "Span", span.to_degrees());
             }

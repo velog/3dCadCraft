@@ -167,6 +167,10 @@ pub(super) struct BoltPanel {
     pub library: Option<BoltPick>,
     /// Follow Pattern was applied to these picks (found again when they change).
     pub followed: Option<String>,
+    /// The Circular Reference the Radius row was last defaulted from.
+    pub radius_for: Option<String>,
+    /// Edit: the stored Radius stays when the reference first arrives.
+    pub keep_radius: bool,
 }
 
 impl std::fmt::Debug for Ghost {
@@ -1176,6 +1180,7 @@ impl CadCraftApp {
             self.library_for_bolt(pick);
         }
         self.bolt_follow_pattern();
+        self.bolt_default_radius();
         let Some(d) = self.part_planned.as_ref().filter(|d| is_bolted(d)) else {
             return;
         };
@@ -1206,6 +1211,34 @@ impl CadCraftApp {
                 }
             }
         }
+    }
+
+    /// Circular: a new Circular Reference sets the bolt circle to twice its
+    /// radius; the user's own value stays until the reference changes.
+    fn bolt_default_radius(&mut self) {
+        let Some(d) = self.part_planned.as_ref().filter(|d| is_bolted(d)) else {
+            return;
+        };
+        if placement(d) != Placement::Circular {
+            return;
+        }
+        let first = d.refs.get("circle").and_then(|v| v.first());
+        let state = first.map(|g| format!("{g:?}"));
+        if state == d.bolt.radius_for {
+            return;
+        }
+        let radius = match first.and_then(|g| self.bolt_world(g)) {
+            Some(Geom::Circle { r, .. } | Geom::Cylinder { r, .. }) => Some(r),
+            _ => None,
+        };
+        let Some(d) = self.part_planned.as_mut() else {
+            return;
+        };
+        if let Some(r) = radius.filter(|_| !d.bolt.keep_radius) {
+            d.set_num(0, "Radius", 2.0 * r);
+        }
+        d.bolt.radius_for = state;
+        d.bolt.keep_radius = false;
     }
 
     fn bolt_find_axes(&mut self) {
@@ -1970,9 +2003,11 @@ impl CadCraftApp {
                         arrow_head(painter, b, a, col);
                         arrow_head(painter, a, b, col);
                         let value = d.num(0, row).unwrap_or(0.0);
-                        let mid = a + (b - a) * 0.5;
+                        // Beyond the edge's end: two short distances' labels
+                        // stay apart and off the bolt's grips.
+                        let out = (a - b).normalized();
                         painter.text(
-                            mid + egui::vec2(0.0, -10.0),
+                            a + out * (16.0 + out.x.abs() * 34.0),
                             egui::Align2::CENTER_CENTER,
                             format!("{label} = {value:.2}"),
                             font.clone(),
