@@ -632,16 +632,29 @@ fn c_shell_disc_small_round() -> Result<PartDocument, String> {
     )
 }
 
-/// SolidCraft #342: the round equals the wall and meets the removed top:
-/// the rim would have no thickness, refused.
+/// SolidCraft #342: the round equals the wall and meets the removed top. The
+/// inner wall (r18) runs up to where the round ends, so the wall thins to a
+/// sharp rim at r18, z5. Five faces: a volume alone would pass a wrong body.
 fn c_shell_disc_round_as_thick() -> Result<PartDocument, String> {
     let part = rounded_disc(2.0)?;
-    shell_of(
+    let part = shell_of(
         part,
         &[("Extrusion1:End", [0.0, 0.0, 5.0])],
         2.0,
         ShellDirection::Inside,
-    )
+    )?;
+    match part.body.faces().count() {
+        5 => Ok(part),
+        n => Err(format!("{n} faces, expected 5")),
+    }
+}
+
+/// The disc R20, 5 high, rounded r2 at the top and shelled 2 from the top.
+fn sharp_rim_shell_volume() -> Real {
+    let r = 2.0;
+    let c = r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI));
+    let loss = 2.0 * PI * (20.0 - c) * r * r * (1.0 - PI / 4.0);
+    PI * 400.0 * 5.0 - loss - PI * 324.0 * 3.0
 }
 
 /// The #1494 part shelled 1: the union less the union of the box and the
@@ -2697,10 +2710,10 @@ fn cases() -> Vec<Case> {
         },
         Case {
             level: "complex",
-            name: "shell 2, round r2 at the open top: refused (#342)",
+            name: "shell 2, round r2 at the open top: sharp rim (#342)",
             budget_ms: 500.0,
             build: c_shell_disc_round_as_thick,
-            want: Want::Error("rim"),
+            want: Want::Volume(sharp_rim_shell_volume()),
         },
         Case {
             level: "complex",
