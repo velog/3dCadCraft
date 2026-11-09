@@ -664,3 +664,49 @@ fn a_slot_is_found_in_a_part() {
         .expect("a top");
     assert!(slot_in(&p, &top, Point3::new(20.0, 50.0, 30.0), Vector3::z()).is_none());
 }
+
+/// The highest point of a family's first member, in its own coordinates.
+fn top_of(s: &Sample) -> f64 {
+    let part = s
+        .part_at(samples::Detail::Standard)
+        .unwrap_or_else(|e| panic!("{e}"));
+    part.body
+        .faces()
+        .filter_map(|(_, f)| f.mesh.as_ref())
+        .flat_map(|m| m.positions.iter().map(|p| p.z))
+        .fold(f64::MIN, f64::max)
+}
+
+#[test]
+fn countersunk_heads_end_flush_with_the_face() {
+    let face = Point3::new(10.0, 20.0, 30.0);
+    for name in ["ISO 10642", "DIN 661"] {
+        let s = family(name).remove(0);
+        let Fit::Into { sink, .. } = Fit::of(&s.kind) else {
+            panic!("{name} does not go into a hole");
+        };
+        let top = top_of(&s);
+        let t = seat_transform(face, Vector3::z(), sink, false);
+        let landed = t * Point3::new(0.0, 0.0, top);
+        assert!(
+            (landed.z - face.z).abs() < 1e-6,
+            "{name}: its top is {} from the face",
+            landed.z - face.z
+        );
+    }
+}
+
+#[test]
+fn only_a_screw_with_its_origin_on_top_gets_a_seat_from_its_head() {
+    let root = std::env::temp_dir().join(format!("cc-head-{}", std::process::id()));
+    let c = Catalog::load(&root);
+    let at = |name: &str| {
+        c.families
+            .iter()
+            .position(|x| x.name == name)
+            .unwrap_or_else(|| panic!("no family {name}"))
+    };
+    assert!(c.countersunk_head(at("ISO 10642"), 0).is_some());
+    assert_eq!(c.countersunk_head(at("DIN 661"), 0), None);
+    let _ = std::fs::remove_dir_all(&root);
+}

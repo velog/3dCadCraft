@@ -310,13 +310,14 @@ impl Catalog {
             .unwrap_or_default()
     }
 
-    /// The head of a countersunk member: its diameter and height.
+    /// The head of a countersunk screw: its diameter and height. Only for
+    /// members whose origin is the top of the head, as a seat cut under the
+    /// origin needs (a countersunk rivet's origin is under its head).
     pub fn countersunk_head(&self, family: usize, member: usize) -> Option<(Real, Real)> {
         let m = self.families.get(family)?.members.get(member)?;
         match &m.source {
             Source::Sample(s) => match s.kind {
-                super::samples::Kind::Countersunk(_, _, dk, k, _)
-                | super::samples::Kind::ConeRivet(_, _, dk, k) => Some((dk, k)),
+                super::samples::Kind::Countersunk(_, _, dk, k, _) => Some((dk, k)),
                 _ => None,
             },
             Source::Row(_) => None,

@@ -73,7 +73,10 @@ impl Fit {
             | Kind::SquareHead(d, l, ..) => into(d, l),
             // Its shoulder fills the hole, the thread runs on below it.
             Kind::Shoulder(_, l, ds, ..) => into(ds, l),
-            Kind::Countersunk(d, l, _, k, _) | Kind::ConeRivet(d, l, _, k) => Fit::Into {
+            // Its origin is the top of the head, which ends flush by itself.
+            Kind::Countersunk(d, l, ..) => into(d, l),
+            // Its origin is under the head.
+            Kind::ConeRivet(d, l, _, k) => Fit::Into {
                 d,
                 length: Some(l),
                 sink: k,
