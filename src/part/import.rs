@@ -124,9 +124,38 @@ impl SourceLink {
         Some((t, m.len()))
     }
 
-    /// Whether the file changed since it was read (a missing file has not: it cannot update).
-    pub fn changed(&self) -> bool {
-        Self::stamp(&self.path).is_some_and(|s| s != (self.modified, self.len))
+    /// The file itself (spec 0.6d §3.4): the stored path (a relative one starts at the folder of
+    /// `owner`, the file holding the link), then the same file name next to `owner`.
+    pub fn locate(&self, owner: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+        if self.path.is_empty() {
+            return None;
+        }
+        let stored = std::path::Path::new(&self.path);
+        if stored.is_absolute() && stored.is_file() {
+            return Some(stored.to_path_buf());
+        }
+        let dir = owner.and_then(std::path::Path::parent)?;
+        let relative = dir.join(stored);
+        if !stored.is_absolute() && relative.is_file() {
+            return Some(relative);
+        }
+        // A path written on another system: its name after either separator.
+        let name = self.path.rsplit(['/', '\\']).next()?;
+        let beside = dir.join(name);
+        beside.is_file().then_some(beside)
+    }
+
+    /// Whether the file changed since it was read (a file found nowhere has not: it cannot
+    /// update). `owner`: the file holding the link.
+    pub fn changed(&self, owner: Option<&std::path::Path>) -> bool {
+        self.locate(owner)
+            .and_then(|f| Self::stamp(&f.to_string_lossy()))
+            .is_some_and(|s| s != (self.modified, self.len))
+    }
+
+    /// Stores the time and size of `file`, the file an Update just read; the path stays.
+    pub fn refresh(&mut self, file: &std::path::Path) {
+        (self.modified, self.len) = Self::stamp(&file.to_string_lossy()).unwrap_or_default();
     }
 }
 
@@ -1175,15 +1204,47 @@ mod tests {
         std::fs::write(&f, "a").expect("write");
         let path = f.display().to_string();
         let l = SourceLink::now(&path);
-        assert!(!l.changed());
+        assert!(!l.changed(None));
         std::fs::write(&f, "a longer text").expect("write");
-        assert!(l.changed());
+        assert!(l.changed(None));
         let gone = SourceLink {
             path: dir.join("missing.step").display().to_string(),
             ..Default::default()
         };
-        assert!(!gone.changed(), "a missing file cannot update");
+        assert!(!gone.changed(None), "a missing file cannot update");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_link_is_found_from_the_file_holding_it() {
+        let dir = tempfile::tempdir().expect("dir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("Parts")).expect("dir");
+        std::fs::create_dir_all(root.join("Linked")).expect("dir");
+        let source = root.join("Linked/part.step");
+        std::fs::write(&source, "a").expect("write");
+        let owner = root.join("Parts/p.ccpart");
+        let mut l = SourceLink {
+            path: "../Linked/part.step".into(),
+            ..Default::default()
+        };
+        assert!(l.locate(Some(&owner)).is_some());
+        assert_eq!(l.locate(None), None, "a relative path needs its owner");
+        assert!(l.changed(Some(&owner)), "no stamp yet");
+        l.refresh(&source);
+        assert!(!l.changed(Some(&owner)));
+        assert_eq!(l.path, "../Linked/part.step", "the stored path stays");
+        // A path of another machine: the name next to the file holding the link.
+        let beside = root.join("Parts/moved.step");
+        std::fs::write(&beside, "b").expect("write");
+        for gone in ["Z:\\Gone\\moved.step", "/gone/moved.step"] {
+            let l = SourceLink {
+                path: gone.into(),
+                ..Default::default()
+            };
+            assert_eq!(l.locate(Some(&owner)), Some(beside.clone()), "{gone}");
+        }
+        assert_eq!(SourceLink::default().locate(Some(&owner)), None);
     }
 
     /// A 40 × 30 × 10 plate with a Ø10 through hole as other CAD systems write it: each rim of

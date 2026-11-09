@@ -12,9 +12,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::design_project::{DesignProject, NamedPath, relative_inside};
-use super::format::{copy_relinked, read_preview};
+use super::format::{copy_relinked, read_preview, read_source_links};
 use super::library::{locate, relative_path, without_verbatim};
 use super::{LibraryId, LibraryLink};
+use crate::part::import::SourceLink;
 
 /// Where the copies go (spec 0.6d §3.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +35,8 @@ pub struct PackOptions {
     pub skip_libraries: bool,
     /// The templates folder is not copied.
     pub skip_templates: bool,
+    /// The files Reference Model imports follow are copied too.
+    pub include_linked: bool,
 }
 
 impl Default for PackOptions {
@@ -42,6 +45,7 @@ impl Default for PackOptions {
             layout: Layout::KeepHierarchy,
             skip_libraries: false,
             skip_templates: true,
+            include_linked: false,
         }
     }
 }
@@ -88,6 +92,15 @@ pub struct FoundLink {
     pub target: Option<PathBuf>,
 }
 
+/// A file (STEP, mesh) a found file's imports follow.
+#[derive(Clone, Debug)]
+pub struct FoundSource {
+    /// The path as stored in the document.
+    pub stored: String,
+    /// The file it reaches (`None`: not found).
+    pub target: Option<PathBuf>,
+}
+
 /// A file reached from the source.
 #[derive(Clone, Debug)]
 pub struct Found {
@@ -99,6 +112,8 @@ pub struct Found {
     pub links: Vec<FoundLink>,
     /// Why it cannot be packed (unreadable, an unpacked folder…).
     pub problem: Option<String>,
+    /// The files its imports follow (filled by [`read_sources`]).
+    pub sources: Vec<FoundSource>,
 }
 
 /// `p` canonical without the verbatim prefix (as it is when that fails).
@@ -122,6 +137,7 @@ pub fn collect(roots: &[PathBuf], scope: Scope) -> Vec<Found> {
             size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
             links: Vec::new(),
             problem: None,
+            sources: Vec::new(),
         };
         match meta {
             Ok(m) if m.is_dir() => {
@@ -147,6 +163,28 @@ pub fn collect(roots: &[PathBuf], scope: Scope) -> Vec<Found> {
         out.push(found);
     }
     out
+}
+
+/// Fills [`Found::sources`] (Include Linked Files). Reads every document of
+/// every file, so it runs on the worker with [`collect`].
+pub fn read_sources(found: &mut [Found]) {
+    for f in found.iter_mut().filter(|f| f.problem.is_none()) {
+        let stored = read_source_links(&f.path).unwrap_or_else(|e| {
+            log::warn!("Pack and Go: {e}");
+            Vec::new()
+        });
+        f.sources = stored
+            .into_iter()
+            .map(|stored| {
+                let link = SourceLink {
+                    path: stored.clone(),
+                    ..Default::default()
+                };
+                let target = link.locate(Some(&f.path)).map(|t| key(&t));
+                FoundSource { stored, target }
+            })
+            .collect();
+    }
 }
 
 /// Model files (by extension) that may link others.
@@ -217,6 +255,8 @@ pub struct Placed {
 pub struct Plan {
     /// Every file with its place.
     pub files: Vec<Placed>,
+    /// The linked source files with their places (Include Linked Files).
+    pub linked: Vec<Placed>,
     /// The new project: its file name and content.
     pub project: (PathBuf, DesignProject),
     /// The templates folder to copy and where (relative).
@@ -230,6 +270,7 @@ impl Plan {
     pub fn totals(&self) -> (usize, u64) {
         self.files
             .iter()
+            .chain(&self.linked)
             .filter(|f| f.dest.is_some())
             .fold((0, 0), |(n, s), f| (n + 1, s + f.size))
     }
@@ -283,6 +324,28 @@ pub fn plan(found: &[Found], scope: Scope, opts: &PackOptions) -> Plan {
     let mut used_libs: HashSet<String> = HashSet::new();
     let mut files = Vec::new();
     let mut problems = Vec::new();
+    let place = |path: &Path, outside: PathBuf, used: &mut HashSet<String>| {
+        let name = PathBuf::from(path.file_name().unwrap_or_default());
+        let lib = libraries
+            .iter()
+            .find_map(|(l, dir)| relative_inside(path, dir).map(|r| (*l, r)));
+        if let Some((l, _)) = lib.as_ref().filter(|_| !opts.skip_libraries) {
+            used.insert(l.name.clone());
+        }
+        match (opts.layout, lib) {
+            (_, Some(_)) if opts.skip_libraries => None,
+            (Layout::SinglePath, _) => Some(name),
+            (Layout::KeepHierarchy, Some((l, r))) => {
+                Some(Path::new("Libraries").join(&l.name).join(r))
+            }
+            (Layout::KeepHierarchy, None) => Some(
+                base.as_deref()
+                    .and_then(|b| relative_inside(path, b))
+                    .or_else(|| relative_inside(path, &workspace))
+                    .unwrap_or(outside),
+            ),
+        }
+    };
     for f in found {
         if let Some(p) = &f.problem {
             problems.push(format!("{}: {p}", f.path.display()));
@@ -298,31 +361,38 @@ pub fn plan(found: &[Found], scope: Scope, opts: &PackOptions) -> Plan {
             }
         }
         let name = PathBuf::from(f.path.file_name().unwrap_or_default());
-        let lib = libraries
-            .iter()
-            .find_map(|(l, dir)| relative_inside(&f.path, dir).map(|r| (*l, r)));
-        let lib_name = lib.as_ref().map(|(l, _)| l.name.clone());
-        let dest = match (opts.layout, lib) {
-            (_, Some(_)) if opts.skip_libraries => None,
-            (Layout::SinglePath, _) => Some(name),
-            (Layout::KeepHierarchy, Some((l, r))) => {
-                Some(Path::new("Libraries").join(&l.name).join(r))
-            }
-            (Layout::KeepHierarchy, None) => Some(
-                base.as_deref()
-                    .and_then(|b| relative_inside(&f.path, b))
-                    .or_else(|| relative_inside(&f.path, &workspace))
-                    .unwrap_or(name),
-            ),
-        };
-        if let Some(n) = lib_name.filter(|_| !opts.skip_libraries) {
-            used_libs.insert(n);
-        }
+        let dest = place(&f.path, name, &mut used_libs);
         files.push(Placed {
             source: f.path.clone(),
             dest: dest.map(|d| unique(d, &mut taken)),
             size: f.size,
         });
+    }
+    let mut linked: Vec<Placed> = Vec::new();
+    for f in found.iter().filter(|_| opts.include_linked) {
+        if f.problem.is_some() {
+            continue;
+        }
+        for s in &f.sources {
+            let Some(target) = &s.target else {
+                problems.push(format!(
+                    "{}: linked file {} not found",
+                    f.path.display(),
+                    s.stored
+                ));
+                continue;
+            };
+            if linked.iter().any(|l| l.source == *target) {
+                continue;
+            }
+            let name = PathBuf::from(target.file_name().unwrap_or_default());
+            let dest = place(target, Path::new("Linked").join(name), &mut used_libs);
+            linked.push(Placed {
+                source: target.clone(),
+                dest: dest.map(|d| unique(d, &mut taken)),
+                size: fs::metadata(target).map_or(0, |m| m.len()),
+            });
+        }
     }
     // The new project: every folder relative to the destination where the
     // copy holds it, absolute where it stays outside.
@@ -357,6 +427,7 @@ pub fn plan(found: &[Found], scope: Scope, opts: &PackOptions) -> Plan {
     let file = unique(file, &mut taken);
     Plan {
         files,
+        linked,
         project: (file, project),
         templates,
         problems,
@@ -367,6 +438,7 @@ pub fn plan(found: &[Found], scope: Scope, opts: &PackOptions) -> Plan {
 pub fn conflicts(plan: &Plan, dest: &Path) -> Vec<PathBuf> {
     plan.files
         .iter()
+        .chain(&plan.linked)
         .filter_map(|f| f.dest.as_ref())
         .chain(std::iter::once(&plan.project.0))
         .map(|r| dest.join(r))
@@ -400,6 +472,8 @@ pub fn run(plan: &Plan, found: &[Found], dest: &Path) -> Result<usize, String> {
     fs::create_dir_all(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
     let dest_abs = key(dest);
     let place: HashMap<&PathBuf, &Placed> = plan.files.iter().map(|p| (&p.source, p)).collect();
+    let source_place: HashMap<&PathBuf, &Placed> =
+        plan.linked.iter().map(|p| (&p.source, p)).collect();
     let mut written = 0;
     for f in found {
         let Some(placed) = place.get(&f.path) else {
@@ -420,14 +494,35 @@ pub fn run(plan: &Plan, found: &[Found], dest: &Path) -> Result<usize, String> {
                 changes.push((l.link.id, new));
             }
         }
-        let r = if changes.is_empty() {
+        let mut source_changes: Vec<(String, String)> = Vec::new();
+        for s in &f.sources {
+            let Some(p) = s.target.as_ref().and_then(|t| source_place.get(t)) else {
+                continue;
+            };
+            let new = match &p.dest {
+                Some(r) => relative_path(&dir, &dest_abs.join(r)),
+                None => p.source.to_string_lossy().into_owned(),
+            };
+            if new != s.stored {
+                source_changes.push((s.stored.clone(), new));
+            }
+        }
+        let r = if changes.is_empty() && source_changes.is_empty() {
             fs::copy(&f.path, &to)
                 .map(|_| ())
                 .map_err(|e| e.to_string())
         } else {
-            copy_relinked(&f.path, &to, &changes).map_err(|e| e.to_string())
+            copy_relinked(&f.path, &to, &changes, &source_changes).map_err(|e| e.to_string())
         };
         r.map_err(|e| format!("{}: {e}", to.display()))?;
+        written += 1;
+    }
+    for l in &plan.linked {
+        let Some(rel) = &l.dest else { continue };
+        let to = dest_abs.join(rel);
+        let dir = to.parent().unwrap_or(&dest_abs);
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        copy_keeping_time(&l.source, &to).map_err(|e| format!("{}: {e}", to.display()))?;
         written += 1;
     }
     if let Some((src, rel)) = &plan.templates {
@@ -439,6 +534,14 @@ pub fn run(plan: &Plan, found: &[Found], dest: &Path) -> Result<usize, String> {
         .save(&path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(written)
+}
+
+/// A copy with the original's modification time: the link's stored stamp
+/// must still match, or the copy would count as a changed source.
+fn copy_keeping_time(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::copy(from, to)?;
+    let time = fs::metadata(from)?.modified()?;
+    fs::File::options().write(true).open(to)?.set_modified(time)
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
@@ -615,6 +718,7 @@ mod tests {
             layout: Layout::SinglePath,
             skip_libraries: true,
             skip_templates: true,
+            include_linked: false,
         };
         let plan = plan(&found, scope, &opts);
         let dests: Vec<_> = plan.files.iter().map(|f| f.dest.clone()).collect();
@@ -629,6 +733,156 @@ mod tests {
         let p = DesignProject::load(&dest.join("Pump.ccproj")).unwrap();
         assert!(p.libraries[0].path.is_absolute());
         assert!(p.templates.is_none());
+    }
+
+    /// A part following `step` (Reference Model), saved at `path`.
+    fn part_following(path: &Path, step: &Path) {
+        use crate::part::body_op::{BodyOp, BodyOpFeature};
+        use crate::part::import::ImportOp;
+        let file = step.display().to_string();
+        let mut op = ImportOp::new(file.clone(), "ISO-10303-21;");
+        op.link = Some(SourceLink::now(&file));
+        let mut doc = crate::part::PartDocument::default();
+        doc.features
+            .push(crate::part::Feature::BodyOp(BodyOpFeature::new(
+                BodyOp::Import(op),
+            )));
+        let mut p = Project::new("Follower");
+        p.add_document("Follower", crate::document::DocumentData::Part(doc));
+        p.save(path).unwrap();
+    }
+
+    fn import_of(path: &Path) -> crate::part::import::ImportOp {
+        use crate::part::body_op::BodyOp;
+        let p = Project::load(path).unwrap();
+        for doc in p.documents() {
+            let crate::document::DocumentData::Part(part) = &doc.data else {
+                continue;
+            };
+            for f in &part.features {
+                if let crate::part::Feature::BodyOp(b) = f
+                    && let BodyOp::Import(o) = &b.op
+                {
+                    return o.clone();
+                }
+            }
+        }
+        panic!("no import")
+    }
+
+    #[test]
+    fn include_linked_files_makes_the_copy_follow_its_own_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = key(dir.path());
+        let (base, project) = design(&root);
+        fs::create_dir_all(root.join("Supplier")).unwrap();
+        let outside = root.join("Supplier/housing.step");
+        let inside = base.join("Parts/inside.step");
+        fs::write(&outside, "outside text").unwrap();
+        fs::write(&inside, "inside").unwrap();
+        let a = base.join("Parts/a.ccpart");
+        let b = base.join("Parts/b.ccpart");
+        part_following(&a, &outside);
+        part_following(&b, &inside);
+        let scope = Scope {
+            project: &project,
+            base: Some(&base),
+        };
+        let roots = vec![a.clone(), b.clone()];
+        let mut found = collect(&roots, scope);
+
+        // Model Files Only reads nothing more and copies the files as they are.
+        let only = plan(&found, scope, &PackOptions::default());
+        assert!(only.linked.is_empty());
+        let dest = root.join("ModelOnly");
+        assert_eq!(run(&only, &found, &dest).unwrap(), 2);
+        assert_eq!(
+            fs::read(dest.join("Parts/a.ccpart")).unwrap(),
+            fs::read(&a).unwrap(),
+            "byte for byte"
+        );
+
+        read_sources(&mut found);
+        let opts = PackOptions {
+            include_linked: true,
+            ..Default::default()
+        };
+        let p = plan(&found, scope, &opts);
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        let dests: Vec<_> = p.linked.iter().map(|l| l.dest.clone().unwrap()).collect();
+        assert_eq!(
+            dests,
+            [
+                Path::new("Linked").join("housing.step"),
+                Path::new("Parts").join("inside.step")
+            ]
+        );
+        assert_eq!(p.totals().0, 4);
+        let dest = root.join("Out");
+        assert_eq!(run(&p, &found, &dest).unwrap(), 4);
+
+        // Moved, with the originals gone: the copies follow their own files.
+        let moved = root.join("Moved");
+        fs::rename(&dest, &moved).unwrap();
+        fs::remove_dir_all(root.join("Supplier")).unwrap();
+        fs::remove_file(&inside).unwrap();
+        let owner = moved.join("Parts/a.ccpart");
+        let op = import_of(&owner);
+        let link = op.link.clone().unwrap();
+        assert_eq!(link.path, "../Linked/housing.step");
+        assert_eq!(op.file, link.path, "the original's place does not travel");
+        let at = link.locate(Some(&owner)).unwrap();
+        assert_eq!(fs::read(&at).unwrap(), b"outside text");
+        assert!(
+            !link.changed(Some(&owner)),
+            "the copy is not a changed file"
+        );
+        let owner = moved.join("Parts/b.ccpart");
+        assert_eq!(import_of(&owner).link.unwrap().path, "inside.step");
+    }
+
+    #[test]
+    fn a_linked_file_not_found_is_reported_and_a_clash_renamed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = key(dir.path());
+        let (base, project) = design(&root);
+        fs::create_dir_all(root.join("S1")).unwrap();
+        fs::create_dir_all(root.join("S2")).unwrap();
+        fs::write(root.join("S1/x.step"), "1").unwrap();
+        fs::write(root.join("S2/x.step"), "2").unwrap();
+        let (a, b, c) = (
+            base.join("Parts/a.ccpart"),
+            base.join("Parts/b.ccpart"),
+            base.join("Parts/c.ccpart"),
+        );
+        part_following(&a, &root.join("S1/x.step"));
+        part_following(&b, &root.join("S2/x.step"));
+        part_following(&c, &root.join("S2/gone.step"));
+        let scope = Scope {
+            project: &project,
+            base: Some(&base),
+        };
+        let mut found = collect(&[a, b, c], scope);
+        read_sources(&mut found);
+        let opts = PackOptions {
+            layout: Layout::SinglePath,
+            include_linked: true,
+            ..Default::default()
+        };
+        let p = plan(&found, scope, &opts);
+        assert_eq!(p.problems.len(), 1);
+        assert!(p.problems[0].contains("gone.step"), "{:?}", p.problems);
+        let dest = root.join("Out");
+        run(&p, &found, &dest).unwrap();
+        assert_eq!(
+            import_of(&dest.join("a.ccpart")).link.unwrap().path,
+            "x.step"
+        );
+        assert_eq!(
+            import_of(&dest.join("b.ccpart")).link.unwrap().path,
+            "x (2).step"
+        );
+        assert_eq!(fs::read(dest.join("x (2).step")).unwrap(), b"2");
     }
 
     #[test]

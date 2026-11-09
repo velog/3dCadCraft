@@ -471,6 +471,7 @@ impl CadCraftApp {
         let now = ui.input(|i| i.time);
         if now - self.import_stale.checked > 2.0 || now < self.import_stale.checked {
             self.import_stale.checked = now;
+            let owner = self.link_owner();
             self.import_stale.features = if self.is_assembly() || self.is_drawing() {
                 Vec::new()
             } else {
@@ -480,7 +481,9 @@ impl CadCraftApp {
                     .enumerate()
                     .filter_map(|(k, f)| match f {
                         crate::part::Feature::BodyOp(b) => match &b.op {
-                            BodyOp::Import(o) if o.link.as_ref().is_some_and(|l| l.changed()) => {
+                            BodyOp::Import(o)
+                                if o.link.as_ref().is_some_and(|l| l.changed(owner.as_deref())) =>
+                            {
                                 Some(k)
                             }
                             _ => None,
@@ -489,8 +492,10 @@ impl CadCraftApp {
                     })
                     .collect()
             };
-            self.import_stale.assembly =
-                self.is_assembly() && self.asm_import_link().is_some_and(|l| l.changed());
+            self.import_stale.assembly = self.is_assembly()
+                && self
+                    .asm_import_link()
+                    .is_some_and(|l| l.changed(owner.as_deref()));
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs(2));
         }
@@ -622,6 +627,12 @@ impl CadCraftApp {
         }
     }
 
+    /// The saved file holding the active document's source links.
+    fn link_owner(&self) -> Option<PathBuf> {
+        let f = self.file_path.trim();
+        (!f.is_empty()).then(|| PathBuf::from(f))
+    }
+
     /// The file the active assembly follows (an assembly opened from a STEP file).
     pub(super) fn asm_import_link(&self) -> Option<&crate::part::import::SourceLink> {
         match self.project.document(self.part_id).map(|d| &d.data) {
@@ -639,7 +650,10 @@ impl CadCraftApp {
         let mut copy = self.project.clone();
         let top = self.part_id;
         let (tx, rx) = std::sync::mpsc::channel();
-        let file = Path::new(&link.path)
+        let source = link
+            .locate(self.link_owner().as_deref())
+            .unwrap_or_else(|| PathBuf::from(&link.path));
+        let file = source
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
@@ -649,10 +663,16 @@ impl CadCraftApp {
             .stack_size(64 << 20)
             .spawn(move || {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let text = read_step(Path::new(&link.path))?;
+                    let text = read_step(&source)?;
                     let r = crate::kernel::exact::step_bodies(&text, "Import1")?;
                     let u =
                         crate::assembly::import::update_project(&mut copy, top, &r, &text, &file)?;
+                    if let Some(crate::document::DocumentData::Assembly(a)) =
+                        copy.document_mut(top).map(|d| &mut d.data)
+                        && let Some(l) = a.import.as_mut().and_then(|i| i.link.as_mut())
+                    {
+                        l.refresh(&source);
+                    }
                     Ok((copy, u))
                 }))
                 .unwrap_or_else(|_| Err("internal error while updating".into()));
@@ -770,6 +790,7 @@ impl CadCraftApp {
     /// Update: each changed import reads its file again, as one Undo step.
     fn update_imports(&mut self) {
         let ks = std::mem::take(&mut self.import_stale.features);
+        let owner = self.link_owner();
         let mut lines = Vec::new();
         let mut rows = Vec::new();
         let mut failed = Vec::new();
@@ -782,9 +803,15 @@ impl CadCraftApp {
             };
             let BodyOp::Import(op) = &b.op else { continue };
             let Some(link) = &op.link else { continue };
-            let r = read_step(Path::new(&link.path))
+            let source = link
+                .locate(owner.as_deref())
+                .unwrap_or_else(|| PathBuf::from(&link.path));
+            let r = read_step(&source)
                 .and_then(|t| op.updated(&b.id, t))
-                .and_then(|(next, report)| {
+                .and_then(|(mut next, report)| {
+                    if let Some(l) = &mut next.link {
+                        l.refresh(&source);
+                    }
                     let mut nb = b.clone();
                     nb.op = BodyOp::Import(next);
                     self.part_mut()

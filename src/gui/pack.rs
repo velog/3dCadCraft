@@ -74,13 +74,18 @@ impl PackUi {
             return;
         }
         let (roots, active) = (self.roots(), self.project.clone());
+        let include_linked = self.options.include_linked;
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let scope = Scope {
                 project: &active.project,
                 base: active.base(),
             };
-            let _ = tx.send(Done::Collected(pack::collect(&roots, scope)));
+            let mut found = pack::collect(&roots, scope);
+            if include_linked {
+                pack::read_sources(&mut found);
+            }
+            let _ = tx.send(Done::Collected(found));
         });
         self.job = Some(rx);
     }
@@ -362,14 +367,10 @@ fn pack_body(ui: &mut egui::Ui, p: &mut PackUi, dialog: &mut Option<DialogPurpos
             .on_hover_text("Every file into the destination folder itself");
     });
     ui.horizontal(|ui| {
-        let mut model_only = true;
-        ui.radio_value(&mut model_only, true, "Model Files Only");
-        ui.add_enabled_ui(false, |ui| {
-            ui.radio_value(&mut model_only, false, "Include Linked Files")
-                .on_disabled_hover_text(
-                    "Spec 0.6d §3.1: the source files of Reference Model imports are not packed yet",
-                );
-        });
+        ui.radio_value(&mut p.options.include_linked, false, "Model Files Only")
+            .on_hover_text("Parts, assemblies and drawings");
+        ui.radio_value(&mut p.options.include_linked, true, "Include Linked Files")
+            .on_hover_text("Also the STEP and mesh files that Reference Model imports follow");
     });
     ui.horizontal(|ui| {
         ui.checkbox(&mut p.options.skip_libraries, "Skip Libraries")
@@ -379,7 +380,9 @@ fn pack_body(ui: &mut egui::Ui, p: &mut PackUi, dialog: &mut Option<DialogPurpos
         ui.checkbox(&mut p.options.skip_templates, "Skip Templates")
             .on_hover_text("Unchecked: the project's templates folder is copied too");
     });
-    if p.options != before {
+    if p.options.include_linked != before.include_linked {
+        p.collect();
+    } else if p.options != before {
         p.replan();
     }
     ui.separator();
@@ -432,7 +435,7 @@ fn pack_body(ui: &mut egui::Ui, p: &mut PackUi, dialog: &mut Option<DialogPurpos
             ui.weak("Goes to");
             ui.weak("Size");
             ui.end_row();
-            for f in &plan.files {
+            for f in plan.files.iter().chain(&plan.linked) {
                 let name = f.source.file_name().unwrap_or_default().to_string_lossy();
                 ui.label(name.as_ref())
                     .on_hover_text(f.source.display().to_string());

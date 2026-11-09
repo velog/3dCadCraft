@@ -570,6 +570,7 @@ pub fn copy_relinked(
     src: &Path,
     dst: &Path,
     paths: &[(super::LibraryId, String)],
+    sources: &[(String, String)],
 ) -> ProjectResult<()> {
     if dst.exists() {
         return Err(io_err(dst)(std::io::Error::from(
@@ -604,6 +605,16 @@ pub fn copy_relinked(
                     }
                 }
                 bytes = serde_json::to_vec_pretty(&v).map_err(|e| corrupt(src, e))?;
+            } else if !sources.is_empty() && is_document_entry(&name) && mentions_link(&bytes) {
+                let mut v: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|e| corrupt(src, e))?;
+                let mut changed = false;
+                each_source_link(&mut v, &mut |holder| {
+                    changed |= relink_source(holder, sources);
+                });
+                if changed {
+                    bytes = serde_json::to_vec_pretty(&v).map_err(|e| corrupt(src, e))?;
+                }
             }
             w.start_file(name, base.compression_method(method))
                 .map_err(|e| corrupt(&tmp, e))?;
@@ -620,6 +631,99 @@ pub fn copy_relinked(
         return Err(e);
     }
     fs::rename(&tmp, dst).map_err(io_err(dst))
+}
+
+fn is_document_entry(name: &str) -> bool {
+    name.starts_with("documents/") && name.ends_with(".json")
+}
+
+/// A cheap test before parsing a document (they can hold a whole STEP text).
+fn mentions_link(json: &[u8]) -> bool {
+    json.windows(6).any(|w| w == b"\"link\"")
+}
+
+/// Calls `f` on every JSON object holding a `SourceLink` as its `link`.
+fn each_source_link(
+    v: &mut serde_json::Value,
+    f: &mut dyn FnMut(&mut serde_json::Map<String, serde_json::Value>),
+) {
+    match v {
+        serde_json::Value::Object(m) => {
+            let is_source = m.get("link").and_then(|l| l.as_object()).is_some_and(|l| {
+                l.get("path").is_some_and(|p| p.is_string()) && l.contains_key("modified")
+            });
+            if is_source {
+                f(m);
+            }
+            for x in m.values_mut() {
+                each_source_link(x, f);
+            }
+        }
+        serde_json::Value::Array(a) => {
+            for x in a {
+                each_source_link(x, f);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Changes the holder's link path (and the file name shown with it) as `sources` say.
+fn relink_source(
+    holder: &mut serde_json::Map<String, serde_json::Value>,
+    sources: &[(String, String)],
+) -> bool {
+    let Some(old) = holder
+        .get("link")
+        .and_then(|l| l.get("path"))
+        .and_then(|p| p.as_str())
+        .map(str::to_owned)
+    else {
+        return false;
+    };
+    let Some((_, new)) = sources.iter().find(|(from, _)| *from == old) else {
+        return false;
+    };
+    if holder.get("file").and_then(|f| f.as_str()) == Some(old.as_str()) {
+        holder.insert("file".into(), new.clone().into());
+    }
+    if let Some(l) = holder.get_mut("link") {
+        l["path"] = new.clone().into();
+    }
+    true
+}
+
+/// The paths of the files a packed project's documents follow (Reference Model imports),
+/// each once (spec 0.6d §3.2). Reads every document, so it is for a worker thread.
+pub fn read_source_links(path: &Path) -> ProjectResult<Vec<String>> {
+    let file = fs::File::open(path).map_err(io_err(path))?;
+    let mut zip = ZipArchive::new(BufReader::new(file))
+        .map_err(|e| corrupt(path, format!("not a 3DCadCraft archive ({e})")))?;
+    let mut out: Vec<String> = Vec::new();
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).map_err(|e| corrupt(path, e))?;
+        let name = entry.name().map_err(|e| corrupt(path, e))?.to_string();
+        if !is_document_entry(&name) {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).map_err(io_err(path))?;
+        if !mentions_link(&bytes) {
+            continue;
+        }
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|e| corrupt(path, e))?;
+        each_source_link(&mut v, &mut |holder| {
+            let p = holder
+                .get("link")
+                .and_then(|l| l.get("path"))
+                .and_then(|p| p.as_str());
+            if let Some(p) = p.filter(|p| !p.is_empty() && !out.iter().any(|q| q == p)) {
+                out.push(p.to_owned());
+            }
+        });
+    }
+    Ok(out)
 }
 
 /// Logs the result of a save or open (`what`) of `path`.
