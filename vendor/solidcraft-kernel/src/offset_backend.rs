@@ -137,10 +137,28 @@ pub(crate) fn thicken(b: &Body, thickness: f64, symmetric: bool) -> Result<Body>
     }
     // SMLib's thicken takes open sheets only; a closed one (a sphere, an egg) is the hollow its
     // shell makes with no opening, from the surface moved half way back when symmetric.
-    let (r, h) = run("thicken", b, Some(thickness.abs()), |s| match s.thicken(thickness, symmetric) {
-        Err(SmError::Argument) if symmetric => s.offset_sheet(-0.5 * thickness)?.shell(&[], pick_tolerance(b), thickness),
-        Err(SmError::Argument) => s.shell(&[], pick_tolerance(b), thickness),
+    let tol = pick_tolerance(b);
+    // One side: SMLib's thicken, or the hollow of a closed sheet.
+    let one_side = |s: &Brep, t: f64| match s.thicken(t, false) {
+        Err(SmError::Argument) => s.shell(&[], tol, t),
         other => other,
+    };
+    let (r, h) = run("thicken", b, Some(thickness.abs()), |s| {
+        let made = match s.thicken(thickness, symmetric) {
+            Err(SmError::Argument) if symmetric => s.offset_sheet(-0.5 * thickness).and_then(|m| m.shell(&[], tol, thickness)),
+            Err(SmError::Argument) => s.shell(&[], tol, thickness),
+            other => other,
+        };
+        match made {
+            // A symmetric thicken moves the surface half way first; that fitted copy can fail
+            // where the surface itself holds (an egg's pole: "the largest wall that works is 0").
+            // Then the two halves of the surface itself, joined along it.
+            Err(e) if symmetric => {
+                let (Ok(out), Ok(inn)) = (one_side(s, 0.5 * thickness), one_side(s, -0.5 * thickness)) else { return Err(e) };
+                out.boolean(&inn, solidcraft_smlib::BooleanOp::Union)?.ok_or(e)
+            }
+            other => other,
+        }
     })?;
     let step = if symmetric { thickness.abs() / 2.0 } else { thickness.abs() };
     // The walls first, while the sheet's edges still carry their tags on both copies.
