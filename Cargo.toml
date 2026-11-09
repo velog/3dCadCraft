@@ -10,7 +10,9 @@ keywords = ["cad", "brep", "geometry", "parametric", "nurbs"]
 categories = ["graphics", "science", "mathematics"]
 
 [workspace]
-members = [".", "xtask"]
+members = [".", "xtask", "crates/core"]
+# `cargo test` from the root runs the unit tests of both: most of them are in the core.
+default-members = [".", "crates/core"]
 # Third-party code kept with local fixes (vendor/README.md): not linted as ours.
 exclude = ["vendor"]
 
@@ -33,6 +35,9 @@ default = ["gui"]
 gui = ["dep:eframe", "dep:chrono", "dep:image"]
 
 [dependencies]
+# Everything below the GUI; `src/lib.rs` re-exports its modules.
+cadcraft3d-core = { path = "crates/core" }
+
 # --- Math & kernel ---------------------------------------------------------
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 # Generational arenas: stable, typed IDs for topology without `unsafe` or Rc cycles.
@@ -101,6 +106,11 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# The GUI is the root package: unoptimised it compiles in about a third of the time, and
+# the geometry it calls is in cadcraft3d-core, which keeps opt-level 1.
+[profile.dev.package.cadcraft3d]
+opt-level = 0
 
 # solidcore is one very large crate: its full debug info got rustc killed on a Linux
 # machine (out of memory, SIGKILL). Line tables keep file:line in backtraces.

@@ -419,7 +419,7 @@ impl Constraint {
     }
 
     /// Mutable access to the value of a dimension.
-    pub(crate) fn value_mut(&mut self) -> Option<&mut Real> {
+    pub fn value_mut(&mut self) -> Option<&mut Real> {
         match self {
             Constraint::Distance { value, .. }
             | Constraint::HorizontalDistance { value, .. }

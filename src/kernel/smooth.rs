@@ -92,7 +92,7 @@ fn same_curve(a: &Curve, b: &Curve) -> bool {
 
 impl BRep {
     /// The analytic surface of face `f` (the exact one of a facet).
-    pub(crate) fn face_surface_of(&self, f: FaceId) -> Option<&Surface> {
+    pub fn face_surface_of(&self, f: FaceId) -> Option<&Surface> {
         let face = self.face(f)?;
         self.surface(face.facet_of.unwrap_or(face.surface))
     }

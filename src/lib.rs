@@ -29,18 +29,10 @@
     clippy::unreachable
 )]
 
-pub mod api;
-pub mod assembly;
-pub mod command;
-pub mod components;
-pub mod diagnostics;
-pub mod document;
-pub mod drawing;
+pub use cadcraft3d_core::{
+    api, assembly, command, components, diagnostics, document, drawing, kernel, materials, part,
+    presets, sheet_rules, sketch,
+};
+
 #[cfg(feature = "gui")]
 pub mod gui;
-pub mod kernel;
-pub mod materials;
-pub mod part;
-pub mod presets;
-pub mod sheet_rules;
-pub mod sketch;

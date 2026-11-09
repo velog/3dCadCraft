@@ -52,6 +52,8 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 
 ## Architecture (src/)
 
+Two packages over one `src/` folder: `cadcraft3d-core` (`crates/core/Cargo.toml`, root `src/core_lib.rs`) is everything below the GUI; the root package `cadcraft3d` (`src/lib.rs`) re-exports its modules and adds `gui` and the binary, so `crate::part::…` and `cadcraft3d::part::…` work everywhere. An edit in `src/gui` recompiles only the root package. What the GUI calls in the core must be `pub`, not `pub(crate)`. Unit tests of the core run from `crates/core` (a relative path or `CARGO_MANIFEST_DIR` in them starts there).
+
 | Module | Responsibility | Key types |
 |---|---|---|
 | `kernel` | B-Rep geometry + topology, validation, tessellation (`mesh.rs`), queries & persistent names (`query.rs`), extrude, revolve (`revolve.rs`), BSP CSG on tagged polygons (`csg.rs`), polygons ↔ B-Rep and Booleans (`facet.rs`), exact kernel boundary (`exact.rs`: SolidCraft/truck → our B-Rep; guided lofts — rails, centre line, Area Loft, conditions, map points, Closed Loop — as stations in `exact/loft.rs`; surface bodies and Split by a surface in `exact/sheet.rs`) | `BRep`, `Curve`, `Surface`, `Plane`, `Face`, `Tolerance`, `BoolOp` |

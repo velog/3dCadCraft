@@ -369,7 +369,7 @@ pub fn unix_ms(t: SystemTime) -> u64 {
 
 /// Locks `m`, recovering the data of a poisoned lock (a panic elsewhere
 /// must not silence diagnostics).
-pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
