@@ -6,7 +6,7 @@ use eframe::egui;
 use super::CadCraftApp;
 use super::icons::Icon;
 use super::valuefield::ExprValue;
-use crate::drawing::resources::{Delimit, LabelFrom, ZoneLabel, ZoneParams};
+use crate::drawing::resources::{Delimit, LabelFrom, ResourceKind, ZoneLabel, ZoneParams};
 
 /// What a border / title block row of the browser asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +56,10 @@ pub(super) enum ResAction {
     EditSymbol(String),
     /// Delete symbol `name`.
     DeleteSymbol(String),
+    /// Copy a definition.
+    Copy(ResourceKind, String),
+    /// Ask a definition's new name.
+    Rename(ResourceKind, String),
 }
 
 /// One border / title block row under a sheet.
@@ -138,6 +142,39 @@ pub(super) struct TitleSave {
     focused: bool,
 }
 
+/// The Rename window of a definition.
+#[derive(Clone, Debug)]
+pub(super) struct ResRename {
+    pub kind: ResourceKind,
+    pub old: String,
+    pub name: String,
+    focused: bool,
+}
+
+/// Edit Property Fields' Property Type.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum PropertyType {
+    /// Everything the definition reads.
+    #[default]
+    All,
+    /// Only what is asked of the user.
+    Prompted,
+    /// Only what comes from Properties and the sheet.
+    Properties,
+}
+
+impl PropertyType {
+    const ALL: [Self; 3] = [Self::All, Self::Prompted, Self::Properties];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Prompted => "Prompted Entries",
+            Self::Properties => "Properties",
+        }
+    }
+}
+
 /// Edit Property Fields: the prompted entries of the title block on a sheet.
 #[derive(Clone, Debug)]
 pub(super) struct PromptDialog {
@@ -149,6 +186,8 @@ pub(super) struct PromptDialog {
     pub border: bool,
     /// Entry title and value, in the definition's order.
     pub values: Vec<(String, String)>,
+    /// Which rows are listed.
+    pub filter: PropertyType,
 }
 
 /// The sheet's border and title block under it in the browser.
@@ -277,10 +316,7 @@ fn title_row(
                         .on_disabled_hover_text("Built in: define your own title block (DTB)");
                 }
             }
-            for item in ["Copy", "Rename"] {
-                ui.add_enabled(false, egui::Button::new(item))
-                    .on_disabled_hover_text("Planned: spec 4.13 §3.1");
-            }
+            copy_rename(ui, ResourceKind::TitleBlock, user, action);
         });
     });
 }
@@ -325,10 +361,7 @@ fn border_row(
                         .on_disabled_hover_text("Built in: define your own border (DBR)");
                 }
             }
-            for item in ["Copy", "Rename"] {
-                ui.add_enabled(false, egui::Button::new(item))
-                    .on_disabled_hover_text("Planned: spec 4.13 §3.1");
-            }
+            copy_rename(ui, ResourceKind::Border, user, action);
         });
     });
 }
@@ -354,12 +387,33 @@ fn symbol_row(ui: &mut egui::Ui, name: &str, action: &mut Option<ResAction>) {
                     ui.close();
                 }
             }
-            for item in ["Copy", "Rename"] {
-                ui.add_enabled(false, egui::Button::new(item))
-                    .on_disabled_hover_text("Planned: spec 4.13 §3.1");
-            }
+            copy_rename(ui, ResourceKind::Symbol, Some(&name.to_string()), action);
         });
     });
+}
+
+/// Copy and Rename of a definition's menu (`None`: built in, greyed).
+fn copy_rename(
+    ui: &mut egui::Ui,
+    kind: ResourceKind,
+    user: Option<&String>,
+    action: &mut Option<ResAction>,
+) {
+    let Some(n) = user else {
+        for item in ["Copy", "Rename"] {
+            ui.add_enabled(false, egui::Button::new(item))
+                .on_disabled_hover_text("Built in: only your own definitions");
+        }
+        return;
+    };
+    if ui.button("Copy").clicked() {
+        *action = Some(ResAction::Copy(kind, n.clone()));
+        ui.close();
+    }
+    if ui.button("Rename").clicked() {
+        *action = Some(ResAction::Rename(kind, n.clone()));
+        ui.close();
+    }
 }
 
 /// Drawing Resources in the browser: the folders, the built-in border and
@@ -559,8 +613,40 @@ impl CadCraftApp {
         }
     }
 
-    /// A Drawing Resources row's action.
+    /// What Insert `a` would replace on the active sheet: (the sheet, what
+    /// is there, what comes). `None`: nothing or the same one.
+    fn replaces(&self, a: &ResAction) -> Option<(String, String, String)> {
+        let d = self.drawing()?;
+        let sheet = d.sheet()?;
+        let f = SheetFormat::of(d, sheet);
+        let (old, new) = match a {
+            ResAction::Insert(n) => (
+                f.title?.name,
+                n.clone()
+                    .unwrap_or_else(|| d.standard.kind.label().to_string()),
+            ),
+            ResAction::InsertBorder(n) => (
+                f.border?.name,
+                n.clone()
+                    .unwrap_or_else(|| crate::drawing::resources::DEFAULT_BORDER.to_string()),
+            ),
+            _ => return None,
+        };
+        (old != new).then(|| (sheet.name.clone(), old, new))
+    }
+
+    /// A Drawing Resources row's action; what would replace a sheet's border
+    /// or title block asks first.
     pub(super) fn res_action(&mut self, a: ResAction) {
+        if self.replaces(&a).is_some() {
+            self.drw.replace_ask = Some(a);
+        } else {
+            self.res_run(a);
+        }
+    }
+
+    /// Carries out a Drawing Resources row's action.
+    fn res_run(&mut self, a: ResAction) {
         let i = self.drawing().map_or(0, |d| d.active_sheet);
         match a {
             ResAction::Define => self.define_title_block(),
@@ -587,6 +673,7 @@ impl CadCraftApp {
                         name: n,
                         border: false,
                         values: prompts.into_iter().map(|t| (t, String::new())).collect(),
+                        filter: PropertyType::All,
                     });
                 }
             }
@@ -633,6 +720,7 @@ impl CadCraftApp {
                         name: n,
                         border: true,
                         values: prompts.into_iter().map(|t| (t, String::new())).collect(),
+                        filter: PropertyType::All,
                     });
                 }
             }
@@ -654,7 +742,160 @@ impl CadCraftApp {
                     self.file_status = Some(Err(e));
                 }
             }
+            ResAction::Copy(kind, n) => {
+                match self.edit_drawing("Copy", |d| d.copy_resource(kind, &n)) {
+                    Some(Err(e)) => {
+                        self.history.cancel();
+                        self.file_status = Some(Err(e));
+                    }
+                    Some(Ok(copy)) => self.file_status = Some(Ok(format!("Copy: {copy}"))),
+                    None => {}
+                }
+            }
+            ResAction::Rename(kind, n) => {
+                self.drw.res_rename = Some(ResRename {
+                    kind,
+                    name: n.clone(),
+                    old: n,
+                    focused: false,
+                });
+            }
         }
+    }
+
+    /// The question before a sheet's border or title block is replaced.
+    fn replace_window(&mut self, ctx: &egui::Context) {
+        let Some(a) = self.drw.replace_ask.clone() else {
+            return;
+        };
+        let Some((sheet, old, new)) = self.replaces(&a) else {
+            self.drw.replace_ask = None;
+            return;
+        };
+        let title = match a {
+            ResAction::Insert(_) => "Replace Title Block",
+            _ => "Replace Border",
+        };
+        let mut open = true;
+        let (mut yes, mut no) = (false, false);
+        let win = egui::Window::new(title)
+            .id(egui::Id::new("res_replace"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false);
+        self.layout
+            .place("res_replace", ctx.content_rect(), false, win)
+            .show(ctx, |ui| {
+                ui.label(format!("Replace {old} on {sheet} with {new}?"));
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.add(super::theme::ok_button("Yes")).clicked()
+                        || super::keys::panel_ok_key(ui, false)
+                    {
+                        yes = true;
+                    }
+                    if ui.button("No").clicked() {
+                        no = true;
+                    }
+                });
+            });
+        if yes {
+            self.drw.replace_ask = None;
+            self.res_run(a);
+        } else if no || !open {
+            self.drw.replace_ask = None;
+        }
+    }
+
+    /// The Rename window of a definition.
+    fn rename_window(&mut self, ctx: &egui::Context) {
+        let Some(mut r) = self.drw.res_rename.clone() else {
+            return;
+        };
+        let mut open = true;
+        let (mut ok, mut cancel) = (false, false);
+        let win = egui::Window::new("Rename")
+            .id(egui::Id::new("res_rename"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false);
+        self.layout
+            .place("res_rename", ctx.content_rect(), false, win)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    let f = ui.text_edit_singleline(&mut r.name);
+                    if !r.focused {
+                        f.request_focus();
+                        r.focused = true;
+                    }
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let can = !r.name.trim().is_empty();
+                    if ui.add_enabled(can, super::theme::ok_button("OK")).clicked()
+                        || (can && super::keys::panel_ok_key(ui, false))
+                    {
+                        ok = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if cancel || !open {
+            self.drw.res_rename = None;
+        } else if ok {
+            let (kind, old, name) = (r.kind, r.old.clone(), r.name.clone());
+            match self.edit_drawing("Rename", |d| d.rename_resource(kind, &old, &name)) {
+                Some(Err(e)) => {
+                    self.history.cancel();
+                    self.file_status = Some(Err(e));
+                    self.drw.res_rename = Some(r);
+                }
+                _ => self.drw.res_rename = None,
+            }
+        } else {
+            self.drw.res_rename = Some(r);
+        }
+    }
+
+    /// What the definition of an Edit Property Fields window reads from
+    /// Properties and the sheet: (field, value).
+    fn read_fields(&self, p: &PromptDialog) -> Vec<(String, String)> {
+        use crate::drawing::fields::{Field, Piece, sheet_value};
+        let Some(d) = self.drawing() else {
+            return Vec::new();
+        };
+        let def = if p.border {
+            d.resources
+                .borders
+                .iter()
+                .map(|b| &b.def)
+                .find(|b| b.name == p.name)
+        } else {
+            d.resources.title_blocks.iter().find(|b| b.name == p.name)
+        };
+        let Some(def) = def else {
+            return Vec::new();
+        };
+        let props = self.field_props(d, p.sheet);
+        let mut out: Vec<(String, String)> = Vec::new();
+        for piece in def.texts.iter().flat_map(|t| &t.pieces) {
+            let Piece::Field(f) = piece else {
+                continue;
+            };
+            let name = f.name();
+            if out.iter().any(|(n, _)| *n == name) {
+                continue;
+            }
+            let value = match f {
+                Field::Sheet(s) => sheet_value(d, p.sheet, *s),
+                other => props.get(other),
+            };
+            out.push((name, value.unwrap_or_else(|| "#?".to_string())));
+        }
+        out
     }
 
     /// Define Sketched Symbol: a sheet sketch whose Finish saves a symbol.
@@ -936,11 +1177,14 @@ impl CadCraftApp {
             name,
             border,
             values,
+            filter: PropertyType::All,
         });
     }
 
     /// The Save Title Block name window and Edit Property Fields.
     pub(super) fn resource_windows(&mut self, ctx: &egui::Context) {
+        self.replace_window(ctx);
+        self.rename_window(ctx);
         if let Some(mut t) = self.drw.title_save.clone() {
             let mut open = true;
             let (mut ok, mut cancel) = (false, false);
@@ -1028,7 +1272,8 @@ impl CadCraftApp {
         }
         if let Some(mut p) = self.drw.prompt_dialog.clone() {
             let mut open = true;
-            let (mut ok, mut cancel) = (false, false);
+            let (mut ok, mut cancel, mut properties) = (false, false, false);
+            let read = self.read_fields(&p);
             let win = egui::Window::new("Edit Property Fields")
                 .open(&mut open)
                 .resizable(false)
@@ -1036,7 +1281,21 @@ impl CadCraftApp {
             self.layout
                 .place("prompt_fields", ctx.content_rect(), false, win)
                 .show(ctx, |ui| {
-                    ui.label(format!("Prompted entries of {}", p.name));
+                    ui.label(format!("Fields of {}", p.name));
+                    ui.horizontal(|ui| {
+                        ui.label("Property Type");
+                        egui::ComboBox::from_id_salt("prompt_property_type")
+                            .selected_text(p.filter.label())
+                            .show_ui(ui, |ui| {
+                                for f in PropertyType::ALL {
+                                    ui.selectable_value(&mut p.filter, f, f.label());
+                                }
+                            });
+                        properties = ui
+                            .button("Properties...")
+                            .on_hover_text("The document's Properties; the fields follow at once")
+                            .clicked();
+                    });
                     egui::Grid::new("prompt_fields_grid")
                         .num_columns(2)
                         .striped(true)
@@ -1045,10 +1304,19 @@ impl CadCraftApp {
                             ui.strong("Property Field");
                             ui.strong("Value");
                             ui.end_row();
-                            for (title, value) in &mut p.values {
-                                ui.label(title.as_str());
-                                ui.text_edit_singleline(value);
-                                ui.end_row();
+                            if p.filter != PropertyType::Properties {
+                                for (title, value) in &mut p.values {
+                                    ui.label(title.as_str());
+                                    ui.text_edit_singleline(value);
+                                    ui.end_row();
+                                }
+                            }
+                            if p.filter != PropertyType::Prompted {
+                                for (title, value) in &read {
+                                    ui.label(title.as_str());
+                                    ui.add_enabled(false, egui::Label::new(value.as_str()));
+                                    ui.end_row();
+                                }
                             }
                         });
                     ui.separator();
@@ -1063,6 +1331,9 @@ impl CadCraftApp {
                         }
                     });
                 });
+            if properties {
+                self.open_iproperties(self.part_id);
+            }
             if cancel || !open {
                 self.drw.prompt_dialog = None;
             } else if ok {

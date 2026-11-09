@@ -309,6 +309,10 @@ pub(super) struct DrwUi {
     pub title_save: Option<super::drawing_resources::TitleSave>,
     /// Edit Property Fields of a sheet's title block.
     pub prompt_dialog: Option<super::drawing_resources::PromptDialog>,
+    /// A definition's Rename window.
+    pub res_rename: Option<super::drawing_resources::ResRename>,
+    /// The Insert waiting for "replace what is on the sheet?".
+    pub replace_ask: Option<super::drawing_resources::ResAction>,
     /// Finished lines.
     done: Arc<Mutex<HashMap<LinesKey, Arc<ViewLines>>>>,
     /// Jobs started (finished ones stay until the cache is cleared).

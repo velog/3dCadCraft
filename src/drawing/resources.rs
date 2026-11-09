@@ -457,7 +457,134 @@ impl PlacedSymbol {
     }
 }
 
+/// A folder of Drawing Resources.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceKind {
+    /// Title Blocks.
+    TitleBlock,
+    /// Borders.
+    Border,
+    /// Sketched Symbols.
+    Symbol,
+}
+
+impl ResourceKind {
+    /// The word used in messages.
+    fn word(self) -> &'static str {
+        match self {
+            Self::TitleBlock => "title block",
+            Self::Border => "border",
+            Self::Symbol => "symbol",
+        }
+    }
+}
+
 impl DrawingDocument {
+    /// Whether `name` is taken in folder `kind`.
+    fn resource_taken(&self, kind: ResourceKind, name: &str) -> bool {
+        match kind {
+            ResourceKind::TitleBlock => self.resources.title_blocks.iter().any(|d| d.name == name),
+            ResourceKind::Border => {
+                name == DEFAULT_BORDER || self.resources.borders.iter().any(|b| b.def.name == name)
+            }
+            ResourceKind::Symbol => self.resources.symbols.iter().any(|d| d.name == name),
+        }
+    }
+
+    /// Renames a definition; the sheets and symbols using it follow. Refused
+    /// when the new name is empty or taken.
+    pub fn rename_resource(
+        &mut self,
+        kind: ResourceKind,
+        old: &str,
+        new: &str,
+    ) -> Result<(), String> {
+        let new = new.trim();
+        if new.is_empty() {
+            return Err(format!("Rename: the {} needs a name", kind.word()));
+        }
+        if new == old {
+            return Ok(());
+        }
+        if self.resource_taken(kind, new) {
+            return Err(format!("Rename: a {} named {new} exists", kind.word()));
+        }
+        let def = match kind {
+            ResourceKind::TitleBlock => self
+                .resources
+                .title_blocks
+                .iter_mut()
+                .find(|d| d.name == old),
+            ResourceKind::Border => self
+                .resources
+                .borders
+                .iter_mut()
+                .map(|b| &mut b.def)
+                .find(|d| d.name == old),
+            ResourceKind::Symbol => self.resources.symbols.iter_mut().find(|d| d.name == old),
+        };
+        let Some(def) = def else {
+            return Err(format!("Rename: no {} named {old}", kind.word()));
+        };
+        def.name = new.to_string();
+        for s in &mut self.sheets {
+            match kind {
+                ResourceKind::TitleBlock => {
+                    if let Some(p) = s.title_def.as_mut().filter(|p| p.name == old) {
+                        p.name = new.to_string();
+                    }
+                }
+                ResourceKind::Border => {
+                    if let Some(p) = s.border_def.as_mut().filter(|p| p.name == old) {
+                        p.name = new.to_string();
+                    }
+                }
+                ResourceKind::Symbol => {
+                    for a in &mut s.annotations {
+                        if let super::AnnotationKind::Symbol(p) = &mut a.kind
+                            && p.name == old
+                        {
+                            p.name = new.to_string();
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Copies a definition as `Copy of <name>` (`Copy of <name> (2)` …) and
+    /// returns the copy's name.
+    pub fn copy_resource(&mut self, kind: ResourceKind, name: &str) -> Result<String, String> {
+        let base = format!("Copy of {name}");
+        let copy = std::iter::once(base.clone())
+            .chain((2..).map(|k| format!("{base} ({k})")))
+            .find(|n| !self.resource_taken(kind, n))
+            .unwrap_or(base);
+        let missing = || format!("Copy: no {} named {name}", kind.word());
+        match kind {
+            ResourceKind::TitleBlock => {
+                let d = self.resources.title_blocks.iter().find(|d| d.name == name);
+                let mut d = d.cloned().ok_or_else(missing)?;
+                d.name = copy.clone();
+                self.resources.title_blocks.push(d);
+            }
+            ResourceKind::Border => {
+                let b = self.resources.borders.iter().find(|b| b.def.name == name);
+                let mut b = b.cloned().ok_or_else(missing)?;
+                b.def.name = copy.clone();
+                self.resources.borders.push(b);
+            }
+            ResourceKind::Symbol => {
+                let d = self.resources.symbols.iter().find(|d| d.name == name);
+                let mut d = d.cloned().ok_or_else(missing)?;
+                d.name = copy.clone();
+                self.resources.symbols.push(d);
+            }
+        }
+        Ok(copy)
+    }
+
     /// Adds symbol definition `def` (Save Sketched Symbol); refused when its
     /// name is empty or taken.
     pub fn add_symbol(&mut self, def: Definition) -> Result<(), String> {
@@ -1066,6 +1193,82 @@ mod tests {
 
     fn near(a: [f64; 2], b: [f64; 2]) -> bool {
         (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9
+    }
+
+    #[test]
+    fn a_renamed_definition_keeps_its_users_and_a_copy_gets_a_free_name() {
+        use crate::drawing::AnnotationKind;
+        let mut d = DrawingDocument::default();
+        assert!(d.add_symbol(symbol()).is_ok());
+        assert!(
+            d.add_annotation(AnnotationKind::Symbol(placed([1.0, 2.0])))
+                .is_some()
+        );
+        assert_eq!(
+            d.copy_resource(ResourceKind::Symbol, "Mark"),
+            Ok("Copy of Mark".into())
+        );
+        assert_eq!(
+            d.copy_resource(ResourceKind::Symbol, "Mark"),
+            Ok("Copy of Mark (2)".into())
+        );
+        assert!(d.copy_resource(ResourceKind::Symbol, "Nothing").is_err());
+        // Taken and empty names change nothing.
+        let before = d.resources.clone();
+        assert!(
+            d.rename_resource(ResourceKind::Symbol, "Mark", "Copy of Mark")
+                .is_err()
+        );
+        assert!(
+            d.rename_resource(ResourceKind::Symbol, "Mark", "  ")
+                .is_err()
+        );
+        assert_eq!(d.resources, before);
+        assert!(
+            d.rename_resource(ResourceKind::Symbol, "Mark", "Stamp")
+                .is_ok()
+        );
+        assert!(matches!(
+            &d.sheets[0].annotations[0].kind,
+            AnnotationKind::Symbol(s) if s.name == "Stamp"
+        ));
+        // A border and a title block in use: the sheet follows.
+        let mut b = symbol();
+        b.name = "Frame".into();
+        assert!(
+            d.add_border(BorderDef {
+                def: b.clone(),
+                zones: None
+            })
+            .is_ok()
+        );
+        assert!(d.set_border(0, Some("Frame"), Vec::new(), None));
+        b.name = "Block".into();
+        assert!(d.add_title_block(b).is_ok());
+        assert!(d.set_title_block(0, Some("Block"), Vec::new()));
+        assert!(
+            d.rename_resource(ResourceKind::Border, "Frame", DEFAULT_BORDER)
+                .is_err()
+        );
+        assert!(
+            d.rename_resource(ResourceKind::Border, "Frame", "Frame2")
+                .is_ok()
+        );
+        assert!(
+            d.rename_resource(ResourceKind::TitleBlock, "Block", "Block2")
+                .is_ok()
+        );
+        let name = |p: &Option<PlacedTitle>| p.as_ref().map(|p| p.name.clone());
+        assert_eq!(name(&d.sheets[0].border_def).as_deref(), Some("Frame2"));
+        assert_eq!(name(&d.sheets[0].title_def).as_deref(), Some("Block2"));
+        assert_eq!(
+            d.copy_resource(ResourceKind::Border, "Frame2"),
+            Ok("Copy of Frame2".into())
+        );
+        assert_eq!(
+            d.copy_resource(ResourceKind::TitleBlock, "Block2"),
+            Ok("Copy of Block2".into())
+        );
     }
 
     #[test]

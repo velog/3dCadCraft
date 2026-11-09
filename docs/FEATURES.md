@@ -978,7 +978,7 @@ sheet's border parameters (zones, labels, corner, line / arrowhead, centre marks
 Instance; Delete of the sheet's border / title block; the user's title blocks (Define Title Block, prompted
 entries) and borders (Define Border, connection points). 🟡 2026-11-09: sketched symbols (Define Sketched Symbol with Insertion and
 Connection Points, the Sketch Symbols dialog, placing with Scale / Rotate and one leader tip, Edit Symbol, Edit Definition, move); scale / rotate grips, leader
-bends and attachment to a view are missing.
+bends and attachment to a view are missing. Definitions can be copied and renamed; Insert asks before it replaces what is on the sheet.
 
 **What it does.** Sheets A4–A0 (or ANSI A–E), a border, a **title block** with fields filled in automatically from the model's properties (name, material, mass, drafter, date, revision).
 
