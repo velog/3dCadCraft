@@ -217,6 +217,7 @@ impl CadCraftApp {
         if let Some(p) = &mut self.pack {
             p.source = path.display().to_string();
             p.unsaved = false;
+            p.result = None;
             p.referencing.clear();
             p.searched = false;
             p.collect();
@@ -226,6 +227,7 @@ impl CadCraftApp {
     pub(super) fn pack_destination_picked(&mut self, path: &Path) {
         if let Some(p) = &mut self.pack {
             p.destination = path.display().to_string();
+            p.result = None;
         }
     }
 
@@ -316,11 +318,15 @@ fn pack_body(ui: &mut egui::Ui, p: &mut PackUi, dialog: &mut Option<DialogPurpos
         }
         ui.end_row();
         ui.label("Destination Folder");
-        ui.add_sized(
-            [460.0, 20.0],
-            egui::TextEdit::singleline(&mut p.destination),
-        )
-        .on_hover_text("Created when missing");
+        let d = ui
+            .add_sized(
+                [460.0, 20.0],
+                egui::TextEdit::singleline(&mut p.destination),
+            )
+            .on_hover_text("Created when missing");
+        if d.changed() {
+            p.result = None;
+        }
         if ui.button("Browse...").clicked() {
             *dialog = Some(DialogPurpose::PackDestination);
         }
