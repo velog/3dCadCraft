@@ -122,6 +122,15 @@ impl Default for SheetCam {
 }
 
 impl SheetCam {
+    /// A camera on sheet point `center` at `zoom` pixels per mm.
+    pub(super) fn at(center: [f64; 2], zoom: f64) -> Self {
+        Self {
+            center,
+            zoom,
+            fit: false,
+        }
+    }
+
     pub(super) fn to_screen(self, rect: Rect, p: [f64; 2]) -> Pos2 {
         let c = rect.center();
         Pos2::new(
@@ -203,6 +212,8 @@ pub(super) enum DrwTool {
     RevisionTag(Option<(u32, [f64; 2])>),
     /// Revision Cloud: the corners so far (sheet mm).
     RevisionCloud(Vec<[f64; 2]>),
+    /// Symbols: the dialog's values and the leader's arrow tip once clicked.
+    Symbol(Box<super::drawing_symbols::SymbolDialog>, Option<[f64; 2]>),
 }
 
 /// Tabs of the Drawing View dialog.
@@ -292,6 +303,8 @@ pub(super) struct DrwUi {
     pub sheet_dialog: Option<SheetDialog>,
     /// Edit Drawing Border Parameters (spec 4.13).
     pub border_dialog: Option<super::drawing_resources::BorderDialog>,
+    /// The Sketch Symbols dialog.
+    pub symbol_dialog: Option<super::drawing_symbols::SymbolDialog>,
     /// Save Title Block's name window.
     pub title_save: Option<super::drawing_resources::TitleSave>,
     /// Edit Property Fields of a sheet's title block.
@@ -676,6 +689,14 @@ impl CadCraftApp {
                 self.drw.dialog = None;
                 self.define_border(false);
             }
+            DrwCmd::Planned(super::drawing_planned::Planned::DefineSymbol) => {
+                self.drw.tool = None;
+                self.drw.dialog = None;
+                self.define_symbol();
+            }
+            DrwCmd::Planned(super::drawing_planned::Planned::SketchedSymbols) => {
+                self.open_symbols(None);
+            }
             DrwCmd::Planned(p) => {
                 self.drw.tool = None;
                 self.drw.dialog = None;
@@ -900,6 +921,9 @@ impl CadCraftApp {
         if let Some(p) = self.bend_table_prompt() {
             return p;
         }
+        if let Some(p) = self.symbol_prompt() {
+            return p;
+        }
         if let Some(p) = self.rev_prompt() {
             return p;
         }
@@ -955,7 +979,8 @@ impl CadCraftApp {
                 DrwTool::GeneralTable(_)
                 | DrwTool::RevisionTable(..)
                 | DrwTool::RevisionTag(_)
-                | DrwTool::RevisionCloud(_),
+                | DrwTool::RevisionCloud(_)
+                | DrwTool::Symbol(..),
             ) => String::new(),
             Some(DrwTool::Base) => {
                 if self.drw.dialog.as_ref().is_some_and(|d| d.orient.custom.is_some()) {
@@ -1456,6 +1481,7 @@ impl CadCraftApp {
             Some(DrwTool::RevisionCloud(_)) => {
                 self.revision_cloud_tool(&painter, rect, &response, &views)
             }
+            Some(DrwTool::Symbol(..)) => self.symbol_tool(&painter, rect, &response),
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             // Edit View of a base view: its preview and ViewCube.
@@ -1518,6 +1544,9 @@ impl CadCraftApp {
                 }
                 Some(DrwTool::RevisionTag(Some(_))) => {
                     self.drw.tool = Some(DrwTool::RevisionTag(None));
+                }
+                Some(DrwTool::Symbol(d, Some(_))) => {
+                    self.drw.tool = Some(DrwTool::Symbol(d.clone(), None));
                 }
                 // Closes the cloud; with no corners the command ends.
                 Some(DrwTool::RevisionCloud(p)) if !p.is_empty() => {
@@ -1880,6 +1909,34 @@ impl CadCraftApp {
                     }
                 }
             };
+            let symbol = self.drw.sel_ann.and_then(|id| {
+                let a = self
+                    .drawing()?
+                    .sheet()?
+                    .annotations
+                    .iter()
+                    .find(|a| a.id == id)?;
+                match &a.kind {
+                    crate::drawing::AnnotationKind::Symbol(s) => Some((id, s.name.clone())),
+                    _ => None,
+                }
+            });
+            if let Some((id, name)) = symbol {
+                if ui.button("Edit Symbol...").clicked() {
+                    self.open_symbol_edit(id);
+                    ui.close();
+                }
+                if ui.button("Edit Definition...").clicked() {
+                    self.edit_symbol_definition(&name);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Delete").clicked() {
+                    self.delete_annotation(id);
+                    ui.close();
+                }
+                return;
+            }
             let draft = target
                 .and_then(|id| self.drawing()?.sheet()?.view(id))
                 .is_some_and(|v| v.kind == ViewKind::Draft);
@@ -2006,6 +2063,7 @@ impl CadCraftApp {
         self.drawing_text_window(ctx);
         self.border_dialog_window(ctx);
         self.resource_windows(ctx);
+        self.symbol_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);
         self.planned_window(ctx);
@@ -2319,6 +2377,7 @@ impl CadCraftApp {
             .iter()
             .map(|b| b.def.name.clone())
             .collect();
+        let symbols: Vec<String> = d.resources.symbols.iter().map(|b| b.name.clone()).collect();
         let tree_sketches = |l: &[crate::drawing::view_sketch::DrawingSketch]| -> Vec<TreeSketch> {
             l.iter()
                 .map(|k| (k.id, k.name.clone(), k.visible))
@@ -2392,6 +2451,7 @@ impl CadCraftApp {
                         &title_name,
                         &blocks,
                         &borders,
+                        &symbols,
                     );
                 });
             for (i, (sname, size, views, sheet_sketches, format)) in sheets.iter().enumerate() {
@@ -3453,6 +3513,7 @@ fn annotation_kind_name(k: &crate::drawing::AnnotationKind) -> &'static str {
         crate::drawing::AnnotationKind::RevisionTable(_) => "Revision Table",
         crate::drawing::AnnotationKind::RevisionTag(_) => "Revision Tag",
         crate::drawing::AnnotationKind::RevisionCloud(_) => "Revision Cloud",
+        crate::drawing::AnnotationKind::Symbol(_) => "Sketched Symbol",
         crate::drawing::AnnotationKind::Text { .. } => "Text",
     }
 }

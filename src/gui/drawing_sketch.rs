@@ -55,6 +55,9 @@ pub(super) enum SketchFor {
     /// A border definition (spec 4.13 §3.3): a new one, or the one named in
     /// `DrwSketch::resource`; sheet mm as drawn.
     Border,
+    /// A sketched symbol definition (spec 4.13 §3.4): a new one, or the one
+    /// named in `DrwSketch::resource`.
+    Symbol,
 }
 
 /// A view sketch being edited.
@@ -93,6 +96,8 @@ pub(super) struct DrwSketch {
     pub connections: Vec<PointId>,
     /// A border sketch saves a zone border (its zones drawn under it).
     pub zones: bool,
+    /// A symbol sketch's Insertion Point (a marked sketch point).
+    pub insertion: Option<PointId>,
 }
 
 /// The tools of a view sketch's toolbar, in Inventor's Sketch tab order.
@@ -138,7 +143,38 @@ impl DrwSketch {
             resource: None,
             connections: Vec::new(),
             zones: false,
+            insertion: None,
         }
+    }
+
+    /// The Insertion Point's position (sheet mm).
+    pub(super) fn insertion_position(&self) -> Option<[f64; 2]> {
+        let q = self.ps.sketch.point(self.insertion?)?;
+        Some([q.position.x, q.position.y])
+    }
+
+    /// The sketch point at `q`, added where there is none.
+    fn point_at(&mut self, q: [f64; 2]) -> PointId {
+        let near = self
+            .ps
+            .sketch
+            .points()
+            .find(|(_, p)| (p.position.x - q[0]).hypot(p.position.y - q[1]) < 1e-6)
+            .map(|(id, _)| id);
+        near.unwrap_or_else(|| self.ps.sketch.add_point(Point2::new(q[0], q[1])))
+    }
+
+    /// Marks the sketch point at `q` as the Insertion Point.
+    pub(super) fn mark_insertion(&mut self, q: [f64; 2]) {
+        self.insertion = Some(self.point_at(q));
+    }
+
+    /// Insertion Point: the one selected point becomes it, or stops being it.
+    pub(super) fn toggle_insertion(&mut self) {
+        let &[p] = self.tools.selected_points.as_slice() else {
+            return;
+        };
+        self.insertion = (self.insertion != Some(p)).then_some(p);
     }
 
     /// The connection points' positions (sheet mm), of points still there.
@@ -154,13 +190,7 @@ impl DrwSketch {
     /// added where there is none).
     pub(super) fn mark_connections(&mut self, pts: &[[f64; 2]]) {
         for q in pts {
-            let near = self
-                .ps
-                .sketch
-                .points()
-                .find(|(_, p)| (p.position.x - q[0]).hypot(p.position.y - q[1]) < 1e-6)
-                .map(|(id, _)| id);
-            let id = near.unwrap_or_else(|| self.ps.sketch.add_point(Point2::new(q[0], q[1])));
+            let id = self.point_at(*q);
             if !self.connections.contains(&id) {
                 self.connections.push(id);
             }
@@ -335,6 +365,8 @@ impl DrwSketch {
             SketchFor::TitleBlock => "Define Title Block",
             SketchFor::Border if self.resource.is_some() => "Edit Border",
             SketchFor::Border => "Define Border",
+            SketchFor::Symbol if self.resource.is_some() => "Edit Sketched Symbol",
+            SketchFor::Symbol => "Define Sketched Symbol",
         };
         let tool = if self.tools.tool == Tool::Text {
             "Text: click where the text's baseline starts; double-click a text with Select to edit it"
@@ -501,6 +533,21 @@ impl CadCraftApp {
                 self.finish_border_sketch(def, resource, zones);
                 return true;
             }
+            SketchFor::Symbol => {
+                let resource = s.resource.clone();
+                let connections = s.connection_positions();
+                let insertion = s.insertion_position();
+                self.end_drawing_sketch(s.view);
+                let mut def = crate::drawing::resources::Definition::new(
+                    resource.clone().unwrap_or_default(),
+                    sketch,
+                    texts,
+                );
+                def.connections = connections;
+                def.insertion = insertion;
+                self.finish_symbol_sketch(def, resource);
+                return true;
+            }
             SketchFor::Sketch(id) => {
                 let same = self
                     .drawing()
@@ -595,6 +642,7 @@ impl CadCraftApp {
             | SketchFor::NewSketch
             | SketchFor::TitleBlock
             | SketchFor::Border
+            | SketchFor::Symbol
             | SketchFor::Sketch(_) => {}
             SketchFor::Section(id) => {
                 let pl = views
@@ -767,6 +815,20 @@ impl CadCraftApp {
                 painter.line_segment([c - egui::vec2(9.0, 0.0), c + egui::vec2(9.0, 0.0)], st);
                 painter.line_segment([c - egui::vec2(0.0, 9.0), c + egui::vec2(0.0, 9.0)], st);
             }
+        }
+        // The Insertion Point: a square with a cross.
+        if let Some(q) = s.insertion_position()
+            && let Some(c) = proj.project(&Point3::new(q[0], q[1], 0.0), rect)
+        {
+            let st = Stroke::new(1.5, Color32::from_rgb(0, 150, 90));
+            painter.rect_stroke(
+                egui::Rect::from_center_size(c, egui::vec2(11.0, 11.0)),
+                0.0,
+                st,
+                egui::StrokeKind::Middle,
+            );
+            painter.line_segment([c - egui::vec2(9.0, 0.0), c + egui::vec2(9.0, 0.0)], st);
+            painter.line_segment([c - egui::vec2(0.0, 9.0), c + egui::vec2(0.0, 9.0)], st);
         }
         super::drawing_section::paint_guides(
             painter,
@@ -985,7 +1047,20 @@ impl CadCraftApp {
                     ui.close();
                 }
             }
-            if s.owner == SketchFor::Border {
+            if s.owner == SketchFor::Symbol {
+                let one = s.tools.selected_points.len() == 1;
+                if ui
+                    .add_enabled(one, egui::Button::new("Insertion Point"))
+                    .on_disabled_hover_text(
+                        "Select one sketch point first (Point tool, then Select)",
+                    )
+                    .clicked()
+                {
+                    s.toggle_insertion();
+                    ui.close();
+                }
+            }
+            if matches!(s.owner, SketchFor::Border | SketchFor::Symbol) {
                 let any = !s.tools.selected_points.is_empty();
                 if ui
                     .add_enabled(any, egui::Button::new("Connection Point"))

@@ -2933,9 +2933,10 @@ pub fn interface_only(a: Action) -> bool {
         Action::AsmPlanned(p) => !Planned::Asm(p).has_logic(),
         Action::SmPlanned(k) => !k.has_logic(),
         // Define Title Block has its logic (spec 4.13).
-        Action::Drawing(DrwCmd::Planned(p)) => {
-            !matches!(p, Dp::DefineTitleBlock | Dp::DefineBorder)
-        }
+        Action::Drawing(DrwCmd::Planned(p)) => !matches!(
+            p,
+            Dp::DefineTitleBlock | Dp::DefineBorder | Dp::DefineSymbol | Dp::SketchedSymbols
+        ),
         _ => false,
     }
 }

@@ -109,6 +109,8 @@ pub enum AnnotationKind {
     RevisionTag(super::revision::RevisionTag),
     /// Revision cloud (`revision`, format revision 36).
     RevisionCloud(super::revision::RevisionCloud),
+    /// A sketched symbol (`resources`, format revision 67).
+    Symbol(super::resources::PlacedSymbol),
     /// Text on the sheet.
     Text {
         /// Lower left of the first line (sheet mm).
@@ -374,6 +376,34 @@ pub fn resolve_in<'a>(
                 prims: super::parts::resolve_balloon(b, pl, lines, tables, look)?,
                 value: None,
             })
+        }
+        AnnotationKind::Symbol(s) => {
+            let art = tables
+                .symbol(s)
+                .ok_or_else(|| Orphan::Missing(s.name.clone()))?;
+            let mut prims = s.place(&art.prims);
+            if !s.leader.is_empty() && !s.leader_hidden {
+                let end = s.leader_end(&art.connections);
+                let mut pts = s.leader.clone();
+                pts.push(end);
+                for w in pts.windows(2) {
+                    prims.push(line(w[0], w[1]));
+                }
+                let d = sub(pts[0], pts[1]);
+                let len = norm(d);
+                if len > 1e-9 {
+                    let l = &look.leader;
+                    terminator(
+                        &mut prims,
+                        pts[0],
+                        mul(d, 1.0 / len),
+                        l.terminator,
+                        l.arrow_size,
+                        l.arrow_height,
+                    );
+                }
+            }
+            Ok(Shown { prims, value: None })
         }
         AnnotationKind::Text {
             at,
@@ -1401,6 +1431,7 @@ impl Annotation {
             AnnotationKind::RevisionCloud(c) => c.view,
             AnnotationKind::Text { .. }
             | AnnotationKind::LeaderText { .. }
+            | AnnotationKind::Symbol(_)
             | AnnotationKind::Table(_)
             | AnnotationKind::RevisionTable(_) => None,
         }

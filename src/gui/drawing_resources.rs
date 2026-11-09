@@ -48,6 +48,14 @@ pub(super) enum ResAction {
     EditBorder(String),
     /// Delete border `name`.
     DeleteBorder(String),
+    /// Define New Symbol.
+    DefineSymbol,
+    /// Sketch Symbols on definition `name`.
+    InsertSymbol(String),
+    /// Edit Definition of symbol `name`.
+    EditSymbol(String),
+    /// Delete symbol `name`.
+    DeleteSymbol(String),
 }
 
 /// One border / title block row under a sheet.
@@ -123,8 +131,10 @@ pub(super) struct BorderDialog {
 pub(super) struct TitleSave {
     pub name: String,
     pub def: crate::drawing::resources::Definition,
-    /// A border (`Some(zone border)`), else a title block.
+    /// A border (`Some(zone border)`), else a title block or a symbol.
     pub border: Option<bool>,
+    /// A sketched symbol.
+    pub symbol: bool,
     focused: bool,
 }
 
@@ -323,13 +333,44 @@ fn border_row(
     });
 }
 
+/// A symbol of Drawing Resources.
+fn symbol_row(ui: &mut egui::Ui, name: &str, action: &mut Option<ResAction>) {
+    ui.horizontal(|ui| {
+        super::panels::tree_icon(ui, Icon::Drawing);
+        let r = ui
+            .selectable_label(false, name)
+            .on_hover_text("Double-click: place it on the active sheet");
+        if r.double_clicked() {
+            *action = Some(ResAction::InsertSymbol(name.to_string()));
+        }
+        r.context_menu(|ui| {
+            for (label, a) in [
+                ("Insert", ResAction::InsertSymbol(name.to_string())),
+                ("Edit Symbol...", ResAction::EditSymbol(name.to_string())),
+                ("Delete", ResAction::DeleteSymbol(name.to_string())),
+            ] {
+                if ui.button(label).clicked() {
+                    *action = Some(a);
+                    ui.close();
+                }
+            }
+            for item in ["Copy", "Rename"] {
+                ui.add_enabled(false, egui::Button::new(item))
+                    .on_disabled_hover_text("Planned: spec 4.13 §3.1");
+            }
+        });
+    });
+}
+
 /// Drawing Resources in the browser: the folders, the built-in border and
-/// title block, the user's title blocks (`blocks`) and borders (`borders`).
+/// title block, the user's title blocks (`blocks`), borders (`borders`) and
+/// symbols (`symbols`).
 pub(super) fn resources_tree(
     ui: &mut egui::Ui,
     title_name: &str,
     blocks: &[String],
     borders: &[String],
+    symbols: &[String],
 ) -> Option<ResAction> {
     let mut action = None;
     let off = |ui: &mut egui::Ui, label: &str, row: &str| {
@@ -382,9 +423,19 @@ pub(super) fn resources_tree(
         off(ui, "Sort by Name", "§3.1");
     });
     header(ui, "Sketched Symbols", &mut |ui| {
-        ui.weak("(none)");
+        if symbols.is_empty() {
+            ui.weak("(none)");
+        }
+        for s in symbols {
+            symbol_row(ui, s, &mut action);
+        }
     })
-    .context_menu(|ui| off(ui, "Define New Symbol", "§3.4"));
+    .context_menu(|ui| {
+        if ui.button("Define New Symbol").clicked() {
+            action = Some(ResAction::DefineSymbol);
+            ui.close();
+        }
+    });
     action
 }
 
@@ -586,12 +637,97 @@ impl CadCraftApp {
                 }
             }
             ResAction::EditBorder(n) => self.edit_border_definition(&n),
+            ResAction::DefineSymbol => self.define_symbol(),
+            ResAction::InsertSymbol(n) => self.open_symbols(Some(n)),
+            ResAction::EditSymbol(n) => self.edit_symbol_definition(&n),
+            ResAction::DeleteSymbol(n) => {
+                let r = self.edit_drawing("Delete Symbol", |d| d.delete_symbol(&n));
+                if let Some(Err(e)) = r {
+                    self.history.cancel();
+                    self.file_status = Some(Err(e));
+                }
+            }
             ResAction::DeleteBorder(n) => {
                 let r = self.edit_drawing("Delete Border", |d| d.delete_border(&n));
                 if let Some(Err(e)) = r {
                     self.history.cancel();
                     self.file_status = Some(Err(e));
                 }
+            }
+        }
+    }
+
+    /// Define Sketched Symbol: a sheet sketch whose Finish saves a symbol.
+    pub(super) fn define_symbol(&mut self) {
+        self.open_view_sketch(
+            super::drawing_sketch::SHEET,
+            super::drawing_sketch::SketchFor::Symbol,
+            Default::default(),
+        );
+        self.drw.sel = None;
+        self.file_status = Some(Ok(
+            "Define Sketched Symbol: sketch it; select a point › right-click › Insertion Point sets where it is held; Finish Sketch saves it"
+                .into(),
+        ));
+    }
+
+    /// Edit Definition of symbol `name`: its sketch opens where it was
+    /// drawn; Finish Sketch changes every instance.
+    pub(super) fn edit_symbol_definition(&mut self, name: &str) {
+        let Some(def) = self
+            .drawing()
+            .and_then(|d| d.resources.symbols.iter().find(|s| s.name == name).cloned())
+        else {
+            return;
+        };
+        self.open_view_sketch(
+            super::drawing_sketch::SHEET,
+            super::drawing_sketch::SketchFor::Symbol,
+            def.sketch,
+        );
+        if let Some(s) = self.drw.sketch.as_mut() {
+            s.texts = def.texts;
+            s.resource = Some(name.to_string());
+            s.mark_connections(&def.connections);
+            if let Some(q) = def.insertion {
+                s.mark_insertion(q);
+            }
+        }
+        self.drw.sel = None;
+    }
+
+    /// Finish Sketch of a symbol: a new one asks for its name, an edited
+    /// one changes every instance.
+    pub(super) fn finish_symbol_sketch(
+        &mut self,
+        def: crate::drawing::resources::Definition,
+        resource: Option<String>,
+    ) {
+        if def.extent().is_none() {
+            self.file_status = Some(Err(
+                "Define Sketched Symbol: the symbol is empty (nothing saved)".into(),
+            ));
+            return;
+        }
+        match resource {
+            Some(n) => {
+                if self.edit_drawing("Edit Symbol", |d| d.update_symbol(&n, def)) != Some(true) {
+                    self.history.cancel();
+                }
+                self.history.break_coalescing();
+            }
+            None => {
+                let name = self
+                    .drawing()
+                    .map(|d| d.next_symbol_name())
+                    .unwrap_or_default();
+                self.drw.title_save = Some(TitleSave {
+                    name,
+                    def,
+                    border: None,
+                    symbol: true,
+                    focused: false,
+                });
             }
         }
     }
@@ -670,6 +806,7 @@ impl CadCraftApp {
                     name,
                     def,
                     border: Some(zones),
+                    symbol: false,
                     focused: false,
                 });
             }
@@ -759,6 +896,7 @@ impl CadCraftApp {
                     name,
                     def,
                     border: None,
+                    symbol: false,
                     focused: false,
                 });
             }
@@ -806,9 +944,14 @@ impl CadCraftApp {
         if let Some(mut t) = self.drw.title_save.clone() {
             let mut open = true;
             let (mut ok, mut cancel) = (false, false);
-            let (title, what, folder) = match t.border {
-                Some(_) => ("Save Border", "Define Border", "Borders"),
-                None => ("Save Title Block", "Define Title Block", "Title Blocks"),
+            let (title, what, folder) = match (t.symbol, t.border) {
+                (true, _) => (
+                    "Save Sketched Symbol",
+                    "Define Sketched Symbol",
+                    "Sketched Symbols",
+                ),
+                (_, Some(_)) => ("Save Border", "Define Border", "Borders"),
+                _ => ("Save Title Block", "Define Title Block", "Title Blocks"),
             };
             let win = egui::Window::new(title)
                 .id(egui::Id::new("title_save"))
@@ -859,7 +1002,9 @@ impl CadCraftApp {
                 };
                 let name = def.name.clone();
                 let border = t.border;
+                let symbol = t.symbol;
                 match self.edit_drawing(what, |d| match border {
+                    _ if symbol => d.add_symbol(def),
                     Some(z) => d.add_border(crate::drawing::resources::BorderDef {
                         def,
                         zones: z.then(ZoneParams::default),

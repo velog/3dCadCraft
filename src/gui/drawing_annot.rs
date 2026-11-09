@@ -206,12 +206,18 @@ impl ShownAnn {
 fn lines_box(prims: &[Prim]) -> Option<([f64; 2], [f64; 2])> {
     let mut lo = [f64::MAX; 2];
     let mut hi = [f64::MIN; 2];
+    let mut grow = |q: &[f64; 2]| {
+        lo = [lo[0].min(q[0]), lo[1].min(q[1])];
+        hi = [hi[0].max(q[0]), hi[1].max(q[1])];
+    };
     for p in prims {
-        if let Prim::Line { a, b, .. } = p {
-            for q in [a, b] {
-                lo = [lo[0].min(q[0]), lo[1].min(q[1])];
-                hi = [hi[0].max(q[0]), hi[1].max(q[1])];
+        match p {
+            Prim::Line { a, b, .. } => {
+                grow(a);
+                grow(b);
             }
+            Prim::Path { pts, .. } => pts.iter().for_each(&mut grow),
+            _ => {}
         }
     }
     (lo[0] <= hi[0]).then_some((lo, hi))
@@ -507,7 +513,19 @@ impl CadCraftApp {
                                 | AnnotationKind::RevisionTable(_)
                         )
                         .then(|| lines_box(&s.prims))
-                        .flatten(),
+                        .flatten()
+                        .or_else(|| {
+                            // A symbol's picture, without its leader (lines).
+                            let art: Vec<Prim> = s
+                                .prims
+                                .iter()
+                                .filter(|p| matches!(p, Prim::Path { .. }))
+                                .cloned()
+                                .collect();
+                            matches!(a.kind, AnnotationKind::Symbol(_))
+                                .then(|| lines_box(&art))
+                                .flatten()
+                        }),
                         value: s.value,
                         prims: s.prims,
                         orphan: None,
@@ -1171,6 +1189,10 @@ impl CadCraftApp {
                                 tip[0] += delta[0];
                                 tip[1] += delta[1];
                             }
+                            AnnotationKind::Symbol(s) => {
+                                s.at[0] += delta[0];
+                                s.at[1] += delta[1];
+                            }
                             AnnotationKind::Text { at, .. }
                             | AnnotationKind::LeaderText { at, .. } => {
                                 at[0] += delta[0];
@@ -1265,7 +1287,9 @@ impl CadCraftApp {
         if response.double_clicked()
             && let Some(id) = self.drw.hover_ann
         {
-            self.open_text_edit(id);
+            if !self.open_symbol_edit(id) {
+                self.open_text_edit(id);
+            }
             return true;
         }
         // A click on an arrowhead of the selected dimension flips it inside /
@@ -1281,7 +1305,14 @@ impl CadCraftApp {
             if let Some(id) = self.drw.hover_ann {
                 self.drw.sel_ann = Some(id);
                 self.drw.sel = None;
-                taken = true;
+                // A symbol's right click goes on to the sheet's menu, which
+                // lists Edit Symbol / Edit Definition for it.
+                let symbol = self
+                    .drawing()
+                    .and_then(|d| d.sheet())
+                    .and_then(|s| s.annotations.iter().find(|a| a.id == id))
+                    .is_some_and(|a| matches!(a.kind, AnnotationKind::Symbol(_)));
+                taken = !(symbol && response.secondary_clicked());
             } else {
                 self.drw.sel_ann = None;
             }

@@ -803,15 +803,51 @@ pub struct Tables {
     pub rows: HashMap<(DocRef, BomKind, bool), Vec<BomRow>>,
     /// Item and quantity by (model, BOM view) and occurrence.
     pub items: HashMap<(DocRef, BomKind), HashMap<u32, (String, String)>>,
+    /// The art of the sheet's symbols by (definition, prompted values).
+    pub symbols: HashMap<(String, Vec<(String, String)>), super::resources::SymbolArt>,
 }
 
 impl Tables {
+    /// The art of symbol `s`.
+    pub fn symbol(
+        &self,
+        s: &super::resources::PlacedSymbol,
+    ) -> Option<&super::resources::SymbolArt> {
+        self.symbols.get(&(s.name.clone(), s.prompts.clone()))
+    }
+
+    /// Reads the art of sheet `i`'s symbols, their fields from `props`.
+    pub fn add_symbols(
+        &mut self,
+        doc: &DrawingDocument,
+        i: usize,
+        props: &dyn Fn(&super::fields::Field) -> Option<String>,
+    ) {
+        self.symbols.clear();
+        let Some(sheet) = doc.sheets.get(i) else {
+            return;
+        };
+        for a in &sheet.annotations {
+            let super::AnnotationKind::Symbol(s) = &a.kind else {
+                continue;
+            };
+            // Instances with the same entries share one picture.
+            let key = (s.name.clone(), s.prompts.clone());
+            if !self.symbols.contains_key(&key)
+                && let Some(art) = super::resources::symbol_art(doc, i, s, props)
+            {
+                self.symbols.insert(key, art);
+            }
+        }
+    }
+
     /// The tables of sheet `i` of `doc`.
     pub fn build(doc: &DrawingDocument, i: usize, bom: BomRows) -> Self {
         let mut t = Tables::default();
         let Some(sheet) = doc.sheets.get(i) else {
             return t;
         };
+        t.add_symbols(doc, i, &|_| None);
         for v in &sheet.views {
             if let Some(m) = doc.model_of(sheet, v.id) {
                 t.view_model.insert(v.id, m);

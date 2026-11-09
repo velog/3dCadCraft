@@ -23,6 +23,9 @@ pub struct Resources {
     /// Borders, in browser order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub borders: Vec<BorderDef>,
+    /// Sketched symbols, in browser order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symbols: Vec<Definition>,
 }
 
 /// A border definition (spec 4.13 §3.3): a sketch in sheet mm as it was
@@ -40,7 +43,7 @@ pub struct BorderDef {
 impl Resources {
     /// No definitions.
     pub fn is_empty(&self) -> bool {
-        self.title_blocks.is_empty() && self.borders.is_empty()
+        self.title_blocks.is_empty() && self.borders.is_empty() && self.symbols.is_empty()
     }
 }
 
@@ -56,9 +59,12 @@ pub struct Definition {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<DrawingText>,
     /// Connection points (sheet mm): where a title block's corner attaches
-    /// (a border's).
+    /// (a border's), where a leader ends (a symbol's).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connections: Vec<[f64; 2]>,
+    /// A symbol's Insertion Point (`None`: the middle of its box).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub insertion: Option<[f64; 2]>,
 }
 
 impl Definition {
@@ -69,7 +75,17 @@ impl Definition {
             sketch,
             texts,
             connections: Vec::new(),
+            insertion: None,
         }
+    }
+
+    /// The point a symbol is placed, scaled and turned about: its Insertion
+    /// Point, else the middle of its box.
+    pub fn anchor(&self) -> Option<[f64; 2]> {
+        self.insertion.or_else(|| {
+            self.extent()
+                .map(|(lo, hi)| [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0])
+        })
     }
 
     /// As a drawing sketch (to draw it and take its extent).
@@ -123,6 +139,9 @@ impl Definition {
             t.at = [t.at[0] + d[0], t.at[1] + d[1]];
         }
         for c in &mut self.connections {
+            *c = [c[0] + d[0], c[1] + d[1]];
+        }
+        if let Some(c) = &mut self.insertion {
             *c = [c[0] + d[0], c[1] + d[1]];
         }
     }
@@ -242,8 +261,21 @@ fn def_prims(
     placed: Option<&PlacedTitle>,
     props: &dyn Fn(&Field) -> Option<String>,
 ) -> Vec<Prim> {
-    let mv = |q: [f64; 2]| [q[0] + off[0], q[1] + off[1]];
     let weight = doc.styles.layer(&doc.styles.defaults.border_layer).weight;
+    def_prims_at(doc, i, def, off, weight, placed, props)
+}
+
+/// [`def_prims`] at line weight `weight`.
+fn def_prims_at(
+    doc: &DrawingDocument,
+    i: usize,
+    def: &Definition,
+    off: [f64; 2],
+    weight: f64,
+    placed: Option<&PlacedTitle>,
+    props: &dyn Fn(&Field) -> Option<String>,
+) -> Vec<Prim> {
+    let mv = |q: [f64; 2]| [q[0] + off[0], q[1] + off[1]];
     let mut out = Vec::new();
     for (pts, look) in def.as_sketch().curves() {
         out.push(Prim::Path {
@@ -297,7 +329,200 @@ pub fn title_prims(
     def_prims(doc, i, def, off, sheet.title_def.as_ref(), props)
 }
 
+/// A sketched symbol placed on a sheet (spec 4.13 §3.4).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlacedSymbol {
+    /// The definition's name.
+    pub name: String,
+    /// Where its anchor is (sheet mm).
+    pub at: [f64; 2],
+    /// Its scale.
+    #[serde(default = "one")]
+    pub scale: f64,
+    /// Its rotation about the anchor (radians, counter-clockwise).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotate: f64,
+    /// Static: no scale and rotate grips on the sheet.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fixed: bool,
+    /// The leader's points from its tip (sheet mm); empty: no leader.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leader: Vec<[f64; 2]>,
+    /// The leader is kept but not drawn (Visible off).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub leader_hidden: bool,
+    /// The prompted entries' values of this instance (entry title, value).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompts: Vec<(String, String)>,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+
+/// What a symbol definition looks like on a sheet, about its anchor, before
+/// the instance's scale and rotation.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SymbolArt {
+    /// Curves and texts, fields filled in.
+    pub prims: Vec<Prim>,
+    /// Connection points.
+    pub connections: Vec<[f64; 2]>,
+}
+
+/// The art of symbol `s` on sheet `i` (`None`: no such definition, or it is
+/// empty).
+pub fn symbol_art(
+    doc: &DrawingDocument,
+    i: usize,
+    s: &PlacedSymbol,
+    props: &dyn Fn(&Field) -> Option<String>,
+) -> Option<SymbolArt> {
+    let def = doc.resources.symbols.iter().find(|d| d.name == s.name)?;
+    let a = def.anchor()?;
+    let placed = PlacedTitle {
+        name: s.name.clone(),
+        prompts: s.prompts.clone(),
+    };
+    let weight = doc.styles.layer(&doc.styles.defaults.symbol_layer).weight;
+    Some(SymbolArt {
+        prims: def_prims_at(doc, i, def, [-a[0], -a[1]], weight, Some(&placed), props),
+        connections: def
+            .connections
+            .iter()
+            .map(|c| [c[0] - a[0], c[1] - a[1]])
+            .collect(),
+    })
+}
+
+impl PlacedSymbol {
+    /// A point of its art on the sheet.
+    pub fn to_sheet(&self, q: [f64; 2]) -> [f64; 2] {
+        let (sn, c) = self.rotate.sin_cos();
+        let (x, y) = (q[0] * self.scale, q[1] * self.scale);
+        [self.at[0] + x * c - y * sn, self.at[1] + x * sn + y * c]
+    }
+
+    /// `art` placed on the sheet.
+    pub fn place(&self, art: &[Prim]) -> Vec<Prim> {
+        art.iter()
+            .map(|p| match p {
+                Prim::Line { a, b, weight } => Prim::Line {
+                    a: self.to_sheet(*a),
+                    b: self.to_sheet(*b),
+                    weight: *weight,
+                },
+                Prim::Path { pts, width, dashed } => Prim::Path {
+                    pts: pts.iter().map(|q| self.to_sheet(*q)).collect(),
+                    width: *width,
+                    dashed: *dashed,
+                },
+                Prim::Fill { pts } => Prim::Fill {
+                    pts: pts.iter().map(|q| self.to_sheet(*q)).collect(),
+                },
+                Prim::Text {
+                    at,
+                    height,
+                    text,
+                    anchor,
+                    angle,
+                } => Prim::Text {
+                    at: self.to_sheet(*at),
+                    height: height * self.scale,
+                    text: text.clone(),
+                    anchor: *anchor,
+                    angle: angle + self.rotate,
+                },
+                other => other.clone(),
+            })
+            .collect()
+    }
+
+    /// Where the leader meets the symbol: the connection point nearest the
+    /// leader's last point before it, else the anchor.
+    pub fn leader_end(&self, connections: &[[f64; 2]]) -> [f64; 2] {
+        let from = self.leader.last().copied().unwrap_or(self.at);
+        connections
+            .iter()
+            .map(|c| self.to_sheet(*c))
+            .min_by(|a, b| {
+                let d = |q: &[f64; 2]| (q[0] - from[0]).hypot(q[1] - from[1]);
+                d(a).total_cmp(&d(b))
+            })
+            .unwrap_or(self.at)
+    }
+}
+
 impl DrawingDocument {
+    /// Adds symbol definition `def` (Save Sketched Symbol); refused when its
+    /// name is empty or taken.
+    pub fn add_symbol(&mut self, def: Definition) -> Result<(), String> {
+        let name = def.name.trim().to_string();
+        if name.is_empty() {
+            return Err("Define Sketched Symbol: the symbol needs a name".into());
+        }
+        if self.resources.symbols.iter().any(|d| d.name == name) {
+            return Err(format!(
+                "Define Sketched Symbol: a symbol named {name} exists"
+            ));
+        }
+        self.resources.symbols.push(Definition { name, ..def });
+        Ok(())
+    }
+
+    /// Replaces symbol `name`'s definition (Edit Definition): every instance
+    /// changes; prompted values of entries that left it are dropped.
+    pub fn update_symbol(&mut self, name: &str, def: Definition) -> bool {
+        let Some(d) = self.resources.symbols.iter_mut().find(|d| d.name == name) else {
+            return false;
+        };
+        *d = Definition {
+            name: name.to_string(),
+            ..def
+        };
+        let kept = d.prompts();
+        for s in &mut self.sheets {
+            for a in &mut s.annotations {
+                if let super::AnnotationKind::Symbol(p) = &mut a.kind
+                    && p.name == name
+                {
+                    p.prompts.retain(|(t, _)| kept.contains(t));
+                }
+            }
+        }
+        true
+    }
+
+    /// Deletes symbol `name`; refused while an instance of it is on a sheet.
+    pub fn delete_symbol(&mut self, name: &str) -> Result<(), String> {
+        let used = self.sheets.iter().find(|s| {
+            s.annotations
+                .iter()
+                .any(|a| matches!(&a.kind, super::AnnotationKind::Symbol(p) if p.name == name))
+        });
+        if let Some(s) = used {
+            return Err(format!("Delete: {} uses symbol {name}", s.name));
+        }
+        let before = self.resources.symbols.len();
+        self.resources.symbols.retain(|d| d.name != name);
+        if self.resources.symbols.len() == before {
+            return Err(format!("Delete: no symbol named {name}"));
+        }
+        Ok(())
+    }
+
+    /// A free symbol name (`Symbol1`, `Symbol2` …).
+    pub fn next_symbol_name(&self) -> String {
+        (1..)
+            .map(|k| format!("Symbol{k}"))
+            .find(|n| !self.resources.symbols.iter().any(|d| &d.name == n))
+            .unwrap_or_default()
+    }
+
     /// Adds title block definition `def` (Save Title Block); refused when
     /// its name is empty or taken.
     pub fn add_title_block(&mut self, def: Definition) -> Result<(), String> {
@@ -793,7 +1018,140 @@ mod tests {
                 pieces: fields::parse("<Model: Part Number> / <?Order> / <Sheet Number>"),
             }],
             connections: Vec::new(),
+            insertion: None,
         }
+    }
+
+    /// A 20 × 10 box at (10, 10) with a prompted text, its Insertion Point
+    /// on the lower left corner and a connection point on the right side.
+    fn symbol() -> Definition {
+        use crate::drawing::view_sketch::TextAnchor;
+        let mut sk = crate::sketch::Sketch::default();
+        let p = |x, y| crate::sketch::Point2::new(x, y);
+        let a = sk.add_point(p(10.0, 10.0));
+        let b = sk.add_point(p(30.0, 10.0));
+        let c = sk.add_point(p(30.0, 20.0));
+        let d = sk.add_point(p(10.0, 20.0));
+        for (u, v) in [(a, b), (b, c), (c, d), (d, a)] {
+            let _ = sk.add_line_between(u, v);
+        }
+        let mut def = Definition::new(
+            "Mark",
+            ViewSketch(sk),
+            vec![DrawingText {
+                at: [12.0, 12.0],
+                height: 3.5,
+                anchor: TextAnchor::Left,
+                angle: 0.0,
+                pieces: fields::parse("<?Code>"),
+            }],
+        );
+        def.insertion = Some([10.0, 10.0]);
+        def.connections = vec![[30.0, 15.0]];
+        def
+    }
+
+    fn placed(at: [f64; 2]) -> PlacedSymbol {
+        PlacedSymbol {
+            name: "Mark".into(),
+            at,
+            scale: 1.0,
+            rotate: 0.0,
+            fixed: false,
+            leader: Vec::new(),
+            leader_hidden: false,
+            prompts: vec![("Code".into(), "A1".into())],
+        }
+    }
+
+    fn near(a: [f64; 2], b: [f64; 2]) -> bool {
+        (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9
+    }
+
+    #[test]
+    fn a_symbol_is_placed_scaled_and_turned_about_its_insertion_point() {
+        use crate::drawing::{AnnotationKind, sheet::Prim};
+        let mut d = DrawingDocument::default();
+        assert!(d.add_symbol(symbol()).is_ok());
+        assert!(d.add_symbol(symbol()).is_err(), "names are unique");
+        assert_eq!(d.next_symbol_name(), "Symbol1");
+        let mut s = placed([100.0, 100.0]);
+        s.scale = 2.0;
+        s.rotate = std::f64::consts::FRAC_PI_2;
+        let art = symbol_art(&d, 0, &s, &|_| None).unwrap_or_default();
+        let prims = s.place(&art.prims);
+        // The box's far corner (20, 10) from the anchor: doubled and turned.
+        let far = prims.iter().any(
+            |p| matches!(p, Prim::Path { pts, .. } if pts.iter().any(|q| near(*q, [80.0, 140.0]))),
+        );
+        assert!(far, "{prims:?}");
+        // The instance's own value, at twice the height, turned with it.
+        assert!(prims.iter().any(|p| matches!(
+            p,
+            Prim::Text { text, height, angle, .. }
+                if text == "A1" && *height == 7.0
+                    && (*angle - std::f64::consts::FRAC_PI_2).abs() < 1e-12
+        )));
+        // The leader ends on the connection point, its arrow on the tip.
+        s.leader = vec![[60.0, 60.0]];
+        assert!(near(s.leader_end(&art.connections), [90.0, 140.0]));
+        // Without an Insertion Point: the middle of the box.
+        let mut mid = symbol();
+        mid.insertion = None;
+        assert_eq!(mid.anchor(), Some([20.0, 15.0]));
+        // In use: no Delete; a definition change keeps only live entries.
+        assert!(d.add_annotation(AnnotationKind::Symbol(s)).is_some());
+        assert!(d.delete_symbol("Mark").is_err());
+        let mut edited = symbol();
+        edited.texts.clear();
+        assert!(d.update_symbol("Mark", edited));
+        assert!(matches!(
+            &d.sheets[0].annotations[0].kind,
+            AnnotationKind::Symbol(p) if p.prompts.is_empty()
+        ));
+    }
+
+    #[test]
+    fn a_symbol_draws_through_the_tables_and_round_trips() {
+        use crate::drawing::{AnnotationKind, annot, parts::Tables, sheet::Prim};
+        let mut d = DrawingDocument::default();
+        assert!(d.add_symbol(symbol()).is_ok());
+        let mut s = placed([50.0, 60.0]);
+        s.leader = vec![[20.0, 20.0]];
+        let kind = AnnotationKind::Symbol(s.clone());
+        assert!(d.add_annotation(kind.clone()).is_some());
+        let tables = Tables::build(&d, 0, &|_, _, _| None);
+        let look = d.styles.look();
+        let shown = annot::resolve_in(&kind, &|_| None, &look, &tables);
+        let Ok(shown) = shown else {
+            panic!("{shown:?}");
+        };
+        // Four box lines, the leader's line to the connection point, its
+        // arrow.
+        let paths = |p: &&Prim| matches!(p, Prim::Path { .. });
+        assert_eq!(shown.prims.iter().filter(paths).count(), 4);
+        assert!(shown.prims.iter().any(|p| matches!(
+            p,
+            Prim::Line { a, b, .. } if near(*a, [20.0, 20.0]) && near(*b, [70.0, 65.0])
+        )));
+        // Visible off: the leader stays in the data, not on the sheet.
+        s.leader_hidden = true;
+        let hidden = AnnotationKind::Symbol(s);
+        let lines = annot::resolve_in(&hidden, &|_| None, &look, &tables).map(|r| {
+            r.prims
+                .iter()
+                .filter(|p| matches!(p, Prim::Line { .. }))
+                .count()
+        });
+        assert_eq!(lines, Ok(0));
+        // A definition that is gone: an orphan, not a crash.
+        let gone = AnnotationKind::Symbol(placed([0.0, 0.0]));
+        let empty = Tables::default();
+        assert!(annot::resolve_in(&gone, &|_| None, &look, &empty).is_err());
+        let json = serde_json::to_string(&d).unwrap_or_default();
+        let back: DrawingDocument = serde_json::from_str(&json).unwrap_or_default();
+        assert_eq!(back.resources, d.resources);
+        assert_eq!(back.sheets[0].annotations, d.sheets[0].annotations);
     }
 
     /// A custom border: a rectangle 5 mm in from an A3 sheet's edges and a

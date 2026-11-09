@@ -2825,6 +2825,68 @@ fn drawing_r65_project() -> Project {
     project
 }
 
+fn drawing_r67_project() -> Project {
+    use cadcraft3d::drawing::resources::{Definition, PlacedSymbol};
+    use cadcraft3d::drawing::view_sketch::ViewSketch;
+    use cadcraft3d::sketch::Point2;
+    let mut sketch = ViewSketch::default();
+    let p = sketch.0.add_point(Point2::new(0.0, 0.0));
+    let q = sketch.0.add_point(Point2::new(20.0, 10.0));
+    sketch.0.add_line_between(p, q).unwrap();
+    let mut def = Definition::new("Mark", sketch, Vec::new());
+    def.insertion = Some([0.0, 0.0]);
+    def.connections = vec![[20.0, 10.0]];
+    let mut project = drawing_r65_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        d.add_symbol(def).unwrap();
+        d.add_annotation(cadcraft3d::drawing::AnnotationKind::Symbol(PlacedSymbol {
+            name: "Mark".into(),
+            at: [60.0, 60.0],
+            scale: 2.0,
+            rotate: 0.5,
+            fixed: true,
+            leader: vec![[30.0, 30.0]],
+            leader_hidden: false,
+            prompts: Vec::new(),
+        }))
+        .unwrap();
+    }
+    project
+}
+
+/// The revision 67 drawing reads back with its symbol and instance.
+#[test]
+fn drawing_r67_reads() {
+    let f = root().join("r67/drawing_r67.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    assert_eq!(d.resources.symbols.len(), 1);
+    assert_eq!(d.resources.symbols[0].insertion, Some([0.0, 0.0]));
+    let placed = d.sheets[0].annotations.iter().find_map(|a| match &a.kind {
+        cadcraft3d::drawing::AnnotationKind::Symbol(s) => Some(s.clone()),
+        _ => None,
+    });
+    let s = placed.expect("the symbol");
+    assert_eq!((s.scale, s.rotate, s.fixed), (2.0, 0.5, true));
+    assert_eq!(s.leader, vec![[30.0, 30.0]]);
+}
+
 /// The revision 65 drawing reads back with its Draft View and sketches.
 #[test]
 fn drawing_r65_reads() {
@@ -3738,6 +3800,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r65_project().save(&f).unwrap();
+        }
+        let f = root().join("r67/drawing_r67.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r67_project().save(&f).unwrap();
         }
         let f = root().join("r38/drawing_r38.3dcadcraft");
         if !f.exists() {

@@ -434,7 +434,10 @@ impl CadCraftApp {
 
     /// The BOM tables of sheet `i`.
     pub(super) fn bom_tables(&self, doc: &DrawingDocument, i: usize) -> Tables {
-        Tables::build(doc, i, &|m, k, merge| self.bom_rows(m, k, merge))
+        let mut t = Tables::build(doc, i, &|m, k, merge| self.bom_rows(m, k, merge));
+        let props = self.field_props(doc, i);
+        t.add_symbols(doc, i, &|f| props.get(f));
+        t
     }
 
     // ---- commands ---------------------------------------------------------------
@@ -482,7 +485,7 @@ impl CadCraftApp {
         self.drw.tool = Some(DrwTool::AutoBalloon);
     }
 
-    fn drw_close_tools(&mut self) {
+    pub(super) fn drw_close_tools(&mut self) {
         self.drw.tool = None;
         self.drw.dialog = None;
         self.drw.planned = None;

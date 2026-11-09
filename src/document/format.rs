@@ -179,7 +179,10 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (2026-11-03).
 /// - 65: drawing Draft View (`ViewKind::Draft`); sheet and view sketches
 ///   (`Sheet::sketches`, `DrawingView::sketches`) (2026-11-06).
-pub const FORMAT_REVISION: u32 = 65;
+/// - 67: drawing sketched symbols (`AnnotationKind::Symbol`,
+///   `Resources::symbols`) (2026-11-08; 66 is taken by the bolted connection's
+///   holes).
+pub const FORMAT_REVISION: u32 = 67;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

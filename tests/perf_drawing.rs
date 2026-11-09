@@ -312,6 +312,67 @@ fn drawing_views_of_large_models() {
             over.push("drawing sketches");
         }
     }
+    // 500 sketched symbols with 20 different entries, as every frame draws
+    // them: the tables' pictures, then each instance placed.
+    if wanted("sketched symbols") {
+        use cadcraft3d::drawing::fields;
+        use cadcraft3d::drawing::parts::Tables;
+        use cadcraft3d::drawing::resources::{Definition, PlacedSymbol};
+        use cadcraft3d::drawing::view_sketch::{DrawingText, TextAnchor, ViewSketch};
+        use cadcraft3d::drawing::{AnnotationKind, DrawingDocument, annot};
+        use cadcraft3d::sketch::Point2;
+        let mut sketch = ViewSketch::default();
+        let p: Vec<_> = [[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]]
+            .iter()
+            .map(|q| sketch.0.add_point(Point2::new(q[0], q[1])))
+            .collect();
+        for i in 0..4 {
+            sketch.0.add_line_between(p[i], p[(i + 1) % 4]).unwrap();
+        }
+        sketch.0.add_circle(Point2::new(10.0, 5.0), 3.0).unwrap();
+        let text = DrawingText {
+            at: [2.0, 2.0],
+            height: 3.5,
+            anchor: TextAnchor::Left,
+            angle: 0.0,
+            pieces: fields::parse("<?Code>"),
+        };
+        let mut d = DrawingDocument::default();
+        d.add_symbol(Definition::new("Mark", sketch, vec![text]))
+            .unwrap();
+        for k in 0..500 {
+            let kind = AnnotationKind::Symbol(PlacedSymbol {
+                name: "Mark".into(),
+                at: [(k % 25) as f64 * 15.0, (k / 25) as f64 * 12.0],
+                scale: 1.0,
+                rotate: 0.3,
+                fixed: false,
+                leader: vec![[0.0, 0.0]],
+                leader_hidden: false,
+                prompts: vec![("Code".into(), format!("A{}", k % 20))],
+            });
+            d.add_annotation(kind).unwrap();
+        }
+        let look = d.styles.look();
+        let t = Instant::now();
+        let tables = Tables::build(&d, 0, &|_, _, _| None);
+        let prims: usize = d.sheets[0]
+            .annotations
+            .iter()
+            .filter_map(|a| annot::resolve_in(&a.kind, &|_| None, &look, &tables).ok())
+            .map(|r| r.prims.len())
+            .sum();
+        let total = ms(t);
+        let budget = 16.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({prims} prims){flag}",
+            "sketched symbols: 500 on a sheet"
+        );
+        if total > budget {
+            over.push("sketched symbols");
+        }
+    }
     // A general table of 1 000 rows × 8 columns read from CSV text, and a
     // revision table of 500 revisions with 100 clouds, drawn every frame.
     if wanted("general / revision tables") {
