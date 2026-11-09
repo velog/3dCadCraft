@@ -161,7 +161,7 @@ pub(super) enum DrwTool {
     /// Centerline: the first circle (view, edge), then the second.
     Centerline(Option<(u32, String)>),
     /// General Dimension.
-    Dimension(super::drawing_annot::DimDraft),
+    Dimension(Box<super::drawing_annot::DimDraft>),
     /// Text: click where it goes.
     Text,
     /// Leader Text: the arrow's tip, then the text's place.
@@ -290,6 +290,10 @@ struct BrokenLines {
 }
 
 /// Drawing UI state of the app.
+/// Mass, volume, area by model and body.
+type PhysicalCache =
+    std::cell::RefCell<HashMap<(crate::document::DocRef, String), (f64, f64, f64)>>;
+
 #[derive(Default)]
 pub(super) struct DrwUi {
     pub cam: SheetCam,
@@ -309,6 +313,8 @@ pub(super) struct DrwUi {
     pub title_save: Option<super::drawing_resources::TitleSave>,
     /// Edit Property Fields of a sheet's title block.
     pub prompt_dialog: Option<super::drawing_resources::PromptDialog>,
+    /// Mass, volume, area of a model by body (fields of drawing texts).
+    pub physical: PhysicalCache,
     /// A definition's Rename window.
     pub res_rename: Option<super::drawing_resources::ResRename>,
     /// The Insert waiting for "replace what is on the sheet?".
@@ -545,6 +551,13 @@ impl CadCraftApp {
         match self.project.document(self.part_id).map(|d| &d.data) {
             Some(DocumentData::Drawing(d)) => Some(d),
             _ => None,
+        }
+    }
+
+    /// Makes sheet `i` the active one.
+    pub(super) fn activate_sheet(&mut self, i: usize) {
+        if let Some(d) = self.drawing_mut() {
+            d.active_sheet = i.min(d.sheets.len().saturating_sub(1));
         }
     }
 
@@ -948,7 +961,10 @@ impl CadCraftApp {
             Some(DrwTool::Centerline(Some(_))) => {
                 "Centerline: click the second circle of the same view".into()
             }
-            Some(DrwTool::Dimension(_)) => "Dimension: click an edge, a circle, two points, or two edges for their angle, then click where the dimension goes (Esc ends)".into(),
+            Some(DrwTool::Dimension(d)) if d.crossing() => {
+                "Dimension: click the second line of the intersection".into()
+            }
+            Some(DrwTool::Dimension(_)) => "Dimension: click an edge, a circle, two points, three points or two edges for an angle, then click where the dimension goes; right click: Dimension Type, Intersection (Esc ends)".into(),
             Some(DrwTool::Text) => "Text: click where the text goes".into(),
             Some(DrwTool::LeaderText(None)) => "Leader Text: click where the arrow points".into(),
             Some(DrwTool::LeaderText(Some(_))) => "Leader Text: click where the text goes".into(),
@@ -1504,9 +1520,8 @@ impl CadCraftApp {
             // Right click ends the command (Inventor's Done / Create); a
             // dimension or centerline with a first pick starts over.
             match &self.drw.tool {
-                Some(DrwTool::Dimension(d)) if *d != Default::default() => {
-                    self.drw.tool = Some(DrwTool::Dimension(Default::default()));
-                }
+                // With a pick: the tool's menu (`dimension_menu`).
+                Some(DrwTool::Dimension(d)) if *d != Default::default() => {}
                 Some(DrwTool::Centerline(Some(_))) => {
                     self.drw.tool = Some(DrwTool::Centerline(None));
                 }
@@ -1617,24 +1632,17 @@ impl CadCraftApp {
     /// The title block's fields of sheet `i`: the drawing's Properties and
     /// those of the model of the sheet's first view.
     pub(super) fn title_values(&self, d: &DrawingDocument, i: usize) -> Vec<(TitleField, String)> {
-        let model = d
-            .sheets
-            .get(i)
-            .and_then(|s| s.views.first().and_then(|v| d.model_of(s, v.id)));
+        let model = d.sheets.get(i).and_then(|s| d.source_model(s));
         let drawing_props = self
             .project
             .document(self.part_id)
             .map(|x| x.properties.clone());
-        let model_props = model.and_then(|m| match m.library {
-            None => self
-                .project
-                .document(m.document)
-                .map(|x| (x.properties.clone(), x.name.clone())),
-            Some(_) => None,
+        let model_props = model.and_then(|m| self.model_properties(m));
+        let material = model.map(|m| {
+            self.with_part(m, |p| p.material.clone())
+                .flatten()
+                .unwrap_or_else(|| "Generic".to_string())
         });
-        let material = model
-            .and_then(|m| self.with_part(m, |p| p.material.clone()))
-            .flatten();
         let dp = |k: &str| {
             drawing_props
                 .as_ref()
@@ -2737,6 +2745,19 @@ impl CadCraftApp {
         let Some(v) = view else {
             let (w, h) = sheet.dims();
             let (n, m) = d.sheet_number(d.active_sheet);
+            let source_view = sheet.source_view;
+            let source = d.source_model(sheet);
+            let model_label = source.map_or_else(
+                || "(no view on this sheet)".to_string(),
+                |m| self.model_name(m),
+            );
+            let source_label = |v: &drw::DrawingView| {
+                let model = d
+                    .model_of(sheet, v.id)
+                    .map_or_else(String::new, |m| self.model_name(m));
+                format!("{}: {model}", v.identifier)
+            };
+            let mut pick_source = None;
             egui::Grid::new("drw_sheet_props")
                 .num_columns(2)
                 .min_col_width(label_w)
@@ -2767,10 +2788,54 @@ impl CadCraftApp {
                     super::panels::plabel(ui, "Views");
                     ui.label(sheet.views.len().to_string());
                     ui.end_row();
+                    super::panels::plabel(ui, "Properties From");
+                    let shown = sheet
+                        .views
+                        .iter()
+                        .find(|v| Some(v.id) == source_view)
+                        .or_else(|| sheet.views.first())
+                        .map_or_else(String::new, source_label);
+                    egui::ComboBox::from_id_salt("drw_source_view")
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            for v in &sheet.views {
+                                if ui
+                                    .selectable_label(
+                                        Some(v.id) == source_view,
+                                        source_label(v),
+                                    )
+                                    .clicked()
+                                {
+                                    pick_source = Some(v.id);
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text(
+                            "The view whose model fills the title block, the border and the symbols",
+                        );
+                    ui.end_row();
+                    super::panels::plabel(ui, "Model");
+                    ui.label(model_label);
+                    ui.end_row();
                 });
             ui.add_space(6.0);
             if ui.button("Edit Sheet...").clicked() {
                 self.drw_apply(DrwCmd::EditSheet);
+            }
+            if ui
+                .add_enabled(source.is_some(), egui::Button::new("Model Properties..."))
+                .clicked()
+                && let Some(m) = source
+            {
+                self.open_model_iproperties(m);
+            }
+            if let Some(id) = pick_source {
+                self.edit_drawing("Properties From", |d| {
+                    if let Some(s) = d.sheet_mut() {
+                        s.source_view = Some(id);
+                    }
+                });
             }
             return;
         };
@@ -3452,6 +3517,12 @@ fn dimension_rows(ui: &mut egui::Ui, d: &mut crate::drawing::Dimension) {
             (DimKind::Aligned, "Aligned"),
         ],
         DimKind::Angle => &[(DimKind::Angle, "Angle")],
+        DimKind::AngleThree => &[(DimKind::AngleThree, "Angle")],
+        DimKind::ArcLength | DimKind::ArcAngle => &[
+            (DimKind::ArcLength, "Arc Length"),
+            (DimKind::ArcAngle, "Angular"),
+        ],
+        DimKind::LinearDiameter => &[(DimKind::LinearDiameter, "Linear Diametric")],
     };
     super::panels::plabel(ui, "Dimension Type");
     let name = kinds

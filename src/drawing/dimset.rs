@@ -141,6 +141,7 @@ mod tests {
                     view: 1,
                     edge: format!("E{k}"),
                     role: PointRole::Start,
+                    other: None,
                 })
                 .collect(),
             origin,

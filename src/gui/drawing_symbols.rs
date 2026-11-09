@@ -211,6 +211,14 @@ impl CadCraftApp {
                     ui.text_edit_singleline(&mut dlg.search);
                 });
                 let needle = dlg.search.to_lowercase();
+                let shown: Vec<&String> = names
+                    .iter()
+                    .filter(|n| n.to_lowercase().contains(&needle))
+                    .collect();
+                // A symbol the search hides is not the one placed.
+                if !dlg.name.as_ref().is_some_and(|n| shown.contains(&n)) {
+                    picked = shown.first().map(|n| (*n).clone());
+                }
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(150.0);
@@ -218,10 +226,7 @@ impl CadCraftApp {
                             .id_salt("symbol_list")
                             .max_height(120.0)
                             .show(ui, |ui| {
-                                for n in names
-                                    .iter()
-                                    .filter(|n| n.to_lowercase().contains(&needle))
-                                {
+                                for n in shown.iter().copied() {
                                     let on = dlg.name.as_ref() == Some(n);
                                     if ui.selectable_label(on, n).clicked() && !on {
                                         picked = Some(n.clone());

@@ -36,7 +36,7 @@ const TABS: [&str; 6] = [
 const TYPES: [&str; 4] = ["Text", "Date", "Number", "Yes or No"];
 
 impl IPropsWin {
-    fn new(doc: DocumentId, linked: Option<(PathBuf, Rc<Project>)>) -> Self {
+    pub(super) fn new(doc: DocumentId, linked: Option<(PathBuf, Rc<Project>)>) -> Self {
         Self {
             doc,
             linked,

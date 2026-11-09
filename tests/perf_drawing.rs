@@ -273,6 +273,81 @@ fn drawing_views_of_large_models() {
             over.push("dimension labels");
         }
     }
+    // 2 000 dimensions of the types of spec 4.14 on 1 000 edges, drawn every
+    // frame.
+    if wanted("dimension types") {
+        use cadcraft3d::drawing::annot::{self, Dimension, PointRef, PointRole};
+        use cadcraft3d::drawing::hlr::{ViewEdge, ViewLines};
+        use cadcraft3d::drawing::{AnnotationKind, DimKind};
+        let edge = |k: usize| {
+            let (x, y) = ((k % 50) as f64 * 30.0, (k / 50) as f64 * 30.0);
+            ViewEdge {
+                name: Some(format!("E{k}")),
+                a: [x + 10.0, y],
+                b: [x, y + 10.0],
+                circle: Some(([x, y], 10.0)),
+                full_circle: false,
+                straight: false,
+                visible: true,
+                note: None,
+                hole: None,
+            }
+        };
+        let lines = ViewLines {
+            edges: (0..1000).map(edge).collect(),
+            ..Default::default()
+        };
+        let pl = cadcraft3d::drawing::annot::Placement {
+            position: [0.0, 0.0],
+            scale: 1.0,
+            center: lines.center(),
+            breaks: lines.breaks,
+        };
+        let view = |_: u32| Some((pl, &lines));
+        let look = cadcraft3d::drawing::style::AnnotationLook::default();
+        let p = |k: usize, role| PointRef {
+            view: 1,
+            edge: format!("E{}", k % 1000),
+            role,
+            other: None,
+        };
+        let dims: Vec<AnnotationKind> = (0..2000)
+            .map(|k| {
+                let arc = k % 2 == 0;
+                AnnotationKind::Dimension(Dimension {
+                    shift: 0.0,
+                    c: None,
+                    arrows: Default::default(),
+                    dim: if arc {
+                        DimKind::ArcLength
+                    } else {
+                        DimKind::Aligned
+                    },
+                    a: p(k, PointRole::Center),
+                    b: (!arc).then(|| p(k + 1, PointRole::Tangent(true))),
+                    text: [k as f64, 40.0],
+                    precision: 2,
+                    format: Default::default(),
+                })
+            })
+            .collect();
+        let t = Instant::now();
+        let prims: usize = dims
+            .iter()
+            .filter_map(|d| annot::resolve_with(d, &view, &look).ok())
+            .map(|s| s.prims.len())
+            .sum();
+        let total = ms(t);
+        let budget = 50.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({prims} prims){flag}",
+            "dimension types: 2 000 on 1 000 edges"
+        );
+        if total > budget {
+            over.push("dimension types");
+        }
+    }
     // Drawing sketches (spec 4.12): 200 sheet sketches of a rectangle, a
     // circle and an arc each, turned into the display list every frame.
     if wanted("drawing sketches") {
@@ -577,17 +652,20 @@ fn drawing_views_of_large_models() {
                 let e = edges[k % edges.len()].clone();
                 Dimension {
                     shift: 0.0,
+                    c: None,
                     arrows: Default::default(),
                     dim: DimKind::Horizontal,
                     a: PointRef {
                         view: 1,
                         edge: e.clone(),
                         role: PointRole::Start,
+                        other: None,
                     },
                     b: Some(PointRef {
                         view: 1,
                         edge: e,
                         role: PointRole::End,
+                        other: None,
                     }),
                     text: [0.0, 40.0 + (k % 37) as f64],
                     precision: 2,

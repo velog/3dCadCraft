@@ -139,6 +139,15 @@ pub enum PointRole {
     End,
     /// The centre of its circle.
     Center,
+    /// The middle of a straight edge or an arc (format revision 69).
+    Mid,
+    /// A circle's extreme point: 0 right, 1 up, 2 left, 3 down, on the view.
+    Quadrant(u8),
+    /// A circle's tangency across the dimension (`true`: on the side of the
+    /// other point, `false`: away from it).
+    Tangent(bool),
+    /// Where this edge's line crosses `PointRef::other`'s.
+    Intersection,
 }
 
 /// A point of a view's geometry.
@@ -150,6 +159,9 @@ pub struct PointRef {
     pub edge: String,
     /// Which of its points.
     pub role: PointRole,
+    /// The second edge of `PointRole::Intersection`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<String>,
 }
 
 /// Dimension types.
@@ -168,6 +180,15 @@ pub enum DimKind {
     /// Angle between two straight edges (`a` and `b` name them); the text's
     /// place picks the sector (format revision 38).
     Angle,
+    /// The angle at `b` between `a` and `c` (format revision 69).
+    AngleThree,
+    /// The length along arc `a`.
+    ArcLength,
+    /// The angle arc `a` spans.
+    ArcAngle,
+    /// Twice the distance from axis `a` to outline `b`, with Ø and one
+    /// arrowhead.
+    LinearDiameter,
 }
 
 /// Where a dimension's arrowhead sits at one end.
@@ -200,6 +221,9 @@ pub struct Dimension {
     /// Second point (linear dimensions).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub b: Option<PointRef>,
+    /// Third point (`DimKind::AngleThree`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub c: Option<PointRef>,
     /// Text position, relative to the view's position (sheet mm): the text
     /// moves with the view.
     pub text: [f64; 2],
@@ -790,17 +814,33 @@ impl Draw<'_> {
                     value: Some(if diameter { 2.0 * r } else { r }),
                 });
             }
-            DimKind::Angle => return self.angle(d, view),
-            DimKind::Horizontal | DimKind::Vertical | DimKind::Aligned => {}
+            DimKind::Angle | DimKind::AngleThree | DimKind::ArcLength | DimKind::ArcAngle => {
+                return self.angle(d, view);
+            }
+            DimKind::Horizontal
+            | DimKind::Vertical
+            | DimKind::Aligned
+            | DimKind::LinearDiameter => {}
         }
-        let b = d.b.as_ref().ok_or(Orphan::NoView)?;
-        let (qa, pa, pl) = point(&d.a, view)?;
-        let (qb, pb, _) = point(b, view)?;
+        let (qa, pa, qb, pb, pl) = dim_refs(d, view)?;
         let t = add(pl.position, d.text);
+        // Linear Diametric: the first point is on the axis, no arrowhead or
+        // extension line there.
+        let on_axis = d.dim == DimKind::LinearDiameter;
         // Direction u along the dimension, n square to it towards the text.
         let (u, value) = match d.dim {
             DimKind::Horizontal => ([1.0, 0.0], (qb[0] - qa[0]).abs()),
             DimKind::Vertical => ([0.0, 1.0], (qb[1] - qa[1]).abs()),
+            DimKind::LinearDiameter => {
+                let (_, lines) = view(d.a.view).ok_or(Orphan::NoView)?;
+                let e = lines
+                    .edge(&d.a.edge)
+                    .ok_or_else(|| Orphan::Missing(d.a.edge.clone()))?;
+                let dl = sub(e.b, e.a);
+                let l = norm(dl).max(1e-12);
+                let u = [-dl[1] / l, dl[0] / l];
+                (u, 2.0 * dot(sub(qb, qa), u).abs())
+            }
             _ => {
                 let dd = sub(pb, pa);
                 let l = norm(dd);
@@ -820,7 +860,10 @@ impl Draw<'_> {
         let la = add(pa, mul(n, dot(sub(t, pa), n)));
         let lb = add(pb, mul(n, dot(sub(t, pb), n)));
         // Extension lines (skipped when the point lies on the dimension line).
-        for (p, l) in [(pa, la), (pb, lb)] {
+        for (k, (p, l)) in [(pa, la), (pb, lb)].into_iter().enumerate() {
+            if on_axis && k == 0 {
+                continue;
+            }
             let len = norm(sub(l, p));
             if len > ds.origin_offset + 1e-6 {
                 let dir = mul(sub(l, p), 1.0 / len);
@@ -837,7 +880,12 @@ impl Draw<'_> {
         } else {
             u
         };
-        let label = self.label(d, value, "");
+        let symbol = if on_axis && ds.diameter_symbol {
+            "Ø"
+        } else {
+            ""
+        };
+        let label = self.label(d, value, symbol);
         // The text slides along the line (`shift`); past an extension line
         // the dimension line runs on under it.
         let mid = add(mul(add(la, lb), 0.5), mul(v, d.shift));
@@ -859,7 +907,7 @@ impl Draw<'_> {
             ArrowSide::Outside => true,
         };
         let tail = ds.arrow_size + 2.0;
-        if out(0) {
+        if out(0) || on_axis {
             s0 = s0.min(-tail);
         }
         if out(1) {
@@ -871,7 +919,9 @@ impl Draw<'_> {
                 if out(0) { v } else { mul(v, -1.0) },
                 if out(1) { mul(v, -1.0) } else { v },
             );
-            self.arrow(&mut prims, la, d0);
+            if !on_axis {
+                self.arrow(&mut prims, la, d0);
+            }
             self.arrow(&mut prims, lb, d1);
         }
         // Text above the line, readable from the bottom or the right (ISO),
@@ -919,8 +969,10 @@ impl Draw<'_> {
         view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
     ) -> Result<Shown, Orphan> {
         let ds = &self.look.dim;
-        let b = d.b.as_ref().ok_or(Orphan::NoView)?;
-        let g = angle_geometry(d, b, view)?;
+        let g = match d.dim {
+            DimKind::ArcLength | DimKind::ArcAngle => arc_geometry(d, view)?,
+            _ => angle_geometry(d, d.b.as_ref().ok_or(Orphan::NoView)?, view)?,
+        };
         let mut prims = Vec::new();
         let r = g.radius;
         let c = g.vertex;
@@ -952,14 +1004,24 @@ impl Draw<'_> {
         let mut st = ds.clone();
         st.precision = ds.angular_precision;
         st.suffix = format!("°{}", ds.suffix);
-        let label = super::dimtext::Label::build(
-            g.value.to_degrees(),
-            "",
-            &d.format,
-            &st,
-            self.look.dim_text.height,
-            self.look.dim_text.width_scale,
-        );
+        // An arc's length: the length units and the arc symbol.
+        let arc_length = if d.dim == DimKind::ArcLength {
+            let (_, lines) = view(d.a.view).ok_or(Orphan::NoView)?;
+            Some(circle(lines, &d.a.edge)?.1 * g.value)
+        } else {
+            None
+        };
+        let label = match arc_length {
+            Some(l) => self.label(d, l, "⌒"),
+            None => super::dimtext::Label::build(
+                g.value.to_degrees(),
+                "",
+                &d.format,
+                &st,
+                self.look.dim_text.height,
+                self.look.dim_text.width_scale,
+            ),
+        };
         let m = g.a0 + g.sweep * 0.5;
         let pos = add(at(m), mul([m.cos(), m.sin()], ds.gap));
         // Readable: turned with the arc's tangent, never upside down (ISO);
@@ -978,7 +1040,7 @@ impl Draw<'_> {
         prims.extend(label.prims(pos, ang));
         Ok(Shown {
             prims,
-            value: Some(g.value.to_degrees()),
+            value: Some(arc_length.unwrap_or(g.value.to_degrees())),
         })
     }
 }
@@ -1006,6 +1068,17 @@ pub fn angle_geometry<'a>(
     b: &PointRef,
     view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
 ) -> Result<AngleGeometry, Orphan> {
+    if d.dim == DimKind::AngleThree {
+        let c = d.c.as_ref().ok_or(Orphan::NoView)?;
+        let (_, p0, pl) = point(&d.a, view)?;
+        let (_, v, _) = point(b, view)?;
+        let (_, p1, _) = point(c, view)?;
+        let (da, db) = (sub(p0, v), sub(p1, v));
+        if norm(da) < 1e-9 || norm(db) < 1e-9 {
+            return Err(Orphan::Missing("angle".into()));
+        }
+        return sector(v, add(pl.position, d.text), [v, p0], [v, p1]);
+    }
     let ends = |r: &PointRef| -> Result<([f64; 2], [f64; 2], Placement), Orphan> {
         let s = PointRef {
             role: PointRole::Start,
@@ -1030,6 +1103,18 @@ pub fn angle_geometry<'a>(
     let k = (w[0] * db[1] - w[1] * db[0]) / den;
     let c = add(a0, mul(da, k));
     let t = add(pl.position, d.text);
+    sector(c, t, [a0, a1], [b0, b1])
+}
+
+/// The sector about `c` holding text point `t`, between the lines through
+/// the segments `a` and `b`.
+fn sector(
+    c: [f64; 2],
+    t: [f64; 2],
+    [a0, a1]: [[f64; 2]; 2],
+    [b0, b1]: [[f64; 2]; 2],
+) -> Result<AngleGeometry, Orphan> {
+    let (da, db) = (sub(a1, a0), sub(b1, b0));
     let r = norm(sub(t, c)).max(1.0);
     let ta = (t[1] - c[1]).atan2(t[0] - c[0]);
     let unit = |v: [f64; 2]| mul(v, 1.0 / norm(v));
@@ -1076,6 +1161,155 @@ pub fn angle_geometry<'a>(
     best.ok_or_else(|| Orphan::Missing("angle".into()))
 }
 
+/// The arc of an arc length or arc angle dimension: about the arc's centre,
+/// through the text.
+fn arc_geometry<'a>(
+    d: &Dimension,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+) -> Result<AngleGeometry, Orphan> {
+    let (pl, lines) = view(d.a.view).ok_or(Orphan::NoView)?;
+    let e = lines
+        .edge(&d.a.edge)
+        .ok_or_else(|| Orphan::Missing(d.a.edge.clone()))?;
+    let (c, r) = circle(lines, &d.a.edge)?;
+    let sweep = arc_sweep(lines, e).ok_or_else(|| Orphan::Missing(d.a.edge.clone()))?;
+    let vertex = pl.to_sheet(c);
+    let t = add(pl.position, d.text);
+    Ok(AngleGeometry {
+        vertex,
+        radius: norm(sub(t, vertex)).max(1.0),
+        a0: (e.a[1] - c[1]).atan2(e.a[0] - c[0]),
+        sweep,
+        value: sweep.abs(),
+        reach: [r * pl.scale; 2],
+    })
+}
+
+/// The signed sweep from `e.a` to `e.b` of arc `e` (radians): its drawn
+/// piece tells which way round it goes; hidden, the shorter way.
+pub fn arc_sweep(lines: &ViewLines, e: &ViewEdge) -> Option<f64> {
+    use std::f64::consts::{PI, TAU};
+    let (c, _) = e.circle?;
+    let ang = |q: [f64; 2]| (q[1] - c[1]).atan2(q[0] - c[0]);
+    let a0 = ang(e.a);
+    let ccw = (ang(e.b) - a0).rem_euclid(TAU);
+    let k = lines.edges.iter().position(|x| std::ptr::eq(x, e));
+    let mid = k.and_then(|k| {
+        lines
+            .visible
+            .iter()
+            .zip(&lines.visible_src)
+            .find(|(p, s)| !p.is_empty() && s.is_some_and(|s| s as usize == k))
+            .map(|(p, _)| p[p.len() / 2])
+    });
+    let forward = match mid {
+        Some(m) => (ang(m) - a0).rem_euclid(TAU) <= ccw + 1e-9,
+        None => ccw <= PI,
+    };
+    Some(if forward { ccw } else { ccw - TAU })
+}
+
+/// Point `role` of edge `e`: everything a pick can name by itself (not a
+/// tangency or an intersection, which need more than the edge).
+pub fn point_in(lines: &ViewLines, e: &ViewEdge, role: PointRole) -> Option<[f64; 2]> {
+    let open = norm(sub(e.a, e.b)) > 1e-9;
+    match role {
+        PointRole::Mid => match e.circle {
+            Some((c, r)) => {
+                if !open || e.full_circle {
+                    return None;
+                }
+                let s = arc_sweep(lines, e)?;
+                let a = (e.a[1] - c[1]).atan2(e.a[0] - c[0]) + s * 0.5;
+                Some([c[0] + r * a.cos(), c[1] + r * a.sin()])
+            }
+            None if e.straight => Some(mul(add(e.a, e.b), 0.5)),
+            None => None,
+        },
+        PointRole::Quadrant(k) => {
+            let (c, r) = e.circle?;
+            let a = f64::from(k % 4) * std::f64::consts::FRAC_PI_2;
+            let q = [c[0] + r * a.cos(), c[1] + r * a.sin()];
+            if open {
+                // On the arc only.
+                let s = arc_sweep(lines, e)?;
+                let a0 = (e.a[1] - c[1]).atan2(e.a[0] - c[0]);
+                let d = (a - a0).rem_euclid(std::f64::consts::TAU);
+                let inside = if s >= 0.0 {
+                    d <= s + 1e-9
+                } else {
+                    d >= std::f64::consts::TAU + s - 1e-9
+                };
+                if !inside {
+                    return None;
+                }
+            }
+            Some(q)
+        }
+        PointRole::Tangent(_) | PointRole::Intersection => None,
+        other => point_of(e, other),
+    }
+}
+
+/// Where the lines of straight edges `a` and `b` cross (`None`: parallel).
+pub fn crossing(a: &ViewEdge, b: &ViewEdge) -> Option<[f64; 2]> {
+    let (da, db) = (sub(a.b, a.a), sub(b.b, b.a));
+    let den = da[0] * db[1] - da[1] * db[0];
+    if den.abs() <= 1e-9 * norm(da).max(1e-9) * norm(db).max(1e-9) {
+        return None;
+    }
+    let w = sub(b.a, a.a);
+    let k = (w[0] * db[1] - w[1] * db[0]) / den;
+    Some(add(a.a, mul(da, k)))
+}
+
+/// First point in the view, on the sheet, second point likewise, placement.
+type DimRefs = ([f64; 2], [f64; 2], [f64; 2], [f64; 2], Placement);
+
+/// A dimension's two points in the view and on the sheet (tangencies
+/// settled against the direction it measures in) and its placement.
+fn dim_refs<'a>(
+    d: &Dimension,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+) -> Result<DimRefs, Orphan> {
+    let b = d.b.as_ref().ok_or(Orphan::NoView)?;
+    let (mut qa, mut pa, pl) = point(&d.a, view)?;
+    let (mut qb, mut pb, _) = point(b, view)?;
+    let tangent = |r: PointRole| match r {
+        PointRole::Tangent(n) => Some(n),
+        _ => None,
+    };
+    if tangent(d.a.role).is_some() || tangent(b.role).is_some() {
+        let (ca, cb) = (qa, qb);
+        let dd = sub(cb, ca);
+        let u = match d.dim {
+            DimKind::Horizontal => [1.0, 0.0],
+            DimKind::Vertical => [0.0, 1.0],
+            _ if norm(dd) > 1e-12 => mul(dd, 1.0 / norm(dd)),
+            _ => [1.0, 0.0],
+        };
+        let (_, lines) = view(d.a.view).ok_or(Orphan::NoView)?;
+        let rim = |c: [f64; 2], other: [f64; 2], near: bool, edge: &str| {
+            let toward = if dot(sub(other, c), u) >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+            let s = if near { toward } else { -toward };
+            circle(lines, edge).map(|(_, r)| add(c, mul(u, s * r)))
+        };
+        if let Some(n) = tangent(d.a.role) {
+            qa = rim(ca, cb, n, &d.a.edge)?;
+            pa = pl.to_sheet(qa);
+        }
+        if let Some(n) = tangent(b.role) {
+            qb = rim(cb, ca, n, &b.edge)?;
+            pb = pl.to_sheet(qb);
+        }
+    }
+    Ok((qa, pa, qb, pb, pl))
+}
+
 /// A point in its view's plane, on the sheet, and the view's placement.
 type ViewPoint = ([f64; 2], [f64; 2], Placement);
 
@@ -1085,9 +1319,7 @@ pub fn dim_points<'a>(
     d: &Dimension,
     view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
 ) -> Option<([f64; 2], [f64; 2], Placement, &'a ViewLines)> {
-    let b = d.b.as_ref()?;
-    let (_, pa, pl) = point(&d.a, view).ok()?;
-    let (_, pb, _) = point(b, view).ok()?;
+    let (_, pa, _, pb, pl) = dim_refs(d, view).ok()?;
     let (_, lines) = view(d.a.view)?;
     Some((pa, pb, pl, lines))
 }
@@ -1206,6 +1438,7 @@ pub fn set_members<'a>(
         t[nx] = line;
         Dimension {
             shift: 0.0,
+            c: None,
             arrows: Default::default(),
             dim: if ax == 0 {
                 DimKind::Horizontal
@@ -1253,6 +1486,7 @@ pub fn point_of(e: &ViewEdge, role: PointRole) -> Option<[f64; 2]> {
         PointRole::Start => Some(e.a),
         PointRole::End => Some(e.b),
         PointRole::Center => e.circle.map(|(c, _)| c),
+        _ => None,
     }
 }
 
@@ -1264,7 +1498,17 @@ fn point<'a>(
     let e = lines
         .edge(&r.edge)
         .ok_or_else(|| Orphan::Missing(r.edge.clone()))?;
-    let q = point_of(e, r.role).ok_or_else(|| Orphan::Missing(r.edge.clone()))?;
+    let q = match r.role {
+        // The centre first; `dim_refs` moves it to the rim.
+        PointRole::Tangent(_) => e.circle.map(|(c, _)| c),
+        PointRole::Intersection => r
+            .other
+            .as_deref()
+            .and_then(|o| lines.edge(o))
+            .and_then(|o| crossing(e, o)),
+        role => point_in(lines, e, role),
+    }
+    .ok_or_else(|| Orphan::Missing(r.edge.clone()))?;
     if lines.breaks.removed(q) {
         return Err(Orphan::Broken);
     }

@@ -2473,6 +2473,7 @@ fn drawing_r29_project() -> Project {
             view: v,
             edge: edge.into(),
             role,
+            other: None,
         };
         d.add_annotation(AnnotationKind::DimSet(DimSet {
             kind: SetKind::Ordinate,
@@ -2487,6 +2488,7 @@ fn drawing_r29_project() -> Project {
         }));
         d.add_annotation(AnnotationKind::Dimension(Dimension {
             shift: 0.0,
+            c: None,
             arrows: Default::default(),
             dim: DimKind::Horizontal,
             a: p("E1", PointRole::Start),
@@ -2612,6 +2614,7 @@ fn drawing_r38_project() -> Project {
             view: v,
             edge: e.into(),
             role: PointRole::Start,
+            other: None,
         };
         d.add_annotation(AnnotationKind::Dimension(Dimension {
             dim: DimKind::Angle,
@@ -2621,6 +2624,7 @@ fn drawing_r38_project() -> Project {
             precision: 2,
             format: Default::default(),
             shift: 0.0,
+            c: None,
             arrows: Default::default(),
         }));
         d.add_annotation(AnnotationKind::Dimension(Dimension {
@@ -2634,6 +2638,7 @@ fn drawing_r38_project() -> Project {
             precision: 2,
             format: Default::default(),
             shift: 12.5,
+            c: None,
             arrows: [ArrowSide::Outside, ArrowSide::Auto],
         }));
     }
@@ -2864,6 +2869,151 @@ fn drawing_r67_project() -> Project {
 }
 
 /// The revision 67 drawing reads back with its symbol and instance.
+fn drawing_r69_project() -> Project {
+    use cadcraft3d::drawing::annot::{Dimension, PointRef, PointRole};
+    use cadcraft3d::drawing::{AnnotationKind, DimKind};
+    let mut project = drawing_r67_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    let p = |edge: &str, role, other: Option<&str>| PointRef {
+        view: 1,
+        edge: edge.into(),
+        role,
+        other: other.map(Into::into),
+    };
+    let dim = |dim, a, b, c| {
+        AnnotationKind::Dimension(Dimension {
+            dim,
+            a,
+            b,
+            c,
+            text: [0.0, 40.0],
+            precision: 2,
+            format: Default::default(),
+            shift: 0.0,
+            arrows: Default::default(),
+        })
+    };
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        for k in [
+            dim(
+                DimKind::AngleThree,
+                p("E1", PointRole::Mid, None),
+                Some(p("E2", PointRole::Quadrant(1), None)),
+                Some(p("E3", PointRole::Tangent(true), None)),
+            ),
+            dim(
+                DimKind::ArcLength,
+                p("E4", PointRole::Center, None),
+                None,
+                None,
+            ),
+            dim(
+                DimKind::ArcAngle,
+                p("E4", PointRole::Center, None),
+                None,
+                None,
+            ),
+            dim(
+                DimKind::LinearDiameter,
+                p("E5", PointRole::Intersection, Some("E6")),
+                Some(p("E7", PointRole::Start, None)),
+                None,
+            ),
+        ] {
+            d.add_annotation(k).unwrap();
+        }
+    }
+    project
+}
+
+fn drawing_r70_project() -> Project {
+    use cadcraft3d::drawing::fields;
+    use cadcraft3d::drawing::resources::Definition;
+    use cadcraft3d::drawing::view_sketch::{DrawingText, TextAnchor, ViewSketch};
+    let mut project = drawing_r69_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    let text = DrawingText {
+        at: [0.0, 0.0],
+        height: 3.5,
+        anchor: TextAnchor::Left,
+        angle: 0.0,
+        pieces: fields::parse("<Parameter: d0> <Physical: Mass>"),
+    };
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        d.add_title_block(Definition::new("Block", ViewSketch::default(), vec![text]))
+            .unwrap();
+    }
+    project
+}
+
+#[test]
+fn drawing_r70_reads() {
+    use cadcraft3d::drawing::fields::{Field, PhysicalField, Piece};
+    let f = root().join("r70/drawing_r70.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let pieces = &d.resources.title_blocks[0].texts[0].pieces;
+    assert!(pieces.contains(&Piece::Field(Field::Parameter("d0".into()))));
+    assert!(pieces.contains(&Piece::Field(Field::Physical(PhysicalField::Mass))));
+}
+
+#[test]
+fn drawing_r69_reads() {
+    use cadcraft3d::drawing::annot::PointRole;
+    use cadcraft3d::drawing::{AnnotationKind, DimKind};
+    let f = root().join("r69/drawing_r69.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let dims: Vec<_> = d.sheets[0]
+        .annotations
+        .iter()
+        .filter_map(|a| match &a.kind {
+            AnnotationKind::Dimension(x) => Some(x.clone()),
+            _ => None,
+        })
+        .collect();
+    let of = |k| dims.iter().find(|x| x.dim == k).expect("the dimension");
+    let three = of(DimKind::AngleThree);
+    assert_eq!(three.a.role, PointRole::Mid);
+    assert_eq!(three.b.as_ref().unwrap().role, PointRole::Quadrant(1));
+    assert_eq!(three.c.as_ref().unwrap().role, PointRole::Tangent(true));
+    of(DimKind::ArcLength);
+    of(DimKind::ArcAngle);
+    let across = of(DimKind::LinearDiameter);
+    assert_eq!(across.a.role, PointRole::Intersection);
+    assert_eq!(across.a.other.as_deref(), Some("E6"));
+}
+
 #[test]
 fn drawing_r67_reads() {
     let f = root().join("r67/drawing_r67.3dcadcraft");
@@ -4013,6 +4163,16 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r67_project().save(&f).unwrap();
+        }
+        let f = root().join("r69/drawing_r69.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r69_project().save(&f).unwrap();
+        }
+        let f = root().join("r70/drawing_r70.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r70_project().save(&f).unwrap();
         }
         let f = root().join("r38/drawing_r38.3dcadcraft");
         if !f.exists() {

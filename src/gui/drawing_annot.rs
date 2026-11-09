@@ -34,6 +34,10 @@ pub(super) struct GeoPick {
     what: PickWhat,
     /// The picked point / the circle centre on the sheet (mm).
     pub(super) at: [f64; 2],
+    /// Where the pointer was (sheet mm): the side of a circle.
+    hit: [f64; 2],
+    /// The second edge of an implied intersection.
+    other: Option<String>,
 }
 
 impl GeoPick {
@@ -69,6 +73,30 @@ enum PickWhat {
 pub(super) struct DimDraft {
     first: Option<GeoPick>,
     second: Option<GeoPick>,
+    /// Three points: the angle at the second.
+    third: Option<GeoPick>,
+    /// What the Dimension Type menu chose.
+    kind: Option<DimType>,
+    /// Intersection: the first line, waiting for the second.
+    cross: Option<GeoPick>,
+}
+
+impl DimDraft {
+    /// Waiting for the second line of an implied intersection.
+    pub(super) fn crossing(&self) -> bool {
+        self.cross.is_some()
+    }
+}
+
+/// The Dimension Type menu's choices while placing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DimType {
+    Radius,
+    Diameter,
+    ArcLength,
+    ArcAngle,
+    Chord,
+    LinearDiameter,
 }
 
 /// The Text window (new or Edit Text).
@@ -596,6 +624,78 @@ impl CadCraftApp {
         }
     }
 
+    /// The Dimension command's right-click menu while something is picked.
+    fn dimension_menu(&mut self, response: &egui::Response, draft: &DimDraft, views: &[ShownView]) {
+        let arc = draft.second.is_none()
+            && draft
+                .first
+                .as_ref()
+                .is_some_and(|f| matches!(f.what, PickWhat::Circle(_, false)));
+        let parallel = draft.third.is_none()
+            && match (&draft.first, &draft.second) {
+                (Some(f), Some(s)) => lines_parallel(f, s, views),
+                _ => false,
+            };
+        // The line an Intersection starts from: the last pick.
+        let last_line = match (&draft.first, &draft.second) {
+            (_, Some(s)) => matches!(s.what, PickWhat::Line),
+            (Some(f), None) => matches!(f.what, PickWhat::Line),
+            _ => false,
+        } && draft.third.is_none()
+            && draft.cross.is_none();
+        let mut next: Option<DimDraft> = None;
+        let mut done = false;
+        response.context_menu(|ui| {
+            if arc || parallel {
+                ui.menu_button("Dimension Type", |ui| {
+                    let items: &[(&str, Option<DimType>)] = if arc {
+                        &[
+                            ("Radius", Some(DimType::Radius)),
+                            ("Diameter", Some(DimType::Diameter)),
+                            ("Arc Length", Some(DimType::ArcLength)),
+                            ("Angular", Some(DimType::ArcAngle)),
+                            ("Chord Length", Some(DimType::Chord)),
+                        ]
+                    } else {
+                        &[
+                            ("Linear", None),
+                            ("Linear Diametric", Some(DimType::LinearDiameter)),
+                        ]
+                    };
+                    for (label, k) in items {
+                        if ui.selectable_label(draft.kind == *k, *label).clicked() {
+                            next = Some(DimDraft {
+                                kind: *k,
+                                ..draft.clone()
+                            });
+                            ui.close();
+                        }
+                    }
+                });
+            }
+            if last_line && ui.button("Intersection").clicked() {
+                let mut d = draft.clone();
+                d.kind = None;
+                d.cross = d.second.take().or_else(|| d.first.take());
+                next = Some(d);
+                ui.close();
+            }
+            if ui.button("Restart").clicked() {
+                next = Some(DimDraft::default());
+                ui.close();
+            }
+            if ui.button("Done").clicked() {
+                done = true;
+                ui.close();
+            }
+        });
+        if let Some(d) = next {
+            self.drw.tool = Some(DrwTool::Dimension(Box::new(d)));
+        } else if done {
+            self.drw.tool = None;
+        }
+    }
+
     /// The annotation under `q` (sheet mm), within a few pixels.
     pub(super) fn annotation_at(&self, anns: &[ShownAnn], q: [f64; 2]) -> Option<u32> {
         let tol = 5.0 / self.drw.cam.zoom;
@@ -622,6 +722,19 @@ impl CadCraftApp {
         views: &[ShownView],
         rect: Rect,
         pointer: Pos2,
+    ) -> Option<GeoPick> {
+        self.geometry_under_with(views, rect, pointer, 0.0, false)
+    }
+
+    /// `geometry_under` with the Dimension command's extra points:
+    /// midpoints within `mid_px`, quadrant points when `quadrants`.
+    fn geometry_under_with(
+        &self,
+        views: &[ShownView],
+        rect: Rect,
+        pointer: Pos2,
+        mid_px: f32,
+        quadrants: bool,
     ) -> Option<GeoPick> {
         let cam = self.drw.cam;
         let mut best: Option<(f32, GeoPick)> = None;
@@ -663,6 +776,35 @@ impl CadCraftApp {
                                 edge: name.clone(),
                                 what: PickWhat::Point(role),
                                 at: pl.to_sheet(q),
+                                hit: pl.to_sheet(q),
+                                other: None,
+                            },
+                        );
+                    }
+                }
+                let extras = (mid_px > 0.0)
+                    .then_some((PointRole::Mid, mid_px))
+                    .into_iter()
+                    .chain(
+                        (0..4u8)
+                            .filter(|_| quadrants)
+                            .map(|k| (PointRole::Quadrant(k), POINT_PX)),
+                    );
+                for (role, px) in extras {
+                    let Some(q) = annot::point_in(l, e, role) else {
+                        continue;
+                    };
+                    let d = scr(q).distance(pointer);
+                    if d <= px {
+                        take(
+                            d - POINT_PX,
+                            GeoPick {
+                                view: v.id,
+                                edge: name.clone(),
+                                what: PickWhat::Point(role),
+                                at: pl.to_sheet(q),
+                                hit: pl.to_sheet(q),
+                                other: None,
                             },
                         );
                     }
@@ -708,6 +850,8 @@ impl CadCraftApp {
                             edge: name,
                             what,
                             at,
+                            hit: cam.to_sheet(rect, pointer),
+                            other: None,
                         },
                     );
                 }
@@ -727,6 +871,7 @@ impl CadCraftApp {
             view: g.view,
             edge: g.edge.clone(),
             role,
+            other: None,
         };
         match g.what {
             PickWhat::Point(role) => vec![(r(role), g.at)],
@@ -900,6 +1045,8 @@ impl CadCraftApp {
                         edge: e.clone(),
                         what: PickWhat::Circle(0.0, true),
                         at: p,
+                        hit: p,
+                        other: None,
                     };
                     self.paint_pick(painter, rect, views, &g, SEL);
                 }
@@ -922,7 +1069,13 @@ impl CadCraftApp {
                 }
             }
             DrwTool::Dimension(draft) => {
-                self.dimension_tool(painter, rect, response, views, draft, under, at)
+                // Quadrants and midpoints only for the second point:
+                // a first click on a circle or a line takes the curve.
+                let picked = draft.first.is_some();
+                let mid_px = if picked { POINT_PX } else { 0.0 };
+                let under =
+                    pointer.and_then(|p| self.geometry_under_with(views, rect, p, mid_px, picked));
+                self.dimension_tool(painter, rect, response, views, *draft, under, at)
             }
             DrwTool::Text => {
                 if response.clicked()
@@ -1024,32 +1177,48 @@ impl CadCraftApp {
         under: Option<GeoPick>,
         at: Option<[f64; 2]>,
     ) {
-        for g in draft.first.iter().chain(draft.second.iter()) {
+        for g in [&draft.first, &draft.second, &draft.third, &draft.cross]
+            .into_iter()
+            .flatten()
+        {
             self.paint_pick(painter, rect, views, g, SEL);
         }
         // What the next click does: take more geometry, or place.
-        let wants_more = match (&draft.first, &draft.second) {
-            (None, _) => true,
-            (Some(f), None) => matches!(f.what, PickWhat::Point(_) | PickWhat::Line),
-            _ => false,
-        };
-        let candidate = under.filter(|g| {
-            wants_more
-                && match &draft.first {
-                    None => true,
-                    // The second item: a point, or a line after a line, of
-                    // the same view (a line's own points are no second item).
-                    Some(f) => {
-                        g.view == f.view
-                            && match (&f.what, &g.what) {
-                                (PickWhat::Point(_), PickWhat::Point(_)) => *g != *f,
-                                (PickWhat::Line, PickWhat::Line | PickWhat::Point(_)) => {
-                                    g.edge != f.edge
-                                }
-                                _ => false,
-                            }
+        let wants_more = draft.cross.is_some()
+            || draft.kind.is_none()
+                && match (&draft.first, &draft.second, &draft.third) {
+                    (None, ..) => true,
+                    (Some(_), None, _) => true,
+                    (Some(f), Some(s), None) => {
+                        matches!(f.what, PickWhat::Point(_)) && matches!(s.what, PickWhat::Point(_))
                     }
-                }
+                    _ => false,
+                };
+        let candidate = under.filter(|g| {
+            if !wants_more {
+                return false;
+            }
+            if let Some(c) = &draft.cross {
+                return g.view == c.view && g.edge != c.edge && matches!(g.what, PickWhat::Line);
+            }
+            let Some(f) = &draft.first else {
+                return true;
+            };
+            if g.view != f.view {
+                return false;
+            }
+            let Some(s) = &draft.second else {
+                // The second item, of the same view; a line's or a
+                // circle's own points are no second item.
+                return match (&f.what, &g.what) {
+                    (PickWhat::Point(_), PickWhat::Point(_)) => *g != *f,
+                    (PickWhat::Point(_), PickWhat::Circle(..)) => true,
+                    (PickWhat::Point(_), PickWhat::Line) => g.edge != f.edge,
+                    (PickWhat::Line | PickWhat::Circle(..), _) => g.edge != f.edge,
+                };
+            };
+            // The third of three points.
+            matches!(g.what, PickWhat::Point(_)) && *g != *f && *g != *s
         });
         if let Some(g) = &candidate {
             self.paint_pick(painter, rect, views, g, HOVER);
@@ -1066,17 +1235,40 @@ impl CadCraftApp {
                 paint_prims(painter, &self.drw.cam, rect, &s.prims, PREVIEW);
             }
         }
+        if draft != DimDraft::default() {
+            self.dimension_menu(response, &draft, views);
+        }
         if !response.clicked() {
             return;
         }
         if let Some(g) = candidate {
             let mut next = draft;
+            let g = match next.cross.take() {
+                Some(c) => match crossing_pick(&c, &g, views) {
+                    Some(p) => p,
+                    None => {
+                        next.cross = Some(c);
+                        self.drw.tool = Some(DrwTool::Dimension(Box::new(next)));
+                        self.file_status = Some(Err("Dimension: the lines are parallel".into()));
+                        return;
+                    }
+                },
+                None => g,
+            };
             if next.first.is_none() {
                 next.first = Some(g);
+            } else if next.second.is_none() {
+                // A point then a line: read as the line and the point.
+                let first_point = next.first.as_ref().is_some_and(GeoPick::is_point);
+                if first_point && matches!(g.what, PickWhat::Line) {
+                    next.second = next.first.replace(g);
+                } else {
+                    next.second = Some(g);
+                }
             } else {
-                next.second = Some(g);
+                next.third = Some(g);
             }
-            self.drw.tool = Some(DrwTool::Dimension(next));
+            self.drw.tool = Some(DrwTool::Dimension(Box::new(next)));
             return;
         }
         if let Some(d) = preview {
@@ -1096,7 +1288,7 @@ impl CadCraftApp {
                     annot::format_value(v, 2)
                 )));
             }
-            self.drw.tool = Some(DrwTool::Dimension(DimDraft::default()));
+            self.drw.tool = Some(DrwTool::Dimension(Box::default()));
         }
     }
 
@@ -1688,6 +1880,41 @@ fn whole_circle(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> bool {
 }
 
 /// The dimension the draft would make with the text at `t` (sheet mm).
+/// Whether two line picks are parallel in their view.
+fn lines_parallel(f: &GeoPick, s: &GeoPick, views: &[ShownView]) -> bool {
+    if !matches!(f.what, PickWhat::Line) || !matches!(s.what, PickWhat::Line) {
+        return false;
+    }
+    let edges = views
+        .iter()
+        .find(|v| v.id == f.view)
+        .and_then(|v| v.lines.as_deref())
+        .and_then(|l| Some((l.edge(&f.edge)?, l.edge(&s.edge)?)));
+    edges.is_some_and(|(a, b)| annot::crossing(a, b).is_none())
+}
+
+/// The implied intersection of line picks `a` and `b`.
+fn crossing_pick(a: &GeoPick, b: &GeoPick, views: &[ShownView]) -> Option<GeoPick> {
+    let v = views.iter().find(|v| v.id == a.view)?;
+    let l = v.lines.as_deref()?;
+    let q = annot::crossing(l.edge(&a.edge)?, l.edge(&b.edge)?)?;
+    let pl = Placement {
+        position: v.position,
+        scale: v.scale,
+        center: l.center(),
+        breaks: l.breaks,
+    };
+    let at = pl.to_sheet(q);
+    Some(GeoPick {
+        view: a.view,
+        edge: a.edge.clone(),
+        what: PickWhat::Point(PointRole::Intersection),
+        at,
+        hit: at,
+        other: Some(b.edge.clone()),
+    })
+}
+
 fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<Dimension> {
     let f = draft.first.as_ref()?;
     let v = views.iter().find(|v| v.id == f.view)?;
@@ -1696,6 +1923,18 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
         view: g.view,
         edge: g.edge.clone(),
         role,
+        other: g.other.clone(),
+    };
+    let dim = |dim: DimKind, a: PointRef, b: Option<PointRef>, c: Option<PointRef>| Dimension {
+        shift: 0.0,
+        c,
+        arrows: Default::default(),
+        dim,
+        a,
+        b,
+        text,
+        precision: 2,
+        format: Default::default(),
     };
     // Horizontal when the text is above / below the span, vertical when
     // beside it, aligned in the corners.
@@ -1712,9 +1951,78 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
             DimKind::Aligned
         }
     };
+    // Three points: the angle at the second.
+    if let (Some(s), Some(t3), PickWhat::Point(r1)) = (&draft.second, &draft.third, f.what)
+        && let (PickWhat::Point(r2), PickWhat::Point(r3)) = (s.what, t3.what)
+    {
+        return Some(dim(
+            DimKind::AngleThree,
+            pr(f, r1),
+            Some(pr(s, r2)),
+            Some(pr(t3, r3)),
+        ));
+    }
+    // The menu's choice for an arc.
+    if draft.second.is_none()
+        && matches!(f.what, PickWhat::Circle(..))
+        && let Some(k) = draft.kind
+    {
+        let center = pr(f, PointRole::Center);
+        return Some(match k {
+            DimType::Radius => dim(DimKind::Radius, center, None, None),
+            DimType::Diameter => dim(DimKind::Diameter, center, None, None),
+            DimType::ArcLength => dim(DimKind::ArcLength, center, None, None),
+            DimType::ArcAngle => dim(DimKind::ArcAngle, center, None, None),
+            DimType::Chord => dim(
+                DimKind::Aligned,
+                pr(f, PointRole::Start),
+                Some(pr(f, PointRole::End)),
+                None,
+            ),
+            DimType::LinearDiameter => return None,
+        });
+    }
+    // Anything with a circle's curve: to its tangency.
+    if let Some(s) = &draft.second
+        && (matches!(f.what, PickWhat::Circle(..)) || matches!(s.what, PickWhat::Circle(..)))
+    {
+        let end = |g: &GeoPick, other: [f64; 2]| match g.what {
+            PickWhat::Point(r) => pr(g, r),
+            PickWhat::Circle(..) => {
+                let (h, o) = (
+                    [g.hit[0] - g.at[0], g.hit[1] - g.at[1]],
+                    [other[0] - g.at[0], other[1] - g.at[1]],
+                );
+                pr(g, PointRole::Tangent(h[0] * o[0] + h[1] * o[1] >= 0.0))
+            }
+            PickWhat::Line => pr(g, PointRole::Start),
+        };
+        // Across an upright or level line, else as the text's place says.
+        let across = [f, s].into_iter().find_map(|g| {
+            if !matches!(g.what, PickWhat::Line) {
+                return None;
+            }
+            let e = v.lines.as_deref()?.edge(&g.edge)?;
+            let (dx, dy) = ((e.b[0] - e.a[0]).abs(), (e.b[1] - e.a[1]).abs());
+            if dx < 1e-6 * dy.max(1.0) {
+                Some(DimKind::Horizontal)
+            } else if dy < 1e-6 * dx.max(1.0) {
+                Some(DimKind::Vertical)
+            } else {
+                None
+            }
+        });
+        return Some(dim(
+            across.unwrap_or_else(|| orient(f.at, s.at)),
+            end(f, s.at),
+            Some(end(s, f.at)),
+            None,
+        ));
+    }
     match (&f.what, &draft.second) {
         (PickWhat::Circle(_, full), _) => Some(Dimension {
             shift: 0.0,
+            c: None,
             arrows: Default::default(),
             dim: if *full {
                 DimKind::Diameter
@@ -1750,12 +2058,21 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                     let (u1, u2) = ([b[0] - a[0], b[1] - a[1]], [d[0] - c[0], d[1] - c[1]]);
                     let cross = u1[0] * u2[1] - u1[1] * u2[0];
                     let len = u1[0].hypot(u1[1]) * u2[0].hypot(u2[1]);
+                    if draft.kind == Some(DimType::LinearDiameter) {
+                        return Some(dim(
+                            DimKind::LinearDiameter,
+                            pr(f, PointRole::Start),
+                            Some(pr(s, PointRole::Start)),
+                            None,
+                        ));
+                    }
                     if s.view == f.view
                         && len > 1e-12
                         && (cross / len).abs() > 0.5f64.to_radians().sin()
                     {
                         return Some(Dimension {
                             shift: 0.0,
+                            c: None,
                             arrows: Default::default(),
                             dim: DimKind::Angle,
                             a: pr(f, PointRole::Start),
@@ -1778,6 +2095,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
             };
             Some(Dimension {
                 shift: 0.0,
+                c: None,
                 arrows: Default::default(),
                 dim,
                 a: pr(f, PointRole::Start),
@@ -1798,6 +2116,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
             };
             Some(Dimension {
                 shift: 0.0,
+                c: None,
                 arrows: Default::default(),
                 dim: orient(pl.to_sheet(e.a), pl.to_sheet(e.b)),
                 a: pr(f, PointRole::Start),
@@ -1813,6 +2132,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
             };
             Some(Dimension {
                 shift: 0.0,
+                c: None,
                 arrows: Default::default(),
                 dim: orient(f.at, s.at),
                 a: pr(f, *r1),

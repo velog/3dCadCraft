@@ -128,7 +128,7 @@ fn inside(b: &[[f64; 2]; 4], q: [f64; 2]) -> bool {
 
 /// The Insert Field menu: the drawing's Properties, the model's, the
 /// sheet's values.
-fn field_menu(ui: &mut egui::Ui, add: &mut Option<Field>) {
+fn field_menu(ui: &mut egui::Ui, add: &mut Option<Field>, model: &ModelFields) {
     let groups: [(&str, Vec<Field>); 3] = [
         (
             "Drawing Properties",
@@ -152,14 +152,48 @@ fn field_menu(ui: &mut egui::Ui, add: &mut Option<Field>) {
                 .collect(),
         ),
     ];
+    let groups = groups.into_iter().chain([
+        (
+            "Model Custom Properties",
+            model
+                .custom
+                .iter()
+                .map(|c| Field::Model(c.clone()))
+                .collect(),
+        ),
+        (
+            "Model Parameters",
+            model
+                .params
+                .iter()
+                .map(|n| Field::Parameter(n.clone()))
+                .collect(),
+        ),
+        (
+            "Model Physical Properties",
+            crate::drawing::fields::PhysicalField::ALL
+                .into_iter()
+                .map(Field::Physical)
+                .collect::<Vec<_>>(),
+        ),
+    ]);
     for (name, list) in groups {
+        let list: Vec<Field> = list;
+        if list.is_empty() {
+            continue;
+        }
         ui.menu_button(name, |ui| {
             egui::ScrollArea::vertical()
                 .max_height(420.0)
                 .show(ui, |ui| {
                     for f in list {
                         let label = f.name();
-                        let label = label.strip_prefix("Model: ").unwrap_or(&label).to_string();
+                        let label = label
+                            .strip_prefix("Model: ")
+                            .or_else(|| label.strip_prefix("Parameter: "))
+                            .or_else(|| label.strip_prefix("Physical: "))
+                            .unwrap_or(&label)
+                            .to_string();
                         if ui.button(label).clicked() {
                             *add = Some(f);
                             ui.close();
@@ -168,6 +202,13 @@ fn field_menu(ui: &mut egui::Ui, add: &mut Option<Field>) {
                 });
         });
     }
+}
+
+/// What Insert Field lists of the sheet's model.
+#[derive(Default)]
+struct ModelFields {
+    params: Vec<String>,
+    custom: Vec<String>,
 }
 
 impl DrwSketch {
@@ -234,6 +275,22 @@ impl CadCraftApp {
         };
         let mut open = true;
         let (mut ok, mut cancel) = (false, false);
+        let model = self
+            .drawing()
+            .and_then(|d| d.sheet().and_then(|s| d.source_model(s)));
+        let model_fields = ModelFields {
+            params: model
+                .and_then(|m| {
+                    self.with_part(m, |p| {
+                        p.parameter_table().into_iter().map(|r| r.name).collect()
+                    })
+                })
+                .unwrap_or_default(),
+            custom: model
+                .and_then(|m| self.model_properties(m))
+                .map(|(p, _)| p.custom.into_iter().map(|c| c.name).collect())
+                .unwrap_or_default(),
+        };
         let title = if e.index.is_some() {
             "Edit Text"
         } else {
@@ -262,11 +319,11 @@ impl CadCraftApp {
                 ui.horizontal(|ui| {
                     let mut add = None;
                     ui.menu_button("Insert Field", |ui| {
-                        field_menu(ui, &mut add);
+                        field_menu(ui, &mut add, &model_fields);
                     })
                     .response
                     .on_hover_text(
-                        "A Property of the drawing, of the model of the first view, or a value of the sheet",
+                        "A Property of the drawing, a Property, parameter or physical property of the sheet's model (Properties From), or a value of the sheet",
                     );
                     if let Some(f) = add {
                         e.text.push('<');

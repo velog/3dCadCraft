@@ -434,12 +434,14 @@ fn annotations_resolve_by_edge_name() {
     let dim = |dim: DimKind, b: Option<PointRef>| {
         AnnotationKind::Dimension(Dimension {
             shift: 0.0,
+            c: None,
             arrows: Default::default(),
             dim,
             a: PointRef {
                 view: 1,
                 edge: name.clone(),
                 role: PointRole::Start,
+                other: None,
             },
             b,
             text: [0.0, 30.0],
@@ -451,6 +453,7 @@ fn annotations_resolve_by_edge_name() {
         view: 1,
         edge: name.clone(),
         role: PointRole::End,
+        other: None,
     });
     let h = resolve(&dim(DimKind::Horizontal, end.clone()), &view).unwrap();
     close(h.value.unwrap(), 40.0, 1e-9, "horizontal value (model mm)");
@@ -532,6 +535,7 @@ fn annotations_resolve_by_edge_name() {
         view: 1,
         edge: up,
         role: PointRole::Start,
+        other: None,
     });
     // Inside the box's corner region near its middle.
     ang.text = [0.0, 0.0];
@@ -555,6 +559,7 @@ fn annotations_resolve_by_edge_name() {
         view: 1,
         edge: name.clone(),
         role: PointRole::End,
+        other: None,
     });
     assert!(resolve(&AnnotationKind::Dimension(ang), &view).is_err());
     // Orphan: an edge that does not exist.
@@ -597,12 +602,14 @@ fn annotations_resolve_by_edge_name() {
     let view = |v: u32| (v == 2).then_some((pl, &top));
     let d = AnnotationKind::Dimension(Dimension {
         shift: 0.0,
+        c: None,
         arrows: Default::default(),
         dim: DimKind::Diameter,
         a: PointRef {
             view: 2,
             edge: circles[0].clone(),
             role: PointRole::Center,
+            other: None,
         },
         b: None,
         text: [20.0, 20.0],
@@ -1441,17 +1448,20 @@ fn styles_drive_annotations() {
     let view = |v: u32| (v == 1).then_some((pl, &front));
     let dim = AnnotationKind::Dimension(Dimension {
         shift: 0.0,
+        c: None,
         arrows: Default::default(),
         dim: DimKind::Horizontal,
         a: PointRef {
             view: 1,
             edge: name.clone(),
             role: PointRole::Start,
+            other: None,
         },
         b: Some(PointRef {
             view: 1,
             edge: name,
             role: PointRole::End,
+            other: None,
         }),
         text: [0.0, 20.0],
         precision: 2,
@@ -1964,6 +1974,7 @@ fn dimension_sets_measure_from_the_origin() {
                 view: 1,
                 edge: e.name.clone().unwrap_or_default(),
                 role,
+                other: None,
             })
         })
         .collect();
@@ -2038,9 +2049,11 @@ fn arrange_puts_dimensions_in_rows() {
         view: 1,
         edge: name.clone(),
         role,
+        other: None,
     };
     let dim = |text: [f64; 2]| Dimension {
         shift: 0.0,
+        c: None,
         arrows: Default::default(),
         dim: DimKind::Horizontal,
         a: p(PointRole::Start),
@@ -2523,17 +2536,20 @@ fn break_views_shorten_and_keep_true_values() {
     let name = e.name.clone().expect("named edge");
     let dim = AnnotationKind::Dimension(Dimension {
         shift: 0.0,
+        c: None,
         arrows: Default::default(),
         dim: DimKind::Horizontal,
         a: PointRef {
             view: 1,
             edge: name.clone(),
             role: PointRole::Start,
+            other: None,
         },
         b: Some(PointRef {
             view: 1,
             edge: name.clone(),
             role: PointRole::End,
+            other: None,
         }),
         text: [0.0, 30.0],
         precision: 2,
@@ -3281,4 +3297,193 @@ fn draft_views() {
     let back: DrawingDocument = serde_json::from_str(&json).unwrap();
     assert_eq!(back.sheets[0].views[0].kind, ViewKind::Draft);
     assert_eq!(back.sheets[0].views[0].sketches.len(), 1);
+}
+
+/// A hand-made view for the dimension types of spec 4.14: lines L (0,0)-(40,0)
+/// and M (0,0)-(0,30), P parallel to M at x = 60, S upright through (50,0),
+/// a quarter arc A of radius 10 about the origin, its long way round B,
+/// circles C1 (100,0) r 5 and C2 (130,0) r 10.
+fn dim_types_view() -> crate::drawing::hlr::ViewLines {
+    use crate::drawing::hlr::{ViewEdge, ViewLines};
+    let edge = |name: &str, a: [f64; 2], b: [f64; 2], circle: Option<([f64; 2], f64)>| ViewEdge {
+        name: Some(name.into()),
+        a,
+        b,
+        circle,
+        full_circle: circle.is_some() && a == b,
+        straight: circle.is_none(),
+        visible: true,
+        note: None,
+        hole: None,
+    };
+    let s = 10.0 * 0.5f64.sqrt();
+    let o = ([0.0, 0.0], 10.0);
+    ViewLines {
+        edges: vec![
+            edge("L", [0.0, 0.0], [40.0, 0.0], None),
+            edge("M", [0.0, 0.0], [0.0, 30.0], None),
+            edge("P", [60.0, 0.0], [60.0, 30.0], None),
+            edge("S", [50.0, -10.0], [50.0, 10.0], None),
+            edge("A", [10.0, 0.0], [0.0, 10.0], Some(o)),
+            edge("B", [10.0, 0.0], [0.0, 10.0], Some(o)),
+            edge("C1", [105.0, 0.0], [105.0, 0.0], Some(([100.0, 0.0], 5.0))),
+            edge("C2", [140.0, 0.0], [140.0, 0.0], Some(([130.0, 0.0], 10.0))),
+        ],
+        visible: vec![
+            vec![[10.0, 0.0], [s, s], [0.0, 10.0]],
+            vec![[10.0, 0.0], [-s, -s], [0.0, 10.0]],
+        ],
+        visible_src: vec![Some(4), Some(5)],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn dimension_types_of_spec_4_14_measure() {
+    use super::annot::{Placement, resolve};
+    let lines = dim_types_view();
+    let pl = Placement {
+        position: [0.0, 0.0],
+        scale: 2.0,
+        center: lines.center(),
+        breaks: lines.breaks,
+    };
+    let view = |v: u32| (v == 1).then_some((pl, &lines));
+    let r = |edge: &str, role: PointRole| PointRef {
+        view: 1,
+        edge: edge.into(),
+        role,
+        other: None,
+    };
+    let dim = |dim: DimKind, a: PointRef, b: Option<PointRef>, c: Option<PointRef>, t: [f64; 2]| {
+        AnnotationKind::Dimension(Dimension {
+            shift: 0.0,
+            c,
+            arrows: Default::default(),
+            dim,
+            a,
+            b,
+            text: t,
+            precision: 2,
+            format: Default::default(),
+        })
+    };
+    let value = |k: AnnotationKind| resolve(&k, &view).unwrap().value.unwrap();
+    use PointRole::{Center, End, Intersection, Mid, Quadrant, Start, Tangent};
+    let up = [0.0, 80.0];
+    // Three points: the angle at the second.
+    let three = dim(
+        DimKind::AngleThree,
+        r("L", End),
+        Some(r("L", Start)),
+        Some(r("M", End)),
+        [30.0, 30.0],
+    );
+    close(value(three), 90.0, 1e-9, "three points");
+    // An arc: its length and angle, the long way round from what is drawn.
+    let arc = |k, e: &str| dim(k, r(e, Center), None, None, [30.0, 30.0]);
+    close(
+        value(arc(DimKind::ArcLength, "A")),
+        5.0 * std::f64::consts::PI,
+        1e-9,
+        "arc length",
+    );
+    close(value(arc(DimKind::ArcAngle, "A")), 90.0, 1e-9, "arc angle");
+    close(
+        value(arc(DimKind::ArcAngle, "B")),
+        270.0,
+        1e-9,
+        "the long way",
+    );
+    close(
+        value(arc(DimKind::ArcLength, "B")),
+        15.0 * std::f64::consts::PI,
+        1e-9,
+        "long arc length",
+    );
+    // Chord: the arc's own two ends.
+    let chord = dim(
+        DimKind::Aligned,
+        r("A", Start),
+        Some(r("A", End)),
+        None,
+        [30.0, 30.0],
+    );
+    close(value(chord), 200.0f64.sqrt(), 1e-9, "chord");
+    let hz = |a: PointRef, b: PointRef| dim(DimKind::Horizontal, a, Some(b), None, up);
+    // Midpoints: a line's, an arc's on the arc.
+    close(
+        value(hz(r("L", Mid), r("P", Start))),
+        40.0,
+        1e-9,
+        "midpoint",
+    );
+    let mid = annot::point_in(&lines, &lines.edges[4], Mid).unwrap();
+    close(mid[0], 10.0 * 0.5f64.sqrt(), 1e-9, "arc middle");
+    let far = annot::point_in(&lines, &lines.edges[5], Mid).unwrap();
+    close(far[0], -10.0 * 0.5f64.sqrt(), 1e-9, "far arc middle");
+    assert!(annot::point_in(&lines, &lines.edges[6], Mid).is_none());
+    // Quadrants: the circle's left point; none off an arc.
+    close(
+        value(hz(r("L", Start), r("C1", Quadrant(2)))),
+        95.0,
+        1e-9,
+        "quadrant",
+    );
+    assert!(annot::point_in(&lines, &lines.edges[4], Quadrant(2)).is_none());
+    assert!(annot::point_in(&lines, &lines.edges[5], Quadrant(2)).is_some());
+    // Tangencies keep their side.
+    close(
+        value(hz(r("M", Start), r("C1", Tangent(true)))),
+        95.0,
+        1e-9,
+        "near",
+    );
+    close(
+        value(hz(r("M", Start), r("C1", Tangent(false)))),
+        105.0,
+        1e-9,
+        "far",
+    );
+    let between = dim(
+        DimKind::Aligned,
+        r("C1", Tangent(true)),
+        Some(r("C2", Tangent(true))),
+        None,
+        up,
+    );
+    close(value(between), 15.0, 1e-9, "two circles, facing sides");
+    // An implied intersection at either end.
+    let cross = PointRef {
+        other: Some("S".into()),
+        ..r("L", Intersection)
+    };
+    close(
+        value(hz(cross.clone(), r("M", Start))),
+        50.0,
+        1e-9,
+        "intersection",
+    );
+    close(value(hz(r("M", Start), cross)), 50.0, 1e-9, "second end");
+    let parallel = PointRef {
+        other: Some("P".into()),
+        ..r("M", Intersection)
+    };
+    assert!(resolve(&hz(parallel, r("L", Start)), &view).is_err());
+    // Linear Diametric: twice the distance, one arrowhead fewer.
+    let across = dim(
+        DimKind::LinearDiameter,
+        r("M", Start),
+        Some(r("P", Start)),
+        None,
+        up,
+    );
+    let shown = resolve(&across, &view).unwrap();
+    close(shown.value.unwrap(), 120.0, 1e-9, "linear diametric");
+    let plain = resolve(&hz(r("M", Start), r("P", Start)), &view).unwrap();
+    close(plain.value.unwrap(), 60.0, 1e-9, "plain distance");
+    // Saved and read back.
+    let json = serde_json::to_string(&across).unwrap_or_default();
+    let back: AnnotationKind = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, across);
 }

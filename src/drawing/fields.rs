@@ -66,6 +66,35 @@ pub enum Field {
     Material,
     /// A value of the sheet.
     Sheet(SheetField),
+    /// A parameter of that model, by name (format revision 70).
+    Parameter(String),
+    /// A physical property of that model.
+    Physical(PhysicalField),
+}
+
+/// The physical properties a text can read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PhysicalField {
+    /// Mass (g).
+    Mass,
+    /// Volume (mm³).
+    Volume,
+    /// Surface area (mm²).
+    Area,
+}
+
+impl PhysicalField {
+    /// Every value, in the Insert Field list's order.
+    pub const ALL: [PhysicalField; 3] = [Self::Mass, Self::Volume, Self::Area];
+
+    /// Its token's name.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Mass => "Mass",
+            Self::Volume => "Volume",
+            Self::Area => "Area",
+        }
+    }
 }
 
 /// One piece of a text.
@@ -104,6 +133,8 @@ impl Field {
             Field::Model(k) => format!("Model: {}", prop_label(k)),
             Field::Material => "Model: Material".to_string(),
             Field::Sheet(s) => s.label().to_string(),
+            Field::Parameter(n) => format!("Parameter: {n}"),
+            Field::Physical(p) => format!("Physical: {}", p.label()),
         }
     }
 
@@ -118,6 +149,17 @@ impl Field {
             .find(|s| s.label().eq_ignore_ascii_case(name))
         {
             return Some(Field::Sheet(s));
+        }
+        if let Some(n) = name.strip_prefix("Parameter:") {
+            let n = n.trim();
+            return (!n.is_empty()).then(|| Field::Parameter(n.to_string()));
+        }
+        if let Some(n) = name.strip_prefix("Physical:") {
+            let n = n.trim();
+            return PhysicalField::ALL
+                .into_iter()
+                .find(|p| p.label().eq_ignore_ascii_case(n))
+                .map(Field::Physical);
         }
         if let Some(m) = name
             .strip_prefix("Model:")

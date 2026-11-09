@@ -978,7 +978,7 @@ sheet's border parameters (zones, labels, corner, line / arrowhead, centre marks
 Instance; Delete of the sheet's border / title block; the user's title blocks (Define Title Block, prompted
 entries) and borders (Define Border, connection points). 🟡 2026-11-09: sketched symbols (Define Sketched Symbol with Insertion and
 Connection Points, the Sketch Symbols dialog, placing with Scale / Rotate and one leader tip, Edit Symbol, Edit Definition, move); scale / rotate grips, leader
-bends and attachment to a view are missing. Definitions can be copied and renamed; Insert asks before it replaces what is on the sheet.
+bends and attachment to a view are missing. Definitions can be copied and renamed; Insert asks before it replaces what is on the sheet. Built-in title block and border open as editable copies; a sheet names the view its model fields come from; fields read linked models, parameters and physical properties.
 
 **What it does.** Sheets A4–A0 (or ANSI A–E), a border, a **title block** with fields filled in automatically from the model's properties (name, material, mass, drafter, date, revision).
 
@@ -1033,6 +1033,7 @@ per annotation; colour / On / Plot on the screen and in the PDF; spec [4.6](spec
 - **Retrieve Model Dimensions:** pulls in the dimensions from the sketches and features.
 - **Hole and thread notes:** from the Hole semantics (2.3), e.g. "4× M8 – 6H ↧ 15".
 - **Centre marks and centrelines.**
+- **Dimension types:** angle by three points, arc length, arc angle, chord, to midpoints, quadrants, tangencies and implied intersections, Linear Diametric — 🟡 2026-11-09, **Specification:** [spec/4.14-drawing-dimensions.md](spec/4.14-drawing-dimensions.md).
 - **Text and leaders:** rich text with symbols and live fields — ⬜ stage D-S2, **Specification:** [spec/4.9-format-text.md](spec/4.9-format-text.md).
 - **Surface roughness.**
 - **GD&T:** feature control frames for form and position tolerances, datums.

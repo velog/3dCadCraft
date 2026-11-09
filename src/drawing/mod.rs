@@ -190,6 +190,10 @@ pub struct Sheet {
     /// values); `None` = the default border. Old builds ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border_def: Option<resources::PlacedTitle>,
+    /// The view whose model feeds this sheet's model fields; `None` or a
+    /// view that is gone: the first view. Old builds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_view: Option<u32>,
 }
 
 fn yes() -> bool {
@@ -214,6 +218,7 @@ impl Sheet {
             border_params: None,
             title_def: None,
             border_def: None,
+            source_view: None,
         }
     }
 
@@ -1236,6 +1241,14 @@ impl DrawingDocument {
     }
 
     /// The model of view `id` (through its parents).
+    pub fn source_model(&self, sheet: &Sheet) -> Option<DocRef> {
+        sheet
+            .source_view
+            .and_then(|id| self.model_of(sheet, id))
+            .or_else(|| sheet.views.first().and_then(|v| self.model_of(sheet, v.id)))
+    }
+
+    /// The model that view `id` of `sheet` shows (through its parents).
     pub fn model_of(&self, sheet: &Sheet, id: u32) -> Option<DocRef> {
         let mut v = sheet.view(id)?;
         for _ in 0..64 {

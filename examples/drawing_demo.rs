@@ -125,17 +125,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let name = e.name.clone().unwrap_or_default();
         d.add_annotation(AnnotationKind::Dimension(Dimension {
             shift: 0.0,
+            c: None,
             arrows: Default::default(),
             dim: DimKind::Horizontal,
             a: PointRef {
                 view: top,
                 edge: name.clone(),
                 role: PointRole::Start,
+                other: None,
             },
             b: Some(PointRef {
                 view: top,
                 edge: name,
                 role: PointRole::End,
+                other: None,
             }),
             text: [0.0, -50.0],
             precision: 2,

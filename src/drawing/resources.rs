@@ -457,6 +457,175 @@ impl PlacedSymbol {
     }
 }
 
+/// Lines and texts of the sheet format as an editable definition: shared
+/// corners stay shared points, texts keep their tokens.
+fn prims_definition(name: String, prims: &[super::sheet::Prim]) -> Definition {
+    use super::sheet::{Anchor, Prim};
+    use super::view_sketch::TextAnchor;
+    use crate::sketch::{Point2, PointId, Sketch};
+    let mut sk = Sketch::default();
+    let mut points: Vec<([f64; 2], PointId)> = Vec::new();
+    let mut point = |sk: &mut Sketch, q: [f64; 2]| {
+        let found = points
+            .iter()
+            .find(|(p, _)| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-6)
+            .map(|(_, id)| *id);
+        found.unwrap_or_else(|| {
+            let id = sk.add_point(Point2::new(q[0], q[1]));
+            points.push((q, id));
+            id
+        })
+    };
+    let mut texts = Vec::new();
+    let mut seg = |sk: &mut Sketch, a: [f64; 2], b: [f64; 2]| {
+        if (a[0] - b[0]).hypot(a[1] - b[1]) > 1e-6 {
+            let (p, q) = (point(sk, a), point(sk, b));
+            let _ = sk.add_line_between(p, q);
+        }
+    };
+    for p in prims {
+        match p {
+            Prim::Line { a, b, .. } => seg(&mut sk, *a, *b),
+            Prim::Path { pts, .. } => {
+                for w in pts.windows(2) {
+                    seg(&mut sk, w[0], w[1]);
+                }
+            }
+            Prim::Text {
+                at,
+                height,
+                text,
+                anchor,
+                angle,
+            } => texts.push(super::view_sketch::DrawingText {
+                at: *at,
+                height: *height,
+                anchor: match anchor {
+                    Anchor::Left => TextAnchor::Left,
+                    Anchor::Center => TextAnchor::Center,
+                },
+                angle: *angle,
+                pieces: fields::parse(text),
+            }),
+            _ => {}
+        }
+    }
+    Definition::new(name, ViewSketch(sk), texts)
+}
+
+/// The token of a built-in title block's value.
+fn title_token(f: super::sheet::TitleField) -> String {
+    use super::sheet::TitleField as T;
+    let field = match f {
+        T::Title => fields::Field::Model("title".into()),
+        T::PartNumber => fields::Field::Model("part_number".into()),
+        T::Designer => fields::Field::Drawing("designer".into()),
+        T::CheckedBy => fields::Field::Drawing("checked_by".into()),
+        T::Date => fields::Field::Drawing("creation_date".into()),
+        T::Material => fields::Field::Material,
+        T::Company => fields::Field::Drawing("company".into()),
+        T::Revision => fields::Field::Model("revision".into()),
+        T::ApprovedBy => fields::Field::Drawing("eng_approved_by".into()),
+        T::ApprovedDate => fields::Field::Drawing("eng_approved_date".into()),
+    };
+    format!("<{}>", field.name())
+}
+
+/// The standard's title block of sheet `i` as a definition the user can
+/// edit: its lines and captions, every value a live field.
+pub fn standard_title_definition(
+    doc: &DrawingDocument,
+    i: usize,
+    name: String,
+) -> Option<Definition> {
+    use super::sheet::Prim;
+    let mut d = doc.clone();
+    let s = d.sheets.get_mut(i)?;
+    s.border = false;
+    s.title_block = true;
+    s.title_def = None;
+    let (n, m) = d.sheet_number(i);
+    let number = format!("{n} / {m}");
+    let scale = d
+        .sheets
+        .get(i)?
+        .views
+        .first()
+        .and_then(|v| d.effective(&d.sheets[i], v.id))
+        .map(|(s, _)| super::scale_text(s));
+    let mut prims = super::sheet::format_prims(&d, i, &title_token);
+    for p in &mut prims {
+        if let Prim::Text { text, .. } = p {
+            if *text == number {
+                *text = format!(
+                    "<{}> / <{}>",
+                    fields::SheetField::Number.label(),
+                    fields::SheetField::Count.label()
+                );
+            } else if scale.as_deref() == Some(text.as_str()) {
+                *text = format!("<{}>", fields::SheetField::Scale.label());
+            }
+        }
+    }
+    Some(prims_definition(name, &prims).normalised())
+}
+
+/// The default border of sheet `i` as a border the user can edit, with its
+/// frame's lower right corner as the title block's connection point.
+pub fn default_border_definition(
+    doc: &DrawingDocument,
+    i: usize,
+    name: String,
+) -> Option<BorderDef> {
+    let mut d = doc.clone();
+    let s = d.sheets.get_mut(i)?;
+    s.border = true;
+    s.border_def = None;
+    s.title_block = false;
+    s.title_def = None;
+    let (lo, hi) = super::sheet::frame(s);
+    let prims = super::sheet::format_prims(&d, i, &|_| String::new());
+    let mut def = prims_definition(name, &prims);
+    def.connections = vec![[hi[0], lo[1]]];
+    Some(BorderDef { def, zones: None })
+}
+
+/// The parameter and physical fields any text of `doc` reads (they cost
+/// more than a Property: computed only when used).
+pub fn model_value_fields(doc: &DrawingDocument) -> Vec<fields::Field> {
+    use fields::{Field, Piece};
+    let r = &doc.resources;
+    let mut texts: Vec<&super::view_sketch::DrawingText> = Vec::new();
+    for d in r
+        .title_blocks
+        .iter()
+        .chain(r.borders.iter().map(|b| &b.def))
+        .chain(r.symbols.iter())
+    {
+        texts.extend(&d.texts);
+    }
+    for s in &doc.sheets {
+        for k in s
+            .sketches
+            .iter()
+            .chain(s.views.iter().flat_map(|v| &v.sketches))
+        {
+            texts.extend(&k.texts);
+        }
+    }
+    let mut out: Vec<Field> = Vec::new();
+    for t in texts {
+        for p in &t.pieces {
+            if let Piece::Field(f @ (Field::Parameter(_) | Field::Physical(_))) = p
+                && !out.contains(f)
+            {
+                out.push(f.clone());
+            }
+        }
+    }
+    out
+}
+
 /// A folder of Drawing Resources.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceKind {
@@ -1193,6 +1362,47 @@ mod tests {
 
     fn near(a: [f64; 2], b: [f64; 2]) -> bool {
         (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9
+    }
+
+    #[test]
+    fn built_in_formats_become_definitions_with_live_fields() {
+        use crate::drawing::fields::Piece;
+        let mut d = DrawingDocument::default();
+        d.new_sheet();
+        let def = standard_title_definition(&d, 0, "Mine".into()).unwrap_or_else(|| panic!());
+        let field = |name: &str| {
+            def.texts.iter().any(|t| {
+                t.pieces
+                    .iter()
+                    .any(|p| matches!(p, Piece::Field(f) if f.name() == name))
+            })
+        };
+        assert!(field("Model: Part Number"), "{:?}", def.texts);
+        assert!(field("Designer"));
+        assert!(field("Sheet Number") && field("Number of Sheets"));
+        // Captions stay plain text, the block's lower right corner the origin.
+        assert!(
+            def.texts
+                .iter()
+                .any(|t| t.pieces == [Piece::Text("Designed by".into())])
+        );
+        let (lo, hi) = def.extent().unwrap_or_else(|| panic!());
+        assert!(hi[0].abs() < 1e-9 && lo[1].abs() < 1e-9);
+        let b = default_border_definition(&d, 0, "Frame".into()).unwrap_or_else(|| panic!());
+        assert_eq!(b.def.connections.len(), 1);
+        assert!(b.zones.is_none());
+        assert!(d.add_border(b).is_ok());
+        assert!(d.set_border(0, Some("Frame"), Vec::new(), None));
+    }
+
+    #[test]
+    fn the_sheet_names_the_view_its_model_fields_come_from() {
+        let mut d = DrawingDocument::default();
+        d.new_sheet();
+        // No views: nothing to read.
+        assert!(d.source_model(&d.sheets[0]).is_none());
+        d.sheets[0].source_view = Some(99);
+        assert!(d.source_model(&d.sheets[0]).is_none());
     }
 
     #[test]

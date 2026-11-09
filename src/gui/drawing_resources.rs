@@ -9,8 +9,10 @@ use super::valuefield::ExprValue;
 use crate::drawing::resources::{Delimit, LabelFrom, ResourceKind, ZoneLabel, ZoneParams};
 
 /// What a border / title block row of the browser asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum FormatAction {
+    /// Replace what is on the sheet with another definition.
+    Replace(ResAction),
     /// Edit Instance of the border (its parameters on this sheet).
     EditBorder,
     /// Delete the border from the sheet.
@@ -56,6 +58,10 @@ pub(super) enum ResAction {
     EditSymbol(String),
     /// Delete symbol `name`.
     DeleteSymbol(String),
+    /// Edit of the standard's title block: makes a copy of it first.
+    EditStandardTitle,
+    /// Edit of the default border: makes a copy of it first.
+    EditDefaultBorder,
     /// Copy a definition.
     Copy(ResourceKind, String),
     /// Ask a definition's new name.
@@ -79,6 +85,10 @@ pub(super) struct FormatRow {
 pub(super) struct SheetFormat {
     pub border: Option<FormatRow>,
     pub title: Option<FormatRow>,
+    /// What can replace the title block: (name, `None` = the standard's).
+    pub titles: Vec<(String, Option<String>)>,
+    /// What can replace the border: (name, `None` = the default one).
+    pub borders: Vec<(String, Option<String>)>,
 }
 
 impl SheetFormat {
@@ -113,7 +123,28 @@ impl SheetFormat {
                 zones: true,
             },
         });
-        Self { border, title }
+        let titles = std::iter::once((d.standard.kind.label().to_string(), None))
+            .chain(
+                d.resources
+                    .title_blocks
+                    .iter()
+                    .map(|b| (b.name.clone(), Some(b.name.clone()))),
+            )
+            .collect();
+        let borders = std::iter::once((DEFAULT_BORDER.to_string(), None))
+            .chain(
+                d.resources
+                    .borders
+                    .iter()
+                    .map(|b| (b.def.name.clone(), Some(b.def.name.clone()))),
+            )
+            .collect();
+        Self {
+            border,
+            title,
+            titles,
+            borders,
+        }
     }
 }
 
@@ -190,6 +221,31 @@ pub(super) struct PromptDialog {
     pub filter: PropertyType,
 }
 
+/// Replace's list on a sheet's border or title block row.
+fn replace_menu(
+    ui: &mut egui::Ui,
+    current: &str,
+    options: &[(String, Option<String>)],
+    border: bool,
+    action: &mut Option<FormatAction>,
+) {
+    let others: Vec<_> = options.iter().filter(|(n, _)| n != current).collect();
+    ui.add_enabled_ui(!others.is_empty(), |ui| {
+        ui.menu_button("Replace", |ui| {
+            for (label, def) in others {
+                if ui.button(label.as_str()).clicked() {
+                    *action = Some(FormatAction::Replace(if border {
+                        ResAction::InsertBorder(def.clone())
+                    } else {
+                        ResAction::Insert(def.clone())
+                    }));
+                    ui.close();
+                }
+            }
+        });
+    });
+}
+
 /// The sheet's border and title block under it in the browser.
 pub(super) fn sheet_format_rows(ui: &mut egui::Ui, f: &SheetFormat) -> Option<FormatAction> {
     let mut action = None;
@@ -213,14 +269,11 @@ pub(super) fn sheet_format_rows(ui: &mut egui::Ui, f: &SheetFormat) -> Option<Fo
                     action = Some(FormatAction::EditBorder);
                     ui.close();
                 }
-                if ui
-                    .add_enabled(b.user, egui::Button::new("Edit Definition..."))
-                    .on_disabled_hover_text("The default border: define your own (DBR)")
-                    .clicked()
-                {
+                if ui.button("Edit Definition...").clicked() {
                     action = Some(FormatAction::EditBorderDef);
                     ui.close();
                 }
+                replace_menu(ui, &b.name, &f.borders, true, &mut action);
                 if ui
                     .add_enabled(b.prompts, egui::Button::new("Edit Field Text..."))
                     .on_disabled_hover_text("This border has no prompted entries")
@@ -236,13 +289,7 @@ pub(super) fn sheet_format_rows(ui: &mut egui::Ui, f: &SheetFormat) -> Option<Fo
             });
         });
     }
-    if let Some(FormatRow {
-        name,
-        user,
-        prompts,
-        ..
-    }) = &f.title
-    {
+    if let Some(FormatRow { name, prompts, .. }) = &f.title {
         ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Drawing);
             let r = ui.selectable_label(false, name.as_str());
@@ -250,14 +297,11 @@ pub(super) fn sheet_format_rows(ui: &mut egui::Ui, f: &SheetFormat) -> Option<Fo
                 action = Some(FormatAction::EditFields);
             }
             r.context_menu(|ui| {
-                if ui
-                    .add_enabled(*user, egui::Button::new("Edit Definition..."))
-                    .on_disabled_hover_text("The standard's title block: define your own (DTB)")
-                    .clicked()
-                {
+                if ui.button("Edit Definition...").clicked() {
                     action = Some(FormatAction::EditTitle);
                     ui.close();
                 }
+                replace_menu(ui, name, &f.titles, false, &mut action);
                 if ui
                     .add_enabled(*prompts, egui::Button::new("Edit Field Text..."))
                     .on_disabled_hover_text("This title block has no prompted entries")
@@ -312,8 +356,10 @@ fn title_row(
                     }
                 }
                 None => {
-                    ui.add_enabled(false, egui::Button::new("Edit..."))
-                        .on_disabled_hover_text("Built in: define your own title block (DTB)");
+                    if ui.button("Edit...").clicked() {
+                        *action = Some(ResAction::EditStandardTitle);
+                        ui.close();
+                    }
                 }
             }
             copy_rename(ui, ResourceKind::TitleBlock, user, action);
@@ -357,8 +403,10 @@ fn border_row(
                     }
                 }
                 None => {
-                    ui.add_enabled(false, egui::Button::new("Edit..."))
-                        .on_disabled_hover_text("Built in: define your own border (DBR)");
+                    if ui.button("Edit...").clicked() {
+                        *action = Some(ResAction::EditDefaultBorder);
+                        ui.close();
+                    }
                 }
             }
             copy_rename(ui, ResourceKind::Border, user, action);
@@ -503,6 +551,8 @@ pub(super) struct FieldProps {
     /// Inventor fills it from the file name).
     model_name: String,
     material: Option<String>,
+    /// Parameters and physical properties the texts read.
+    values: Vec<(crate::drawing::fields::Field, String)>,
 }
 
 impl FieldProps {
@@ -510,57 +560,253 @@ impl FieldProps {
     pub fn get(&self, f: &crate::drawing::fields::Field) -> Option<String> {
         use crate::drawing::fields::{Field, property};
         match f {
-            Field::Drawing(k) => property(self.drawing.as_ref()?, k),
-            Field::Model(k) => {
-                let v = property(self.model.as_ref()?, k)?;
-                Some(if v.is_empty() && k == "part_number" {
-                    self.model_name.clone()
+            Field::Drawing(k) => {
+                let p = self.drawing.as_ref()?;
+                let v = property(p, k)?;
+                Some(if v.is_empty() && k == "designer" {
+                    p.get("author").to_string()
                 } else {
                     v
                 })
             }
+            Field::Model(k) => {
+                let p = self.model.as_ref()?;
+                let v = property(p, k)?;
+                // The fallbacks of the built-in title block: a block made
+                // from it reads the same.
+                Some(match k.as_str() {
+                    "part_number" if v.is_empty() => self.model_name.clone(),
+                    "title" if v.is_empty() => {
+                        let d = p.get("description").to_string();
+                        if d.is_empty() {
+                            self.model_name.clone()
+                        } else {
+                            d
+                        }
+                    }
+                    _ => v,
+                })
+            }
             Field::Material => self.material.clone(),
             Field::Sheet(_) => None,
+            Field::Parameter(_) | Field::Physical(_) => self
+                .values
+                .iter()
+                .find(|(g, _)| g == f)
+                .map(|(_, v)| v.clone()),
         }
     }
+}
+
+/// `base`, or `base (2)` … when that is taken.
+fn free_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
+    std::iter::once(base.to_string())
+        .chain((2..).map(|k| format!("{base} ({k})")))
+        .find(|n| !taken(n))
+        .unwrap_or_else(|| base.to_string())
 }
 
 impl CadCraftApp {
     /// The Properties for the fields of sheet `i` of `d`.
     pub(super) fn field_props(&self, d: &crate::drawing::DrawingDocument, i: usize) -> FieldProps {
-        let model = d
-            .sheets
-            .get(i)
-            .and_then(|s| s.views.first().and_then(|v| d.model_of(s, v.id)));
+        let model = d.sheets.get(i).and_then(|s| d.source_model(s));
         let drawing = self
             .project
             .document(self.part_id)
             .map(|x| x.properties.clone());
-        let model_doc = model.and_then(|m| match m.library {
-            None => self
-                .project
-                .document(m.document)
-                .map(|x| (x.properties.clone(), x.name.clone())),
-            Some(_) => None,
-        });
+        let model_doc = model.and_then(|m| self.model_properties(m));
         let (model_props, model_name) = match model_doc {
             Some((p, n)) => (Some(p), n),
             None => (None, String::new()),
         };
-        let material = model
-            .and_then(|m| self.with_part(m, |p| p.material.clone()))
-            .flatten();
+        let material = model.map(|m| {
+            self.with_part(m, |p| p.material.clone())
+                .flatten()
+                .unwrap_or_else(|| "Generic".to_string())
+        });
         FieldProps {
             drawing,
             model: model_props,
             model_name,
             material,
+            values: model.map(|m| self.model_values(d, m)).unwrap_or_default(),
+        }
+    }
+
+    /// The Properties and name of model `r`: a document of this file or of
+    /// a linked one (as edited from here), with its variant's own values.
+    pub(super) fn model_properties(
+        &self,
+        r: crate::document::DocRef,
+    ) -> Option<(crate::document::iprops::IProperties, String)> {
+        let (mut props, name) = match r.library {
+            None => {
+                let d = self.project.document(r.document)?;
+                (d.properties.clone(), d.name.clone())
+            }
+            Some(lib) => {
+                let read = |p: &crate::document::Project| {
+                    p.document(r.document)
+                        .map(|d| (d.properties.clone(), d.name.clone()))
+                };
+                match self.project.linked_edits.get(&lib) {
+                    Some(p) => read(p)?,
+                    None => read(&*self.part_file_pub(&self.library_path(lib)?).ok()?)?,
+                }
+            }
+        };
+        if let Some(v) = r.variant
+            && let Some(Some(own)) =
+                self.with_part(r.base(), |p| p.variants.get(v).map(|x| x.info.clone()))
+        {
+            own.write(&mut props);
+        }
+        Some((props, name))
+    }
+
+    /// The parameter and physical fields `d`'s texts read, from model `m`.
+    fn model_values(
+        &self,
+        d: &crate::drawing::DrawingDocument,
+        m: crate::document::DocRef,
+    ) -> Vec<(crate::drawing::fields::Field, String)> {
+        use crate::drawing::fields::{Field, PhysicalField};
+        let wanted = crate::drawing::resources::model_value_fields(d);
+        if wanted.is_empty() {
+            return Vec::new();
+        }
+        let table = self.with_part(m, |p| {
+            p.parameter_table()
+                .into_iter()
+                .map(|r| {
+                    let v = crate::part::params::format_in(r.value, r.def(), "");
+                    (r.name, v)
+                })
+                .collect::<Vec<_>>()
+        });
+        // Mass and the like integrate the triangles: once per body.
+        let mass = wanted
+            .iter()
+            .any(|f| matches!(f, Field::Physical(_)))
+            .then(|| {
+                let key = (m, self.with_part(m, |p| p.body_signature())?);
+                let mut cache = self.drw.physical.borrow_mut();
+                if let Some(v) = cache.get(&key) {
+                    return Some(*v);
+                }
+                let v = self
+                    .with_part(m, |p| {
+                        crate::part::physical::physical_properties(p, Default::default())
+                            .ok()
+                            .map(|x| (x.total.mass, x.total.volume, x.total.area))
+                    })
+                    .flatten()?;
+                cache.insert(key, v);
+                Some(v)
+            })
+            .flatten();
+        wanted
+            .into_iter()
+            .filter_map(|f| {
+                let v = match &f {
+                    Field::Parameter(n) => table
+                        .as_ref()?
+                        .iter()
+                        .find(|(k, _)| k == n)
+                        .map(|(_, v)| v.clone())?,
+                    Field::Physical(p) => {
+                        let (ma, vo, ar) = mass?;
+                        match p {
+                            PhysicalField::Mass => format!("{ma:.3}"),
+                            PhysicalField::Volume => format!("{vo:.3}"),
+                            PhysicalField::Area => format!("{ar:.3}"),
+                        }
+                    }
+                    _ => return None,
+                };
+                Some((f, v))
+            })
+            .collect()
+    }
+
+    /// Properties of model `r`: its document, or (read only) the linked file.
+    pub(super) fn open_model_iproperties(&mut self, r: crate::document::DocRef) {
+        match r.library {
+            None => self.open_iproperties(r.document),
+            Some(lib) => {
+                let linked = self
+                    .library_path(lib)
+                    .and_then(|p| Some((p.clone(), self.part_file_pub(&p).ok()?)));
+                self.iprops = Some(super::iprops::IPropsWin::new(r.document, linked));
+            }
+        }
+    }
+
+    /// Edit of the standard's title block: a copy with live fields takes
+    /// its place on the active sheet and opens.
+    fn edit_standard_title(&mut self) {
+        let Some((i, name)) = self.drawing().map(|d| {
+            let base = format!("{} Copy", d.standard.kind.label());
+            (
+                d.active_sheet,
+                free_name(&base, |n| {
+                    d.resources.title_blocks.iter().any(|b| b.name == n)
+                }),
+            )
+        }) else {
+            return;
+        };
+        let done = self.edit_drawing("Edit Title Block", |d| {
+            let Some(def) =
+                crate::drawing::resources::standard_title_definition(d, i, name.clone())
+            else {
+                return false;
+            };
+            d.add_title_block(def).is_ok() && d.set_title_block(i, Some(&name), Vec::new())
+        });
+        if done == Some(true) {
+            self.edit_title_definition(&name);
+        } else {
+            self.history.cancel();
+        }
+    }
+
+    /// Edit of the default border: a copy of it takes its place on the
+    /// active sheet and opens.
+    fn edit_default_border(&mut self) {
+        use crate::drawing::resources::DEFAULT_BORDER;
+        let Some((i, name)) = self.drawing().map(|d| {
+            let base = format!("{DEFAULT_BORDER} Copy");
+            (
+                d.active_sheet,
+                free_name(&base, |n| {
+                    d.resources.borders.iter().any(|b| b.def.name == n)
+                }),
+            )
+        }) else {
+            return;
+        };
+        let done = self.edit_drawing("Edit Border", |d| {
+            let Some(b) = crate::drawing::resources::default_border_definition(d, i, name.clone())
+            else {
+                return false;
+            };
+            d.add_border(b).is_ok() && d.set_border(i, Some(&name), Vec::new(), None)
+        });
+        if done == Some(true) {
+            self.edit_border_definition(&name);
+        } else {
+            self.history.cancel();
         }
     }
 
     /// Runs a border / title block row's action on sheet `i`.
     pub(super) fn format_action(&mut self, i: usize, a: FormatAction) {
         match a {
+            FormatAction::Replace(r) => {
+                self.activate_sheet(i);
+                self.res_action(r);
+            }
             FormatAction::EditBorder => {
                 let Some(s) = self.drawing().and_then(|d| d.sheets.get(i)) else {
                     return;
@@ -580,8 +826,12 @@ impl CadCraftApp {
                     .and_then(|d| d.sheets.get(i))
                     .and_then(|s| s.border_def.as_ref())
                     .map(|p| p.name.clone());
-                if let Some(n) = name {
-                    self.edit_border_definition(&n);
+                match name {
+                    Some(n) => self.edit_border_definition(&n),
+                    None => {
+                        self.activate_sheet(i);
+                        self.edit_default_border();
+                    }
                 }
             }
             FormatAction::EditBorderFields => self.open_prompt_dialog(i, true),
@@ -605,8 +855,12 @@ impl CadCraftApp {
                     .and_then(|d| d.sheets.get(i))
                     .and_then(|s| s.title_def.as_ref())
                     .map(|p| p.name.clone());
-                if let Some(n) = name {
-                    self.edit_title_definition(&n);
+                match name {
+                    Some(n) => self.edit_title_definition(&n),
+                    None => {
+                        self.activate_sheet(i);
+                        self.edit_standard_title();
+                    }
                 }
             }
             FormatAction::EditFields => self.open_prompt_dialog(i, false),
@@ -752,6 +1006,8 @@ impl CadCraftApp {
                     None => {}
                 }
             }
+            ResAction::EditStandardTitle => self.edit_standard_title(),
+            ResAction::EditDefaultBorder => self.edit_default_border(),
             ResAction::Rename(kind, n) => {
                 self.drw.res_rename = Some(ResRename {
                     kind,
@@ -1272,7 +1528,18 @@ impl CadCraftApp {
         }
         if let Some(mut p) = self.drw.prompt_dialog.clone() {
             let mut open = true;
-            let (mut ok, mut cancel, mut properties) = (false, false, false);
+            let (mut ok, mut cancel, mut properties, mut model_props) =
+                (false, false, false, false);
+            let source = self
+                .drawing()
+                .and_then(|d| d.sheets.get(p.sheet).and_then(|s| d.source_model(s)));
+            let source_name = source.map_or_else(
+                || "(no view on this sheet)".to_string(),
+                |m| {
+                    self.model_properties(m)
+                        .map_or_else(|| "(missing)".to_string(), |x| x.1)
+                },
+            );
             let read = self.read_fields(&p);
             let win = egui::Window::new("Edit Property Fields")
                 .open(&mut open)
@@ -1292,8 +1559,15 @@ impl CadCraftApp {
                                 }
                             });
                         properties = ui
-                            .button("Properties...")
-                            .on_hover_text("The document's Properties; the fields follow at once")
+                            .button("Drawing Properties...")
+                            .on_hover_text("The drawing's Properties; the fields follow at once")
+                            .clicked();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Model: {source_name}"));
+                        model_props = ui
+                            .add_enabled(source.is_some(), egui::Button::new("Model Properties..."))
+                            .on_hover_text("The Properties of the model these fields read")
                             .clicked();
                     });
                     egui::Grid::new("prompt_fields_grid")
@@ -1333,6 +1607,9 @@ impl CadCraftApp {
                 });
             if properties {
                 self.open_iproperties(self.part_id);
+            }
+            if model_props && let Some(m) = source {
+                self.open_model_iproperties(m);
             }
             if cancel || !open {
                 self.drw.prompt_dialog = None;
