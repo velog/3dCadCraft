@@ -227,12 +227,20 @@ impl SplitDraft {
 
 /// Edge polylines of the faces `keep` chooses (the preview).
 pub(super) fn face_edges(part: &PartDocument, keep: impl Fn(&str) -> bool) -> Vec<Vec<Point3>> {
+    face_edges_where(part, |_, face| face.name.as_deref().is_some_and(&keep))
+}
+
+/// The edges of the faces `keep` takes (by id and face).
+pub(super) fn face_edges_where(
+    part: &PartDocument,
+    keep: impl Fn(FaceId, &crate::kernel::Face) -> bool,
+) -> Vec<Vec<Point3>> {
     let body = &part.body;
     let opts = TessellationOptions::default();
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for (f, face) in body.faces() {
-        if !face.name.as_deref().is_some_and(&keep) {
+        if !keep(f, face) {
             continue;
         }
         for e in psel::edges_of_face(body, f) {

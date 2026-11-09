@@ -5945,6 +5945,7 @@ impl CadCraftApp {
         // --- Shell / Face Draft / Hole / Thread: pick faces (with the model
         // point) ---
         let face_cmd = self.shell_draft.is_some()
+            || self.thicken_draft.is_some()
             || self.hole_draft.is_some()
             || self.thread_draft.is_some()
             || self.draft_draft.as_ref().is_some_and(|d| d.picks_faces());
@@ -7427,6 +7428,18 @@ impl CadCraftApp {
             } else if let Some(d) = &self.hole_draft {
                 let body = &self.part().body;
                 Some(d.face.iter().filter_map(|n| body.find_face(n)).collect())
+            } else if let Some(d) = &self.thicken_draft {
+                // Thicken: its faces stay lit, the one under the cursor too.
+                let body = &self.part().body;
+                Some(
+                    d.def
+                        .faces
+                        .iter()
+                        .filter_map(|r| {
+                            crate::part::shell::face_near(body, &r.face, Point3::from(r.hint))
+                        })
+                        .collect(),
+                )
             } else {
                 None
             };

@@ -173,8 +173,126 @@ fn rim_plane(op: &LipOp, body: &BRep, works: &WorkGeom) -> Result<Plane, Fail> {
     ))
 }
 
-/// The path's pieces in the rim's plane, joined in order.
-fn path_pieces(op: &LipOp, body: &BRep, plane: &Plane) -> Result<(Vec<Piece>, bool), Fail> {
+/// How far a fitted arc may leave the points of a spline edge (mm).
+const SPLINE_FIT: Real = 2e-3;
+
+/// How far a bead or a groove stays off a spline edge it would be flush with (mm): arcs fitted to
+/// the edge cross it to and fro by up to [`SPLINE_FIT`], and walls that close broke the Boolean.
+const SPLINE_CLEAR: Real = 0.01;
+
+/// The arc leaving `p` along the unit `t` and ending at `q`; a line when it is straight.
+fn arc_from(p: Point2, t: Vector2, q: Point2) -> Piece {
+    let n = Vector2::new(-t.y, t.x);
+    let w = q - p;
+    let bend = 2.0 * n.dot(&w);
+    if bend.abs() < 1e-9 * w.norm_squared().max(1e-12) {
+        return Piece::Line(p, q);
+    }
+    let along = w.norm_squared() / bend;
+    // Nearly straight: a line is as close, and the kernel refused the NURBS form of a cylinder
+    // that wide and that narrow.
+    if w.norm_squared() / (8.0 * along.abs()) < SPLINE_FIT / 10.0 {
+        return Piece::Line(p, q);
+    }
+    let c = p + n * along;
+    let (a, b) = (p - c, q - c);
+    let mut sweep = (a.x * b.y - a.y * b.x).atan2(a.dot(&b));
+    if along > 0.0 && sweep < 0.0 {
+        sweep += std::f64::consts::TAU;
+    } else if along < 0.0 && sweep > 0.0 {
+        sweep -= std::f64::consts::TAU;
+    }
+    Piece::Arc {
+        c,
+        r: along.abs(),
+        a0: a.y.atan2(a.x),
+        sweep,
+    }
+}
+
+/// Two tangent arcs from `p0` (unit tangent `t0`) to `p1` (`t1`), with equal tangent lengths.
+fn biarc(p0: Point2, t0: Vector2, p1: Point2, t1: Vector2) -> [Piece; 2] {
+    let v = p1 - p0;
+    let vt = v.dot(&(t0 + t1));
+    let a = 2.0 * (1.0 - t0.dot(&t1));
+    let root = vt + (vt * vt + a * v.norm_squared()).max(0.0).sqrt();
+    if root.abs() < 1e-12 {
+        let m = p0 + v / 2.0;
+        return [Piece::Line(p0, m), Piece::Line(m, p1)];
+    }
+    let d = v.norm_squared() / root;
+    let (q0, q1) = (p0 + t0 * d, p1 - t1 * d);
+    let m = q0 + (q1 - q0) / 2.0;
+    let tm = (q1 - q0).try_normalize(1e-12).unwrap_or(t0);
+    [arc_from(p0, t0, m), arc_from(m, tm, p1)]
+}
+
+/// Distance from `q` to a piece.
+fn distance(piece: &Piece, q: Point2) -> Real {
+    match *piece {
+        Piece::Line(a, b) => {
+            let d = b - a;
+            let s = ((q - a).dot(&d) / d.norm_squared().max(1e-18)).clamp(0.0, 1.0);
+            (a + d * s - q).norm()
+        }
+        Piece::Arc { c, r, a0, sweep } => {
+            let v = q - c;
+            let along = ((v.y.atan2(v.x) - a0) * sweep.signum()).rem_euclid(std::f64::consts::TAU);
+            if along <= sweep.abs() {
+                (v.norm() - r).abs()
+            } else {
+                let at = |t: Real| c + Vector2::new(t.cos(), t.sin()) * r;
+                (at(a0) - q).norm().min((at(a0 + sweep) - q).norm())
+            }
+        }
+    }
+}
+
+/// Tangent arcs through the points of a curve, within [`SPLINE_FIT`]. A polyline made every sample
+/// a wall of its own (minutes in the Boolean, or no result); arcs offset exactly.
+fn fitted_arcs(points: &[Point2]) -> Vec<Piece> {
+    let n = points.len();
+    if n < 3 {
+        return points.windows(2).map(|w| Piece::Line(w[0], w[1])).collect();
+    }
+    let unit = |v: Vector2| {
+        v.try_normalize(1e-12)
+            .unwrap_or_else(|| Vector2::new(1.0, 0.0))
+    };
+    let tangents: Vec<Vector2> = (0..n)
+        .map(|k| {
+            unit(if k == 0 {
+                (points[1] - points[0]) * 4.0 - (points[2] - points[0])
+            } else if k + 1 == n {
+                (points[n - 1] - points[n - 2]) * 4.0 - (points[n - 1] - points[n - 3])
+            } else {
+                points[k + 1] - points[k - 1]
+            })
+        })
+        .collect();
+    let mut out = Vec::new();
+    // Spans still to fit, the first on top so the pieces come out in order.
+    let mut todo = vec![(0, n - 1)];
+    while let Some((i, j)) = todo.pop() {
+        let pair = biarc(points[i], tangents[i], points[j], tangents[j]);
+        let off = points[i + 1..j]
+            .iter()
+            .map(|q| distance(&pair[0], *q).min(distance(&pair[1], *q)))
+            .fold(0.0, Real::max);
+        if off > SPLINE_FIT && j - i > 1 {
+            let m = (i + j) / 2;
+            todo.push((m, j));
+            todo.push((i, m));
+        } else {
+            out.extend(pair);
+        }
+    }
+    out
+}
+
+/// The path's pieces in the rim's plane, joined in order, whether it is closed, and whether a
+/// curve in it is fitted (a spline edge).
+fn path_pieces(op: &LipOp, body: &BRep, plane: &Plane) -> Result<(Vec<Piece>, bool, bool), Fail> {
     let user = |m: String| Fail::User(m);
     let near = Point3::from(op.path[0].hint);
     let geom = PathRef::Edges(op.path.clone())
@@ -183,6 +301,7 @@ fn path_pieces(op: &LipOp, body: &BRep, plane: &Plane) -> Result<(Vec<Piece>, bo
     let n = plane.normal.into_inner();
     let flat = |q: &Point3| (q - plane.origin).dot(&n).abs() < 1e-6;
     let mut out = Vec::with_capacity(geom.pieces.len());
+    let mut fitted = false;
     for p in &geom.pieces {
         match p {
             PathPiece::Line { a, b } => {
@@ -210,20 +329,25 @@ fn path_pieces(op: &LipOp, body: &BRep, plane: &Plane) -> Result<(Vec<Piece>, bo
                 });
             }
             PathPiece::Points(pts) | PathPiece::Spline { points: pts, .. } => {
-                for w in pts.windows(2) {
-                    if !(flat(&w[0]) && flat(&w[1])) {
-                        return Err(user("the path must lie in the rim's plane".into()));
-                    }
-                    out.push(Piece::Line(plane.project(&w[0]), plane.project(&w[1])));
+                if !pts.iter().all(flat) {
+                    return Err(user("the path must lie in the rim's plane".into()));
                 }
+                let flat_pts: Vec<Point2> = pts.iter().map(|q| plane.project(q)).collect();
+                out.extend(fitted_arcs(&flat_pts));
+                fitted = true;
             }
         }
     }
-    Ok((out, geom.closed))
+    Ok((out, geom.closed, fitted))
 }
 
 /// Which way from the path the rim lies (+1: left of the chain) and how wide it is there.
-fn rim_side(rays: &Rays, plane: &Plane, chain: &[Piece]) -> Result<(Real, Real), Fail> {
+fn rim_side(
+    rays: &Rays,
+    plane: &Plane,
+    chain: &[Piece],
+    clear: Real,
+) -> Result<(Real, Real), Fail> {
     let first = chain
         .first()
         .ok_or_else(|| Fail::User("select the path edges".into()))?;
@@ -245,7 +369,7 @@ fn rim_side(rays: &Rays, plane: &Plane, chain: &[Piece]) -> Result<(Real, Real),
     let probe = plane.point_at(q.x, q.y) + down * 1e-3;
     for sign in [1.0, -1.0] {
         let dir: Vector3 = world(left * sign);
-        let from = probe + dir * 1e-4;
+        let from = probe + dir * clear;
         if let Some((0.0, exit)) = rays.entry(from, dir) {
             return Ok((sign, exit));
         }
@@ -267,22 +391,31 @@ pub(in crate::part) fn lip(
     let plane = rim_plane(op, body, works)?;
     let rays = Rays::of(body, &op.solids);
     // A face's sense can be inside-out: the material under the rim decides which way is out.
-    let (plane, chain, closed, side, rim) = {
-        let (chain, closed) = path_pieces(op, body, &plane)?;
-        match rim_side(&rays, &plane, &chain) {
-            Ok((side, rim)) => (plane, chain, closed, side, rim),
+    // Arcs fitted to a spline edge pass it on either side: the probe starts past that.
+    let clear = |fitted: bool| if fitted { SPLINE_CLEAR } else { 1e-4 };
+    let (plane, chain, closed, fitted, side, rim) = {
+        let (chain, closed, fitted) = path_pieces(op, body, &plane)?;
+        match rim_side(&rays, &plane, &chain, clear(fitted)) {
+            Ok((side, rim)) => (plane, chain, closed, fitted, side, rim),
             Err(first) => {
                 let out = -plane.normal.into_inner();
                 let turned = Plane::new(plane.origin, out, plane.x_axis.into_inner())
                     .map_err(|e| Fail::Kernel(e.to_string()))?;
-                let (chain, closed) = path_pieces(op, body, &turned)?;
-                let (side, rim) = rim_side(&rays, &turned, &chain).map_err(|_| first)?;
-                (turned, chain, closed, side, rim)
+                let (chain, closed, fitted) = path_pieces(op, body, &turned)?;
+                let (side, rim) =
+                    rim_side(&rays, &turned, &chain, clear(fitted)).map_err(|_| first)?;
+                (turned, chain, closed, fitted, side, rim)
             }
         }
     };
-    let s = op.shoulder;
-    let w = op.width;
+    // A wall flush with a spline edge moves off it: a bead stays on the rim, a groove's opening
+    // reaches over the edge into the air. The far wall stays where it was asked for.
+    let s = match op.kind {
+        LipKind::Lip if fitted => op.shoulder.max(SPLINE_CLEAR),
+        LipKind::Groove if fitted && op.shoulder < SPLINE_CLEAR => -SPLINE_CLEAR,
+        _ => op.shoulder,
+    };
+    let w = op.width - (s - op.shoulder);
     let (ti, to) = (op.inside_angle.tan(), op.outside_angle.tan());
     // A band between two offsets (from the path, into the rim), outline and holes.
     let band = |d0: Real, d1: Real| -> Result<(Vec<Piece>, Vec<Vec<Piece>>), String> {
@@ -308,19 +441,36 @@ pub(in crate::part) fn lip(
         let (o0, h0) = band(d00, d01).map_err(user)?;
         let (o1, h1) = band(d10, d11).map_err(user)?;
         let holes: Vec<(Vec<Piece>, Vec<Piece>)> = h0.into_iter().zip(h1).collect();
-        common::prism(&plane, (z0, &o0), (z1, &o1), &holes, &prefix)
+        let build = if fitted {
+            common::prism_smooth
+        } else {
+            common::prism
+        };
+        build(&plane, (z0, &o0), (z1, &o1), &holes, &prefix)
     };
     let h = op.height;
     match op.kind {
         LipKind::Lip => {
-            // The bead's foot goes a hair into the rim, along the same drafted walls.
+            // The bead's foot goes a hair into the rim, along the same drafted walls. How deep
+            // shows nowhere, but with a wall flush with the body's own the kernel's intersection
+            // gave up at some depths (a 0.01 foot on a rounded cover, status 1001).
             let e = (h * 0.01).clamp(1e-3, 0.05);
-            let tool = solid(
-                (-e, s - e * ti, s + w + e * to),
-                (h, s + h * ti, s + w - h * to),
-                format!("{id}:Bead"),
-            )?;
-            let mut out = combine(cur.to_vec(), vec![tool], Operation::Join, &op.solids, false)?;
+            let join = |foot: Real| -> Result<Vec<ExactSolid>, Fail> {
+                let tool = solid(
+                    (-foot, s - foot * ti, s + w + foot * to),
+                    (h, s + h * ti, s + w - h * to),
+                    format!("{id}:Bead"),
+                )?;
+                combine(cur.to_vec(), vec![tool], Operation::Join, &op.solids, false)
+            };
+            let mut joined = join(e);
+            for f in [0.6, 1.7, 3.1] {
+                if !matches!(joined, Err(Fail::Kernel(_))) {
+                    break;
+                }
+                joined = join(e * f);
+            }
+            let mut out = joined?;
             if op.clearance > 0.0 {
                 let air = 1.0;
                 let reach = s + w + (rim - (s + w)).max(0.0) + 1.0;

@@ -264,6 +264,9 @@ impl CadCraftApp {
         let mut trial = self.part().clone();
         let (def, edit) = (d.def.clone(), d.edit);
         self.preview_async(key, move || {
+            // A thickened face that merges into the body keeps its name: faces whose place
+            // changed are shown too, not only the feature's own.
+            let before = face_boxes(&trial);
             let f = BodyOpFeature::new(BodyOp::Thicken(def));
             let built = match edit {
                 Some(k) => trial.replace_feature(k, Feature::BodyOp(f)),
@@ -272,7 +275,12 @@ impl CadCraftApp {
             built
                 .map(|id| {
                     let own = format!("{id}:");
-                    super::combine_split::face_edges(&trial, |n| n.starts_with(&own))
+                    super::combine_split::face_edges_where(&trial, |_, face| {
+                        let Some(n) = face.name.as_deref() else {
+                            return false;
+                        };
+                        n.starts_with(&own) || !unchanged(&before, n, face)
+                    })
                 })
                 .map_err(|e| e.to_string())
         })
@@ -660,6 +668,42 @@ fn take_face(
             }
         }
     }
+}
+
+/// Each named face's box (from its display triangles), per name.
+type FaceBoxes = std::collections::HashMap<String, Vec<(Point3, Point3)>>;
+
+fn face_box(face: &crate::kernel::Face) -> Option<(Point3, Point3)> {
+    let m = face.mesh.as_ref()?;
+    let mut it = m.positions.iter();
+    let first = *it.next()?;
+    Some(it.fold((first, first), |(lo, hi), q| {
+        (
+            Point3::new(lo.x.min(q.x), lo.y.min(q.y), lo.z.min(q.z)),
+            Point3::new(hi.x.max(q.x), hi.y.max(q.y), hi.z.max(q.z)),
+        )
+    }))
+}
+
+fn face_boxes(part: &crate::part::PartDocument) -> FaceBoxes {
+    let mut out = FaceBoxes::new();
+    for (_, face) in part.body.faces() {
+        if let (Some(n), Some(b)) = (&face.name, face_box(face)) {
+            out.entry(n.clone()).or_default().push(b);
+        }
+    }
+    out
+}
+
+/// Whether a face of this name stood in the same place before the feature.
+fn unchanged(before: &FaceBoxes, name: &str, face: &crate::kernel::Face) -> bool {
+    let (Some(boxes), Some((lo, hi))) = (before.get(name), face_box(face)) else {
+        return false;
+    };
+    let tol = 1e-3 * (hi - lo).norm().max(1.0);
+    boxes
+        .iter()
+        .any(|(a, b)| (a - lo).norm() < tol && (b - hi).norm() < tol)
 }
 
 #[cfg(test)]

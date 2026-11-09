@@ -134,6 +134,13 @@ pub enum PrismSeg {
         nalgebra::Point2<Real>,
         Real,
     ),
+    /// Cubic Bézier through its four control points.
+    Cubic(
+        nalgebra::Point2<Real>,
+        nalgebra::Point2<Real>,
+        nalgebra::Point2<Real>,
+        nalgebra::Point2<Real>,
+    ),
 }
 
 /// A prism between two planes (a frame member cut at both ends, square or
@@ -159,6 +166,12 @@ pub fn prism_between(
             b: v2(&b),
             w,
         },
+        PrismSeg::Cubic(p0, p1, p2, p3) => sg::Seg2::Cubic {
+            p0: v2(&p0),
+            p1: v2(&p1),
+            p2: v2(&p2),
+            p3: v2(&p3),
+        },
     };
     let (p0, p1) = (plane_of(start)?, plane_of(end)?);
     let input: Vec<[(sg::Plane, sg::Loop2); 2]> = loops
@@ -183,11 +196,40 @@ pub fn prism_between(
     let (body, roles) = guarded("prism", || builders::prism_between(&input))
         .map_err(|e| format!("this member cannot be built ({e})"))?;
     let n: usize = loops.iter().map(|l| l.0.len()).sum();
+    // Cubics running on tangentially share a name: one smooth wall in the view and to a pick.
+    let tangent = |a: &PrismSeg, b: &PrismSeg| match (a, b) {
+        (PrismSeg::Cubic(_, _, p2, p3), PrismSeg::Cubic(q0, q1, _, _)) => {
+            match (
+                (p3 - p2).try_normalize(1e-12),
+                (q1 - q0).try_normalize(1e-12),
+            ) {
+                (Some(u), Some(v)) => u.dot(&v) > 1.0 - 1e-6,
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    let mut group: Vec<usize> = Vec::with_capacity(n);
+    for (a, _) in loops {
+        let base = group.len();
+        for (i, s) in a.iter().enumerate() {
+            let on = i > 0 && tangent(&a[i - 1], s);
+            group.push(if on { group[base + i - 1] } else { base + i });
+        }
+        if a.len() > 1 && tangent(&a[a.len() - 1], &a[0]) {
+            let (from, to) = (group[base + a.len() - 1], group[base]);
+            for g in &mut group[base..] {
+                if *g == from {
+                    *g = to;
+                }
+            }
+        }
+    }
     let face_names = roles
         .iter()
         .map(|r| {
             r.map(|r| match r {
-                r if r < n => format!("{prefix}:Side:{r}"),
+                r if r < n => format!("{prefix}:Side:{}", group[r]),
                 r if r == n => format!("{prefix}:Start"),
                 _ => format!("{prefix}:End"),
             })

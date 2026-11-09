@@ -571,7 +571,13 @@ pub fn prism_between(loops: &[[(Plane, Loop2); 2]]) -> Result<(Body, Numbers)> {
             w,
         }),
         Seg2::Line { a, b } => Ok(line(local(a), local(b))),
-        _ => invalid("a prism's section is lines and conics"),
+        Seg2::Cubic { p0, p1, p2, p3 } => Ok(Seg2::Cubic {
+            p0: local(p0),
+            p1: local(p1),
+            p2: local(p2),
+            p3: local(p3),
+        }),
+        _ => invalid("a prism's section is lines, conics and cubics"),
     };
     let section = |l: &Loop2| -> Result<Loop2> {
         Ok(Loop2 {

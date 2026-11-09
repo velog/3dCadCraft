@@ -100,6 +100,8 @@ const MEDIUM: &[&str] = &[
     "split_surface",
     // Loft between surfaces and Stitch on the owner's spline surfaces.
     "surface_bridges",
+    // Lip and Groove on rounded and spline rims (spline Booleans, ~30 s).
+    "lip_curved",
 ];
 
 /// Integration tests with time budgets or long runs, each run alone (last).

@@ -113,6 +113,64 @@ impl Piece {
     }
 
     /// As prism section segments; arcs in conics of at most a third of a turn.
+    /// Unit direction of travel at the start or at the end.
+    fn direction(&self, at_end: bool) -> Vector2 {
+        match *self {
+            Piece::Line(a, b) => (b - a)
+                .try_normalize(1e-12)
+                .unwrap_or_else(|| Vector2::new(1.0, 0.0)),
+            Piece::Arc { a0, sweep, .. } => {
+                let t = if at_end { a0 + sweep } else { a0 };
+                Vector2::new(-t.sin(), t.cos()) * sweep.signum()
+            }
+        }
+    }
+
+    fn length(&self) -> Real {
+        match *self {
+            Piece::Line(a, b) => (b - a).norm(),
+            Piece::Arc { r, sweep, .. } => r * sweep.abs(),
+        }
+    }
+
+    /// Signed turn along the piece.
+    fn turning(&self) -> Real {
+        match *self {
+            Piece::Line(..) => 0.0,
+            Piece::Arc { sweep, .. } => sweep,
+        }
+    }
+
+    /// The point at fraction `f` of the piece.
+    fn point_at(&self, f: Real) -> Point2 {
+        match *self {
+            Piece::Line(a, b) => a + (b - a) * f,
+            Piece::Arc { c, r, a0, sweep } => {
+                let t = a0 + sweep * f;
+                c + Vector2::new(t.cos(), t.sin()) * r
+            }
+        }
+    }
+
+    /// Cubic Béziers for an arc (at most a quarter turn each, ~1e-4 of the radius at worst, far
+    /// less on the short arcs fitted to a spline), lines as they are.
+    fn smooth(&self) -> Vec<PrismSeg> {
+        let Piece::Arc { c, r, a0, sweep } = *self else {
+            return self.prism();
+        };
+        let n = (sweep.abs() / std::f64::consts::FRAC_PI_2).ceil().max(1.0) as usize;
+        let step = sweep / n as Real;
+        let k = 4.0 / 3.0 * (step / 4.0).tan();
+        (0..n)
+            .map(|i| {
+                let (s, e) = (a0 + step * i as Real, a0 + step * (i + 1) as Real);
+                let at = |t: Real| c + Vector2::new(t.cos(), t.sin()) * r;
+                let along = |t: Real| Vector2::new(-t.sin(), t.cos()) * (r * k);
+                PrismSeg::Cubic(at(s), at(s) + along(s), at(e) - along(e), at(e))
+            })
+            .collect()
+    }
+
     fn prism(&self) -> Vec<PrismSeg> {
         match *self {
             Piece::Line(a, b) => vec![PrismSeg::Line(a, b)],
@@ -229,6 +287,9 @@ fn join(a: &Piece, b: &Piece, at: Point2) -> Option<Point2> {
     }
 }
 
+/// Offset ends closer than this are one joint (mm).
+const JOINED: Real = 1e-5;
+
 /// `pieces` offset by `d` to the left, joined again (mitres at sharp corners, tangent joins stay
 /// tangent). A corner the offsets do not meet at gets a straight piece.
 pub(super) fn offset(pieces: &[Piece], closed: bool, d: Real) -> Result<Vec<Piece>, String> {
@@ -251,7 +312,19 @@ pub(super) fn offset(pieces: &[Piece], closed: bool, d: Real) -> Result<Vec<Piec
     for k in 0..joints {
         let m = (k + 1) % n;
         let (a, b) = (out[k], out[m]);
-        if (a.end() - b.start()).norm() < 1e-9 {
+        // Ends that already meet (a tangent joint: model vertices lie up to ~2e-6 off their
+        // curves). Intersecting the pieces there is a double root: no point at all left a line
+        // 1e-7 long in the chain, which the kernel's extrude refuses.
+        if (a.end() - b.start()).norm() < JOINED {
+            match (a, b) {
+                (Piece::Line(..), Piece::Arc { .. }) => out[k] = a.with_end(b.start()),
+                (Piece::Line(..), Piece::Line(..)) => {
+                    let q = a.end() + (b.start() - a.end()) / 2.0;
+                    out[k] = a.with_end(q);
+                    out[m] = b.with_start(q);
+                }
+                _ => out[m] = b.with_start(a.end()),
+            }
             continue;
         }
         match join(&a, &b, pieces[k].end()) {
@@ -335,10 +408,141 @@ fn section(pieces: &[Piece], ccw: bool) -> Vec<PrismSeg> {
 /// flat or conical, no Boolean.
 pub(super) fn prism(
     plane: &Plane,
+    at0: (Real, &[Piece]),
+    at1: (Real, &[Piece]),
+    holes: &[(Vec<Piece>, Vec<Piece>)],
+    prefix: &str,
+) -> Result<ExactSolid, Fail> {
+    prism_with(plane, at0, at1, holes, prefix, false)
+}
+
+/// [`prism`] for arcs fitted to a spline: runs of them as single cubic Béziers. As exact arcs, or
+/// as one cubic each, the short ones come back from the kernel as cylinders that fail its own
+/// check by a few nanometres; a cubic over a long run is no cylinder, and the walls are fewer.
+pub(super) fn prism_smooth(
+    plane: &Plane,
+    at0: (Real, &[Piece]),
+    at1: (Real, &[Piece]),
+    holes: &[(Vec<Piece>, Vec<Piece>)],
+    prefix: &str,
+) -> Result<ExactSolid, Fail> {
+    prism_with(plane, at0, at1, holes, prefix, true)
+}
+
+/// How far a cubic may leave the arcs it replaces (mm).
+const CUBIC_FIT: Real = 2e-3;
+
+/// How much longer a cubic's handles are than a circle's (mm).
+const CUBIC_LIFT: Real = 1e-3;
+
+/// The most a cubic of a run turns: a quarter turn stays well within [`CUBIC_FIT`] of a circle
+/// and far enough from one that the kernel does not take it for a cylinder.
+const CUBIC_TURN: Real = std::f64::consts::FRAC_PI_2;
+
+/// The cubic's control points for tangent pieces: the end tangents held, their length the one
+/// that reproduces a circle of the run's length and turn.
+fn run_cubic(run: &[Piece]) -> Option<[Point2; 4]> {
+    let (first, last) = (run.first()?, run.last()?);
+    let (p0, p3) = (first.start(), last.end());
+    let length: Real = run.iter().map(Piece::length).sum();
+    let turn = run.iter().map(Piece::turning).sum::<Real>().abs();
+    let k = if turn > 1e-6 {
+        4.0 / 3.0 * (turn / 4.0).tan() / turn
+    } else {
+        1.0 / 3.0
+    };
+    // A cubic that follows a short arc too closely is taken for a cylinder: longer handles keep
+    // the ends and the tangents and lift it off the circle by microns.
+    let handle = length * k;
+    let handle = handle + (0.1 * handle).min(CUBIC_LIFT);
+    Some([
+        p0,
+        p0 + first.direction(false) * handle,
+        p3 - last.direction(true) * handle,
+        p3,
+    ])
+}
+
+/// The cubic's point at `t`.
+fn on_cubic(c: &[Point2; 4], t: Real) -> Point2 {
+    let s = 1.0 - t;
+    Point2::from(
+        c[0].coords * (s * s * s)
+            + c[1].coords * (3.0 * s * s * t)
+            + c[2].coords * (3.0 * s * t * t)
+            + c[3].coords * (t * t * t),
+    )
+}
+
+/// Whether one cubic follows the whole run within [`CUBIC_FIT`].
+fn run_fits(run: &[Piece]) -> bool {
+    let Some(c) = run_cubic(run) else {
+        return false;
+    };
+    let line: Vec<Point2> = (0..=64).map(|i| on_cubic(&c, i as Real / 64.0)).collect();
+    let off = |q: Point2| {
+        line.windows(2)
+            .map(|w| {
+                let d = w[1] - w[0];
+                let s = ((q - w[0]).dot(&d) / d.norm_squared().max(1e-18)).clamp(0.0, 1.0);
+                (w[0] + d * s - q).norm()
+            })
+            .fold(Real::INFINITY, Real::min)
+    };
+    run.iter().all(|p| {
+        [0.25, 0.5, 0.75, 1.0]
+            .iter()
+            .all(|&f| off(p.point_at(f)) <= CUBIC_FIT)
+    })
+}
+
+/// Where the runs of `chain` end (exclusive): each as long as one cubic can follow it.
+fn cubic_runs(chain: &[Piece]) -> Vec<usize> {
+    let mut ends = Vec::new();
+    let mut i = 0;
+    while i < chain.len() {
+        let mut j = i + 1;
+        while j < chain.len() {
+            let tangent = chain[j - 1].direction(true).dot(&chain[j].direction(false)) > 1.0 - 5e-7;
+            let run = &chain[i..=j];
+            let turn = run.iter().map(Piece::turning).sum::<Real>().abs();
+            if !(tangent && turn <= CUBIC_TURN && run_fits(run)) {
+                break;
+            }
+            j += 1;
+        }
+        ends.push(j);
+        i = j;
+    }
+    ends
+}
+
+/// The chain's sections, one cubic per run of several pieces.
+fn cubics(chain: &[Piece], ends: &[usize]) -> Vec<PrismSeg> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    for &to in ends {
+        let run = &chain[from..to];
+        match (run, run_cubic(run)) {
+            // A line stays a plane, a long arc goes by quarter turns.
+            ([one], _) if one.turning() == 0.0 || one.turning().abs() > CUBIC_TURN => {
+                out.extend(one.smooth())
+            }
+            (_, Some([a, b, c, d])) => out.push(PrismSeg::Cubic(a, b, c, d)),
+            _ => {}
+        }
+        from = to;
+    }
+    out
+}
+
+fn prism_with(
+    plane: &Plane,
     (z0, at0): (Real, &[Piece]),
     (z1, at1): (Real, &[Piece]),
     holes: &[(Vec<Piece>, Vec<Piece>)],
     prefix: &str,
+    smooth: bool,
 ) -> Result<ExactSolid, Fail> {
     let n = plane.normal.into_inner();
     // The kernel's prism runs along the normal of its planes.
@@ -355,24 +559,27 @@ pub(super) fn prism(
     };
     // The outline's direction decides for both ends.
     let ccw = area(a) >= 0.0;
-    let turned = |p: &[Piece], want: bool| -> Vec<PrismSeg> {
-        let chain = if (area(a) >= 0.0) == want {
-            p.to_vec()
+    let both = |x: &[Piece], y: &[Piece], keep: bool| -> (Vec<PrismSeg>, Vec<PrismSeg>) {
+        let order = |p: &[Piece]| if keep { p.to_vec() } else { reversed(p) };
+        let (x, y) = (order(x), order(y));
+        if !smooth {
+            let plain = |c: &[Piece]| c.iter().flat_map(Piece::prism).collect();
+            return (plain(&x), plain(&y));
+        }
+        // One division for both ends, so that their walls pair up.
+        let ends = cubic_runs(&x);
+        let other = if x.len() == y.len() {
+            ends.clone()
         } else {
-            reversed(p)
+            cubic_runs(&y)
         };
-        chain.iter().flat_map(Piece::prism).collect()
+        (cubics(&x, &ends), cubics(&y, &other))
     };
     let _ = ccw;
-    let mut loops = vec![(turned(a, true), turned(b, true))];
+    let mut loops = vec![both(a, b, area(a) >= 0.0)];
     for (h0, h1) in holes {
         let (x, y) = if z1 >= z0 { (h0, h1) } else { (h1, h0) };
-        let cw = area(x) <= 0.0;
-        let seg = |p: &[Piece]| -> Vec<PrismSeg> {
-            let chain = if cw { p.to_vec() } else { reversed(p) };
-            chain.iter().flat_map(Piece::prism).collect()
-        };
-        loops.push((seg(x), seg(y)));
+        loops.push(both(x, y, area(x) <= 0.0));
     }
     let _ = section;
     exact::prism_between(&loops, &level(lo), &level(hi), prefix).map_err(Fail::Kernel)

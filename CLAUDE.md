@@ -1411,6 +1411,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   extruded out of the face) is `exact::face_slab_join`: the face thickened into a slab (Union = gluing, 30 ms) and the
   profile's holes cut back out. The plain tool's Union found no result after a minute and the part went faceted. A
   plane's section of a round is an exact arc (`vendor` `splitface.rs::fit_on`); a spline section 0.01 mm off broke it.
+- **Walls from a spline edge are cubics over runs of fitted arcs** (`common::prism_smooth`): as exact arcs, or as one cubic per short arc, they follow a circle so closely that the kernel takes them for cylinders and its own check then refuses them by nanometres (`CUBIC_LIFT` lifts a short cubic off the circle). Fewer walls also made a Lip 3-4x faster. A prism's two ends use one division (`cubic_runs`), or a drafted wall cannot pair them. Tangent cubics share a face name (one wall in the view; a few short ones still draw their seams). A bead's foot depth shows nowhere, so `lip` retries other depths when the kernel's intersection gives up on its flush wall.
+- **Offset ends that already meet are one joint** (`common::offset`, `JOINED`): model vertices lie up to ~2e-6 off their curves, and intersecting a line with the arc it is tangent to is a double root. No intersection left a straight piece 1e-7 long in the chain, and the kernel's extrude refused it (status 1001) on boxes rounded either way.
 - **GPU errors are logged** (`ViewportRenderer::new`: `on_uncaptured_error`, `set_device_lost_callback`); buffers over
   `max_buffer_size` are left out and the view texture is clamped to `max_texture_dimension_2d` (a validation error
   makes egui-wgpu's next upload panic): a surface
