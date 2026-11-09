@@ -14,9 +14,10 @@ use serde::{Deserialize, Serialize};
 
 use super::tree::Linked;
 use crate::assembly::relation::GeomRef;
+use crate::document::iprops::{CustomProperty, PropValue};
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
 use crate::kernel::{Point3, Real, Transform3, Vector3};
-use crate::part::frame::{EndCut, LENGTH_PROPERTY, Library, NotchTool, Section};
+use crate::part::frame::{CUT_PROPERTIES, EndCut, LENGTH_PROPERTY, Library, NotchTool, Section};
 use crate::part::{Feature, PartDocument};
 
 /// Which point of the section's box lies on the skeleton line.
@@ -863,6 +864,8 @@ struct Live {
     /// Cut planes in assembly coordinates per end (start, end): point and
     /// normal towards the removed side.
     cuts: [Option<(Point3, Vector3)>; 2],
+    /// Which cut ends a Miter made (the word in its cut detail).
+    mitred: [bool; 2],
     /// Notch prisms in assembly coordinates.
     notches: Vec<NotchTool>,
     built: Option<Shape>,
@@ -1255,6 +1258,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                             end,
                             place: t,
                             cuts: [None, None],
+                            mitred: [false, false],
                             notches: Vec::new(),
                             built: m.built.clone(),
                             material,
@@ -1276,6 +1280,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
     let mut jobs: Vec<(u32, DocumentId, Section, Shape, Option<String>)> = Vec::new();
     let mut places: Vec<(u32, Transform3)> = Vec::new();
     let mut shapes: Vec<(u32, Shape)> = Vec::new();
+    let mut details: Vec<(DocumentId, [Option<String>; 2])> = Vec::new();
     let face = |g: &GeomRef| -> Result<(Point3, Vector3), String> {
         let top = a
             .find(g.occurrence())
@@ -1291,6 +1296,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                 Ok(cuts) => {
                     for (i, end, p, n) in cuts {
                         live[i].cuts[end] = Some((p, n));
+                        live[i].mitred[end] = matches!(t, Treatment::Miter { .. });
                     }
                 }
                 Err(e) => {
@@ -1336,6 +1342,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
         }
         for m in &live {
             places.push((m.occ, m.place));
+            details.push((m.doc, cut_details(m)));
             match shape_of(m) {
                 Ok(sh) => {
                     let old = m.built.clone().unwrap_or_else(|| Shape {
@@ -1418,6 +1425,9 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
             }
         }
     }
+    for (doc, cuts) in details {
+        set_cut_details(project, doc, cuts);
+    }
     let a = asm_mut(project, asm)?;
     for (occ, t) in places {
         if let Some(o) = a.occurrences.iter_mut().find(|o| o.id == occ) {
@@ -1440,6 +1450,50 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
     }
     out.moved = changed.len();
     Ok(out)
+}
+
+/// What each end of `m` is cut like, from the final geometry: the angle off
+/// square (a saw's setting); a square end has no text.
+fn cut_details(m: &Live) -> [Option<String>; 2] {
+    let axis = (m.end - m.start).try_normalize(1e-9);
+    let at = |e: usize| {
+        let (_, n) = m.cuts[e]?;
+        let cos = n.try_normalize(1e-12)?.dot(&axis?).abs().min(1.0);
+        let deg = cos.acos().to_degrees();
+        (deg >= 0.005).then(|| {
+            let kind = if m.mitred[e] { "Miter" } else { "Cut" };
+            format!("{kind} {deg:.2} deg")
+        })
+    };
+    [at(0), at(1)]
+}
+
+/// Writes a member part's cut details (nothing when they are the same, so a
+/// solve that changes nothing leaves the file unchanged).
+fn set_cut_details(project: &mut Project, doc: DocumentId, cuts: [Option<String>; 2]) {
+    let Some(d) = project.document_mut(doc) else {
+        return;
+    };
+    let custom = &mut d.properties.custom;
+    for (name, text) in CUT_PROPERTIES.iter().zip(cuts) {
+        let now = custom.iter().position(|c| c.name == *name);
+        match (now, text) {
+            (Some(k), None) => {
+                custom.remove(k);
+            }
+            (Some(k), Some(t)) => {
+                let v = PropValue::Text(t);
+                if custom[k].value != v {
+                    custom[k].value = v;
+                }
+            }
+            (None, Some(t)) => custom.push(CustomProperty {
+                name: (*name).to_owned(),
+                value: PropValue::Text(t),
+            }),
+            (None, None) => {}
+        }
+    }
 }
 
 /// Member shapes the kernel failed on (document, shape, why), this run only.
@@ -3602,6 +3656,72 @@ mod tests {
     }
 
     /// The four top edges of the box: every pair that meets.
+    fn custom_text(p: &Project, a: DocumentId, occ: u32, name: &str) -> Option<String> {
+        let doc = asm_of(p, a).ok()?.find(occ)?.component.document;
+        let c = p
+            .document(doc)?
+            .properties
+            .custom
+            .iter()
+            .find(|c| c.name == name)?;
+        Some(c.value.text())
+    }
+
+    /// A mitred corner of 90° reads 45° at the cut end only; removing the
+    /// treatment removes the text; a skewed mitre of a 60° corner reads 60°.
+    #[test]
+    fn cut_details_come_from_the_final_ends() {
+        let (mut p, aid, _) = project();
+        let linked = Linked::new();
+        let e = [
+            edge("Front", "Top", [200.0, 0.0, 200.0]),
+            edge("Right", "Top", [400.0, 150.0, 200.0]),
+        ];
+        let (_, occs) =
+            insert(&mut p, &linked, aid, &e, &opts(), Library::builtin(), None).unwrap();
+        for &o in &occs {
+            assert_eq!(custom_text(&p, aid, o, "CUTDETAIL1"), None);
+            assert_eq!(custom_text(&p, aid, o, "CUTDETAIL2"), None);
+        }
+        add_miter(
+            &mut p,
+            &linked,
+            aid,
+            &[(occs[0], occs[1])],
+            0.0,
+            MiterOffset::Default,
+        )
+        .unwrap();
+        let text = |p: &Project, o, k| custom_text(p, aid, o, k);
+        let all = [
+            text(&p, occs[0], "CUTDETAIL1"),
+            text(&p, occs[0], "CUTDETAIL2"),
+            text(&p, occs[1], "CUTDETAIL1"),
+            text(&p, occs[1], "CUTDETAIL2"),
+        ];
+        assert_eq!(
+            all.iter()
+                .flatten()
+                .filter(|t| *t == "Miter 45.00 deg")
+                .count(),
+            2,
+            "{all:?}"
+        );
+        assert_eq!(all.iter().flatten().count(), 2, "{all:?}");
+        // A solve with nothing to do writes nothing new.
+        let before = p.clone();
+        solve(&mut p, &linked, aid).unwrap();
+        assert_eq!(
+            text(&before, occs[0], "CUTDETAIL2"),
+            text(&p, occs[0], "CUTDETAIL2")
+        );
+        remove_treatments(&mut p, &linked, aid, &occs).unwrap();
+        for &o in &occs {
+            assert_eq!(custom_text(&p, aid, o, "CUTDETAIL1"), None);
+            assert_eq!(custom_text(&p, aid, o, "CUTDETAIL2"), None);
+        }
+    }
+
     #[test]
     fn meeting_pairs_of_a_rectangle() {
         let (mut p, aid, _) = project();

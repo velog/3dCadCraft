@@ -1030,6 +1030,18 @@ impl CadCraftApp {
                             ui.label("");
                             ui.checkbox(&mut d.pl.merge, "Part Number Row Merge");
                             ui.end_row();
+                            ui.label("");
+                            let mut cut = d.pl.cut_list;
+                            if ui
+                                .checkbox(&mut cut, "Cut List")
+                                .on_hover_text(
+                                    "Frame members only: one row per stock number, length and end cuts",
+                                )
+                                .changed()
+                            {
+                                d.pl.set_cut_list(cut);
+                            }
+                            ui.end_row();
                         }
                         _ => {
                             ui.label("Direction to Wrap Table");

@@ -112,6 +112,71 @@ pub fn default_columns() -> Vec<Column> {
         .collect()
 }
 
+/// The columns of a cut list.
+pub fn cut_list_columns() -> Vec<Column> {
+    let [c1, c2] = crate::part::frame::CUT_PROPERTIES;
+    [
+        ("item", "ITEM", 15.0),
+        ("qty", "QTY", 15.0),
+        ("stock_number", "STOCK NUMBER", 45.0),
+        ("unit", "LENGTH", 30.0),
+        (&format!("custom:{c1}"), "START CUT", 35.0),
+        (&format!("custom:{c2}"), "END CUT", 35.0),
+        ("material", "MATERIAL", 35.0),
+    ]
+    .iter()
+    .map(|(key, title, width)| Column {
+        key: (*key).to_owned(),
+        title: (*title).to_owned(),
+        width: *width,
+    })
+    .collect()
+}
+
+/// A cut list's rows: the frame members of `rows` (those with a length), one
+/// row per stock number, length, end cuts and material (an end reversed is
+/// the same cut), renumbered from 1.
+pub fn cut_rows(rows: &[BomRow]) -> Vec<BomRow> {
+    let [c1, c2] = crate::part::frame::CUT_PROPERTIES;
+    let mut out: Vec<(Vec<String>, BomRow)> = Vec::new();
+    for r in rows
+        .iter()
+        .filter(|r| r.custom.contains_key(crate::part::frame::LENGTH_PROPERTY))
+    {
+        let cut = |k| r.custom.get(k).cloned().unwrap_or_default();
+        let mut ends = [cut(c1), cut(c2)];
+        ends.sort();
+        let [a, b] = ends;
+        let key = vec![
+            r.stock_number.clone(),
+            r.unit.clone(),
+            a,
+            b,
+            r.material.clone(),
+        ];
+        match out.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, t)) => {
+                t.qty += r.qty;
+                for o in &r.occurrences {
+                    if !t.occurrences.contains(o) {
+                        t.occurrences.push(*o);
+                    }
+                }
+                t.components.extend(r.components.iter().copied());
+                t.missing |= r.missing;
+            }
+            None => out.push((key, r.clone())),
+        }
+    }
+    out.into_iter()
+        .enumerate()
+        .map(|(k, (_, mut r))| {
+            r.item = (k + 1).to_string();
+            r
+        })
+        .collect()
+}
+
 /// Every column a parts list of `rows` can show: the BOM's own, every
 /// standard Property, then the custom Properties used.
 pub fn available_columns(rows: &[BomRow]) -> Vec<(String, String)> {
@@ -244,6 +309,11 @@ pub struct PartsList {
     /// Table Wrapping.
     #[serde(default)]
     pub wrap: Wrap,
+    /// A cut list (spec 6.1 §3.7): frame members only, one row per stock
+    /// number, length, end cuts and material. Older builds ignore it (the
+    /// list stays a parts list with these columns).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cut_list: bool,
 }
 
 fn yes() -> bool {
@@ -280,6 +350,22 @@ impl PartsList {
             hidden: Vec::new(),
             custom_rows: Vec::new(),
             wrap: Wrap::default(),
+            cut_list: false,
+        }
+    }
+
+    /// Turns the list into a cut list (its columns and title) or back to
+    /// the defaults of a parts list.
+    pub fn set_cut_list(&mut self, on: bool) {
+        self.cut_list = on;
+        if on {
+            self.bom = BomKind::PartsOnly;
+            self.title = "CUT LIST".into();
+            self.columns = cut_list_columns();
+        } else {
+            self.bom = BomKind::Structured;
+            self.title = default_title();
+            self.columns = default_columns();
         }
     }
 
@@ -375,7 +461,11 @@ pub struct Table {
 
 /// The table of parts list `pl` over the BOM `rows`.
 pub fn table(pl: &PartsList, rows: &[BomRow]) -> Table {
-    let mut rows: Vec<BomRow> = rows.to_vec();
+    let mut rows: Vec<BomRow> = if pl.cut_list {
+        cut_rows(rows)
+    } else {
+        rows.to_vec()
+    };
     if let Some(s) = &pl.sort {
         let key = |r: &BomRow| bom_cell(r, &s.column);
         rows.sort_by(|a, b| {
@@ -937,6 +1027,55 @@ pub fn resolve_balloon(
 mod tests {
     use super::*;
     use crate::document::iprops::BomStructure;
+
+    fn member(pn: &str, stock: &str, len: &str, cuts: [&str; 2], occ: u32) -> BomRow {
+        let mut r = row("1", pn, 1, &[occ]);
+        r.stock_number = stock.into();
+        r.unit = len.into();
+        r.custom.insert("G_L".into(), len.into());
+        for (k, c) in ["CUTDETAIL1", "CUTDETAIL2"].iter().zip(cuts) {
+            if !c.is_empty() {
+                r.custom.insert((*k).into(), c.into());
+            }
+        }
+        r
+    }
+
+    /// Same stock, length and end cuts roll up (either end first); a different
+    /// length or cut is its own row; what is no member is left out.
+    #[test]
+    fn a_cut_list_rolls_up_members_only() {
+        const M: &str = "Miter 45.00 deg";
+        let rows = vec![
+            member("a-1", "SHS 40x40x3", "400.000 mm", [M, ""], 1),
+            member("a-2", "SHS 40x40x3", "400.000 mm", ["", M], 2),
+            member("a-3", "SHS 40x40x3", "400.000 mm", [M, M], 3),
+            member("a-4", "SHS 40x40x3", "300.000 mm", [M, ""], 4),
+            member("b-1", "IPE 200", "400.000 mm", [M, ""], 5),
+            row("9", "Bolt", 8, &[6]),
+        ];
+        let c = cut_rows(&rows);
+        let got: Vec<(String, u32)> = c.iter().map(|r| (r.item.clone(), r.qty)).collect();
+        let want: Vec<(String, u32)> = [("1", 2), ("2", 1), ("3", 1), ("4", 1)]
+            .iter()
+            .map(|(i, q)| ((*i).to_owned(), *q))
+            .collect();
+        assert_eq!(got, want);
+        assert_eq!(c[0].occurrences, vec![1, 2]);
+        let mut pl = PartsList::new(1, [0.0, 0.0]);
+        pl.set_cut_list(true);
+        assert_eq!(pl.bom, BomKind::PartsOnly);
+        assert_eq!(pl.title, "CUT LIST");
+        let t = table(&pl, &rows);
+        assert_eq!(t.rows.len(), 4);
+        assert_eq!(
+            t.rows[0].cells,
+            vec!["1", "2", "SHS 40x40x3", "400.000 mm", M, "", "Steel"]
+        );
+        pl.set_cut_list(false);
+        assert_eq!(pl.columns, default_columns());
+        assert_eq!(table(&pl, &rows).rows.len(), rows.len());
+    }
 
     fn row(item: &str, pn: &str, qty: u32, occ: &[u32]) -> BomRow {
         BomRow {

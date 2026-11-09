@@ -27,6 +27,9 @@ const BUILTIN: &str = include_str!("../../data/profiles/profiles.csv");
 
 /// The custom property holding a member's length (Inventor's `G_L`).
 pub const LENGTH_PROPERTY: &str = "G_L";
+/// The custom properties with the cut of a member's start and end
+/// (Inventor's `CUTDETAIL<n>`; a square end has none).
+pub const CUT_PROPERTIES: [&str; 2] = ["CUTDETAIL1", "CUTDETAIL2"];
 
 /// The kind of section: which template draws it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

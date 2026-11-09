@@ -403,7 +403,7 @@ fn gather(
             qty: 1,
             qty_static: false,
             item_typed: false,
-            unit: "Each".into(),
+            unit: unit_qty(&ci.props),
             stock_number: ci.props.get("stock_number").to_owned(),
             description: ci.props.get("description").to_owned(),
             material: ci.material.clone().unwrap_or_default(),
@@ -426,6 +426,20 @@ fn gather(
             missing: ci.missing,
         });
     }
+}
+
+/// The Unit QTY of a component: a frame member's length (`G_L`), else Each.
+fn unit_qty(props: &crate::document::iprops::IProperties) -> String {
+    use crate::document::iprops::PropValue;
+    props
+        .custom
+        .iter()
+        .find(|c| c.name == crate::part::frame::LENGTH_PROPERTY)
+        .and_then(|c| match c.value {
+            PropValue::Number(l) => Some(format!("{l:.3} mm")),
+            _ => None,
+        })
+        .unwrap_or_else(|| "Each".into())
 }
 
 /// The custom Property names used by `rows` (optional columns).
@@ -489,6 +503,17 @@ mod tests {
     use crate::document::DocumentId;
     use crate::document::iprops::PropValue;
     use crate::kernel::Transform3;
+
+    #[test]
+    fn a_frame_member_s_unit_quantity_is_its_length() {
+        let mut p = crate::document::iprops::IProperties::default();
+        assert_eq!(unit_qty(&p), "Each");
+        p.custom.push(crate::document::iprops::CustomProperty {
+            name: crate::part::frame::LENGTH_PROPERTY.into(),
+            value: PropValue::Number(1250.0),
+        });
+        assert_eq!(unit_qty(&p), "1250.000 mm");
+    }
 
     #[test]
     fn quantities_structures_merging_and_csv() {

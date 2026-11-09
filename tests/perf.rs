@@ -1832,6 +1832,33 @@ fn speed_budgets() {
             .cloned()
             .collect();
         assert_eq!(top.len(), 4);
+        // The frame as a subassembly (spec 6.1 §3.6a): nothing moved, the check
+        // that runs after every solve of the parent.
+        {
+            use cadcraft3d::assembly::frame_sub::{self, Target};
+            let mut p = base.clone();
+            let linked = Linked::new();
+            let (frame, doc) = frame_sub::new_frame_assembly(&mut p, aid, "Frame0001").unwrap();
+            let t = Target {
+                top: aid,
+                frame,
+                doc,
+                skeleton: "Skeleton0001",
+            };
+            let down: Vec<Skeleton> = edges
+                .iter()
+                .map(|e| frame_sub::skeleton_down(&mut p, &linked, t, e).unwrap())
+                .collect();
+            insert(&mut p, &linked, doc, &down, &o, lib, None).unwrap();
+            rows.push((
+                "frame: a frame assembly of 12 members follows, nothing moved",
+                20.0,
+                median_ms(5, || {
+                    let s = frame_sub::follow(&mut p, &linked, aid).unwrap();
+                    assert_eq!(s.moved, 0);
+                }),
+            ));
+        }
         rows.push((
             "frame: miter the 4 SHS 40x40x3 members of a rectangle (8 cuts)",
             300.0,
