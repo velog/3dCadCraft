@@ -1811,6 +1811,19 @@ impl PartDocument {
                                                 _ => plain(msg),
                                             }
                                         }
+                                        // Profiles touching only at corners: the material
+                                        // left between them would meet along a line.
+                                        Err(exact::Fail::Kernel(msg))
+                                            if op == Operation::Cut
+                                                && let Sweep::Extrude(e) = sweep =>
+                                        {
+                                            match exact::extrude_corners_apart(e, &body, &works, &ps.sketch) {
+                                                Ok(Some(again)) => exact::combine(solids.clone(), again, op, chosen, false)
+                                                    .map(Some)
+                                                    .map_err(|_| exact::Fail::Kernel(msg)),
+                                                _ => Err(exact::Fail::Kernel(msg)),
+                                            }
+                                        }
                                         r => r.map(Some),
                                     }
                                 }
