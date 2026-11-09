@@ -562,7 +562,7 @@ true volume. Open:
 - **Old files:** r9's Shell fails in SMLib's fillet of the rounded corners (status 1005), the only
   entry not re-recorded.
 - **Doubtful:** Physical Properties integrate the display mesh, 0.6 % low on an M3 screw (the geometry
-  is within 0.01 %); a cylinder's drawing view has gaps of 0.05-0.09 mm in its rim near the corners;
+  is within 0.01 %);
   Stitch at 0.001 mm leaves a loft between whole surfaces open (the old kernel closed it; 0.01 mm closes).
 - **Refused:** Shell of non-convex bodies with rounds no larger than the wall (convex ones get a cavity
   of moved planes, `plane_cavity`; the box lid of `project_box_lip` is still refused), a Parallel sweep whose path ends along the section's
