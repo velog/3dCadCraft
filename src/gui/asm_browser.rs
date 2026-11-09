@@ -122,6 +122,7 @@ impl CadCraftApp {
     /// The active assembly's tree in the browser.
     pub(super) fn assembly_tree(&mut self, ui: &mut egui::Ui, name: &str) {
         let linked = self.linked();
+        let frame_occ = self.frame_occ();
         let Some(a) = self.assembly() else {
             return;
         };
@@ -136,7 +137,9 @@ impl CadCraftApp {
             // The hidden tools part (assembly features, sketches and work
             // features) is no component: its contents have rows of their own.
             .filter(|o| a.features.as_ref().is_none_or(|f| f.occurrence != o.id))
-            // Frame members are listed under their frame.
+            // Frame members are listed under their frame, and so is the
+            // frame assembly's own row.
+            .filter(|o| Some(o.id) != frame_occ)
             .filter(|o| {
                 !a.frames
                     .iter()

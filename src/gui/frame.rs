@@ -10,6 +10,7 @@ use super::asm_planned::AsmPlanned;
 use super::part_planned::{PartDialog, Planned};
 use crate::assembly::frame::Skeleton;
 use crate::assembly::frame::{self, Anchor, InsertOptions, Orientation};
+use crate::assembly::frame_sub;
 use crate::kernel::Point3;
 use crate::part::frame::Library;
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
@@ -205,22 +206,42 @@ pub(super) fn insert_options(d: &PartDialog) -> Option<InsertOptions> {
 }
 
 impl CadCraftApp {
-    /// OK of Insert Frame: a member on every picked edge. False (with the
-    /// reason in the status bar) leaves everything as it was.
+    /// OK of Insert Frame: a member on every picked edge. The first one in
+    /// an assembly asks for the frame's names first (the panel stays open).
+    /// False (with the reason in the status bar) leaves everything as it was.
     pub(super) fn frame_ok(&mut self, d: &PartDialog) -> bool {
         if !d.members.list.is_empty() {
             return self.edit_members_ok(d);
         }
-        let fail = |app: &mut Self, e: &str| {
-            app.file_status = Some(Err(format!("Insert Frame: {e}")));
-            false
-        };
-        if d.refs.get("align").is_some_and(|v| !v.is_empty()) {
-            return fail(self, "Align comes with stage F2 (spec 6.1)");
+        if d.frame_sets.is_empty() && d.skeletons.is_empty() {
+            self.file_status = Some(Err(
+                "Insert Frame: select the skeleton edges or sketch lines".into(),
+            ));
+            return false;
         }
-        let Some(o) = insert_options(d) else {
-            return fail(self, "the section table is empty");
-        };
+        if self.frame_ask_names() {
+            return false;
+        }
+        match self.frame_insert(d, None) {
+            Ok(()) => true,
+            Err(e) => {
+                self.file_status = Some(Err(format!("Insert Frame: {e}")));
+                false
+            }
+        }
+    }
+
+    /// Inserts the panel's members; `names` (frame, skeleton) make a new
+    /// frame assembly. On an error nothing changes.
+    pub(super) fn frame_insert(
+        &mut self,
+        d: &PartDialog,
+        names: Option<(&str, &str)>,
+    ) -> Result<(), String> {
+        if d.refs.get("align").is_some_and(|v| !v.is_empty()) {
+            return Err("Align comes with stage F2 (spec 6.1)".into());
+        }
+        let o = insert_options(d).ok_or("the section table is empty")?;
         // The kept sets, then the lines picked now (with the panel's section).
         let mut sets: Vec<(Vec<Skeleton>, InsertOptions)> = d
             .frame_sets
@@ -231,85 +252,97 @@ impl CadCraftApp {
             sets.push((d.skeletons.clone(), o.clone()));
         }
         if sets.is_empty() {
-            return fail(self, "select the skeleton edges or sketch lines");
+            return Err("select the skeleton edges or sketch lines".into());
         }
         let mut trial = self.project.clone();
         let linked = self.linked();
         let lib = Library::current();
         let corners = o.corners;
+        let mut new_target = None;
+        if let Some((name, _)) = names {
+            new_target = Some(frame_sub::new_frame_assembly(
+                &mut trial,
+                self.part_id,
+                name,
+            )?);
+        }
+        let doc = new_target.map_or_else(|| self.frame_doc(), |(_, d)| d);
+        // Inside the frame's document the lines are in its terms.
+        for (lines, _) in &mut sets {
+            for s in lines.iter_mut() {
+                *s = match (new_target, names) {
+                    (Some((frame, doc)), Some((_, skeleton))) => frame_sub::skeleton_down(
+                        &mut trial,
+                        &linked,
+                        frame_sub::Target {
+                            top: self.part_id,
+                            frame,
+                            doc,
+                            skeleton,
+                        },
+                        s,
+                    )?,
+                    _ => self.frame_skeleton_down(&mut trial, &linked, s)?,
+                };
+            }
+        }
         // One frame per assembly (Inventor): new members join the frame of a
         // selected member, else the last one; only the first insert makes one.
-        let existing = self.assembly().and_then(|a| {
-            a.frames
-                .iter()
-                .find(|f| {
-                    f.members
-                        .iter()
-                        .any(|m| self.asm.sel.contains(&m.occurrence))
-                })
-                .or(a.frames.last())
-                .map(|f| f.id)
-        });
-        let result = (|| {
-            let mut frame_id = existing;
-            let mut occs = Vec::new();
-            // Several sets, or members joining a frame: the corners once all
-            // are in (between the new members and the frame's).
-            let many = sets.len() > 1 || existing.is_some();
-            for (lines, mut opts) in sets {
-                if many {
-                    // The corners come once all sets are in.
-                    opts.corners = Default::default();
-                }
-                let (fid, made) = frame::insert(
-                    &mut trial,
-                    &linked,
-                    self.part_id,
-                    &lines,
-                    &opts,
-                    &lib,
-                    frame_id,
-                )?;
-                frame_id = Some(fid);
-                occs.extend(made);
+        let selected = self.frame_selected();
+        let existing = if new_target.is_none() {
+            self.frame_asm().and_then(|a| {
+                a.frames
+                    .iter()
+                    .find(|f| f.members.iter().any(|m| selected.contains(&m.occurrence)))
+                    .or(a.frames.last())
+                    .map(|f| f.id)
+            })
+        } else {
+            None
+        };
+        let mut frame_id = existing;
+        let mut occs = Vec::new();
+        // Several sets, or members joining a frame: the corners once all
+        // are in (between the new members and the frame's).
+        let many = sets.len() > 1 || existing.is_some();
+        for (lines, mut opts) in sets {
+            if many {
+                // The corners come once all sets are in.
+                opts.corners = Default::default();
             }
-            if let Some(fid) = frame_id.filter(|_| many)
-                && (corners.kind != frame::CornerType::None
-                    || corners.tees != frame::TeeJoint::None)
-            {
-                frame::add_corners(&mut trial, &linked, self.part_id, fid, &occs, &corners)?;
-            }
-            Ok::<_, String>((frame_id, occs))
-        })();
-        match result {
-            Ok((_, occs)) => {
-                self.history.break_coalescing();
-                self.checkpoint("Insert Frame");
-                self.project = trial;
-                self.history.break_coalescing();
-                self.asm.sel = occs.clone();
-                self.asm.sub.clear();
-                self.scene_dirty = true;
-                self.file_status = Some(Ok(format!(
-                    "Insert Frame: {} member(s) of {} {}",
-                    occs.len(),
-                    o.family,
-                    o.size
-                )));
-                true
-            }
-            Err(e) => fail(self, &e),
+            let (fid, made) =
+                frame::insert(&mut trial, &linked, doc, &lines, &opts, &lib, frame_id)?;
+            frame_id = Some(fid);
+            occs.extend(made);
         }
+        if let Some(fid) = frame_id.filter(|_| many)
+            && (corners.kind != frame::CornerType::None || corners.tees != frame::TeeJoint::None)
+        {
+            frame::add_corners(&mut trial, &linked, doc, fid, &occs, &corners)?;
+        }
+        self.history.break_coalescing();
+        self.checkpoint("Insert Frame");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.frame_set_selected(occs.clone());
+        self.scene_dirty = true;
+        self.file_status = Some(Ok(format!(
+            "Insert Frame: {} member(s) of {} {}",
+            occs.len(),
+            o.family,
+            o.size
+        )));
+        Ok(())
     }
 
     /// Members follow their skeleton (after the skeleton part was edited);
     /// members that cannot are reported in the log and keep their state.
     pub(super) fn follow_frames(&mut self) {
-        if !self.assembly().is_some_and(|a| !a.frames.is_empty()) {
+        if self.frame_ctx().is_none() {
             return;
         }
         let linked = self.linked();
-        match frame::solve(&mut self.project, &linked, self.part_id) {
+        match frame_sub::follow(&mut self.project, &linked, self.part_id) {
             Ok(s) => {
                 for (occ, why) in &s.sick {
                     log::warn!("frame member {occ}: {why}");
@@ -661,7 +694,7 @@ impl CadCraftApp {
 impl CadCraftApp {
     /// The frame members picked in selector `key` (occurrence ids).
     pub(super) fn picked_members(&self, d: &PartDialog, key: &str) -> Vec<u32> {
-        let Some(a) = self.assembly() else {
+        let Some(a) = self.frame_asm() else {
             return Vec::new();
         };
         d.picks_of(key)
@@ -692,7 +725,7 @@ impl CadCraftApp {
         let linked = self.linked();
         let pairs = match members.as_slice() {
             [a, b] => vec![(*a, *b)],
-            _ => match self.assembly() {
+            _ => match self.frame_asm() {
                 Some(a) => frame::meeting_pairs(&self.project, &linked, a, &members),
                 None => Vec::new(),
             },
@@ -704,7 +737,7 @@ impl CadCraftApp {
         };
         let gap = d.num(0, "Distance").unwrap_or(0.0);
         let mut trial = self.frame_trial(d);
-        match frame::add_miter(&mut trial, &linked, self.part_id, &pairs, gap, offset) {
+        match frame::add_miter(&mut trial, &linked, self.frame_doc(), &pairs, gap, offset) {
             Ok(_) => {
                 self.history.break_coalescing();
                 self.checkpoint("Miter");
@@ -729,7 +762,7 @@ impl CadCraftApp {
         let Some(&m) = members.first() else {
             return fail(self, "select a member of the frame");
         };
-        let Some(fid) = self.assembly().and_then(|a| {
+        let Some(fid) = self.frame_asm().and_then(|a| {
             a.frames
                 .iter()
                 .find(|f| f.members.iter().any(|x| x.occurrence == m))
@@ -774,7 +807,7 @@ impl CadCraftApp {
         }
         let mut trial = self.project.clone();
         let linked = self.linked();
-        match frame::edit_frame(&mut trial, &linked, self.part_id, fid, layout, corners) {
+        match frame::edit_frame(&mut trial, &linked, self.frame_doc(), fid, layout, corners) {
             Ok(_) => {
                 self.history.break_coalescing();
                 self.checkpoint("Edit Frame");
@@ -883,10 +916,11 @@ impl CadCraftApp {
                 let (o1, o2) = (num("Offset"), num("Offset 2"));
                 let kind = d.index(0, "Offset Type");
                 let linked = self.linked();
-                let Some(a) = self.assembly() else {
+                let Some(a) = self.frame_asm() else {
                     return false;
                 };
                 let names: Vec<String> = d.picks_of("members").to_vec();
+                let place = self.frame_place();
                 members
                     .into_iter()
                     .map(|member| {
@@ -897,7 +931,8 @@ impl CadCraftApp {
                             .iter()
                             .filter(|w| w.split(" · ").next() == Some(name.as_str()))
                             .find_map(|w| d.clicks.iter().rev().find(|(l, _)| l == w))
-                            .map(|(_, p)| crate::kernel::Point3::new(p[0], p[1], p[2]));
+                            .map(|(_, p)| crate::kernel::Point3::new(p[0], p[1], p[2]))
+                            .map(|c| place.inverse() * c);
                         let near =
                             match (click, frame::member_run(&self.project, &linked, a, member)) {
                                 (Some(c), Some((s, e))) => {
@@ -926,7 +961,11 @@ impl CadCraftApp {
         };
         let linked = self.linked();
         let mut trial = self.frame_trial(d);
-        match frame::add_treatments(&mut trial, &linked, self.part_id, ts) {
+        let ts = match self.frame_treatments_down(&mut trial, &linked, ts) {
+            Ok(v) => v,
+            Err(e) => return fail(self, &e),
+        };
+        match frame::add_treatments(&mut trial, &linked, self.frame_doc(), ts) {
             Ok(_) => {
                 self.history.break_coalescing();
                 self.checkpoint(title);
@@ -949,7 +988,7 @@ impl CadCraftApp {
         }
         let linked = self.linked();
         let mut trial = self.project.clone();
-        match frame::remove_treatments(&mut trial, &linked, self.part_id, &members) {
+        match frame::remove_treatments(&mut trial, &linked, self.frame_doc(), &members) {
             Ok(_) => {
                 self.history.break_coalescing();
                 self.checkpoint("Remove End Treatments");

@@ -56,7 +56,7 @@ impl CadCraftApp {
     /// The frame nodes of the browser: each frame's members, then its end
     /// treatments.
     pub(super) fn frame_rows(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<FrameCmd>) {
-        let Some(a) = self.assembly() else {
+        let Some(a) = self.frame_asm() else {
             return;
         };
         let frames: Vec<FrameNode> = a
@@ -71,13 +71,26 @@ impl CadCraftApp {
                 (f.id, f.name.clone(), members)
             })
             .collect();
+        let selected = self.frame_selected();
+        let holder = self
+            .frame_occ()
+            .and_then(|f| self.assembly()?.find(f).map(|o| o.name.clone()));
+        let skeleton: Vec<String> = a
+            .occurrences
+            .iter()
+            .filter(|o| {
+                o.bom == Some(crate::document::iprops::BomStructure::Reference) && !o.visible
+            })
+            .map(|o| o.name.clone())
+            .collect();
         let rows: Vec<(u32, usize, String, Vec<u32>)> = frame::treatment_rows(a)
             .into_iter()
             .map(|(f, i, name, t)| (f, i, name, t.members()))
             .collect();
         for (fid, fname, members) in frames {
             let all: Vec<u32> = members.iter().map(|m| m.0).collect();
-            let on = !all.is_empty() && all.iter().all(|i| self.asm.sel.contains(i));
+            let on = !all.is_empty() && all.iter().all(|i| selected.contains(i));
+            let fname = holder.clone().unwrap_or(fname);
             super::panels::tree_fold(ui, ui.make_persistent_id(("asm_frame", fid)), true)
                 .show_header(ui, |ui| {
                     super::panels::tree_icon(ui, Icon::InsertFrame);
@@ -108,7 +121,7 @@ impl CadCraftApp {
                     for (id, name) in &members {
                         ui.horizontal(|ui| {
                             super::panels::tree_icon(ui, Icon::Part);
-                            let r = ui.selectable_label(self.asm.sel.contains(id), name);
+                            let r = ui.selectable_label(selected.contains(id), name);
                             if r.clicked() {
                                 let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
                                 cmds.push(FrameCmd::Select(vec![*id], add));
@@ -118,16 +131,35 @@ impl CadCraftApp {
                                 cmds.push(FrameCmd::EditMembers(vec![*id]));
                             }
                             if r.hovered() {
-                                self.asm.hover = Some(*id);
+                                self.frame_tree_hover(*id);
                             }
                             r.context_menu(|ui| {
-                                let ids = if self.asm.sel.contains(id) {
-                                    self.asm.sel.clone()
+                                let ids = if selected.contains(id) {
+                                    selected.clone()
                                 } else {
                                     vec![*id]
                                 };
                                 member_menu(ui, &ids, cmds);
                             });
+                        });
+                    }
+                    if !skeleton.is_empty() {
+                        super::panels::tree_fold(
+                            ui,
+                            ui.make_persistent_id(("asm_frame_skeleton", fid)),
+                            false,
+                        )
+                        .show_header(ui, |ui| {
+                            super::panels::tree_icon(ui, Icon::Part);
+                            ui.label("Skeleton");
+                        })
+                        .body(|ui| {
+                            for n in &skeleton {
+                                ui.horizontal(|ui| {
+                                    super::panels::tree_icon(ui, Icon::Part);
+                                    ui.label(egui::RichText::new(n).weak());
+                                });
+                            }
                         });
                     }
                     let own: Vec<&(u32, usize, String, Vec<u32>)> =
@@ -148,7 +180,7 @@ impl CadCraftApp {
                         for (f, i, name, ms) in own {
                             ui.horizontal(|ui| {
                                 super::panels::tree_icon(ui, treatment_icon(name));
-                                let on = ms.iter().all(|m| self.asm.sel.contains(m));
+                                let on = ms.iter().all(|m| selected.contains(m));
                                 let r = ui.selectable_label(on, name);
                                 if r.clicked() {
                                     cmds.push(FrameCmd::Select(ms.clone(), false));
@@ -197,28 +229,30 @@ impl CadCraftApp {
     pub(super) fn frame_cmd(&mut self, c: FrameCmd) {
         match c {
             FrameCmd::Select(ids, add) => {
-                if add {
-                    for id in ids {
-                        if let Some(k) = self.asm.sel.iter().position(|&i| i == id) {
-                            self.asm.sel.remove(k);
-                        } else {
-                            self.asm.sel.push(id);
-                        }
-                    }
+                let mut now = if add {
+                    self.frame_selected()
                 } else {
-                    self.asm.sel = ids;
+                    Vec::new()
+                };
+                for id in ids {
+                    if let (true, Some(k)) = (add, now.iter().position(|&i| i == id)) {
+                        now.remove(k);
+                    } else {
+                        now.push(id);
+                    }
                 }
+                self.frame_set_selected(now);
                 self.cons.selected = None;
             }
             FrameCmd::Start(kind, ids) => {
-                self.asm.sel = ids;
+                self.frame_set_selected(ids);
                 self.start_asm_planned(kind);
             }
             FrameCmd::EditTreatment(f, i) => self.edit_treatment(f, i),
             FrameCmd::DeleteTreatment(f, i) => {
                 let linked = self.linked();
                 let mut trial = self.project.clone();
-                match frame::delete_treatment(&mut trial, &linked, self.part_id, f, i) {
+                match frame::delete_treatment(&mut trial, &linked, self.frame_doc(), f, i) {
                     Ok(_) => self.frame_commit("Delete End Treatment", trial),
                     Err(e) => self.file_status = Some(Err(format!("Delete: {e}"))),
                 }
@@ -228,7 +262,7 @@ impl CadCraftApp {
             FrameCmd::Retype(f, i, k) => {
                 let linked = self.linked();
                 let mut trial = self.project.clone();
-                match frame::retype_corner(&mut trial, &linked, self.part_id, f, i, k) {
+                match frame::retype_corner(&mut trial, &linked, self.frame_doc(), f, i, k) {
                     Ok(_) => self.frame_commit("Change Corner", trial),
                     Err(e) => self.file_status = Some(Err(format!("Change Corner: {e}"))),
                 }
@@ -264,10 +298,17 @@ impl CadCraftApp {
     pub(super) fn frame_delete_members(&mut self, ids: &[u32]) {
         let linked = self.linked();
         let mut trial = self.project.clone();
-        match frame::delete_members(&mut trial, &linked, self.part_id, ids) {
+        let top_level = self.frame_occ().is_none();
+        match frame::delete_members(&mut trial, &linked, self.frame_doc(), ids)
+            .and_then(|_| self.frame_prune(&mut trial))
+        {
             Ok(_) => {
                 self.frame_commit("Delete", trial);
-                self.asm.sel.retain(|i| !ids.contains(i));
+                if top_level {
+                    self.asm.sel.retain(|i| !ids.contains(i));
+                } else {
+                    self.asm.sub.clear();
+                }
                 self.asm.hover = None;
             }
             Err(e) => self.file_status = Some(Err(format!("Delete: {e}"))),
@@ -280,7 +321,7 @@ impl CadCraftApp {
         let mut trial = self.project.clone();
         if let Some((f, i)) = d.frame_edit
             && let Some(DocumentData::Assembly(a)) =
-                trial.document_mut(self.part_id).map(|x| &mut x.data)
+                trial.document_mut(self.frame_doc()).map(|x| &mut x.data)
         {
             frame::take_treatment(a, f, i);
         }
@@ -298,7 +339,7 @@ impl CadCraftApp {
         else {
             return;
         };
-        let label = |app: &Self, o: u32| app.occurrence_label_pub(o).unwrap_or_default();
+        let label = |app: &Self, o: u32| app.frame_label(o).unwrap_or_default();
         let kind = match t {
             Treatment::Miter { .. } => AsmPlanned::Miter,
             Treatment::CornerJoint { .. } => AsmPlanned::CornerJoint,
@@ -339,8 +380,9 @@ impl CadCraftApp {
                 face,
                 offset,
             } => {
-                d.picks.insert("face", vec![self.geom_label(face)]);
-                d.refs.insert("face", vec![face.clone()]);
+                let face = self.frame_geom_up(face);
+                d.picks.insert("face", vec![self.geom_label(&face)]);
+                d.refs.insert("face", vec![face]);
                 d.picks.insert("members", vec![label(self, *member)]);
                 d.set_num(0, "Offset", *offset);
             }
@@ -357,6 +399,7 @@ impl CadCraftApp {
                     } else {
                         s
                     };
+                    let at = self.frame_place() * at;
                     d.clicks.push((w.clone(), [at.x, at.y, at.z]));
                 }
                 d.picks.insert("members", vec![w]);
@@ -384,7 +427,7 @@ impl CadCraftApp {
     /// Fills Change's Frame Member and Orientation fields from member
     /// `occ` (Inventor shows the picked member's current values).
     pub(super) fn frame_fill_change(&self, d: &mut PartDialog, occ: u32) {
-        let Some(m) = self.assembly().and_then(|a| {
+        let Some(m) = self.frame_asm().and_then(|a| {
             a.frames
                 .iter()
                 .flat_map(|f| &f.members)
@@ -425,7 +468,7 @@ impl CadCraftApp {
     /// *Edit Frame*): their skeleton, section, material and orientation in
     /// the panel, the frame's members listed above it.
     pub(super) fn edit_members_start(&mut self, ids: &[u32]) {
-        let Some(a) = self.assembly() else {
+        let Some(a) = self.frame_asm() else {
             return;
         };
         let Some(f) = a
@@ -487,7 +530,7 @@ impl CadCraftApp {
 
     /// The edges selector shows the edited members' skeleton lines.
     fn member_skeletons(&self, d: &mut PartDialog) {
-        let Some(a) = self.assembly() else {
+        let Some(a) = self.frame_asm() else {
             return;
         };
         let mut sk = Vec::new();
@@ -499,7 +542,7 @@ impl CadCraftApp {
                 .flat_map(|f| &f.members)
                 .find(|m| m.occurrence == o)
             {
-                sk.push(m.skeleton.clone());
+                sk.push(self.frame_skeleton_up(&m.skeleton));
                 let name = a.find(o).map(|x| x.name.clone()).unwrap_or_default();
                 labels.push(format!("{name} · skeleton"));
             }
@@ -514,7 +557,7 @@ impl CadCraftApp {
     /// points in the view) and its anchor in the panel.
     pub(super) fn member_list_ui(&mut self, ui: &mut egui::Ui, d: &mut PartDialog) {
         if let Some(z) = d.members.zoom.take()
-            && let Some((lo, hi)) = self.asm_box(z)
+            && let Some((lo, hi)) = self.frame_member_box(z)
         {
             let pad = (hi - lo) * 0.6 + crate::kernel::Vector3::repeat(20.0);
             self.camera.fit(lo - pad, hi + pad);
@@ -609,13 +652,23 @@ impl CadCraftApp {
         if moved && !(d.members.edit.len() == 1 && d.skeletons.len() == 1) {
             return fail(self, "to move a member, edit only it and pick one edge");
         }
+        let linked = self.linked();
+        let mut trial = self.project.clone();
+        let target = if moved {
+            match self.frame_skeleton_down(&mut trial, &linked, &d.skeletons[0]) {
+                Ok(s) => Some(s),
+                Err(e) => return fail(self, &e),
+            }
+        } else {
+            None
+        };
         let edits: Vec<frame::MemberEdit> = d
             .members
             .edit
             .iter()
             .map(|&occurrence| frame::MemberEdit {
                 occurrence,
-                skeleton: moved.then(|| d.skeletons[0].clone()),
+                skeleton: target.clone(),
                 orientation: frame::Orientation {
                     anchor: d
                         .members
@@ -628,12 +681,10 @@ impl CadCraftApp {
                 },
             })
             .collect();
-        let linked = self.linked();
-        let mut trial = self.project.clone();
         let r = frame::edit_members(
             &mut trial,
             &linked,
-            self.part_id,
+            self.frame_doc(),
             &edits,
             &o,
             &Library::current(),
@@ -660,7 +711,7 @@ impl CadCraftApp {
             frame::edit_frame(
                 &mut trial,
                 &linked,
-                self.part_id,
+                self.frame_doc(),
                 fid,
                 None,
                 Some(o.corners),
@@ -678,7 +729,7 @@ impl CadCraftApp {
     /// Frame Member Info: member `occ`'s family, size, material, length
     /// (`G_L`), mass and section properties in the panel's fields.
     pub(super) fn fill_member_info(&self, d: &mut PartDialog, occ: u32) {
-        let Some(a) = self.assembly() else {
+        let Some(a) = self.frame_asm() else {
             return;
         };
         let Some(m) = a
@@ -752,7 +803,7 @@ impl CadCraftApp {
         match frame::change(
             &mut trial,
             &linked,
-            self.part_id,
+            self.frame_doc(),
             &members,
             &o,
             &Library::current(),
@@ -776,19 +827,21 @@ impl CadCraftApp {
     /// The corners shown in the view (no command open): those of frames with
     /// a selected member, on screen, with the treatment's letter.
     fn corner_glyphs(&self, rect: egui::Rect) -> Vec<(u32, usize, egui::Pos2, &'static str)> {
-        if self.part_planned.is_some() || self.asm.sel.is_empty() {
+        let selected = self.frame_selected();
+        if self.part_planned.is_some() || selected.is_empty() {
             return Vec::new();
         }
-        let Some(a) = self.assembly() else {
+        let place = self.frame_place();
+        let Some(a) = self.frame_asm() else {
             return Vec::new();
         };
         let linked = self.linked();
         let mut out: Vec<(u32, usize, egui::Pos2, &'static str)> = Vec::new();
         for (f, i, c, ms) in frame::corner_points(&self.project, &linked, a) {
-            if !ms.iter().any(|m| self.asm.sel.contains(m)) {
+            if !ms.iter().any(|m| selected.contains(m)) {
                 continue;
             }
-            let Some(mut q) = self.camera.project(&c, rect) else {
+            let Some(mut q) = self.camera.project(&(place * c), rect) else {
                 continue;
             };
             let Some(t) = a

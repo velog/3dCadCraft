@@ -372,7 +372,9 @@ impl CadCraftApp {
                             .face_look(name)
                             .and_then(|n| sub.appearance(n, &self.mat.lib))
                     }),
-                    tint: tint(&l.path, name),
+                    tint: self
+                        .frame_leaf_tint(o.id, &l.path)
+                        .or_else(|| tint(&l.path, name)),
                 };
                 let at = place * l.world;
                 self.with_part(l.component, |part| {
@@ -709,6 +711,13 @@ impl CadCraftApp {
             self.asm.sub = vec![s];
             self.asm.sel.clear();
             self.scene_dirty = true;
+        }
+        // Members of a frame assembly: the Frame commands only.
+        if self.frame_occ().is_some() {
+            let members = self.frame_selected();
+            if !members.is_empty() && self.frame_member_menu(ui, &members) {
+                return;
+            }
         }
         let ids = self.asm_selected_occurrences();
         if !ids.is_empty() {

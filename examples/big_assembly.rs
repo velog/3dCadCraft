@@ -91,6 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             patterns: Vec::new(),
             appearances: Vec::new(),
             frames: Vec::new(),
+            frame_links: Vec::new(),
             import: None,
             features: None,
             bolts: Vec::new(),

@@ -1778,8 +1778,8 @@ impl CadCraftApp {
         // Edit Frame edits the whole frame in Insert Frame's full panel: the frame of the
         // selected member, else the first one (*Position and Corners...* is the short one).
         if kind == AsmPlanned::EditFrame {
-            let all = self.assembly().and_then(|a| {
-                let selected = self.asm.sel.first().copied();
+            let all = self.frame_asm().and_then(|a| {
+                let selected = self.frame_selected().first().copied();
                 a.frames
                     .iter()
                     .find(|f| f.members.iter().any(|m| Some(m.occurrence) == selected))
@@ -1861,7 +1861,7 @@ impl CadCraftApp {
             return;
         };
         // Frame commands: a member selector takes only frame members.
-        let member = self.asm_pick_pub(p, rect).map(|(h, at)| (h.occurrence, at));
+        let member = self.frame_member_under(p, rect);
         if self.frame_member_click(member) {
             return;
         }

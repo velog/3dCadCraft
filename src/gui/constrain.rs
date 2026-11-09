@@ -220,6 +220,7 @@ impl CadCraftApp {
         if drag.is_none() {
             self.adapt_follow();
             self.context_follow();
+            self.follow_frames();
         }
     }
 

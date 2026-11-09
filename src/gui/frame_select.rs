@@ -81,17 +81,31 @@ fn pick_name(w: &str) -> &str {
 impl CadCraftApp {
     /// Is occurrence `occ` a member of a frame of the active assembly?
     pub(super) fn is_frame_member(&self, occ: u32) -> bool {
-        self.assembly().is_some_and(|a| {
+        self.frame_asm().is_some_and(|a| {
             a.frames
                 .iter()
                 .any(|f| f.members.iter().any(|m| m.occurrence == occ))
         })
     }
 
-    /// The colour the open frame panel gives occurrence `id` (its picks).
+    /// The colour the open frame panel gives occurrence `id` of the active
+    /// assembly (a member of a flat frame).
     pub(super) fn frame_tint(&self, id: u32) -> Option<[f32; 3]> {
+        self.frame_occ().is_none().then(|| self.member_tint(id))?
+    }
+
+    /// The same for the part at `path` inside occurrence `top`.
+    pub(super) fn frame_leaf_tint(&self, top: u32, path: &[u32]) -> Option<[f32; 3]> {
+        match path {
+            [m] if self.frame_occ() == Some(top) => self.member_tint(*m),
+            _ => None,
+        }
+    }
+
+    /// The colour the open frame panel gives member `id` (its picks).
+    fn member_tint(&self, id: u32) -> Option<[f32; 3]> {
         let d = self.part_planned.as_ref()?;
-        let name = &self.assembly()?.find(id)?.name;
+        let name = &self.frame_asm()?.find(id)?.name;
         d.picks.iter().find_map(|(key, picks)| {
             member_colour(d, key).filter(|_| picks.iter().any(|w| pick_name(w) == name.as_str()))
         })
@@ -99,13 +113,13 @@ impl CadCraftApp {
 
     /// Every tinted occurrence (the scene is rebuilt when this changes).
     pub(super) fn frame_tints(&self) -> Vec<(u32, [u8; 3])> {
-        let Some(a) = self.assembly() else {
+        let Some(a) = self.frame_asm() else {
             return Vec::new();
         };
         a.occurrences
             .iter()
             .filter_map(|o| {
-                let c = color(self.frame_tint(o.id)?);
+                let c = color(self.member_tint(o.id)?);
                 Some((o.id, [c.r(), c.g(), c.b()]))
             })
             .collect()
@@ -122,7 +136,7 @@ impl CadCraftApp {
             return hover;
         };
         if member_colour(d, key).is_some() {
-            return hover.filter(|&o| self.is_frame_member(o));
+            return hover.filter(|&o| self.is_top_frame_member(o));
         }
         // A selector of faces, edges or lines: the whole component is not
         // what a click takes, so it is not highlighted (spec 0-ui rule 19).
@@ -150,7 +164,7 @@ impl CadCraftApp {
         let Some((occ, at)) = hit else {
             return true;
         };
-        let Some(w) = self.occurrence_label_pub(occ) else {
+        let Some(w) = self.frame_label(occ) else {
             return true;
         };
         if !self.is_frame_member(occ) {
@@ -220,15 +234,13 @@ impl CadCraftApp {
             return false;
         };
         let members: Vec<u32> = self
-            .asm
-            .sel
-            .iter()
-            .copied()
+            .frame_selected()
+            .into_iter()
             .filter(|&o| self.is_frame_member(o))
             .collect();
         let names: Vec<String> = members
             .iter()
-            .filter_map(|&o| self.occurrence_label_pub(o))
+            .filter_map(|&o| self.frame_label(o))
             .collect();
         if names.is_empty() {
             return true;
@@ -294,7 +306,7 @@ impl CadCraftApp {
     /// The anchor points of member `occ` (the 9 box points and the
     /// centroid) halfway along it, with its section outline there.
     fn anchor_points(&self, occ: u32) -> Option<(Vec<Point3>, Vec<Point3>)> {
-        let a = self.assembly()?;
+        let a = self.frame_asm()?;
         let o = a.find(occ)?;
         let m = a
             .frames
@@ -303,7 +315,8 @@ impl CadCraftApp {
             .find(|m| m.occurrence == occ)?;
         let s = m.section()?;
         let z = m.built.as_ref().map(|b| b.length).unwrap_or(0.0) / 2.0;
-        let at = |x: f64, y: f64| o.transform.transform_point(&Point3::new(x, y, z));
+        let place = self.frame_place() * o.transform;
+        let at = |x: f64, y: f64| place.transform_point(&Point3::new(x, y, z));
         let points = frame::Anchor::ALL
             .iter()
             .map(|k| {
@@ -388,7 +401,7 @@ impl CadCraftApp {
         };
         let linked = self.linked();
         let mut trial = self.project.clone();
-        match frame::set_anchor(&mut trial, &linked, self.part_id, occ, anchor) {
+        match frame::set_anchor(&mut trial, &linked, self.frame_doc(), occ, anchor) {
             Ok(_) => {
                 self.history.break_coalescing();
                 self.checkpoint("Frame Member Anchor");
@@ -403,7 +416,7 @@ impl CadCraftApp {
     /// A dot at the end of each picked member that Lengthen/Shorten
     /// changes (the end nearer the click).
     fn lengthen_dots(&self, d: &PartDialog, painter: &egui::Painter, rect: Rect) {
-        let Some(a) = self.assembly() else {
+        let Some(a) = self.frame_asm() else {
             return;
         };
         let linked = self.linked();
@@ -414,6 +427,8 @@ impl CadCraftApp {
             let Some((s, e)) = frame::member_run(&self.project, &linked, a, o.id) else {
                 continue;
             };
+            let place = self.frame_place();
+            let (s, e) = (place * s, place * e);
             let click = d
                 .clicks
                 .iter()

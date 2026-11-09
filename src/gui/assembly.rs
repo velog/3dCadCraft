@@ -95,6 +95,8 @@ pub(super) struct AsmUi {
     /// The menu of a frame corner's glyph (frame, treatment, where; `true`
     /// while the click that opened it is still being handled).
     pub corner_menu: Option<(u32, usize, Pos2, bool)>,
+    /// The open Create New Frame dialog (spec 6.1 §3.6a).
+    pub frame_new: Option<super::frame_ctx::FrameNew>,
     /// The occurrence under the cursor.
     pub hover: Option<u32>,
     /// The open command.
@@ -1896,7 +1898,7 @@ impl CadCraftApp {
         }
         // Frame members go with their parts and end treatments.
         let (members, ids): (Vec<u32>, Vec<u32>) =
-            ids.iter().partition(|&&o| self.is_frame_member(o));
+            ids.iter().partition(|&&o| self.is_top_frame_member(o));
         if !members.is_empty() {
             self.frame_delete_members(&members);
         }
@@ -1908,6 +1910,7 @@ impl CadCraftApp {
             for &i in ids {
                 a.remove(i);
             }
+            a.frame_links.retain(|l| !ids.contains(&l.frame));
         });
         self.asm.sel.retain(|i| !ids.contains(i));
         self.asm.hover = None;
@@ -2038,7 +2041,8 @@ impl CadCraftApp {
         let ctx = ui.ctx().clone();
         let modal = self.asm.place.is_some()
             || self.asm.library.is_some()
-            || self.asm.change_size.is_some();
+            || self.asm.change_size.is_some()
+            || self.asm.frame_new.is_some();
         // A linked part file saved meanwhile: reload it.
         if self.poll_libraries() {
             self.scene_dirty = true;
@@ -2067,6 +2071,12 @@ impl CadCraftApp {
             }
             if ui.input(|i| i.key_pressed(egui::Key::Delete)) && !ctx.egui_wants_keyboard_input() {
                 let ids = self.asm.sel.clone();
+                if self.frame_occ().is_some() {
+                    let members = self.frame_selected();
+                    if !members.is_empty() {
+                        self.frame_delete_members(&members);
+                    }
+                }
                 self.delete_occurrences(&ids);
                 if ids.is_empty()
                     && let Some(c) = self.cons.selected
@@ -2097,6 +2107,16 @@ impl CadCraftApp {
                 .flatten(),
             _ => None,
         };
+        // A member of a frame assembly is taken whole under any component
+        // priority (spec 6.1 §3.6a).
+        let nested = nested.or_else(|| match (pointer, hit) {
+            (Some(p), Some(_))
+                if self.asm.tool.is_none() && self.asm_priority().takes_components() =>
+            {
+                self.frame_member_sub(p, rect)
+            }
+            _ => None,
+        });
         let sub_mode = !self.asm_priority().takes_components() || nested.is_some();
         let sub_hit = match (pointer, hit) {
             _ if nested.is_some() => nested,
@@ -2112,7 +2132,7 @@ impl CadCraftApp {
                 .map(|(h, _)| h.occurrence)
                 .filter(|_| pre && !sub_mode && self.asm.tool != Some(AsmTool::SmartDrop));
             self.asm.hover = self.frame_hover(hover);
-            self.asm.sub_hover = sub_hit.clone().filter(|_| pre);
+            self.asm.sub_hover = sub_hit.clone().filter(|s| pre && self.frame_sub_takes(s));
         }
         // Measure (no command open) takes the clicks on faces and edges.
         let measuring = self.measure.open && !constraining && self.asm.tool.is_none();
@@ -2203,6 +2223,17 @@ impl CadCraftApp {
             && let Some(id) = glyph
         {
             self.edit_constraint(id);
+            return;
+        }
+        if response.double_clicked_by(PointerButton::Primary)
+            && self.asm.tool.is_none()
+            && !constraining
+            && let Some(p) = pointer
+            && self.frame_occ().is_some()
+            && let Some((m, _)) = self.frame_member_under(p, rect)
+        {
+            // Inventor: double-click a member = Edit with Frame Generator.
+            self.edit_members_start(&[m]);
             return;
         }
         if response.double_clicked_by(PointerButton::Primary)
@@ -2313,7 +2344,9 @@ impl CadCraftApp {
                 }
                 return;
             }
-            if sub_mode && self.asm.tool.is_none() {
+            // A member stays selected while the pointer is over the open menu.
+            let member_menu = self.frame_occ().is_some() && !self.frame_selected().is_empty();
+            if (sub_mode || member_menu) && self.asm.tool.is_none() {
                 self.asm_sub_menu(ui, sub_hit.clone());
             } else {
                 self.asm_context_menu(ui, hit.map(|(h, _)| h.occurrence))
@@ -2342,6 +2375,7 @@ impl CadCraftApp {
         let painter = ui.painter_at(rect);
         self.render_view(ui, frame, rect, &painter);
         self.asm_sel_mode_window(ui.ctx(), rect);
+        self.frame_new_window(ui.ctx());
         let cursor = ui
             .input(|i| i.pointer.hover_pos())
             .filter(|p| rect.contains(*p));
@@ -2740,10 +2774,11 @@ impl CadCraftApp {
             && !self.asm.sel.contains(&id)
         {
             self.asm.sel = self.bolt_group(id);
+            self.asm.sub.clear();
         }
         let ids = self.asm.sel.clone();
         if !ids.is_empty() {
-            if self.frame_member_menu(ui, &ids) {
+            if self.frame_occ().is_none() && self.frame_member_menu(ui, &ids) {
                 ui.separator();
             }
             self.occurrence_menu(ui, &ids);

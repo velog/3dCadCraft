@@ -430,6 +430,11 @@ pub struct AssemblyDocument {
     /// occurrences, so older builds show them where they were saved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frames: Vec<crate::assembly::frame::Frame>,
+    /// What ties the skeleton references of the frame assemblies placed here
+    /// to their source components (spec 6.1 §3.6a). Older builds ignore them
+    /// (the frame assembly is an ordinary subassembly, as it was saved).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame_links: Vec<crate::assembly::frame_sub::SkeletonLink>,
     /// An assembly made from a STEP file (spec 7.7a 3a): the occurrences that came from it and,
     /// on the top one, the file it follows. Older builds ignore it (a plain assembly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -793,6 +798,7 @@ mod tests {
             patterns: Vec::new(),
             appearances: Vec::new(),
             frames: Vec::new(),
+            frame_links: Vec::new(),
             import: None,
             features: None,
             bolts: Vec::new(),
