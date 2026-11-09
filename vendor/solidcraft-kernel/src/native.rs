@@ -197,12 +197,45 @@ fn same_numbering(a: &solidcore_record::brep::Brep, b: &solidcore_record::brep::
                 _ => false,
             })
     });
-    let ends_alike = a.edges.iter().zip(&b.edges).all(|(x, y)| x.vertices == y.vertices);
-    let at_same_place = a.vertices.iter().zip(&b.vertices).all(|(x, y)| {
+    // Each of `b`'s vertices is the one of `a`'s at its place: SMLib may number the vertices of a
+    // face it walks the other way round otherwise (a patch's corners), which the history does not
+    // see (it maps faces and edges).
+    let Some(vertex_of) = same_places(a, b) else { return false };
+    let ends_alike = a.edges.iter().zip(&b.edges).all(|(x, y)| {
+        x.vertices.len() == y.vertices.len()
+            && x.vertices.iter().zip(&y.vertices).all(|(&p, &q)| usize::try_from(q).ok().and_then(|q| vertex_of.get(q)).is_some_and(|&m| u32::try_from(m).ok() == Some(p)))
+    });
+    loops_alike && ends_alike
+}
+
+/// For each vertex of `b`, the vertex of `a` at its place: the same index when that one is there
+/// (the usual case), else the only one of `a`'s there; `None` unless that is a one-to-one map.
+fn same_places(a: &solidcore_record::brep::Brep, b: &solidcore_record::brep::Brep) -> Option<Vec<usize>> {
+    let near = |x: &solidcore_record::brep::Vertex, y: &solidcore_record::brep::Vertex| {
         let d = (0..3).map(|k| (x.point[k] - y.point[k]).powi(2)).sum::<f64>().sqrt();
         d <= x.tolerance + y.tolerance + a.tolerance + b.tolerance
-    });
-    loops_alike && ends_alike && at_same_place
+    };
+    let mut used = vec![false; a.vertices.len()];
+    let mut out = Vec::with_capacity(b.vertices.len());
+    for (i, y) in b.vertices.iter().enumerate() {
+        let m = if a.vertices.get(i).is_some_and(|x| near(x, y)) {
+            i
+        } else {
+            let mut there = a.vertices.iter().enumerate().filter(|(_, x)| near(x, y)).map(|(k, _)| k);
+            let first = there.next()?;
+            if there.next().is_some() {
+                return None;
+            }
+            first
+        };
+        let slot = used.get_mut(m)?;
+        if *slot {
+            return None;
+        }
+        *slot = true;
+        out.push(m);
+    }
+    Some(out)
 }
 
 /// Whether two loops walk the same edges: in the same order from some edge on, or in the
