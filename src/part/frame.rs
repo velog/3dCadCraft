@@ -917,6 +917,133 @@ impl Section {
     }
 }
 
+/// How the corners of an end cap's plate are finished.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CapCorners {
+    /// Rounded like the section's.
+    #[default]
+    Filleted,
+    /// A straight cut across each rounded corner.
+    Chamfered,
+    /// Sharp.
+    Sharp,
+}
+
+impl Section {
+    /// The section of an end cap's plate of this member section: its outline
+    /// (`internal`: the inside of a hollow section), `inset` smaller all
+    /// round. On a failure the reason, for the panel's status.
+    pub fn cap_section(
+        &self,
+        internal: bool,
+        corners: CapCorners,
+        inset: Real,
+    ) -> Result<Section, String> {
+        if !(inset.is_finite() && inset >= 0.0) {
+            return Err("the edge offset must be zero or more".into());
+        }
+        let loops = self.loops();
+        let source = if internal {
+            loops
+                .get(1)
+                .ok_or("an Internal cap needs a hollow section")?
+        } else {
+            loops.first().ok_or("the section has no outline")?
+        };
+        let outline = match source {
+            Loop::Circle(c, r, _) => {
+                if *r - inset <= 1e-6 {
+                    return Err("the edge offset leaves no plate".into());
+                }
+                Loop::Circle(*c, *r - inset, false)
+            }
+            Loop::Corners(v) => {
+                let mut v = v.clone();
+                // A hole runs clockwise; a plate's outline counter-clockwise.
+                if internal {
+                    v.reverse();
+                }
+                Loop::Corners(cap_corners(&v, corners, inset)?)
+            }
+            Loop::Path(_) if inset > 1e-9 => {
+                return Err("a custom section's cap takes an Edge Offset of 0".into());
+            }
+            Loop::Path(_) => source.clone(),
+        };
+        let mut s = self.clone();
+        s.shape = Shape::Custom;
+        s.custom = vec![outline];
+        Ok(s)
+    }
+}
+
+/// The corners of a counter-clockwise outline moved `inset` inwards, each
+/// rounded, cut or sharp as asked.
+fn cap_corners(
+    v: &[(Point2, Real)],
+    corners: CapCorners,
+    inset: Real,
+) -> Result<Vec<(Point2, Real)>, String> {
+    let n = v.len();
+    if n < 3 {
+        return Err("the section has no outline".into());
+    }
+    let mut out = Vec::with_capacity(n * 2);
+    for k in 0..n {
+        let (a, (p, r), b) = (v[(k + n - 1) % n].0, v[k], v[(k + 1) % n].0);
+        let (Some(u), Some(w)) = ((p - a).try_normalize(1e-9), (b - p).try_normalize(1e-9)) else {
+            return Err("the section's outline has a zero-length side".into());
+        };
+        // Inward normals of the two sides (left of a counter-clockwise run).
+        let (nu, nw) = (Vector2::new(-u.y, u.x), Vector2::new(-w.y, w.x));
+        let denom = 1.0 + nu.dot(&nw);
+        if denom < 1e-6 {
+            return Err("the section's outline folds back on itself".into());
+        }
+        let q = p + (nu + nw) * (inset / denom);
+        let convex = u.perp(&w) > 0.0;
+        let left = (r - inset).max(0.0);
+        match corners {
+            CapCorners::Filleted => out.push((q, if convex { left } else { r + inset })),
+            CapCorners::Sharp => out.push((q, 0.0)),
+            CapCorners::Chamfered if convex && left > 1e-9 => {
+                // The tangent points of the arc that was there.
+                let half = (1.0 - u.dot(&w)).max(0.0).sqrt() / (1.0 + u.dot(&w)).max(1e-9).sqrt();
+                let d = left * half;
+                out.push((q - u * d, 0.0));
+                out.push((q + w * d, 0.0));
+            }
+            CapCorners::Chamfered => out.push((q, 0.0)),
+        }
+    }
+    // Each side must still run its old way: a larger inset turns it round.
+    let shrunk = |k: usize| out[k].0 - out[(k + out.len() - 1) % out.len()].0;
+    let flipped = match corners {
+        // The chamfer's extra corners do not line up with the old sides.
+        CapCorners::Chamfered => false,
+        _ => (0..n).any(|k| {
+            let old = v[k].0 - v[(k + n - 1) % n].0;
+            shrunk(k).dot(&old) <= 1e-9
+        }),
+    };
+    if flipped || signed_area(&out) <= 1e-9 {
+        return Err("the edge offset leaves no plate".into());
+    }
+    Ok(out)
+}
+
+/// Twice the signed area of a corner list, over 2.
+fn signed_area(v: &[(Point2, Real)]) -> Real {
+    let n = v.len();
+    (0..n)
+        .map(|k| {
+            let (p, q) = (v[k].0, v[(k + 1) % n].0);
+            p.x * q.y - q.x * p.y
+        })
+        .sum::<Real>()
+        / 2.0
+}
+
 /// A work feature of a member part, not shown (the part's construction).
 pub(crate) fn hidden(def: WorkDef) -> WorkFeature {
     let mut w = WorkFeature::new(def);

@@ -143,6 +143,11 @@ impl CadCraftApp {
             .filter(|o| {
                 !a.frames
                     .iter()
+                    .any(|f| f.caps.iter().any(|c| c.occurrence == o.id))
+            })
+            .filter(|o| {
+                !a.frames
+                    .iter()
                     .any(|f| f.members.iter().any(|m| m.occurrence == o.id))
             })
             .map(|o| (o.id, o.name.clone(), o.grounded, o.visible, o.component))

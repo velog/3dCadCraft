@@ -1502,6 +1502,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (both senses, broken loops, not drawn — surfaces showed no outline). In a surface body it is a free edge when the
   face's triangles run it one way only; in solids the old rule stays (a seam listed once). `s.is_open()` walks every
   shell: take it once per body, never per edge (it doubled a 5 s Cut).
+- **End caps and reused members** (`Frame::caps`, `FrameMember::reuse_of`): a reused member has no `built` shape and its cuts are its source's, so treatments, Change and caps are refused on it; deleting a source hands the part on (`promote_reuse`). Plate outlines are `Section::cap_section` + `member_part`.
 - **Member ids of a frame are ids of its own document** (`frame_asm`), not of the active assembly: `is_top_frame_member` for an id of the active one (ids collide), `frame_selected` / `frame_set_selected` instead of `asm.sel`, stored references through `frame_geom_up` / `frame_skeleton_up` before drawing or showing them.
 - **Frame members are never Booleans at their ends**: a cut square to the member is the extrusion's end, a slanted (mitred)
   end makes the whole member one `BodyOp::Prism` (revision 57: the section pushed along the member onto both end planes —

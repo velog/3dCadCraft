@@ -1234,6 +1234,7 @@ Insert Frame on straight model edges (orientation, member parts, the members fol
 - **Miter**;
 - **Notch** (cut to the profile) — Basic Profile with Offset done 2026-10-30, templates to do;
 - the frame as a subassembly (2026-11-09: Create New Frame, members and a hidden skeleton reference in their own assembly, followed from the parent);
+- Unit QTY = length, cut details from the final ends, Parts List › Cut List; Insert End Cap (Internal / External, Filleted / Chamfered / Sharp, Edge Offset, Rotate, Offset); Reuse of a member's part on lines of the same length (2026-11-09);
 - a frame from a solid (all its edges in one click), group Position Inside / Outside, corners by vertex kind, Edit Frame (2026-10-30);
 - **Trim/Extend** to a face;
 - **Lengthen/Shorten.**

@@ -1953,7 +1953,10 @@ impl CadCraftApp {
         }
         let mode = match &self.part_planned {
             Some(d)
-                if d.kind == Planned::Asm(AsmPlanned::InsertFrame) && d.active == Some("edges") =>
+                if matches!(
+                    d.kind,
+                    Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::Reuse)
+                ) && d.active == Some("edges") =>
             {
                 Some(d.index(0, "Select"))
             }

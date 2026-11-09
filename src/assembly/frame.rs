@@ -17,7 +17,9 @@ use crate::assembly::relation::GeomRef;
 use crate::document::iprops::{CustomProperty, PropValue};
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
 use crate::kernel::{Point3, Real, Transform3, Vector3};
-use crate::part::frame::{CUT_PROPERTIES, EndCut, LENGTH_PROPERTY, Library, NotchTool, Section};
+use crate::part::frame::{
+    CUT_PROPERTIES, CapCorners, EndCut, LENGTH_PROPERTY, Library, NotchTool, Section,
+};
 use crate::part::{Feature, PartDocument};
 
 /// Which point of the section's box lies on the skeleton line.
@@ -189,6 +191,10 @@ pub struct FrameMember {
     /// [`solve`] rebuilds only members whose shape changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub built: Option<Shape>,
+    /// Reuse: the member whose part this occurrence shows (by occurrence).
+    /// It has no shape of its own: its cuts are the source's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_of: Option<u32>,
 }
 
 /// The shape of a member part: skeleton length, extensions past the start
@@ -223,6 +229,30 @@ impl Shape {
                 .all(|(a, b)| (0..2).all(|i| (0..3).all(|k| near(a[i][k], b[i][k]))))
             && self.notches.len() == o.notches.len()
             && self.notches.iter().zip(&o.notches).all(|(a, b)| a.same(b))
+    }
+
+    /// The member part's Z range, as its square ends leave it.
+    fn z_range(&self) -> (Real, Real) {
+        let (mut z0, mut z1) = (-self.ext[0], self.length + self.ext[1]);
+        for c in &self.cuts {
+            let n = c[1];
+            if n[0].abs() < 1e-9 && n[1].abs() < 1e-9 {
+                if n[2] > 0.0 {
+                    z1 = z1.min(c[0][2]);
+                } else {
+                    z0 = z0.max(c[0][2]);
+                }
+            }
+        }
+        (z0, z1)
+    }
+
+    /// Is the high (else the low) end cut slanted?
+    fn slanted(&self, high: bool) -> bool {
+        self.cuts.iter().any(|c| {
+            let n = c[1];
+            (n[0].abs() >= 1e-9 || n[1].abs() >= 1e-9) && (n[2] > 0.0) == high
+        })
     }
 
     fn end_cuts(&self) -> Vec<EndCut> {
@@ -415,6 +445,55 @@ pub struct Frame {
     /// End treatments between them, in creation order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub treatments: Vec<Treatment>,
+    /// End caps of its members. Older builds ignore them (the caps are
+    /// ordinary occurrences, where they were saved).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caps: Vec<EndCap>,
+}
+
+/// Insert End Cap's choices.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CapOptions {
+    /// Inside the tube (else on the end face).
+    pub internal: bool,
+    /// The plate's corners.
+    pub corners: CapCorners,
+    /// Plate thickness.
+    pub thickness: Real,
+    /// [`Self::edge_offset`] is a share of the section's smaller side.
+    pub ratio: bool,
+    /// How much smaller than the section's outline the plate is.
+    pub edge_offset: Real,
+    /// Turn about the member's axis (radians).
+    pub rotate: Real,
+    /// Distance between the end face and the plate.
+    pub offset: Real,
+}
+
+impl CapOptions {
+    fn inset(&self, s: &Section) -> Real {
+        if self.ratio {
+            let (w, h) = s.extent();
+            self.edge_offset * w.min(h)
+        } else {
+            self.edge_offset
+        }
+    }
+}
+
+/// An end cap: a plate closing one end of a member.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EndCap {
+    /// The plate's occurrence.
+    pub occurrence: u32,
+    /// The member it closes.
+    pub member: u32,
+    /// The end: the high (else the low) end of the member part's Z.
+    pub high: bool,
+    /// How it was made.
+    pub options: CapOptions,
+    /// The member's section when the plate was built (`family size`).
+    pub built_for: String,
 }
 
 /// Insert Frame's choices.
@@ -791,6 +870,7 @@ pub fn insert(
                     length,
                     ..Default::default()
                 }),
+                reuse_of: None,
             });
         }
         if !(o.corners.gap.is_finite() && o.corners.gap >= 0.0) {
@@ -814,6 +894,7 @@ pub fn insert(
                     name,
                     members: made,
                     treatments: Vec::new(),
+                    caps: Vec::new(),
                 });
                 id
             }
@@ -864,6 +945,8 @@ struct Live {
     /// Cut planes in assembly coordinates per end (start, end): point and
     /// normal towards the removed side.
     cuts: [Option<(Point3, Vector3)>; 2],
+    /// Shows another member's part (Reuse): no shape of its own.
+    reuse_of: Option<u32>,
     /// Which cut ends a Miter made (the word in its cut detail).
     mitred: [bool; 2],
     /// Notch prisms in assembly coordinates.
@@ -1241,7 +1324,12 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                 continue;
             }
             let doc = occ.component.document;
-            let sec = m.section();
+            // A reused member stands as its source's section does.
+            let source = m
+                .reuse_of
+                .and_then(|s| f.members.iter().find(|x| x.occurrence == s))
+                .unwrap_or(m);
+            let sec = source.section();
             match (skeleton_line(project, linked, a, &m.skeleton), sec) {
                 (Ok((p, q)), Some(s)) => match placement(&s, p, q, &m.orientation) {
                     Some(t) => {
@@ -1259,6 +1347,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                             place: t,
                             cuts: [None, None],
                             mitred: [false, false],
+                            reuse_of: m.reuse_of,
                             notches: Vec::new(),
                             built: m.built.clone(),
                             material,
@@ -1281,6 +1370,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
     let mut places: Vec<(u32, Transform3)> = Vec::new();
     let mut shapes: Vec<(u32, Shape)> = Vec::new();
     let mut details: Vec<(DocumentId, [Option<String>; 2])> = Vec::new();
+    let mut cap_places: Vec<(u32, Transform3)> = Vec::new();
     let face = |g: &GeomRef| -> Result<(Point3, Vector3), String> {
         let top = a
             .find(g.occurrence())
@@ -1342,6 +1432,19 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
         }
         for m in &live {
             places.push((m.occ, m.place));
+            if let Some(src) = m.reuse_of {
+                // The line must stay as long as the part it shows.
+                let own = (m.end - m.start).norm();
+                if let Some(s) = live.iter().find(|x| x.occ == src)
+                    && ((s.end - s.start).norm() - own).abs() > REUSE_TOLERANCE
+                {
+                    out.sick.push((
+                        m.occ,
+                        "its line is no longer as long as its source's".into(),
+                    ));
+                }
+                continue;
+            }
             details.push((m.doc, cut_details(m)));
             match shape_of(m) {
                 Ok(sh) => {
@@ -1428,6 +1531,63 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
     for (doc, cuts) in details {
         set_cut_details(project, doc, cuts);
     }
+    let a = asm_of(project, asm)?;
+    let mut rebuilt_caps: Vec<(u32, DocumentId, Section, CapOptions, Option<String>, String)> =
+        Vec::new();
+    for f in &a.frames {
+        for c in &f.caps {
+            let Some(m) = f.members.iter().find(|m| m.occurrence == c.member) else {
+                continue;
+            };
+            let (Some((_, sh)), Some((_, place))) = (
+                shapes.iter().find(|(o, _)| *o == c.member),
+                places.iter().find(|(o, _)| *o == c.member),
+            ) else {
+                continue;
+            };
+            if sh.slanted(c.high) {
+                out.sick
+                    .push((c.occurrence, "its end is no longer square".into()));
+                continue;
+            }
+            cap_places.push((c.occurrence, cap_placement(place, sh.z_range(), c)));
+            let Some(sec) = m.section() else {
+                continue;
+            };
+            let now = format!("{} {}", m.family, m.size);
+            if now != c.built_for
+                && let Some(o) = a.find(c.occurrence)
+                && o.component.library.is_none()
+            {
+                rebuilt_caps.push((
+                    c.occurrence,
+                    o.component.document,
+                    sec,
+                    c.options,
+                    part_material(project, o.component.document),
+                    now,
+                ));
+            }
+        }
+    }
+    for (occ, doc, sec, opts, mat, now) in rebuilt_caps {
+        match cap_part(&sec, &opts, mat.as_deref()) {
+            Ok((part, _)) => {
+                if let Some(d) = project.document_mut(doc) {
+                    d.data = DocumentData::Part(part);
+                }
+                let a = asm_mut(project, asm)?;
+                for c in a.frames.iter_mut().flat_map(|f| &mut f.caps) {
+                    if c.occurrence == occ {
+                        c.built_for = now.clone();
+                    }
+                }
+                changed.insert(occ);
+            }
+            Err(e) => out.sick.push((occ, format!("End Cap: {e}"))),
+        }
+    }
+    places.extend(cap_places);
     let a = asm_mut(project, asm)?;
     for (occ, t) in places {
         if let Some(o) = a.occurrences.iter_mut().find(|o| o.id == occ) {
@@ -1451,6 +1611,9 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
     out.moved = changed.len();
     Ok(out)
 }
+
+/// How much a reused member's line may differ from its source's (mm).
+const REUSE_TOLERANCE: Real = 1e-3;
 
 /// What each end of `m` is cut like, from the final geometry: the angle off
 /// square (a saw's setting); a square end has no text.
@@ -1603,6 +1766,13 @@ pub fn add_treatments(
         let mut touched = Vec::new();
         for t in ts {
             let ms = t.members();
+            if a.frames
+                .iter()
+                .flat_map(|f| &f.members)
+                .any(|m| ms.contains(&m.occurrence) && m.reuse_of.is_some())
+            {
+                return Err("a reused member's end treatments are changed on its source".into());
+            }
             merge_frames_of(a, &ms);
             let f = a
                 .frames
@@ -1755,6 +1925,9 @@ pub fn edit_members(
                 .iter()
                 .find(|m| m.occurrence == occ)
                 .ok_or("only frame members can be changed")?;
+            if m.reuse_of.is_some() {
+                return Err("a reused member is changed on its source".into());
+            }
             let doc = a
                 .find(occ)
                 .map(|x| x.component)
@@ -1931,6 +2104,7 @@ pub fn delete_members(
     let result = (|| {
         let a = asm_mut(project, asm)?;
         let mut docs = Vec::new();
+        let mut caps = Vec::new();
         for &occ in members {
             if !a
                 .frames
@@ -1940,8 +2114,20 @@ pub fn delete_members(
                 return Err("only frame members can be deleted here".to_owned());
             }
             for f in &mut a.frames {
+                promote_reuse(f, occ);
                 f.members.retain(|m| m.occurrence != occ);
                 f.treatments.retain(|t| !t.members().contains(&occ));
+                for c in f.caps.iter().filter(|c| c.member == occ) {
+                    caps.push(c.occurrence);
+                }
+                f.caps.retain(|c| c.member != occ);
+            }
+            for c in caps.drain(..) {
+                if let Some(o) = a.remove(c)
+                    && o.component.library.is_none()
+                {
+                    docs.push(o.component.document);
+                }
             }
             if let Some(o) = a.remove(occ)
                 && o.component.library.is_none()
@@ -1952,6 +2138,274 @@ pub fn delete_members(
         a.frames.retain(|f| !f.members.is_empty());
         for d in docs {
             // Still placed elsewhere (a reused member): kept.
+            let _ = project.remove_document(d);
+        }
+        solve(project, linked, asm)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// Before source `gone` is deleted: the first member reusing it becomes the
+/// source of the others.
+fn promote_reuse(f: &mut Frame, gone: u32) {
+    let Some(next) = f
+        .members
+        .iter()
+        .find(|m| m.reuse_of == Some(gone))
+        .map(|m| m.occurrence)
+    else {
+        return;
+    };
+    let built = f
+        .members
+        .iter()
+        .find(|m| m.occurrence == gone)
+        .and_then(|m| m.built.clone());
+    for m in &mut f.members {
+        if m.occurrence == next {
+            m.reuse_of = None;
+            m.built = built.clone();
+        } else if m.reuse_of == Some(gone) {
+            m.reuse_of = Some(next);
+        }
+    }
+}
+
+/// Reuse: further occurrences of `source`'s part on `lines` of the same
+/// length (a reused member names its own source). On an error nothing is
+/// changed. Returns the new occurrences.
+pub fn reuse(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    source: u32,
+    lines: &[Skeleton],
+    flip: bool,
+) -> Result<Vec<u32>, String> {
+    if lines.is_empty() {
+        return Err("select the lines to reuse the member on".into());
+    }
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_of(project, asm)?;
+        let found = |id: u32| {
+            a.frames.iter().enumerate().find_map(|(k, f)| {
+                f.members
+                    .iter()
+                    .find(|m| m.occurrence == id)
+                    .map(|m| (k, m))
+            })
+        };
+        let (frame, m) = found(source).ok_or("that is not a frame member")?;
+        let (frame, m) = match m.reuse_of {
+            Some(s) => found(s).unwrap_or((frame, m)),
+            None => (frame, m),
+        };
+        let src = m.occurrence;
+        let o = a.find(src).ok_or("the member no longer exists")?;
+        let component = o.component;
+        let base = o.name.split(':').next().unwrap_or(&o.name).to_owned();
+        let (p, q) = skeleton_line(project, linked, a, &m.skeleton)?;
+        let want = (q - p).norm();
+        let template = m.clone();
+        let mut new = Vec::new();
+        for line in lines {
+            let (p, q) = skeleton_line(project, linked, a, line)?;
+            let len = (q - p).norm();
+            if (len - want).abs() > REUSE_TOLERANCE {
+                return Err(format!(
+                    "a line is {len:.3} mm long, the source's {want:.3} mm"
+                ));
+            }
+            new.push(line.clone());
+        }
+        let mut made = Vec::new();
+        let a = asm_mut(project, asm)?;
+        for skeleton in new {
+            let occ = a.place(component, &base, Transform3::identity(), true);
+            let mut orientation = template.orientation;
+            orientation.flip ^= flip;
+            a.frames[frame].members.push(FrameMember {
+                occurrence: occ,
+                skeleton,
+                orientation,
+                built: None,
+                reuse_of: Some(src),
+                ..template.clone()
+            });
+            made.push(occ);
+        }
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(m, _)| made.contains(m)) {
+            return Err(why.clone());
+        }
+        Ok(made)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+fn part_material(project: &Project, doc: DocumentId) -> Option<String> {
+    match project.document(doc).map(|d| &d.data) {
+        Some(DocumentData::Part(p)) => p.material.clone(),
+        _ => None,
+    }
+}
+
+/// The plate part of an end cap on section `s`, and its name's base.
+fn cap_part(
+    s: &Section,
+    o: &CapOptions,
+    material: Option<&str>,
+) -> Result<(PartDocument, String), String> {
+    if !(o.thickness.is_finite() && o.thickness > 1e-6) {
+        return Err("the thickness must be more than zero".into());
+    }
+    if !o.offset.is_finite() {
+        return Err("the offset is not a number".into());
+    }
+    let plate = s.cap_section(o.internal, o.corners, o.inset(s))?;
+    let part = plate
+        .member_part(o.thickness, material)
+        .map_err(|e| e.to_string())?;
+    if let Some(why) = part.feature_health.values().next() {
+        return Err(why.clone());
+    }
+    let (w, h) = s.extent();
+    Ok((part, format!("End Cap {w:.0}x{h:.0}x{:.1}", o.thickness)))
+}
+
+/// Where the plate of cap `c` stands: on the member placed by `member`, whose
+/// part spans `z` along its Z.
+fn cap_placement(member: &Transform3, z: (Real, Real), c: &EndCap) -> Transform3 {
+    let t = c.options.thickness;
+    let off = c.options.offset;
+    let at = match (c.high, c.options.internal) {
+        (true, false) => z.1 + off,
+        (false, false) => z.0 - off - t,
+        (true, true) => z.1 - off - t,
+        (false, true) => z.0 + off,
+    };
+    let turn = nalgebra::UnitQuaternion::from_axis_angle(&Vector3::z_axis(), c.options.rotate);
+    *member * Transform3::from_parts(Vector3::new(0.0, 0.0, at).into(), turn)
+}
+
+/// Insert End Cap: a plate on each (member, high end) of `ends`; a part per
+/// member section, placed where [`solve`] keeps it. On an error nothing is
+/// changed. Returns the new occurrences.
+pub fn insert_caps(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    ends: &[(u32, bool)],
+    o: &CapOptions,
+    material: Option<&str>,
+) -> Result<Vec<u32>, String> {
+    if ends.is_empty() {
+        return Err("select the end faces of the members".into());
+    }
+    let before = project.clone();
+    let result = (|| {
+        let mut made = Vec::new();
+        for &(member, high) in ends {
+            let a = asm_of(project, asm)?;
+            let frame = a
+                .frames
+                .iter()
+                .position(|f| f.members.iter().any(|m| m.occurrence == member))
+                .ok_or("that is not a frame member")?;
+            let f = &a.frames[frame];
+            if f.caps.iter().any(|c| c.member == member && c.high == high) {
+                return Err("that end has a cap already".into());
+            }
+            let m = f
+                .members
+                .iter()
+                .find(|m| m.occurrence == member)
+                .ok_or("that is not a frame member")?;
+            if m.reuse_of.is_some() {
+                return Err("a cap goes on the source of a reused member".into());
+            }
+            let sec = m.section().ok_or("its section data is unreadable")?;
+            if m.built.as_ref().is_some_and(|b| b.slanted(high)) {
+                return Err("a cap goes on a square end".into());
+            }
+            let built_for = format!("{} {}", m.family, m.size);
+            let (part, base) = cap_part(&sec, o, material)?;
+            let name = project.free_name(&format!("{base}-"));
+            let doc = project.add_document(name.clone(), DocumentData::Part(part));
+            if let Some(d) = project.document_mut(doc) {
+                d.properties.set("stock_number", &base);
+                d.properties.set("description", "End cap");
+            }
+            let a = asm_mut(project, asm)?;
+            let occurrence = a.place(DocRef::local(doc), &name, Transform3::identity(), true);
+            a.frames[frame].caps.push(EndCap {
+                occurrence,
+                member,
+                high,
+                options: *o,
+                built_for,
+            });
+            made.push(occurrence);
+        }
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(m, _)| made.contains(m)) {
+            return Err(why.clone());
+        }
+        Ok(made)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// Which end of member `member` a point of its part (Z) lies on: the high
+/// one or not; `None` when it is on neither.
+pub fn member_end_at(a: &AssemblyDocument, member: u32, z: Real) -> Option<bool> {
+    let m = a
+        .frames
+        .iter()
+        .flat_map(|f| &f.members)
+        .find(|m| m.occurrence == member)?;
+    let (z0, z1) = m.built.as_ref()?.z_range();
+    if (z - z1).abs() < 1e-3 {
+        Some(true)
+    } else if (z - z0).abs() < 1e-3 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Deletes end caps by their occurrences (with their parts).
+pub fn delete_caps(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    caps: &[u32],
+) -> Result<Solved, String> {
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_mut(project, asm)?;
+        let mut docs = Vec::new();
+        for &c in caps {
+            for f in &mut a.frames {
+                f.caps.retain(|x| x.occurrence != c);
+            }
+            if let Some(o) = a.remove(c)
+                && o.component.library.is_none()
+            {
+                docs.push(o.component.document);
+            }
+        }
+        for d in docs {
             let _ = project.remove_document(d);
         }
         solve(project, linked, asm)
@@ -3720,6 +4174,252 @@ mod tests {
             assert_eq!(custom_text(&p, aid, o, "CUTDETAIL1"), None);
             assert_eq!(custom_text(&p, aid, o, "CUTDETAIL2"), None);
         }
+    }
+
+    fn caps_of(p: &Project, a: DocumentId) -> Vec<EndCap> {
+        asm_of(p, a).unwrap().frames[0].caps.clone()
+    }
+
+    fn cap_opts() -> CapOptions {
+        CapOptions {
+            internal: false,
+            corners: CapCorners::Sharp,
+            thickness: 5.0,
+            ratio: false,
+            edge_offset: 0.0,
+            rotate: 0.0,
+            offset: 0.0,
+        }
+    }
+
+    /// One 40x40x3 member along the box's front top edge, 400 long.
+    fn one_member(p: &mut Project, a: DocumentId) -> u32 {
+        let e = [edge("Front", "Top", [200.0, 0.0, 200.0])];
+        insert(p, &Linked::new(), a, &e, &opts(), Library::builtin(), None)
+            .unwrap()
+            .1[0]
+    }
+
+    fn close_to(v: Real, want: Real, tol: Real) {
+        assert!((v - want).abs() < tol, "{v} vs {want}");
+    }
+
+    #[test]
+    fn an_external_cap_sits_beyond_the_end_with_the_outline_area() {
+        let (mut p, aid, _) = project();
+        let m = one_member(&mut p, aid);
+        let c = insert_caps(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[(m, true)],
+            &cap_opts(),
+            Some("Steel S235"),
+        )
+        .unwrap()[0];
+        // Sharp corners: 40 x 40 x 5.
+        close_to(volume_of(&p, aid, c), 8000.0, 1.0);
+        let a = asm_of(&p, aid).unwrap();
+        let mt = a.find(m).unwrap().transform;
+        let at = mt.inverse() * a.find(c).unwrap().transform;
+        close_to(at.translation.vector.z, 400.0, 1e-6);
+    }
+
+    #[test]
+    fn an_internal_cap_fits_the_hole_and_stays_inside() {
+        let (mut p, aid, _) = project();
+        let m = one_member(&mut p, aid);
+        let o = CapOptions {
+            internal: true,
+            edge_offset: 0.5,
+            offset: 2.0,
+            ..cap_opts()
+        };
+        let c = insert_caps(&mut p, &Linked::new(), aid, &[(m, false)], &o, None).unwrap()[0];
+        // A 34 x 34 hole 0.5 smaller all round, 5 thick.
+        close_to(volume_of(&p, aid, c), 33.0 * 33.0 * 5.0, 1.0);
+        let a = asm_of(&p, aid).unwrap();
+        let at = a.find(m).unwrap().transform.inverse() * a.find(c).unwrap().transform;
+        close_to(at.translation.vector.z, 2.0, 1e-6);
+    }
+
+    #[test]
+    fn filleted_and_chamfered_plates_lose_their_corners() {
+        let (mut p, aid, _) = project();
+        let m = one_member(&mut p, aid);
+        let r = 6.0; // the section's outer radius (2 t)
+        let square = 1600.0 * 5.0;
+        let fillet = (4.0 - std::f64::consts::PI) * r * r * 5.0;
+        let chamfer = 2.0 * r * r * 5.0;
+        let filleted = CapOptions {
+            corners: CapCorners::Filleted,
+            ..cap_opts()
+        };
+        let chamfered = CapOptions {
+            corners: CapCorners::Chamfered,
+            ..cap_opts()
+        };
+        let linked = Linked::new();
+        let f = insert_caps(&mut p, &linked, aid, &[(m, true)], &filleted, None).unwrap()[0];
+        let c = insert_caps(&mut p, &linked, aid, &[(m, false)], &chamfered, None).unwrap()[0];
+        close_to(volume_of(&p, aid, f), square - fillet, 2.0);
+        close_to(volume_of(&p, aid, c), square - chamfer, 2.0);
+    }
+
+    #[test]
+    fn a_cap_follows_its_member_and_goes_with_it() {
+        let (mut p, aid, sk) = project();
+        let linked = Linked::new();
+        let m = one_member(&mut p, aid);
+        let c = insert_caps(&mut p, &linked, aid, &[(m, true)], &cap_opts(), None).unwrap()[0];
+        // The skeleton grows: the end, and the cap on it, move.
+        if let Some(DocumentData::Part(x)) = p.document_mut(sk).map(|d| &mut d.data) {
+            *x = PartDocument::with_box("Box1", [500.0, 300.0, 200.0]).unwrap();
+        }
+        let s = solve(&mut p, &linked, aid).unwrap();
+        assert!(s.sick.is_empty(), "{:?}", s.sick);
+        let a = asm_of(&p, aid).unwrap();
+        let at = a.find(m).unwrap().transform.inverse() * a.find(c).unwrap().transform;
+        close_to(at.translation.vector.z, 500.0, 1e-6);
+        // Change of section: the plate is rebuilt to it.
+        let lib = Library::builtin();
+        let mut o2 = opts();
+        o2.size = "50x50x4".into();
+        change(&mut p, &linked, aid, &[m], &o2, lib).unwrap();
+        close_to(volume_of(&p, aid, c), 2500.0 * 5.0, 1.0);
+        // A member deleted takes its cap and the cap's part.
+        let docs = p.documents().len();
+        delete_members(&mut p, &linked, aid, &[m]).unwrap();
+        assert!(asm_of(&p, aid).unwrap().find(c).is_none());
+        assert_eq!(p.documents().len(), docs - 2);
+    }
+
+    #[test]
+    fn a_cap_is_refused_where_it_cannot_be_and_nothing_changes() {
+        let (mut p, aid, _) = project();
+        let linked = Linked::new();
+        let m = one_member(&mut p, aid);
+        let n = p.documents().len();
+        // No such end twice, no zero thickness, no plate left by the offset.
+        insert_caps(&mut p, &linked, aid, &[(m, true)], &cap_opts(), None).unwrap();
+        assert!(insert_caps(&mut p, &linked, aid, &[(m, true)], &cap_opts(), None).is_err());
+        let thin = CapOptions {
+            thickness: 0.0,
+            ..cap_opts()
+        };
+        assert!(insert_caps(&mut p, &linked, aid, &[(m, false)], &thin, None).is_err());
+        let wide = CapOptions {
+            edge_offset: 30.0,
+            corners: CapCorners::Filleted,
+            ..cap_opts()
+        };
+        assert!(insert_caps(&mut p, &linked, aid, &[(m, false)], &wide, None).is_err());
+        assert_eq!(caps_of(&p, aid).len(), 1);
+        assert_eq!(p.documents().len(), n + 1);
+        // Removing it brings back the free end.
+        let c = caps_of(&p, aid)[0].occurrence;
+        delete_caps(&mut p, &linked, aid, &[c]).unwrap();
+        assert!(caps_of(&p, aid).is_empty());
+        assert_eq!(p.documents().len(), n);
+    }
+
+    fn component_of(p: &Project, a: DocumentId, occ: u32) -> DocRef {
+        asm_of(p, a).unwrap().find(occ).unwrap().component
+    }
+
+    /// The front and back top edges are equally long; the sides are not.
+    fn front_and_back(p: &mut Project, a: DocumentId) -> (u32, Skeleton, Skeleton) {
+        let m = one_member(p, a);
+        (
+            m,
+            edge("Back", "Top", [200.0, 300.0, 200.0]),
+            edge("Right", "Top", [400.0, 150.0, 200.0]),
+        )
+    }
+
+    #[test]
+    fn reuse_places_the_same_part_and_refuses_another_length() {
+        let (mut p, aid, _) = project();
+        let linked = Linked::new();
+        let (m, back, side) = front_and_back(&mut p, aid);
+        let n = p.documents().len();
+        assert!(reuse(&mut p, &linked, aid, m, std::slice::from_ref(&side), false).is_err());
+        assert_eq!(p.documents().len(), n);
+        let r = reuse(&mut p, &linked, aid, m, &[back], false).unwrap()[0];
+        assert_eq!(p.documents().len(), n, "no new part");
+        assert_eq!(component_of(&p, aid, r), component_of(&p, aid, m));
+        let a = asm_of(&p, aid).unwrap();
+        close_to(
+            a.find(r).unwrap().transform.translation.vector.y,
+            300.0,
+            21.0,
+        );
+        // A reused member is not cut, changed or capped on its own.
+        let t = Treatment::Lengthen {
+            member: r,
+            offsets: [5.0, 0.0],
+        };
+        assert!(add_treatments(&mut p, &linked, aid, vec![t]).is_err());
+        assert!(change(&mut p, &linked, aid, &[r], &opts(), Library::builtin()).is_err());
+        assert!(insert_caps(&mut p, &linked, aid, &[(r, true)], &cap_opts(), None).is_err());
+        // Picking a reused member finds its source.
+        let again = edge("Front", "Bottom", [200.0, 0.0, 0.0]);
+        let r2 = reuse(&mut p, &linked, aid, r, &[again], false).unwrap()[0];
+        let f = &asm_of(&p, aid).unwrap().frames[0];
+        assert_eq!(
+            f.members
+                .iter()
+                .find(|x| x.occurrence == r2)
+                .unwrap()
+                .reuse_of,
+            Some(m)
+        );
+    }
+
+    #[test]
+    fn a_change_on_the_source_reaches_the_reused_members() {
+        let (mut p, aid, _) = project();
+        let linked = Linked::new();
+        let (m, back, _) = front_and_back(&mut p, aid);
+        let r = reuse(&mut p, &linked, aid, m, &[back], false).unwrap()[0];
+        let t = Treatment::Lengthen {
+            member: m,
+            offsets: [10.0, 0.0],
+        };
+        add_treatments(&mut p, &linked, aid, vec![t]).unwrap();
+        close_to(volume_of(&p, aid, r), volume_of(&p, aid, m), 1e-6);
+        assert!(solve(&mut p, &linked, aid).unwrap().sick.is_empty());
+    }
+
+    #[test]
+    fn deleting_a_source_hands_it_on_and_the_last_takes_the_part() {
+        let (mut p, aid, _) = project();
+        let linked = Linked::new();
+        let (m, back, _) = front_and_back(&mut p, aid);
+        let again = edge("Front", "Bottom", [200.0, 0.0, 0.0]);
+        let r = reuse(&mut p, &linked, aid, m, &[back, again], false).unwrap();
+        let n = p.documents().len();
+        delete_members(&mut p, &linked, aid, &[m]).unwrap();
+        assert_eq!(p.documents().len(), n, "the part is still shown");
+        let f = &asm_of(&p, aid).unwrap().frames[0];
+        assert_eq!(
+            f.members
+                .iter()
+                .find(|x| x.occurrence == r[0])
+                .unwrap()
+                .reuse_of,
+            None
+        );
+        assert_eq!(
+            f.members
+                .iter()
+                .find(|x| x.occurrence == r[1])
+                .unwrap()
+                .reuse_of,
+            Some(r[0])
+        );
+        delete_members(&mut p, &linked, aid, &r).unwrap();
+        assert_eq!(p.documents().len(), n - 1);
     }
 
     #[test]

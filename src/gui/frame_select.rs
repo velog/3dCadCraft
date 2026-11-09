@@ -59,6 +59,7 @@ fn face_colour(d: &PartDialog, key: &str) -> Option<[f32; 3]> {
     matches!(
         (d.kind, key),
         (Planned::Asm(AsmPlanned::TrimExtend), "face")
+            | (Planned::Asm(AsmPlanned::EndCap), "faces")
     )
     .then_some(YELLOW)
 }

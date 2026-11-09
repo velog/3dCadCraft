@@ -11,8 +11,9 @@ use super::part_planned::{PartDialog, Planned};
 use crate::assembly::frame::Skeleton;
 use crate::assembly::frame::{self, Anchor, InsertOptions, Orientation};
 use crate::assembly::frame_sub;
+use crate::assembly::relation::GeomRef;
 use crate::kernel::Point3;
-use crate::part::frame::Library;
+use crate::part::frame::{CapCorners, Library};
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 
 /// Colour of component sketches in the assembly view.
@@ -28,7 +29,7 @@ const HOVER: Color32 = Color32::from_rgb(255, 160, 50);
 fn is_frame(d: &PartDialog) -> bool {
     matches!(
         d.kind,
-        Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::FrameChange)
+        Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::FrameChange | AsmPlanned::EndCap)
     )
 }
 
@@ -419,7 +420,10 @@ impl CadCraftApp {
     /// Is Insert Frame open with its edges selector active?
     fn frame_takes_lines(&self) -> bool {
         self.part_planned.as_ref().is_some_and(|d| {
-            d.kind == Planned::Asm(AsmPlanned::InsertFrame) && d.active == Some("edges")
+            matches!(
+                d.kind,
+                Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::Reuse)
+            ) && d.active == Some("edges")
         })
     }
 
@@ -641,7 +645,10 @@ impl CadCraftApp {
         let Some(d) = self.part_planned.as_ref() else {
             return;
         };
-        if d.kind != Planned::Asm(AsmPlanned::InsertFrame) {
+        if !matches!(
+            d.kind,
+            Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::Reuse)
+        ) {
             return;
         }
         if d.members.list.is_empty() {
@@ -973,6 +980,117 @@ impl CadCraftApp {
                 self.history.break_coalescing();
                 self.scene_dirty = true;
                 self.file_status = Some(Ok(format!("{title}: done")));
+                true
+            }
+            Err(e) => fail(self, &e),
+        }
+    }
+
+    /// OK of Reuse: the source's part on every picked line.
+    pub(super) fn reuse_ok(&mut self, d: &PartDialog) -> bool {
+        let fail = |app: &mut Self, e: &str| {
+            app.file_status = Some(Err(format!("Reuse: {e}")));
+            false
+        };
+        let Some(&source) = self.picked_members(d, "source").first() else {
+            return fail(self, "select the member to reuse");
+        };
+        if d.skeletons.is_empty() {
+            return fail(self, "select the lines to reuse it on");
+        }
+        let linked = self.linked();
+        let mut trial = self.project.clone();
+        let doc = self.frame_doc();
+        let flip = d.check(0, "Flip Direction");
+        let result = d
+            .skeletons
+            .iter()
+            .map(|s| self.frame_skeleton_down(&mut trial, &linked, s))
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(|lines| frame::reuse(&mut trial, &linked, doc, source, &lines, flip));
+        match result {
+            Ok(made) => {
+                self.history.break_coalescing();
+                self.checkpoint("Reuse");
+                self.project = trial;
+                self.history.break_coalescing();
+                self.scene_dirty = true;
+                self.file_status = Some(Ok(format!("Reuse: {} member(s)", made.len())));
+                true
+            }
+            Err(e) => fail(self, &e),
+        }
+    }
+
+    /// OK of Insert End Cap: a plate on every picked end face.
+    pub(super) fn end_cap_ok(&mut self, d: &PartDialog) -> bool {
+        let fail = |app: &mut Self, e: &str| {
+            app.file_status = Some(Err(format!("Insert End Cap: {e}")));
+            false
+        };
+        let refs: Vec<GeomRef> = d.refs.get("faces").cloned().unwrap_or_default();
+        if refs.is_empty() {
+            return fail(self, "select the end faces of the members");
+        }
+        let Some(a) = self.frame_asm() else {
+            return fail(self, "the assembly has no frame");
+        };
+        let top = self.frame_occ();
+        let mut ends = Vec::new();
+        for g in &refs {
+            let (member, hint) = match (g, top) {
+                (
+                    GeomRef::Face {
+                        occurrence,
+                        sub,
+                        hint,
+                        ..
+                    },
+                    Some(f),
+                ) if *occurrence == f && sub.len() == 1 => (sub[0], *hint),
+                (
+                    GeomRef::Face {
+                        occurrence,
+                        sub,
+                        hint,
+                        ..
+                    },
+                    None,
+                ) if sub.is_empty() => (*occurrence, *hint),
+                _ => return fail(self, "that face is not on a frame member"),
+            };
+            let Some(high) = frame::member_end_at(a, member, hint[2]) else {
+                return fail(self, "select a member's end face");
+            };
+            if !ends.contains(&(member, high)) {
+                ends.push((member, high));
+            }
+        }
+        let o = frame::CapOptions {
+            internal: d.index(0, "Placement") == 0,
+            corners: match d.index(0, "Profile") {
+                1 => CapCorners::Chamfered,
+                2 => CapCorners::Sharp,
+                _ => CapCorners::Filleted,
+            },
+            thickness: d.num(0, "Thickness").unwrap_or(0.0),
+            ratio: d.index(0, "Offset Type") == 1,
+            edge_offset: d.num(0, "Edge Offset").unwrap_or(0.0),
+            rotate: d.num(0, "Rotate").unwrap_or(0.0).to_radians(),
+            offset: d.num(0, "Offset").unwrap_or(0.0),
+        };
+        let material = frame_choice(d, 0, "Material");
+        let linked = self.linked();
+        let mut trial = self.project.clone();
+        let doc = self.frame_doc();
+        match frame::insert_caps(&mut trial, &linked, doc, &ends, &o, material.as_deref()) {
+            Ok(made) => {
+                self.history.break_coalescing();
+                self.checkpoint("Insert End Cap");
+                self.project = trial;
+                self.history.break_coalescing();
+                self.scene_dirty = true;
+                self.file_status = Some(Ok(format!("Insert End Cap: {} cap(s)", made.len())));
                 true
             }
             Err(e) => fail(self, &e),

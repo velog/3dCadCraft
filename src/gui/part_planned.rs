@@ -1539,6 +1539,8 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::Miter
                     | super::asm_planned::AsmPlanned::RemoveEndTreatments
                     | super::asm_planned::AsmPlanned::FrameChange
+                    | super::asm_planned::AsmPlanned::EndCap
+                    | super::asm_planned::AsmPlanned::Reuse
                     | super::asm_planned::AsmPlanned::CornerJoint
                     | super::asm_planned::AsmPlanned::TrimExtend
                     | super::asm_planned::AsmPlanned::LengthenShorten
@@ -1597,6 +1599,14 @@ impl Planned {
             ) => Some(
                 "Comes later: the cylinder stands on its plane, along its normal (spec 5.5 §3.1)",
             ),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::Reuse),
+                "Apply Appearance to Part",
+                None,
+            ) => Some("Comes later (spec 6.1 §3.5): the part is the source's"),
+            (Planned::Asm(super::asm_planned::AsmPlanned::EndCap), "Appearance", None) => {
+                Some("Comes later: the plate takes its material's appearance (spec 6.1 §3.2)")
+            }
             (Planned::Part(PartPlanned::Grill), "Parting Element", None) => {
                 Some("Comes later (spec 5.8 Grill: Draft)")
             }
@@ -1967,7 +1977,13 @@ impl PartDialog {
     /// Edges: a face or an edge) — the picking and the highlight take nothing else (spec 0-ui rule 19).
     fn accepts(&self, key: &str, def: &'static [PickKind]) -> &'static [PickKind] {
         match (self.kind, key) {
-            (Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame), "edges") => {
+            (
+                Planned::Asm(
+                    super::asm_planned::AsmPlanned::InsertFrame
+                    | super::asm_planned::AsmPlanned::Reuse,
+                ),
+                "edges",
+            ) => {
                 if self.index(0, "Select") == 0 {
                     &[
                         PickKind::Edge,
@@ -3073,6 +3089,16 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) => {
                 if self.frame_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Reuse) => {
+                if self.reuse_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::EndCap) => {
+                if self.end_cap_ok(&d) {
                     self.part_planned = None;
                 }
             }

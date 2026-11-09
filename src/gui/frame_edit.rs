@@ -19,6 +19,7 @@ pub(super) enum FrameCmd {
     EditTreatment(u32, usize),
     DeleteTreatment(u32, usize),
     DeleteMembers(Vec<u32>),
+    DeleteCap(u32),
     Retype(u32, usize, frame::CornerType),
     EditMembers(Vec<u32>),
 }
@@ -70,6 +71,12 @@ impl CadCraftApp {
                     .collect();
                 (f.id, f.name.clone(), members)
             })
+            .collect();
+        let caps: Vec<(u32, String)> = a
+            .frames
+            .iter()
+            .flat_map(|f| &f.caps)
+            .filter_map(|c| a.find(c.occurrence).map(|o| (c.occurrence, o.name.clone())))
             .collect();
         let selected = self.frame_selected();
         let holder = self
@@ -158,6 +165,31 @@ impl CadCraftApp {
                                 ui.horizontal(|ui| {
                                     super::panels::tree_icon(ui, Icon::Part);
                                     ui.label(egui::RichText::new(n).weak());
+                                });
+                            }
+                        });
+                    }
+                    if !caps.is_empty() {
+                        super::panels::tree_fold(
+                            ui,
+                            ui.make_persistent_id(("asm_frame_caps", fid)),
+                            true,
+                        )
+                        .show_header(ui, |ui| {
+                            super::panels::tree_icon(ui, Icon::EndCap);
+                            ui.label("End Caps");
+                        })
+                        .body(|ui| {
+                            for (c, n) in &caps {
+                                ui.horizontal(|ui| {
+                                    super::panels::tree_icon(ui, Icon::Part);
+                                    let r = ui.selectable_label(false, n);
+                                    r.context_menu(|ui| {
+                                        if ui.button("Delete").clicked() {
+                                            cmds.push(FrameCmd::DeleteCap(*c));
+                                            ui.close();
+                                        }
+                                    });
                                 });
                             }
                         });
@@ -258,6 +290,14 @@ impl CadCraftApp {
                 }
             }
             FrameCmd::DeleteMembers(ids) => self.frame_delete_members(&ids),
+            FrameCmd::DeleteCap(c) => {
+                let linked = self.linked();
+                let mut trial = self.project.clone();
+                match frame::delete_caps(&mut trial, &linked, self.frame_doc(), &[c]) {
+                    Ok(_) => self.frame_commit("Delete End Cap", trial),
+                    Err(e) => self.file_status = Some(Err(format!("Delete: {e}"))),
+                }
+            }
             FrameCmd::EditMembers(ids) => self.edit_members_start(&ids),
             FrameCmd::Retype(f, i, k) => {
                 let linked = self.linked();

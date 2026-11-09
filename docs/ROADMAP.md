@@ -290,7 +290,7 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 
 ## Phase 5 — Specialized environments
 
-- Frame Generator (6.1): [spec](spec/6.1-frame-generator.md) written 2026-10-29, stages F0–F5. 2026-11-09: the frame is a subassembly (§3.6a); next F4 (Unit QTY = length, cut details, cut list), End Cap, Reuse, arcs and Merge.
+- Frame Generator (6.1): [spec](spec/6.1-frame-generator.md) written 2026-10-29, stages F0–F5. 2026-11-09: the frame is a subassembly (§3.6a); Unit QTY = length, cut details, Cut List, End Cap, Reuse done; next arcs and Merge, Change Reuse, Frame Member Naming, File Naming Defaults, Base Unit.
 - Libraries of standard components (6.3): [spec](spec/6.3-content-center.md) rewritten 2026-11-02 with the plan CC0–CC7 (interface, families [5.7](spec/5.7-part-families.md), library and fasteners, profiles in the tree, everyday use, AutoDrop, own libraries and publishing, breadth); waiting for the owner's decisions (its §7).
   Fasteners built directly, no Boolean, 2026-11-02 (spec 6.3 §6.0b, format revision 61): all 2586 members build in 17 s, worst family 33.7 ms.
 - Bolted connections, shafts and gears (6.2).

@@ -162,10 +162,10 @@ impl CadCraftApp {
     /// is a subassembly here.
     pub(super) fn frame_member_sub(&self, p: Pos2, rect: Rect) -> Option<AsmSub> {
         let occurrence = self.frame_occ()?;
-        let (member, _) = self.frame_member_under(p, rect)?;
-        Some(AsmSub::Part {
+        let (part, _, _) = self.part_hit(p, rect)?;
+        (part.top == occurrence && part.sub.len() == 1).then_some(AsmSub::Part {
             occurrence,
-            sub: vec![member],
+            sub: part.sub,
         })
     }
 
