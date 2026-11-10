@@ -1,0 +1,21 @@
+# ISO 228-1 parallel pipe threads (G), for Tapped holes (mm).
+# Basic diameters of the 55 deg Whitworth form: minor = major - 2 x 0.640327 P;
+#   pitch = 25.4 / threads per inch (28, 19, 14, 11).
+# One tolerance class for internal threads (no letter); external threads are class A or B.
+# tap_drill = the usual drill for the size.
+# Edit freely, or copy this file to the user standards folder to override it.
+designation,series,size,major,pitch,tap_drill,minor,classes_internal,classes_external
+G 1/16,G,1/16,7.723,0.9071,6.800,6.561,,A;B
+G 1/8,G,1/8,9.728,0.9071,8.800,8.566,,A;B
+G 1/4,G,1/4,13.157,1.3368,11.800,11.445,,A;B
+G 3/8,G,3/8,16.662,1.3368,15.250,14.950,,A;B
+G 1/2,G,1/2,20.955,1.8143,19.000,18.631,,A;B
+G 5/8,G,5/8,22.911,1.8143,21.000,20.587,,A;B
+G 3/4,G,3/4,26.441,1.8143,24.500,24.117,,A;B
+G 7/8,G,7/8,30.201,1.8143,28.250,27.877,,A;B
+G 1,G,1,33.249,2.3091,30.750,30.291,,A;B
+G 1 1/8,G,1 1/8,37.897,2.3091,35.500,34.939,,A;B
+G 1 1/4,G,1 1/4,41.910,2.3091,39.500,38.952,,A;B
+G 1 1/2,G,1 1/2,47.803,2.3091,45.250,44.845,,A;B
+G 1 3/4,G,1 3/4,53.746,2.3091,51.250,50.788,,A;B
+G 2,G,2,59.614,2.3091,57.000,56.656,,A;B

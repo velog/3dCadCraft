@@ -681,7 +681,7 @@ Tilts faces at an angle to a pull direction, for castings and die casting. Metho
 
 ## 2.9 Thread — 🟡 · M
 
-**Specification:** [spec/2.9-thread.md](spec/2.9-thread.md). Implemented (waiting for a visual check): a thread on a cylindrical face (shaft or hole), the size is proposed from the diameter, a check that the size fits the face, Full Length or Offset + Length, Right/Left Hand, cosmetic (data + a texture with helical stripes one pitch apart on the face, only along the thread's length, and in pattern copies; Application Options → Display → Thread texture) or modeled (groove per ISO 68-1; only the zone around the thread is faceted), clearance for 3D printing. To do: several faces at once, tapered thread.
+**Specification:** [spec/2.9-thread.md](spec/2.9-thread.md). Implemented (waiting for a visual check): a thread on a cylindrical face (shaft or hole), the size is proposed from the diameter, a check that the size fits the face, Full Length or Offset + Length, Right/Left Hand, cosmetic (data + a texture with helical stripes one pitch apart on the face, only along the thread's length, and in pattern copies; Application Options → Display → Thread texture) or modeled (groove per ISO 68-1; only the zone around the thread is faceted), clearance for 3D printing. 🟡 (2026-11-10): several faces of one diameter in one Thread; ISO 228-1 G parallel pipe threads (also for Tapped holes). To do: tapered thread on a conical face, the 55° form for modeled G threads.
 
 A cosmetic thread on a cylindrical face (attribute + texture in the view + correct representation in the drawing). A modeled (physical) thread is optional, for 3D printing.
 

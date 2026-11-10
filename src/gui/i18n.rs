@@ -161,8 +161,8 @@ const TABLE: &[(&str, &str)] = &[
         "Thread: щракнете цилиндрична стена близо до края, от който започва резбата",
     ),
     (
-        "Thread: set the size and the length, then OK (another click picks another face)",
-        "Thread: задайте размера и дължината, после OK (друг клик избира друга стена)",
+        "Thread: set the size and the length, then OK (another face of the same diameter adds it)",
+        "Thread: задайте размера и дължината, после OK (друга стена със същия диаметър се добавя)",
     ),
     (
         "Select the pull direction (a planar face, a plane, a straight edge or an axis)",

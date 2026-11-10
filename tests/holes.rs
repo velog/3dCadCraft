@@ -1525,3 +1525,111 @@ fn countersinks_at_both_ends_have_the_exact_volume() {
         );
     }
 }
+
+/// Thread on several faces at once (Inventor: one Thread, several faces):
+/// three Ø8 shafts in one extrusion get one cosmetic thread each, a fourth
+/// face of another size is refused naming that face, and the feature
+/// survives a save and load. Modeled on two shafts: both lose material.
+#[test]
+fn thread_on_several_faces() {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &SketchOptions::default(),
+        )
+        .unwrap();
+    for (x, r) in [(0.0, 4.0), (20.0, 4.0), (40.0, 4.0), (60.0, 6.0)] {
+        part.sketches[i]
+            .sketch
+            .add_circle(Point2::new(x, 0.0), r)
+            .unwrap();
+    }
+    let regions = part.sketches[i].sketch.regions();
+    let profiles: Vec<ProfileRef> = regions
+        .iter()
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    part.add_extrude(i, ExtrudeFeature::new(profiles, 20.0))
+        .unwrap();
+    // The side face of the shaft about x, clicked near its top end.
+    let side = |part: &PartDocument, x: Real, r: Real| {
+        let f = part
+            .body
+            .faces()
+            .filter(|(_, f)| f.name.as_deref().is_some_and(|n| n.contains(":Side")))
+            .find(|(_, f)| {
+                f.mesh.as_ref().is_some_and(|m| {
+                    m.positions.iter().all(|p| {
+                        ((p.x - x).powi(2) + p.y.powi(2)).sqrt() - r < 1e-3
+                            && ((p.x - x).powi(2) + p.y.powi(2)).sqrt() > r - 1e-2
+                    })
+                })
+            })
+            .map(|(fid, _)| fid)
+            .expect("the shaft side");
+        cadcraft3d::part::shell::face_ref(&part.body, f, Some(Point3::new(x + r, 0.0, 19.0)))
+            .unwrap()
+    };
+    let m8 =
+        ThreadSpec::from_table(&Standards::builtin(), standards::ISO_METRIC, "M8", false).unwrap();
+    let mut t = ThreadFeature::new(side(&part, 0.0, 4.0), m8.clone());
+    t.faces = vec![side(&part, 20.0, 4.0), side(&part, 40.0, 4.0)];
+    let mut cos = part.clone();
+    cos.add_thread(t.clone()).unwrap();
+    assert_eq!(cos.cosmetic_threads.len(), 3);
+    let mut xs: Vec<Real> = cos
+        .cosmetic_threads
+        .iter()
+        .map(|c| c.start.x.round())
+        .collect();
+    xs.sort_by(Real::total_cmp);
+    assert_eq!(xs, [0.0, 20.0, 40.0]);
+    let text = serde_json::to_string(&cos).unwrap();
+    let mut back: PartDocument = serde_json::from_str(&text).unwrap();
+    back.regenerate().unwrap();
+    assert_eq!(back.cosmetic_threads.len(), 3);
+    // The Ø12 shaft does not fit M8: refused, naming the face.
+    let mut bad = t.clone();
+    bad.faces.push(side(&part, 60.0, 6.0));
+    let e = part.clone().add_thread(bad).unwrap_err().to_string();
+    assert!(e.contains("face 4") && e.contains("does not fit"), "{e}");
+    // Modeled on two of them.
+    let mut m = m8;
+    m.modeled = true;
+    m.full_depth = false;
+    m.depth = 6.0;
+    let mut t2 = ThreadFeature::new(side(&part, 0.0, 4.0), m);
+    t2.faces = vec![side(&part, 20.0, 4.0)];
+    let v0 = volume(&part);
+    part.add_thread(t2).unwrap();
+    assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+    let removed = v0 - volume(&part);
+    let h = 1.25 * 3f64.sqrt() / 2.0;
+    let ring = PI * (16.0 - (4.0 - 5.0 * h / 8.0).powi(2)) * 6.0;
+    assert!(
+        removed > 2.0 * 0.3 * ring && removed < 2.0 * 0.7 * ring,
+        "{removed} of two rings {ring}"
+    );
+}
+
+/// A Tapped hole with an ISO 228-1 G 1/4 parallel pipe thread: the bore is
+/// the thread's minor diameter, the note names the size.
+#[test]
+fn tapped_hole_with_a_g_pipe_thread() {
+    let g =
+        ThreadSpec::from_table(&Standards::builtin(), standards::ISO_PIPE, "G 1/4", true).unwrap();
+    assert!(!g.taper);
+    assert!((g.minor - 11.445).abs() < 1e-9, "{g:?}");
+    let mut part = block();
+    let mut s = HoleSpec::tapped(g.clone(), 12.0);
+    s.termination = Termination::ThroughAll;
+    holes_at(&mut part, s, &[(20.0, 15.0)]).unwrap();
+    let r = g.minor / 2.0;
+    check(&part, BLOCK - PI * r * r * 20.0, 2e-4);
+    assert!(
+        part.holes()[0].spec.note().starts_with("G 1/4"),
+        "{}",
+        part.holes()[0].spec.note()
+    );
+}

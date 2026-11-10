@@ -7519,6 +7519,7 @@ impl CadCraftApp {
                 Some(
                     d.face
                         .iter()
+                        .chain(&d.more)
                         .filter_map(|r| {
                             crate::part::shell::face_near(body, &r.face, Point3::from(r.hint))
                         })

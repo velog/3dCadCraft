@@ -288,6 +288,9 @@ impl HoleDraft {
 pub(super) struct ThreadDraft {
     /// The face picked (none yet: the definition is not complete).
     pub face: Option<crate::part::FaceRef>,
+    /// Further faces of the same diameter (a click on another cylinder
+    /// adds it; on one in the list again: its start end).
+    pub more: Vec<crate::part::FaceRef>,
     /// The thread (dialog state, a serde type).
     pub spec: ThreadSpec,
     /// Offset from the start end (when not full length).
@@ -304,6 +307,7 @@ impl ThreadDraft {
         spec.depth = 10.0;
         Self {
             face: None,
+            more: Vec::new(),
             spec,
             offset: 0.0,
             display: true,
@@ -314,6 +318,7 @@ impl ThreadDraft {
     pub(super) fn editing(t: ThreadFeature, k: usize) -> Self {
         Self {
             face: Some(t.face),
+            more: t.faces,
             spec: t.spec,
             offset: t.offset,
             display: t.display,
@@ -324,6 +329,7 @@ impl ThreadDraft {
     /// The feature (when a face is picked).
     pub(super) fn def(&self) -> Option<ThreadFeature> {
         let mut t = ThreadFeature::new(self.face.clone()?, self.spec.clone());
+        t.faces = self.more.clone();
         t.offset = self.offset;
         t.display = self.display;
         Some(t)
@@ -755,9 +761,32 @@ impl CadCraftApp {
                 return;
             }
         };
+        // Another face of the same diameter joins the faces picked; the
+        // same face again sets its start end.
+        let first = self
+            .thread_draft
+            .as_ref()
+            .and_then(|d| d.face.clone())
+            .and_then(|f| hole::cylinder_face(&body, &f).ok().map(|c| (f, c)));
+        if let Some((f0, c0)) = first
+            && (c0.radius - cf.radius).abs() < 1e-6 * (1.0 + cf.radius)
+            && c0.internal == cf.internal
+            && let Some(d) = self.thread_draft.as_mut()
+        {
+            if f0.face == r.face {
+                d.face = Some(r);
+            } else if let Some(k) = d.more.iter().position(|m| m.face == r.face) {
+                d.more[k] = r;
+            } else {
+                d.more.push(r);
+            }
+            self.file_status = None;
+            return;
+        }
         let Some(d) = self.thread_draft.as_mut() else {
             return;
         };
+        d.more.clear();
         if let Some(t) = fitting_thread(
             Standards::global(),
             &d.spec.thread_type,
