@@ -383,7 +383,13 @@ impl SectionData {
             shape: shape_name(s).into(),
             standard: s.standard.clone(),
             dims: [s.h, s.b, s.t, s.tw, s.tf, s.r1, s.r2],
-            loops: s.custom.clone(),
+            // A T-slot section is stored as its outline: its grid and area
+            // need no new field, and older builds read it as a custom one.
+            loops: if s.shape == crate::part::frame::Shape::TSlot {
+                s.loops()
+            } else {
+                s.custom.clone()
+            },
         }
     }
 }
@@ -406,7 +412,7 @@ fn shape_name(s: &Section) -> &'static str {
         HexBar => "hexbar",
         ZedFormed => "zcf",
         ChannelFormed => "ccf",
-        Custom => "custom",
+        Custom | TSlot => "custom",
     }
 }
 

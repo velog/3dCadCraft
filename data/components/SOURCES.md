@@ -38,6 +38,10 @@ typed, which a source contradicts, is simply corrected.
 | [Honeywell data sheet](https://www.honeywellbuildings.in/uploads/security/product/doc/1675830203Forged_Brass_Ball_Valve_Datasheet18-01-2023_2.pdf) | ball valve length and height |
 | [PEM product pages](https://www.pemnet.com/products/product-finder/) | clinch nuts M3 to M5 |
 | [Essentra listings](https://www.essentracomponents.com/) | standoffs: `M4 (s 8)`, `M5 (s 10)` |
+| [item24 product pages](https://www.item24.com/) (Profile 5 20x20, Profile 6 30x30 and 60x30, Profile 8 40x40, 80x40 and 80x80, Profile 10 50x50, standard design) and item's Profile 8 40x40 light data sheet (via [RS](https://docs.rs-online.com/6c2f/A700000016010640.pdf)) | T-slot profiles: published cross-section areas (60x30 from its 2.29 kg/m at 2.70 g/cm³); slot 8: opening 8, lip 4.5, groove depth 12.25, core 6.8 |
+| [Motedis](https://www.motedis.es/en/Aluminium-Profile-20x20-I-Typ-slot-5) I-type slot 5 page, [Alux](https://www.aluxprofile.com/aluminium-slot-profile-4040-3t-slots/a4250) | T-slot profiles: slot 5 groove depth 6.35; slot 8 core 6.8 |
+| [Metalwork ISO 15552 type A catalogue](https://docs.pneumatiek.nl/pdf/metalwork/cilinder/profielcilinder_type_a_iso15552.pdf), [Tameson ISO 15552 sheet](https://storage.tameson.com/asset/Products/Manuals/EN/cylinders-15552.pdf) | ISO 15552 cylinders: body across flats, body length, boss, rod, rod reach; rod threads |
+| [fasten.it DIN 69051-5](https://fasten.it/en/Norms/Norm/DIN%2069051%205), [Albeco catalogue](https://www.albeco.com.pl/data/catalogueb/su.pdf) | DIN 69051-5 form B ball nuts, lead 5 |
 
 Corrected, a typed value against a source:
 
@@ -89,6 +93,16 @@ Compared in part, each table's first line says which rows: DIN 5419 (five single
 **Not compared:** Metric O-Ring (common trade sizes beside ISO 3601), and, typed for trying out their shapes and placement: Clinch Stud, Cage Nut (only its 9.5 mm square hole was confirmed), Extension Spring, Tube Cap, Bridge Handle, Levelling Foot, Butt Hinge. None of these has one standard; a maker's table is what they need.
 
 Bearing boundary dimensions follow ISO 15, so makers agree on them.
+
+T-slot profiles (2026-11-10, spec 6.1 §3.11a): the section's outside, grid, slot opening, groove depth and core are the
+published ones where the table above says so; a lip is the item data sheet's for slot 8 and **typed** for slots 5, 6 and 10
+(2.0, 2.0, 4.0), the groove depths of slots 6 and 10 (9, 15) and the cores of slots 5, 6 and 10 (tap drills of M5, M6, M12)
+are typed, the corner radii are typed. The chamber's width and the cavities are then sized so the area is the maker's;
+the maker's own inner webs are not modelled, so Ix and It are ours. Not compared: Ix against the makers' values.
+
+DIN 508 T-slot nuts are for machine-table slots (DIN 650), not for profile slots: `M6 x 8` fits the slot 8 profile (neck 8 in
+the 8 mm opening, foot 6 high in a 7.75 mm chamber), the others stand 2 mm proud of a profile's face. Profile slot nuts,
+brackets, end caps and feet for these systems wait for a maker's published table (spec 6.3 §6.5c).
 
 **Not used:** MISUMI. Its terms for CAD data forbid obtaining it in bulk and reusing it beyond designing with its
 products; its catalogue is not a source for this library unless MISUMI agrees.

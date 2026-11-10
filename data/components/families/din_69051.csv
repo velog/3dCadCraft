@@ -1,0 +1,8 @@
+# DIN 69051-5 form B: flanged ball nut, lead 5. Values in mm from the fasten.it page of DIN 69051-5: D body, D1 bolt circle,
+# D2 flange, L length, L1 flange thickness, D3 hole; the Albeco catalogue gives the same lengths. The flange's flats and the
+# lubrication hole are left out; the bore is the screw's nominal diameter.
+size,d0,P,D,D1,D2,L,L1,D3
+16x5,16,5,28,38,48,50,10,5.5
+20x5,20,5,36,47,58,51,10,6.6
+25x5,25,5,40,51,62,51,10,6.6
+32x5,32,5,50,65,80,52,12,9

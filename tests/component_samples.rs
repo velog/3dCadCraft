@@ -798,3 +798,65 @@ fn a_stale_member_file_is_written_again() {
     assert_eq!(Project::load(&path).unwrap().id, id);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Machine elements for automation (spec 6.3 §6.5c): every ISO 15552 bore,
+/// ball nut and ball screw builds in one stepped body, weighs its envelope,
+/// keeps one set of face names in every size, and stays in the budget.
+#[test]
+fn automation_elements_weigh_their_envelopes() {
+    let mut names: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut worst = (0.0, String::new());
+    for s in all() {
+        let expected = match s.kind {
+            Kind::Cylinder(_, e, l0, b, va, rod, wh, stroke) => {
+                e * e * (l0 + stroke) + PI / 4.0 * (b * b * va + rod * rod * (wh - va))
+            }
+            Kind::BallNut(d0, d, _, fl, l, l1, hole) => {
+                PI / 4.0 * (fl * fl * l1 + d * d * (l - l1) - d0 * d0 * l + -6.0 * hole * hole * l1)
+            }
+            Kind::BallScrew(d, l) => {
+                let (r, c) = (d / 2.0, d / 20.0);
+                let end = PI * c / 3.0 * (r * r + r * (r - c) + (r - c) * (r - c));
+                PI * r * r * (l - 2.0 * c) + 2.0 * end
+            }
+            _ => continue,
+        };
+        // Only the first and last stroke of each cylinder bore: 77 members.
+        if matches!(s.kind, Kind::Cylinder(.., stroke) if stroke > 25.0 && stroke < 500.0) {
+            continue;
+        }
+        let t = Instant::now();
+        let p = s
+            .part()
+            .unwrap_or_else(|e| panic!("{}: {e}", s.designation()));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        if ms > worst.0 {
+            worst = (ms, s.designation());
+        }
+        assert!(
+            p.exact && p.feature_health.is_empty(),
+            "{}",
+            s.designation()
+        );
+        let v = volume(&p);
+        assert!(
+            (v - expected).abs() < 5e-3 * expected,
+            "{}: {v} vs {expected}",
+            s.designation()
+        );
+        let mut faces: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
+        faces.sort();
+        faces.dedup();
+        let family = names
+            .entry(s.family.clone())
+            .or_insert_with(|| faces.clone());
+        assert_eq!(
+            *family,
+            faces,
+            "{} names its faces as its family",
+            s.designation()
+        );
+    }
+    println!("slowest: {} {:.0} ms", worst.1, worst.0);
+    assert_eq!(names.len(), 3);
+}

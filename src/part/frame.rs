@@ -75,6 +75,13 @@ pub enum Shape {
     ChannelFormed,
     /// The user's own outline (`Section::custom`, spec 6.1 §3.11).
     Custom,
+    /// Aluminium T-slot framing on a grid (spec 6.1 §3.11a): `h` x `b`, a
+    /// slot in the middle of every grid cell's face (opening `tw`, lip `t`,
+    /// groove depth `tf` from the face), a core bore `r1` (diameter) in every
+    /// cell, outer corner radius `r2`, grid `grid`. The chamber under the lips
+    /// and the cavities between cells are sized so the section's area is the
+    /// published one (`area`): a maker's inner webs are not modelled.
+    TSlot,
 }
 
 impl Shape {
@@ -96,6 +103,7 @@ impl Shape {
             "zcf" => Shape::ZedFormed,
             "ccf" => Shape::ChannelFormed,
             "custom" => Shape::Custom,
+            "tslot" => Shape::TSlot,
             _ => return None,
         })
     }
@@ -129,7 +137,25 @@ pub struct Section {
     /// The outline of a [`Shape::Custom`] section (bounding box centred on
     /// the origin); empty for the templates.
     pub custom: Vec<Loop>,
+    /// Grid of a [`Shape::TSlot`] section (slot spacing), mm; 0 for others.
+    pub grid: Real,
+    /// The published area of a [`Shape::TSlot`] section, mm²; 0 = none.
+    pub area: Real,
 }
+
+/// What a T-slot section's published area makes of its inner shape.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TSlotFit {
+    /// Width of the chamber under the lips.
+    pub chamber: Real,
+    /// Half diagonal of the square cavity on each boundary between two cells.
+    pub between: Real,
+    /// Half side of the square cavity where four cells meet.
+    pub node: Real,
+}
+
+/// The thinnest web a T-slot section keeps between two of its cavities, mm.
+const TSLOT_WEB: Real = 1.2;
 
 /// A closed loop of the outline: corners with their fillet radius (0 =
 /// sharp), counter-clockwise for the outside, clockwise for a hole; or a
@@ -190,6 +216,7 @@ impl Section {
             | Shape::Channel
             | Shape::Tee
             | Shape::Custom
+            | Shape::TSlot
             | Shape::ChannelTapered
             | Shape::IBeamTapered
             | Shape::ZedFormed
@@ -282,6 +309,7 @@ impl Section {
                 ])]
             }
             Shape::Custom => self.custom.clone(),
+            Shape::TSlot => self.tslot_loops(),
             Shape::SquareBar => vec![rect(x0, y0, x1, y1, 0.0, false)],
             Shape::HexBar => {
                 let r = self.h / 3f64.sqrt();
@@ -423,7 +451,186 @@ impl Section {
             Shape::ZedFormed => Point2::new(-w / 2.0 + self.b - self.t / 2.0, 0.0),
             Shape::Tee => Point2::new(0.0, self.extent().1 / 2.0 - self.tee_flange() / 2.0),
             Shape::Custom => self.inside_point().unwrap_or_else(Point2::origin),
+            Shape::TSlot => {
+                let (w, h) = self.extent();
+                let along = (self.tslot_grid() / 2.0 - self.tw / 2.0) / 2.0;
+                Point2::new(-w / 2.0 + along, -h / 2.0 + self.t / 2.0)
+            }
         }
+    }
+
+    /// A T-slot section's grid (the smaller side when the table gives none).
+    fn tslot_grid(&self) -> Real {
+        if self.grid > 0.0 {
+            self.grid
+        } else {
+            self.h.min(self.b)
+        }
+    }
+
+    /// Cells of a T-slot section along x and y.
+    fn tslot_cells(&self) -> (usize, usize) {
+        let m = self.tslot_grid();
+        let n = |l: Real| ((l / m).round() as usize).max(1);
+        (n(self.b), n(self.h))
+    }
+
+    /// The chamber and cavities of a T-slot section that give its published
+    /// area: the chamber's width is scanned between its narrowest (floor as
+    /// wide as the opening) and its widest (a web of [`TSLOT_WEB`] left at the
+    /// corners), the cavities between cells take what is left, each up to the
+    /// web it must keep. Without a published area the chamber is the middle
+    /// of its range and there are no cavities.
+    pub fn tslot_fit(&self) -> TSlotFit {
+        use std::f64::consts::{PI, SQRT_2};
+        let (m, w, t, dd, core) = (self.tslot_grid(), self.tw, self.t, self.tf, self.r1);
+        let (nx, ny) = self.tslot_cells();
+        let (nxr, nyr) = (nx as Real, ny as Real);
+        let hh = (dd - t).max(0.0);
+        let slots = 2.0 * (nxr + nyr);
+        let lo = w + 2.0 * hh;
+        let hi = (m - 2.0 * t - SQRT_2 * TSLOT_WEB).max(lo);
+        if self.area <= 0.0 {
+            return TSlotFit {
+                chamber: (lo + hi) / 2.0,
+                between: 0.0,
+                node: 0.0,
+            };
+        }
+        let between_n = (nxr - 1.0) * nyr + (nyr - 1.0) * nxr;
+        let node_n = (nxr - 1.0) * (nyr - 1.0);
+        let model = |c: Real| -> (Real, TSlotFit) {
+            let solid = self.b * self.h
+                - (4.0 - PI) * self.r2 * self.r2
+                - slots * (w * t + (c - hh) * hh)
+                - nxr * nyr * PI * core * core / 4.0;
+            let mut left = solid - self.area;
+            let (mut between, mut node) = (0.0, 0.0);
+            if between_n > 0.0 {
+                let max = (m - c / 2.0 - t - SQRT_2 * TSLOT_WEB)
+                    .min(m / 2.0 - core / 2.0 - TSLOT_WEB)
+                    .max(0.0);
+                between = (left.max(0.0) / (2.0 * between_n)).sqrt().min(max);
+                left -= 2.0 * between_n * between * between;
+            }
+            if node_n > 0.0 {
+                let max = (m / 2.0 - between - TSLOT_WEB).max(0.0);
+                node = (left.max(0.0) / (4.0 * node_n)).sqrt().min(max);
+                left -= 4.0 * node_n * node * node;
+            }
+            (
+                left.abs(),
+                TSlotFit {
+                    chamber: c,
+                    between,
+                    node,
+                },
+            )
+        };
+        let steps = 2000;
+        (0..=steps)
+            .map(|k| model(lo + (hi - lo) * k as Real / steps as Real))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or(
+                TSlotFit {
+                    chamber: lo,
+                    between: 0.0,
+                    node: 0.0,
+                },
+                |r| r.1,
+            )
+    }
+
+    /// The outline of a T-slot section: the outside with a slot in the middle
+    /// of every cell's face (opening, lips, a chamber whose walls run at 45°
+    /// down to its floor), counter-clockwise; core bores and cavities as holes.
+    fn tslot_loops(&self) -> Vec<Loop> {
+        let (x0, y0) = (-self.b / 2.0, -self.h / 2.0);
+        let (m, w, t, dd) = (self.tslot_grid(), self.tw, self.t, self.tf);
+        let (nx, ny) = self.tslot_cells();
+        let fit = self.tslot_fit();
+        let (c, hh) = (fit.chamber, (dd - t).max(0.0));
+        let f = c - 2.0 * hh;
+        // Along the side (in the direction of travel) and into the material.
+        let notch = [
+            (-w / 2.0, 0.0),
+            (-w / 2.0, t),
+            (-c / 2.0, t),
+            (-f / 2.0, dd),
+            (f / 2.0, dd),
+            (c / 2.0, t),
+            (w / 2.0, t),
+            (w / 2.0, 0.0),
+        ];
+        let mut outer: Vec<(Point2, Real)> = Vec::new();
+        let sides = [
+            (Point2::new(x0, y0), Vector2::new(1.0, 0.0), nx),
+            (Point2::new(-x0, y0), Vector2::new(0.0, 1.0), ny),
+            (Point2::new(-x0, -y0), Vector2::new(-1.0, 0.0), nx),
+            (Point2::new(x0, -y0), Vector2::new(0.0, -1.0), ny),
+        ];
+        for (start, d, cells) in sides {
+            outer.push((start, self.r2));
+            // Into the material: left of the direction of a CCW loop.
+            let n = Vector2::new(-d.y, d.x);
+            for k in 0..cells {
+                let mid = start + d * (m * (k as Real + 0.5));
+                for (a, z) in notch {
+                    outer.push((mid + d * a + n * z, 0.0));
+                }
+            }
+        }
+        let mut loops = vec![Loop::Corners(outer)];
+        let centre = |i: usize, j: usize| {
+            Point2::new(x0 + m * (i as Real + 0.5), y0 + m * (j as Real + 0.5))
+        };
+        for j in 0..ny {
+            for i in 0..nx {
+                loops.push(Loop::Circle(centre(i, j), self.r1 / 2.0, true));
+            }
+        }
+        // Holes run clockwise.
+        let diamond = |q: Point2, r: Real| {
+            Loop::Corners(vec![
+                (Point2::new(q.x + r, q.y), 0.0),
+                (Point2::new(q.x, q.y - r), 0.0),
+                (Point2::new(q.x - r, q.y), 0.0),
+                (Point2::new(q.x, q.y + r), 0.0),
+            ])
+        };
+        if fit.between > 1e-3 {
+            for j in 0..ny {
+                for i in 1..nx {
+                    loops.push(diamond(
+                        centre(i, j) - Vector2::new(m / 2.0, 0.0),
+                        fit.between,
+                    ));
+                }
+            }
+            for j in 1..ny {
+                for i in 0..nx {
+                    loops.push(diamond(
+                        centre(i, j) - Vector2::new(0.0, m / 2.0),
+                        fit.between,
+                    ));
+                }
+            }
+        }
+        if fit.node > 1e-3 {
+            let r = fit.node;
+            for j in 1..ny {
+                for i in 1..nx {
+                    let q = Point2::new(x0 + m * i as Real, y0 + m * j as Real);
+                    loops.push(Loop::Corners(vec![
+                        (Point2::new(q.x + r, q.y + r), 0.0),
+                        (Point2::new(q.x + r, q.y - r), 0.0),
+                        (Point2::new(q.x - r, q.y - r), 0.0),
+                        (Point2::new(q.x - r, q.y + r), 0.0),
+                    ]));
+                }
+            }
+        }
+        loops
     }
 
     /// A T section's stem thickness (EN 10055 gives one `t` for both).
@@ -534,6 +741,8 @@ impl Section {
             r1: 0.0,
             r2: 0.0,
             custom: loops,
+            grid: 0.0,
+            area: 0.0,
         })
     }
 
@@ -1567,6 +1776,8 @@ impl Library {
                                 r1: 0.0,
                                 r2: 0.0,
                                 custom: z.loops,
+                                grid: 0.0,
+                                area: 0.0,
                             });
                         }
                     }
@@ -1653,6 +1864,8 @@ impl Library {
                 r1: num(f.get(9).copied()),
                 r2: num(f.get(10).copied()),
                 custom: Vec::new(),
+                grid: num(f.get(11).copied()),
+                area: num(f.get(12).copied()),
             });
         }
         (lib, bad)
@@ -1740,7 +1953,7 @@ mod tests {
         let (lib, bad) = Library::parse(BUILTIN);
         assert!(bad.is_empty(), "{bad:?}");
         assert!(lib.sections.len() > 50);
-        assert_eq!(lib.standards(), vec!["EN", "ANSI"]);
+        assert_eq!(lib.standards(), vec!["EN", "ANSI", "Other"]);
         assert!(lib.families("EN").contains(&"IPE beam (EN 10365)"));
         assert!(lib.sizes("IPE beam (EN 10365)").contains(&"IPE 200"));
     }
@@ -1992,6 +2205,51 @@ mod tests {
         // The ANSI standard lists its families.
         let lib = Library::builtin();
         assert!(lib.standards().contains(&"ANSI"));
+    }
+
+    /// T-slot framing (spec 6.1 §3.11a): every size's area is the published
+    /// one within 1 %, the chamber's floor is at least as wide as the opening,
+    /// the loops stay more than 1 mm apart, and a member builds with the
+    /// area's volume.
+    #[test]
+    fn t_slot_sections_have_their_published_area() {
+        let lib = Library::builtin();
+        let rows: Vec<&Section> = lib
+            .sections
+            .iter()
+            .filter(|s| s.shape == Shape::TSlot)
+            .collect();
+        assert_eq!(rows.len(), 7);
+        for s in rows {
+            let p = s.properties();
+            close(p.area, s.area, 0.01, &s.size);
+            let fit = s.tslot_fit();
+            assert!(
+                fit.chamber - 2.0 * (s.tf - s.t) >= s.tw - 1e-9,
+                "{}",
+                s.size
+            );
+            let polys: Vec<Vec<Point2>> = s.loops().iter().map(|l| polygon(l, 96)).collect();
+            // Every hole lies inside the outside and clear of the other loops.
+            for (i, a) in polys.iter().enumerate().skip(1) {
+                for q in a {
+                    assert!(contains(&polys[0], *q), "{} hole {i}", s.size);
+                    for (j, b) in polys.iter().enumerate() {
+                        if j != i {
+                            assert!(edge_distance(b, *q) > 1.0, "{} loops {i} {j}", s.size);
+                        }
+                    }
+                }
+            }
+            let part = s.member_part(100.0, Some("Aluminium 6063-T66")).unwrap();
+            let v: Real = part
+                .exact_bodies
+                .0
+                .iter()
+                .filter_map(|b| b.volume_at(1e-3))
+                .sum();
+            close(v, p.area * 100.0, 0.005, &s.size);
+        }
     }
 
     /// Tapered flanges (UPN 8 %, IPN 14 %): areas and Ix of the EN 10365

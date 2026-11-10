@@ -104,6 +104,10 @@ bearing_r,Shaft Parts/Bearings,Deep Groove Ball,Series R,"Deep groove ball beari
 ,Structural Shapes,Round Tubes,Pipe Schedule 40 (ASME B36.10),Pipe Schedule 40 (ASME B36.10),../profiles/profiles.csv,11,see profiles.csv,ANSI
 ,Structural Shapes,Angles,Equal angle (AISC),Equal angle (AISC),../profiles/profiles.csv,6,see profiles.csv,ANSI
 ,Structural Shapes,Square and Rectangular Tubes,Square HSS (ASTM A500),Square HSS (ASTM A500),../profiles/profiles.csv,5,see profiles.csv,ANSI
+,Aluminium Framing,T-Slot Profiles,T-slot profile slot 5 (20 grid),T-slot profile slot 5 (20 grid),../profiles/profiles.csv,1,see profiles.csv; SOURCES.md,Other
+,Aluminium Framing,T-Slot Profiles,T-slot profile slot 6 (30 grid),T-slot profile slot 6 (30 grid),../profiles/profiles.csv,2,see profiles.csv; SOURCES.md,Other
+,Aluminium Framing,T-Slot Profiles,T-slot profile slot 8 (40 grid),T-slot profile slot 8 (40 grid),../profiles/profiles.csv,3,see profiles.csv; SOURCES.md,Other
+,Aluminium Framing,T-Slot Profiles,T-slot profile slot 10 (50 grid),T-slot profile slot 10 (50 grid),../profiles/profiles.csv,1,see profiles.csv; SOURCES.md,Other
 din_85,Fasteners/Bolts,Pan Head,DIN 85,Slotted pan head screw,families/din_85.csv,6,fasten.it,DIN
 din_84,Fasteners/Bolts,Cheese Head,DIN 84,Slotted cheese head screw,families/din_84.csv,6,fasten.it,DIN
 din_603,Fasteners/Bolts,Carriage,DIN 603,Mushroom head square neck bolt,families/din_603.csv,7,fasten.it,DIN
@@ -162,3 +166,6 @@ bridge_handle,Other Parts,Handles,Bridge Handle,"Bridge handle",families/bridge_
 level_foot,Other Parts,Feet,Levelling Foot,"Levelling foot",families/level_foot.csv,5,,Other
 butt_hinge,Other Parts,Hinges,Butt Hinge,"Butt hinge envelope",families/butt_hinge.csv,5,,Other
 iso_3601_1,Shaft Parts/Sealing,O-Ring,ISO 3601,"O-ring, sections 1.8 to 7",families/iso_3601_1.csv,344,Prepol size list (rows it prints readably),ISO
+iso_15552,Machine Elements/Pneumatics,Cylinder,ISO 15552,"Pneumatic cylinder, envelope",families/iso_15552.csv,77,Metalwork ISO 15552 catalogue; Tameson (rod threads),ISO
+din_69051,Machine Elements/Linear Motion,Ball Nut,DIN 69051-5 B,"Flanged ball nut, form B",families/din_69051.csv,4,fasten.it (DIN 69051-5); Albeco (lengths),DIN
+ball_screw,Machine Elements/Linear Motion,Ball Screw,Ball Screw,"Ball screw shaft, plain",families/ball_screw.csv,20,diameters of DIN 69051-5 (lengths typed),Other

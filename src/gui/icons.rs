@@ -811,6 +811,27 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
     let section = |pts: &[(f32, f32)]| p.closed(pts, ink);
     let leaf = category.rsplit('/').next().unwrap_or(category);
     match leaf {
+        "Cylinder" | "Pneumatics" if category.contains("Pneumatic") => {
+            // Square body, the boss and the rod to the right.
+            p.rect(1.5, 4.0, 10.0, 12.0, ink);
+            p.rect(10.0, 6.5, 11.2, 9.5, ink);
+            p.rect(11.2, 7.2, 15.0, 8.8, acc);
+        }
+        "Ball Nut" => {
+            // Flange and body seen from the side, the screw through them.
+            p.rect(3.0, 2.0, 6.0, 14.0, ink);
+            p.rect(6.0, 4.5, 13.0, 11.5, ink);
+            p.line(&[(1.0, 6.5), (15.0, 6.5)], acc);
+            p.line(&[(1.0, 9.5), (15.0, 9.5)], acc);
+        }
+        "Ball Screw" => {
+            p.rect(1.0, 6.0, 15.0, 10.0, ink);
+            let mut x = 2.5;
+            while x < 14.5 {
+                p.line(&[(x, 10.0), (x + 1.4, 6.0)], acc);
+                x += 2.0;
+            }
+        }
         "Carriage" if category.contains("Linear") => {
             p.rect(2.0, 11.0, 14.0, 14.0, acc);
             p.rect(3.5, 4.0, 12.5, 11.0, ink);
@@ -1063,6 +1084,31 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
             (2.5, 11.7),
             (7.0, 11.7),
         ]),
+        "T-Slot Profiles" | "Aluminium Framing" => {
+            // A square with a T slot in each face and the core bore.
+            let mut pts = Vec::new();
+            let side = |pts: &mut Vec<(f32, f32)>, f: &dyn Fn(f32, f32) -> (f32, f32)| {
+                for (a, z) in [
+                    (0.0, 0.0),
+                    (5.0, 0.0),
+                    (5.0, 1.2),
+                    (3.8, 1.2),
+                    (3.8, 3.4),
+                    (8.2, 3.4),
+                    (8.2, 1.2),
+                    (7.0, 1.2),
+                    (7.0, 0.0),
+                ] {
+                    pts.push(f(a, z));
+                }
+            };
+            side(&mut pts, &|a, z| (2.0 + a, 2.0 + z));
+            side(&mut pts, &|a, z| (14.0 - z, 2.0 + a));
+            side(&mut pts, &|a, z| (14.0 - a, 14.0 - z));
+            side(&mut pts, &|a, z| (2.0 + z, 14.0 - a));
+            p.closed(&pts, ink);
+            p.circle(8.0, 8.0, 1.3, acc);
+        }
         "Round Tubes" => {
             p.circle(8.0, 8.0, 6.3, ink);
             p.circle(8.0, 8.0, 4.5, ink);

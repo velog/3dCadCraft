@@ -5,7 +5,7 @@
 # Dimensions in mm, typed from the dimension tables of the standards named in
 # the family column (nominal values; hollow sections use the standard's
 # calculation radii: outer 2t / inner t up to t = 6 mm, 2.5t / 1.5t above).
-# shape: shs | rhs | chs | angle | ibeam | ipn | channel | upn | tee | flat | bar | sqbar | hexbar | zcf | ccf
+# shape: shs | rhs | chs | angle | ibeam | ipn | channel | upn | tee | flat | bar | sqbar | hexbar | zcf | ccf | tslot
 #   shs / rhs: h b t r1 (outer radius) r2 (inner radius)
 #   chs: h (outside diameter) t
 #   angle: h b t r1 (root radius) r2 (toe radius)
@@ -18,8 +18,11 @@
 #   bar: h (diameter)
 #   sqbar: h (side); hexbar: h (across the flats)
 #   zcf / ccf (cold-formed, constant wall): h b t, r1 (inner bend radius); ccf: tf (lip)
+#   tslot (aluminium framing, spec 6.1 3.11a): h b, t (lip), tw (slot opening), tf (groove depth from the face),
+#     r1 (core bore diameter), r2 (outer corner radius), m (grid), A (published area, mm2); the chamber and the
+#     cavities between cells are sized to A. Sources per family in data/components/SOURCES.md.
 # ANSI rows are typed in inches from the AISC / ASME tables and converted to mm.
-family,standard,shape,size,h,b,t,tw,tf,r1,r2
+family,standard,shape,size,h,b,t,tw,tf,r1,r2,m,A
 Square hollow section (EN 10219),EN,shs,20x20x2,20,20,2,,,4,2
 Square hollow section (EN 10219),EN,shs,30x30x3,30,30,3,,,6,3
 Square hollow section (EN 10219),EN,shs,40x40x3,40,40,3,,,6,3
@@ -182,3 +185,10 @@ Square HSS (ASTM A500),ANSI,shs,HSS3x3x3/16,76.2,76.2,4.42,,,8.839,4.42
 Square HSS (ASTM A500),ANSI,shs,HSS4x4x1/4,101.6,101.6,5.918,,,11.836,5.918
 Square HSS (ASTM A500),ANSI,shs,HSS6x6x1/4,152.4,152.4,5.918,,,11.836,5.918
 Square HSS (ASTM A500),ANSI,shs,HSS6x6x3/8,152.4,152.4,8.865,,,17.729,8.865
+T-slot profile slot 5 (20 grid),Other,tslot,20x20,20,20,2.0,5,6.35,4.2,1.0,20,180
+T-slot profile slot 6 (30 grid),Other,tslot,30x30,30,30,2.0,6,9.0,5.0,1.5,30,467
+T-slot profile slot 6 (30 grid),Other,tslot,60x30,30,60,2.0,6,9.0,5.0,1.5,30,848
+T-slot profile slot 8 (40 grid),Other,tslot,40x40,40,40,4.5,8,12.25,6.8,1.5,40,916
+T-slot profile slot 8 (40 grid),Other,tslot,80x40,40,80,4.5,8,12.25,6.8,1.5,40,1676
+T-slot profile slot 8 (40 grid),Other,tslot,80x80,80,80,4.5,8,12.25,6.8,1.5,40,2666
+T-slot profile slot 10 (50 grid),Other,tslot,50x50,50,50,4.0,10,15.0,10.2,2.0,50,1331

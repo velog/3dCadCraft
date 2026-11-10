@@ -145,6 +145,17 @@ pub enum Kind {
     PipeCap(Real, Real, Real),
     /// Structural shape: family and size of the frame section table, length.
     Shape(&'static str, &'static str, Real),
+    /// Pneumatic cylinder to ISO 15552, retracted: its front face on the XY
+    /// plane, the square body behind it along -Z, the front boss and the rod
+    /// along +Z. Bore, body across flats, body length, boss diameter, boss
+    /// height, rod diameter, rod's reach from the body, stroke.
+    Cylinder(Real, Real, Real, Real, Real, Real, Real, Real),
+    /// Flanged ball nut to DIN 69051-5 form B, its flange face on the XY plane:
+    /// screw diameter, body diameter, bolt circle, flange diameter, length,
+    /// flange thickness, hole diameter (six holes).
+    BallNut(Real, Real, Real, Real, Real, Real, Real),
+    /// A ball screw's shaft, its thread left out: diameter, length.
+    BallScrew(Real, Real),
 }
 
 /// The numbers of a pipe flange. Weld neck: weld end on the XY plane, the hub and
@@ -874,6 +885,18 @@ const TABLES: &[(&str, &str)] = &[
         "magnet_disc",
         include_str!("../../data/components/families/magnet_disc.csv"),
     ),
+    (
+        "iso_15552",
+        include_str!("../../data/components/families/iso_15552.csv"),
+    ),
+    (
+        "din_69051",
+        include_str!("../../data/components/families/din_69051.csv"),
+    ),
+    (
+        "ball_screw",
+        include_str!("../../data/components/families/ball_screw.csv"),
+    ),
 ];
 
 /// A table's lines without comments, the first one the heading.
@@ -1167,6 +1190,30 @@ fn row_members(
             Some(Kind::Spring(get("De")?, get("d")?, get("L0")?, get("n")?))
         })()),
         "linear_rail" => per_length(&|l| Some(Kind::Block(get("a")?, get("b")?, l))),
+        "pneumatic_cylinder" => per_length(&|l| {
+            Some(Kind::Cylinder(
+                get("bore")?,
+                get("E")?,
+                get("L0")?,
+                get("B")?,
+                get("VA")?,
+                get("MM")?,
+                get("WH")?,
+                l,
+            ))
+        }),
+        "ball_nut" => one((|| {
+            Some(Kind::BallNut(
+                get("d0")?,
+                get("D")?,
+                get("D1")?,
+                get("D2")?,
+                get("L")?,
+                get("L1")?,
+                get("D3")?,
+            ))
+        })()),
+        "ball_screw" => per_length(&|l| Some(Kind::BallScrew(get("d0")?, l))),
         "linear_carriage" => one((|| Some(Kind::Block(get("a")?, get("b")?, get("c")?)))()),
         "clamp" => one((|| {
             let (d, t) = (get("d")?, get("s")?);
@@ -1395,6 +1442,9 @@ impl Sample {
                 | Kind::PipeReducer(..)
                 | Kind::PipeCap(..)
                 | Kind::Shape(..)
+                | Kind::Cylinder(..)
+                | Kind::BallNut(..)
+                | Kind::BallScrew(..)
         )
     }
 
@@ -1418,6 +1468,7 @@ impl Sample {
             Kind::Rod(d, l) => Kind::Rod(d, l.min(8.0 * d)),
             Kind::Block(a, b, l) => Kind::Block(a, b, l.min(3.0 * a.max(b))),
             Kind::Shape(f, size, _) => Kind::Shape(f, size, 150.0),
+            Kind::BallScrew(d, l) => Kind::BallScrew(d, l.min(8.0 * d)),
             k => k,
         };
         s
@@ -1493,6 +1544,9 @@ impl Sample {
             Kind::PipeReducer(..) => "Pipe reducer",
             Kind::PipeCap(..) => "Pipe cap",
             Kind::Shape(..) => "Structural shape",
+            Kind::Cylinder(..) => "Pneumatic cylinder",
+            Kind::BallNut(..) => "Ball nut",
+            Kind::BallScrew(..) => "Ball screw",
         }
     }
 
@@ -1538,6 +1592,8 @@ impl Sample {
 
     fn material(&self) -> &'static str {
         match self.kind {
+            Kind::Shape(family, ..) if family.starts_with("T-slot") => "Aluminium 6063-T66",
+            Kind::Cylinder(..) => "Aluminium 6063-T66",
             Kind::Shape(..) => "Steel S235",
             _ => "Steel AISI 4140",
         }
@@ -1863,6 +1919,21 @@ fn standard_part(kind: Kind) -> Result<PartDocument, PartError> {
             Kind::PipeTee(d, t, c) => pipe_tee(d, t, c),
             Kind::PipeReducer(d1, d2, t1, t2, l) => pipe_reducer(d1, d2, t1, t2, l),
             Kind::PipeCap(d, t, e) => pipe_cap(d, t, e),
+            Kind::Cylinder(_, e, l0, b, va, rod, wh, stroke) => {
+                pneumatic_cylinder(e, l0 + stroke, b, va, rod, wh)
+            }
+            Kind::BallNut(d0, d, pcd, fl, l, l1, hole) => ball_nut(d0, d, pcd, fl, l, l1, hole),
+            Kind::BallScrew(d, l) => {
+                let (r, c) = (d / 2.0, d / 20.0);
+                ring(&[
+                    (0.0, 0.0),
+                    (r - c, 0.0),
+                    (r, c),
+                    (r, l - c),
+                    (r - c, l),
+                    (0.0, l),
+                ])
+            }
             Kind::Bearing(d, od, b) => {
                 let (r0, r1, c) = (d / 2.0, od / 2.0, (od - d) / 40.0);
                 ring(&[
@@ -3346,6 +3417,88 @@ fn flange(f: Flange, with_holes: bool) -> Result<PartDocument, PartError> {
         runs,
         first_cap: first_cap.map(str::to_owned),
         closed,
+        holes,
+        tee: None,
+        bend: None,
+        rolling: Vec::new(),
+    })))?;
+    Ok(part)
+}
+
+/// An ISO 15552 cylinder as one stepped body: the square body (its corners on
+/// ±X, ±Y) from `-length` to the front face, the front boss and the rod in
+/// front of it. No Boolean (spec 6.3 §6.0b).
+fn pneumatic_cylinder(
+    e: Real,
+    length: Real,
+    b: Real,
+    va: Real,
+    rod: Real,
+    wh: Real,
+) -> Result<PartDocument, PartError> {
+    if !(rod < b && b < e && va < wh) {
+        return Err(bad("the cylinder's rod, boss and body do not nest"));
+    }
+    let mut body = AxialRun::hexagon(e, -length, 0.0, "Body", Some("Front"));
+    if let AxialShape::Hexagon { sides, .. } = &mut body.shape {
+        *sides = 4;
+    }
+    axial_part(
+        vec![
+            body,
+            AxialRun::turned(
+                &[
+                    (b / 2.0, 0.0, ""),
+                    (b / 2.0, va, "Boss"),
+                    (rod / 2.0, va, "BossFace"),
+                    (rod / 2.0, wh, "Rod"),
+                ],
+                Some("RodEnd"),
+            ),
+        ],
+        Some("Back"),
+        false,
+    )
+}
+
+/// A flanged ball nut as one stepped body with its six flange holes, no
+/// Boolean: the flange on the XY plane, the body above it, the bore through.
+fn ball_nut(
+    d0: Real,
+    d: Real,
+    pcd: Real,
+    flange: Real,
+    l: Real,
+    l1: Real,
+    hole: Real,
+) -> Result<PartDocument, PartError> {
+    let (rb, rd, rf) = (d0 / 2.0, d / 2.0, flange / 2.0);
+    if !(rb < rd && rd + 0.1 < pcd / 2.0 - hole / 2.0 && pcd / 2.0 + hole / 2.0 + 0.1 < rf) {
+        return Err(bad("the ball nut's holes do not lie on its flange"));
+    }
+    let runs = vec![
+        AxialRun::turned(&[(rf, 0.0, ""), (rf, l1, "Flange")], Some("FlangeBack")),
+        AxialRun::turned(&[(rd, l1, ""), (rd, l, "Body")], Some("End")),
+        AxialRun::turned(&[(rb, l, ""), (rb, 0.0, "Bore")], Some("Face")),
+    ];
+    let step = std::f64::consts::TAU / 6.0;
+    let holes = (0..6)
+        .map(|k| {
+            let a = Real::from(k) * step;
+            AxialHole {
+                center: [pcd / 2.0 * a.cos(), pcd / 2.0 * a.sin()],
+                diameter: hole,
+                z0: 0.0,
+                z1: l1,
+                role: format!("Hole:{}", k + 1),
+            }
+        })
+        .collect();
+    let mut part = blank();
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs,
+        first_cap: None,
+        closed: true,
         holes,
         tee: None,
         bend: None,
