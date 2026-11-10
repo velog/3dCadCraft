@@ -508,7 +508,18 @@ impl Feature {
     /// `id` of every 3D sketch it uses (a sweep's path).
     pub fn sketch3d_ids(&self) -> Vec<&str> {
         match self {
-            Feature::Sweep(s) => s.path.sketch3d_id().into_iter().collect(),
+            Feature::Sweep(s) => s
+                .path
+                .sketch3d_id()
+                .into_iter()
+                .chain(s.rail.iter().filter_map(PathRef::sketch3d_id))
+                .collect(),
+            Feature::Loft(l) => l
+                .rails
+                .iter()
+                .chain(l.center_line.iter())
+                .filter_map(PathRef::sketch3d_id)
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -1544,7 +1555,7 @@ impl PartDocument {
                     }
                     Err(e) => Err(e),
                 },
-                BuildStep::Loft(lo) if use_exact => match lo.build_in(&self.sketches, &body, &{
+                BuildStep::Loft(lo) if use_exact => match lo.build_in(&self.sketches, &self.sketches3d, &body, &{
                     let mut all = solids.clone();
                     all.extend(sheets.iter().cloned());
                     all

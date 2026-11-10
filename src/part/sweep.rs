@@ -715,9 +715,10 @@ impl SweepFeature {
             return Err(User("the path lies in the profile plane".into()));
         }
         let rail = match (self.sweep_type, &self.rail) {
-            (SweepType::PathAndGuideRail, Some(r)) => {
-                Some(r.resolve(sketches, body, path.start()).map_err(User)?)
-            }
+            (SweepType::PathAndGuideRail, Some(r)) => Some(
+                r.resolve_with(sketches, spaces, body, path.start())
+                    .map_err(User)?,
+            ),
             (SweepType::PathAndGuideRail, None) => {
                 return Err(User("select the guide rail".into()));
             }

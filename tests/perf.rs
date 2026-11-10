@@ -1075,6 +1075,41 @@ fn speed_budgets() {
             800.0,
             timed(&tube),
         ));
+        // A 3D sketch route of 60 lines with 59 bends and 30 Perpendicular
+        // constraints: solve + path pieces (per edit in the panel).
+        {
+            use cadcraft3d::part::sketch3d::Constraint3;
+            let mut s = Sketch3d::new("Sketch3D1", "3D Sketch1");
+            let ids: Vec<u32> = (0..61)
+                .map(|k| {
+                    let t = k as Real;
+                    s.add_point(
+                        Point3::new(40.0 * t, 25.0 * (t * 0.7).sin(), 30.0 * (t * 0.3).cos()),
+                        k == 0,
+                    )
+                })
+                .collect();
+            let lines: Vec<u32> = ids
+                .windows(2)
+                .map(|w| s.add_line(w[0], w[1]).unwrap())
+                .collect();
+            for &c in &ids[1..60] {
+                s.add_bend(c, 3.0).unwrap();
+            }
+            let cons: Vec<Constraint3> = (0..30)
+                .map(|k| Constraint3::Perpendicular(lines[2 * k], lines[2 * k + 1]))
+                .collect();
+            rows.push((
+                "3D sketch: 60 lines, 59 bends, 30 constraints: solve + pieces",
+                250.0,
+                median_ms(3, || {
+                    let mut c = s.clone();
+                    c.constraints = cons.clone();
+                    c.solve().unwrap();
+                    let _ = c.pieces();
+                }),
+            ));
+        }
         // A ring revolved about a box's vertical edge, joined.
         let mut rev = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
         let b = &rev.body;

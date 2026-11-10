@@ -271,6 +271,7 @@ impl LoftFeature {
     pub(super) fn build_in(
         &self,
         sketches: &[PartSketch],
+        spaces: &[super::sketch3d::Sketch3d],
         body: &BRep,
         bodies: &[ExactSolid],
     ) -> Result<Vec<ExactSolid>, Fail> {
@@ -353,7 +354,9 @@ impl LoftFeature {
         let refs: Vec<(Plane, &kx::ExactProfile)> =
             secs.iter().map(|(p, s)| (p.clone(), s)).collect();
         if self.guided() {
-            let g = self.guided_input(sketches, body, refs).map_err(User)?;
+            let g = self
+                .guided_input(sketches, spaces, body, refs)
+                .map_err(User)?;
             return kx::loft_guided(&g, &self.id).map(|s| vec![s]).map_err(User);
         }
         let s = if surface {
@@ -600,6 +603,7 @@ impl LoftFeature {
     fn guided_input<'a>(
         &self,
         sketches: &[PartSketch],
+        spaces: &[super::sketch3d::Sketch3d],
         body: &BRep,
         sections: Vec<(Plane, &'a kx::ExactProfile)>,
     ) -> Result<kx::GuidedLoft<'a>, String> {
@@ -613,7 +617,7 @@ impl LoftFeature {
                 .iter()
                 .enumerate()
                 .map(|(j, r)| {
-                    r.resolve(sketches, body, near)
+                    r.resolve_with(sketches, spaces, body, near)
                         .map(|g| g.polyline())
                         .map_err(|e| format!("rail {}: {e}", j + 1))
                 })
@@ -630,7 +634,7 @@ impl LoftFeature {
                     .filter(|c| !c.is_empty())
                     .ok_or("select the centre line")?;
                 Some(
-                    c.resolve(sketches, body, near)
+                    c.resolve_with(sketches, spaces, body, near)
                         .map_err(|e| format!("centre line: {e}"))?
                         .polyline(),
                 )
@@ -696,7 +700,7 @@ impl LoftFeature {
             .collect::<Result<Vec<_>, _>>()?;
         let refs: Vec<(Plane, &kx::ExactProfile)> =
             secs.iter().map(|(p, s)| (p.clone(), s)).collect();
-        let g = self.guided_input(sketches, body, refs)?;
+        let g = self.guided_input(sketches, &[], body, refs)?;
         kx::loft_stations(&g)
     }
 
