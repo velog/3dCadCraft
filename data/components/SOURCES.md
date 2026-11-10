@@ -39,6 +39,11 @@ typed, which a source contradicts, is simply corrected.
 | [PEM product pages](https://www.pemnet.com/products/product-finder/) | clinch nuts M3 to M5 |
 | [Essentra listings](https://www.essentracomponents.com/) | standoffs: `M4 (s 8)`, `M5 (s 10)` |
 | [item24 product pages](https://www.item24.com/) (Profile 5 20x20, Profile 6 30x30 and 60x30, Profile 8 40x40, 80x40 and 80x80, Profile 10 50x50, standard design) and item's Profile 8 40x40 light data sheet (via [RS](https://docs.rs-online.com/6c2f/A700000016010640.pdf)) | T-slot profiles: published cross-section areas (60x30 from its 2.29 kg/m at 2.70 g/cm³); slot 8: opening 8, lip 4.5, groove depth 12.25, core 6.8 |
+| Bosch Rexroth *GoTo Europe* R999000269 (2016-04) via [RS](https://docs.rs-online.com/d36a/A700000006655669.pdf), pages 9-15 | Rexroth strut profiles: area A, Ix, Iy, Wx, Wy and mass of 30x30, 40x40L, 40x80L, 80x80L, 45x45L, 45x90L, 90x90L, 45x45, 45x90, 90x90, 90x180, 50x50L, 60x60 |
+| Bosch Rexroth *MGE 13.2* 3 842 540 392 (2017-08) via RS: [p. 2-16](https://docs.rs-online.com/c75a/0900766b816ca1a7.pdf) (slot 8), [p. 2-24](https://docs.rs-online.com/191e/0900766b816ca1bb.pdf) (slot 10) | Rexroth slot geometry: slot 8 opening 8, chamber 16.5, lip 2.2, groove depth 9, core 7.3; slot 10 opening 10, chamber 20.1, upright chamber walls to 6, groove depth 12.5, core 10 |
+| [Engineers Edge](https://www.engineersedge.com/iso_hardware_menu.shtml): [ISO 4762](https://engineersedge.com/iso_socket_head_screw.htm), [ISO 4014 / 4017](https://www.engineersedge.com/iso_hex_head_screw.htm), [ISO 7380](https://www.engineersedge.com/iso_socket_button_head.htm), [ISO 4026 / 4029](https://www.engineersedge.com/iso_set_screw.htm), [ISO 10642](https://www.engineersedge.com/hardware/bs_en_iso_10642_14583.htm), [ISO 8734](https://www.engineersedge.com/hardware/iso_metric_dowel_pins_13805.htm) | the nominal lengths of each size; ISO 7380 M16, ISO 10642 M16 and M20, set screws M16 to M24 (socket) |
+| [fasteners.eu ISO 4762](https://www.fasteners.eu/standards/ISO/4762/) | ISO 4762 M30, M36 heads and sockets |
+| fasten.it pages of [DIN 7984](https://fasten.it/en/Norms/Norm/DIN_7984), [DIN 433](https://fasten.it/en/Norms/Norm/DIN_433) (ISO 7092), [DIN 6798](https://fasten.it/en/Norms/Norm/DIN_6798), [DIN 562](https://fasten.it/en/Norms/Norm/DIN_562), [DIN 127](https://fasten.it/en/Norms/Norm/DIN_127), [ISO 13337](https://fasten.it/en/Norms/Norm/ISO_13337), [DIN 94](https://fasten.it/en/Norms/Norm/DIN_94) (ISO 1234), [DIN 7979](https://fasten.it/en/Norms/Norm/DIN_7979) (ISO 8735) | the fastener families added 2026-11-10 |
 | [Motedis](https://www.motedis.es/en/Aluminium-Profile-20x20-I-Typ-slot-5) I-type slot 5 page, [Alux](https://www.aluxprofile.com/aluminium-slot-profile-4040-3t-slots/a4250) | T-slot profiles: slot 5 groove depth 6.35; slot 8 core 6.8 |
 | [Metalwork ISO 15552 type A catalogue](https://docs.pneumatiek.nl/pdf/metalwork/cilinder/profielcilinder_type_a_iso15552.pdf), [Tameson ISO 15552 sheet](https://storage.tameson.com/asset/Products/Manuals/EN/cylinders-15552.pdf) | ISO 15552 cylinders: body across flats, body length, boss, rod, rod reach; rod threads |
 | [fasten.it DIN 69051-5](https://fasten.it/en/Norms/Norm/DIN%2069051%205), [Albeco catalogue](https://www.albeco.com.pl/data/catalogueb/su.pdf) | DIN 69051-5 form B ball nuts, lead 5 |
@@ -103,6 +108,17 @@ the maker's own inner webs are not modelled, so Ix and It are ours. Not compared
 DIN 508 T-slot nuts are for machine-table slots (DIN 650), not for profile slots: `M6 x 8` fits the slot 8 profile (neck 8 in
 the 8 mm opening, foot 6 high in a 7.75 mm chamber), the others stand 2 mm proud of a profile's face. Profile slot nuts,
 brackets, end caps and feet for these systems wait for a maker's published table (spec 6.3 §6.5c).
+
+Rexroth strut profiles (2026-11-10): the published chamber, opening, lip, groove depth and core make the slots; one wall
+thickness for the outer walls and webs is then sized so the area is the catalogue's (every size within 3 %; 30x30 is 2 % over at the thinnest wall, 0.8 mm), so Ix and Iy are ours
+(the test prints both; Ix comes out 7 to 28 % under the catalogue's: 40x40L 8.4 / 9.1, 45x45L 10.1 / 11.7, 45x45 13.2 / 18.3, 90x90 266 / 300 cm4). The slot 10 lip (3) and the slot 8 undercut depth (where the floor is as wide as the opening) are typed, and
+the core tube is the bore plus 6 mm. Left out: 20x20 (slot 6: no slot drawing read), 30x60 and 80x120L (their areas need inner
+shapes the model does not have). Rexroth's connectors (T-nuts, brackets, caps, feet) are not built: the catalogue gives their
+sizes only in drawings, which the text of these pages does not carry readably. Their CAD files were not used.
+
+Fasteners 2026-11-10: lengths marked "typed" follow the standard's length series between the range ends we know for the size, not
+a table compared row by row (DIN 7984, ISO 10642 M16 and M20, ISO 13337, ISO 1234, ISO 8735, ISO 4762 / 4017 / 4014 M14). ISO 7090
+uses ISO 7089's sizes (its chamfer is left out). There is no "ISO 7984": the low head socket screw is DIN 7984.
 
 **Not used:** MISUMI. Its terms for CAD data forbid obtaining it in bulk and reusing it beyond designing with its
 products; its catalogue is not a source for this library unless MISUMI agrees.

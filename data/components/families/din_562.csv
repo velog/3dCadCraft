@@ -1,0 +1,8 @@
+# DIN 562: square nut, thin. Mm from the fasten.it page of DIN 562.
+size,d,P,s,m
+M3,3,0.5,5.5,1.8
+M4,4,0.7,7,2.2
+M5,5,0.8,8,2.7
+M6,6,1,10,3.2
+M8,8,1.25,13,4
+M10,10,1.5,16,5

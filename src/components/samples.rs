@@ -156,6 +156,9 @@ pub enum Kind {
     BallNut(Real, Real, Real, Real, Real, Real, Real),
     /// A ball screw's shaft, its thread left out: diameter, length.
     BallScrew(Real, Real),
+    /// Parallel pin with a tapped hole in its top end (ISO 8735): diameter,
+    /// length, thread, thread depth.
+    ThreadedPin(Real, Real, Real, Real),
 }
 
 /// The numbers of a pipe flange. Weld neck: weld end on the XY plane, the hub and
@@ -897,6 +900,38 @@ const TABLES: &[(&str, &str)] = &[
         "ball_screw",
         include_str!("../../data/components/families/ball_screw.csv"),
     ),
+    (
+        "din_7984",
+        include_str!("../../data/components/families/din_7984.csv"),
+    ),
+    (
+        "iso_7092",
+        include_str!("../../data/components/families/iso_7092.csv"),
+    ),
+    (
+        "iso_7090",
+        include_str!("../../data/components/families/iso_7090.csv"),
+    ),
+    (
+        "din_6798",
+        include_str!("../../data/components/families/din_6798.csv"),
+    ),
+    (
+        "din_562",
+        include_str!("../../data/components/families/din_562.csv"),
+    ),
+    (
+        "iso_13337",
+        include_str!("../../data/components/families/iso_13337.csv"),
+    ),
+    (
+        "iso_1234",
+        include_str!("../../data/components/families/iso_1234.csv"),
+    ),
+    (
+        "iso_8735",
+        include_str!("../../data/components/families/iso_8735.csv"),
+    ),
 ];
 
 /// A table's lines without comments, the first one the heading.
@@ -1214,6 +1249,9 @@ fn row_members(
             ))
         })()),
         "ball_screw" => per_length(&|l| Some(Kind::BallScrew(get("d0")?, l))),
+        "threaded_pin" => {
+            per_length(&|l| Some(Kind::ThreadedPin(get("d")?, l, get("d2")?, get("t")?)))
+        }
         "linear_carriage" => one((|| Some(Kind::Block(get("a")?, get("b")?, get("c")?)))()),
         "clamp" => one((|| {
             let (d, t) = (get("d")?, get("s")?);
@@ -1445,6 +1483,7 @@ impl Sample {
                 | Kind::Cylinder(..)
                 | Kind::BallNut(..)
                 | Kind::BallScrew(..)
+                | Kind::ThreadedPin(..)
         )
     }
 
@@ -1547,6 +1586,7 @@ impl Sample {
             Kind::Cylinder(..) => "Pneumatic cylinder",
             Kind::BallNut(..) => "Ball nut",
             Kind::BallScrew(..) => "Ball screw",
+            Kind::ThreadedPin(..) => "Cylindrical pin",
         }
     }
 
@@ -1592,7 +1632,11 @@ impl Sample {
 
     fn material(&self) -> &'static str {
         match self.kind {
-            Kind::Shape(family, ..) if family.starts_with("T-slot") => "Aluminium 6063-T66",
+            Kind::Shape(family, ..)
+                if family.starts_with("T-slot") || family.starts_with("Strut profile") =>
+            {
+                "Aluminium 6063-T66"
+            }
             Kind::Cylinder(..) => "Aluminium 6063-T66",
             Kind::Shape(..) => "Steel S235",
             _ => "Steel AISI 4140",
@@ -1923,6 +1967,7 @@ fn standard_part(kind: Kind) -> Result<PartDocument, PartError> {
                 pneumatic_cylinder(e, l0 + stroke, b, va, rod, wh)
             }
             Kind::BallNut(d0, d, pcd, fl, l, l1, hole) => ball_nut(d0, d, pcd, fl, l, l1, hole),
+            Kind::ThreadedPin(d, l, thread, depth) => threaded_pin(d, l, thread, depth),
             Kind::BallScrew(d, l) => {
                 let (r, c) = (d / 2.0, d / 20.0);
                 ring(&[
@@ -1947,10 +1992,24 @@ fn standard_part(kind: Kind) -> Result<PartDocument, PartError> {
                     (r0, c),
                 ])
             }
-            Kind::Shape(family, size, length) => Library::builtin()
-                .find(family, size)
-                .ok_or_else(|| bad("the section is not in the table"))?
-                .member_part(length, None),
+            Kind::Shape(family, size, length) => {
+                let sec = Library::builtin()
+                    .find(family, size)
+                    .ok_or_else(|| bad("the section is not in the table"))?;
+                if sec.shape == crate::part::frame::Shape::TSlot {
+                    // Many loops: one prism, no sketch regions to find (a
+                    // 90x180 took 1.1 s through the sketch).
+                    let mut part = blank();
+                    part.add_body_op(BodyOpFeature::new(BodyOp::Prism(PrismOp {
+                        loops: sec.loops(),
+                        start: [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+                        end: [[0.0, 0.0, length], [0.0, 0.0, 1.0]],
+                    })))?;
+                    Ok(part)
+                } else {
+                    sec.member_part(length, None)
+                }
+            }
         }
     }
 }
@@ -3422,6 +3481,29 @@ fn flange(f: Flange, with_holes: bool) -> Result<PartDocument, PartError> {
         bend: None,
         rolling: Vec::new(),
     })))?;
+    Ok(part)
+}
+
+/// A dowel with a tapped hole in its top end, one revolve: the pin's chamfered
+/// outline with the tap drill's bore cut into it, and the cosmetic thread.
+fn threaded_pin(d: Real, l: Real, thread: Real, depth: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(thread, true)?;
+    let (r, c, rb) = (d / 2.0, d / 8.0, spec.minor / 2.0);
+    let depth = depth.min(l - 2.0 * c);
+    if !(rb + 0.5 < r - c && depth > 0.0) {
+        return Err(bad("the pin is too small for its thread"));
+    }
+    let mut part = ring(&[
+        (0.0, 0.0),
+        (r - c, 0.0),
+        (r, c),
+        (r, l - c),
+        (r - c, l),
+        (rb, l),
+        (rb, l - depth),
+        (0.0, l - depth),
+    ])?;
+    add_thread(&mut part, spec, rb, Point3::new(rb, 0.0, l - depth / 2.0))?;
     Ok(part)
 }
 

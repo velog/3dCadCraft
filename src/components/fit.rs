@@ -115,6 +115,7 @@ impl Fit {
             Kind::TNut(_, _, e, ..) => Fit::Slot { foot: e },
             Kind::BallNut(d0, ..) => Fit::Over { bore: d0 },
             Kind::BallScrew(d, l) => into(d, l),
+            Kind::ThreadedPin(d, l, ..) => into(d, l),
             Kind::Key(..)
             | Kind::Woodruff(..)
             | Kind::ORing(..)

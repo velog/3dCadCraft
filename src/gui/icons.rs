@@ -979,6 +979,12 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
             p.line(&[(6.0, 3.0), (10.0, 3.0)], acc);
             p.line(&[(6.0, 13.0), (10.0, 13.0)], acc);
         }
+        "Internal Thread" => {
+            // A pin seen in section: its tapped hole from the top.
+            p.rect(5.5, 1.5, 10.5, 14.5, ink);
+            p.rect(7.0, 1.5, 9.0, 6.5, acc);
+            threads(7.0, 9.0, 2.5, 6.0);
+        }
         "Taper" => p.closed(&[(5.5, 1.5), (10.5, 1.5), (9.5, 14.5), (6.5, 14.5)], ink),
         "Rivets" | "Blind" if !category.contains("Flanges") => {
             p.arc(8.0, 6.0, 5.0, 0.0, 180.0, ink);

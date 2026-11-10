@@ -58,7 +58,8 @@ fn a_clearance_hole_takes_the_widest_screw_that_passes_and_the_shortest_length()
     // An exact hole still takes its screw.
     assert_eq!(
         dropped("ISO 4762", &hole(6.0, 8.0)).as_deref(),
-        Some("M6 x 12")
+        // The standard series has 10 mm for M6 (2026-11-10).
+        Some("M6 x 10")
     );
 }
 

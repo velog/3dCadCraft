@@ -46,6 +46,7 @@ Fasteners/Pins,Spring,spring_pin,ready,size d s lengths,slotted tubular
 Fasteners/Pins,Grooved,grooved_pin,ready,size d lengths,with rolled grooves
 Fasteners/Pins,Cotter,cotter_pin,ready,size d a c lengths,"split, bent on assembly"
 Fasteners/Pins,Clevis,clevis_pin,ready,size d dk k lengths,with a head and a cross hole
+Fasteners/Pins,Internal Thread,threaded_pin,ready,size d d2 t lengths,dowel with a tapped hole
 Fasteners/Rivets,Round Head,rivet,ready,size d dk k lengths,solid
 Fasteners/Rivets,Countersunk,countersunk_rivet,ready,size d dk k lengths,solid
 Fasteners/Rivets,Blind,blind_rivet,ready,size d dk k lengths,closed from one side

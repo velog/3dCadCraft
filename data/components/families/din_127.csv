@@ -1,10 +1,18 @@
-# DIN 127 B: Spring lock washer. Nominal values in mm, typed for this library; compared with fasten.it.
+# DIN 127 B: spring lock washer. Mm from the fasten.it page of DIN 127 (form B), M3 to M36.
 size,d1,d2,s
+3,3.1,6.2,0.8
 4,4.1,7.6,0.9
 5,5.1,9.2,1.2
 6,6.1,11.8,1.6
 8,8.1,14.8,2
 10,10.2,18.1,2.2
 12,12.2,21.1,2.5
+14,14.2,24.1,3
 16,16.2,27.4,3.5
+18,18.2,29.4,3.5
 20,20.2,33.6,4
+22,22.5,35.9,4
+24,24.5,40,5
+27,27.5,43,5
+30,30.5,48.2,6
+36,36.5,58.2,6
