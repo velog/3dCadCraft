@@ -33,6 +33,7 @@ pub mod api;
 pub mod assembly;
 pub mod command;
 pub mod components;
+pub mod design;
 pub mod diagnostics;
 pub mod document;
 pub mod drawing;

@@ -1549,6 +1549,7 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::FrameMemberInfo
                     | super::asm_planned::AsmPlanned::PlaceImported
                     | super::asm_planned::AsmPlanned::BoltedConnection
+                    | super::asm_planned::AsmPlanned::Shaft
             ) | Planned::Part(
                 PartPlanned::Emboss
                     | PartPlanned::Grill
@@ -1800,6 +1801,8 @@ pub(super) struct PartDialog {
     pub members: MemberEditState,
     /// Bolted Connection: the library and the fastener stack (`gui/bolted.rs`).
     pub bolt: super::bolted::BoltPanel,
+    /// Shaft: the sections, loads and results (`gui/shaft.rs`).
+    pub shaft: super::shaft::ShaftPanel,
 }
 
 /// One set of Insert Frame (+ Add Set): its lines and options.
@@ -1945,6 +1948,7 @@ impl PartDialog {
             frame_sets: Vec::new(),
             members: MemberEditState::default(),
             bolt: Default::default(),
+            shaft: Default::default(),
         }
     }
 
@@ -2507,6 +2511,9 @@ impl PartDialog {
                 ui.label(RichText::new(t).strong());
                 ui.end_row();
             }
+            Note(_) if super::shaft::is_shaft(self) && at.0 == 2 => {
+                super::shaft::graphs_ui(self, ui);
+            }
             Note(t) => {
                 plabel(ui, "");
                 ui.label(RichText::new(t).weak().italics());
@@ -2526,6 +2533,18 @@ impl PartDialog {
             }
             Button("Click to add a fastener") if super::bolted::is_bolted(self) => {
                 super::bolted::stack_ui(self, ui);
+            }
+            Button("Insert Cylinder") if super::shaft::is_shaft(self) => {
+                super::shaft::sections_ui(self, ui);
+            }
+            Button("Calculate") if super::shaft::is_shaft(self) => {
+                super::shaft::calculation_ui(self, ui);
+            }
+            Button("Calculate") if super::gear_key::is_spur(self) => {
+                super::gear_key::gear_ui(self, ui);
+            }
+            Button("Calculate") if super::gear_key::is_key(self) => {
+                super::gear_key::key_ui(self, ui);
             }
             Button(t) => {
                 plabel(ui, "");
@@ -3143,6 +3162,11 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::BoltedConnection) => {
                 if self.bolted_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Shaft) => {
+                if self.shaft_ok(&d) {
                     self.part_planned = None;
                 }
             }
