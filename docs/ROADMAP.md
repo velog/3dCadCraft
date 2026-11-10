@@ -566,8 +566,9 @@ true volume. Open:
   Stitch at 0.001 mm leaves a loft between whole surfaces open (the old kernel closed it; 0.01 mm closes).
 - **Refused:** Shell of non-convex bodies with rounds no larger than the wall (convex ones get a cavity
   of moved planes, `plane_cavity`; the box lid of `project_box_lip` is still refused), a Parallel sweep whose path ends along the section's
-  plane (SMLib's check), lofts through stations, Thicken of a symmetric closed egg, of a swept tube and
-  of lofted surfaces, an inclined hole's exit on a side wall, tangent and guided patches.
+  plane (SMLib's check), lofts through stations, Thicken of creased lofted surfaces (outward:
+  SMLib cannot extend the spline offsets across the creases, status 1001; a loft sheet's normals point inward, so
+  Direction 1 is the inward side; the swept tube and the egg's offset surface build since 2026-11-10), an inclined hole's exit on a side wall, tangent and guided patches.
 - **Speed:** solidcore is patched to our fork (`vendor/README.md`): a plate with 1024 holes went from
   119 s to 32 s (the check 92 s → 6 s), then 27 s → 21 s (deleting the faces a Boolean discards is
   no longer quadratic); each pair measured at the same time, the machine's speed varied between them. Next in the Boolean: the imprint and `intersect_topology`, then `bounds`. Still open:

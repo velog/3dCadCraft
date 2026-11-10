@@ -76,12 +76,19 @@ pub(crate) fn run(
     let tagged = sb.tagged(0).map_err(|e| failed(name, "tag", e))?;
     let r = op(&tagged).map_err(|e| refused(name, wall, e))?;
     let check = r.check(CheckLevel::All).map_err(|e| failed(name, "check", e))?;
+    let mut straightened = None;
     if !check.is_valid() {
-        let input = sb.check(CheckLevel::All).is_ok_and(|c| !c.is_valid());
-        let what = if input { "SMLib's check refuses the result (the body already fails it)" } else { "SMLib's check refuses the result" };
-        return Err(failed(name, what, check));
+        straightened = straightened_export(&r)?;
+        if straightened.is_none() {
+            let input = sb.check(CheckLevel::All).is_ok_and(|c| !c.is_valid());
+            let what = if input { "SMLib's check refuses the result (the body already fails it)" } else { "SMLib's check refuses the result" };
+            return Err(failed(name, what, check));
+        }
     }
-    let (body, or) = body_from_smlib_ordered(&r)?;
+    let (body, or) = match straightened {
+        Some((record, order)) => (Body::from_smlib_record(record)?, Some(order)),
+        None => body_from_smlib_ordered(&r)?,
+    };
     let history = match (ob, or) {
         (Some(ob), Some(or)) => r.history().map_err(|e| failed(name, "history", e))?.history(&[ob], &or).map(Some).unwrap_or_else(|e| {
             log::debug!(target: "smlib", "{name} history: {e}");
@@ -90,6 +97,125 @@ pub(crate) fn run(
         _ => None,
     };
     Ok((body, history))
+}
+
+/// The widest gap at the seam of a closed row or column of a control net taken for a fitter's slip
+/// (mm, [`straighten_nets`]): a thousandth of the finest fitting tolerance a thicken or offset
+/// asks for (0.01 mm).
+const NET_SLIP: f64 = 1e-5;
+
+/// `r`'s export with its nets' seams closed ([`straighten_nets`]), with the order of SMLib's faces
+/// and edges, where that changed something and SMLib's check accepts the result imported again
+/// with its splines as they are (3DCadCraft addition). SMLib's fitted offset of a swept tube came
+/// back with rows round the tube whose last control point overshoots the first by up to 2.6e-6 mm:
+/// the step closing the row points back against the row's first step (0.037 mm), which its check
+/// (test #5, a net that doubles back) refuses.
+fn straightened_export(r: &Brep) -> Result<Option<(solidcore_record::brep::Brep, solidcraft_smlib::history::Order)>> {
+    // A result that cannot be exported cannot be a body either: that is the error.
+    let (mut record, order) = r.to_native_ordered().map_err(|e| KernelError::Failed(e.to_string()))?;
+    if !straighten_nets(&mut record) {
+        return Ok(None);
+    }
+    let Ok(again) = Brep::from_record_keeping_splines(&record, true) else { return Ok(None) };
+    Ok(again.check(CheckLevel::All).is_ok_and(|c| c.is_valid()).then_some((record, order)))
+}
+
+/// Each B-spline net of `r` with the seams of its closed rows and columns closed: where a line's
+/// two end points are less than [`NET_SLIP`] apart and the step from its last point to its first
+/// turns back (more than 170 degrees, the angle SMLib's check refuses) against the line's first or
+/// last step, at least a hundred times longer, both end points go to their middle. Each moves
+/// less than half the gap, so the surface by less than that. Whether anything moved.
+fn straighten_nets(r: &mut solidcore_record::brep::Brep) -> bool {
+    use solidcore_record::brep::Surface;
+    let mut moved = false;
+    for f in &mut r.faces {
+        match &mut f.surface {
+            Surface::Spline { points, .. } => {
+                let mut net: Vec<Vec<Vec3>> = points.iter().map(|row| row.iter().map(|p| Vec3::new(p[0], p[1], p[2])).collect()).collect();
+                if straighten(&mut net) {
+                    moved = true;
+                    for (row, out) in net.iter().zip(points.iter_mut()) {
+                        for (p, o) in row.iter().zip(out.iter_mut()) {
+                            *o = [p.x, p.y, p.z];
+                        }
+                    }
+                }
+            }
+            Surface::RationalSpline { homogeneous, .. } => {
+                if homogeneous.iter().flatten().any(|h| !(h[3].is_finite() && h[3] != 0.0)) {
+                    continue;
+                }
+                let mut net: Vec<Vec<Vec3>> = homogeneous.iter().map(|row| row.iter().map(|h| Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3])).collect()).collect();
+                if straighten(&mut net) {
+                    moved = true;
+                    for (row, out) in net.iter().zip(homogeneous.iter_mut()) {
+                        for (p, o) in row.iter().zip(out.iter_mut()) {
+                            let w = o[3];
+                            *o = [p.x * w, p.y * w, p.z * w, w];
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    moved
+}
+
+/// [`straighten_nets`] on one net of Euclidean points, rows then columns.
+fn straighten(net: &mut [Vec<Vec3>]) -> bool {
+    let cols = net.first().map_or(0, Vec::len);
+    if net.iter().any(|row| row.len() != cols) {
+        return false;
+    }
+    let mut moved = false;
+    for row in net.iter_mut() {
+        moved |= straighten_line(row);
+    }
+    for j in 0..cols {
+        let mut line: Vec<Vec3> = net.iter().filter_map(|row| row.get(j).copied()).collect();
+        if straighten_line(&mut line) {
+            moved = true;
+            for (row, q) in net.iter_mut().zip(line) {
+                if let Some(p) = row.get_mut(j) {
+                    *p = q;
+                }
+            }
+        }
+    }
+    moved
+}
+
+/// [`straighten_nets`] on one row or column.
+fn straighten_line(line: &mut [Vec3]) -> bool {
+    let n = line.len();
+    let (Some(&first), Some(&second), Some(&before), Some(&last)) = (line.first(), line.get(1), n.checked_sub(2).and_then(|i| line.get(i)), line.last()) else {
+        return false;
+    };
+    if n < 3 {
+        return false;
+    }
+    let gap = first - last;
+    let lg = gap.len();
+    if !(lg > 0.0 && lg < NET_SLIP) {
+        return false;
+    }
+    let back = (170f64).to_radians().cos();
+    let turns_back = |step: Vec3| {
+        let ls = step.len();
+        ls >= 100.0 * lg && gap.dot(step) < back * lg * ls
+    };
+    if !(turns_back(second - first) || turns_back(last - before)) {
+        return false;
+    }
+    let mid = (first + last) * 0.5;
+    if let Some(p) = line.first_mut() {
+        *p = mid;
+    }
+    if let Some(p) = line.last_mut() {
+        *p = mid;
+    }
+    true
 }
 
 /// [`crate::shell`] through SMLib: walls of `thickness` inside, open at the faces under the
@@ -129,9 +255,103 @@ pub(crate) fn offset_faces(b: &Body, chosen: &[usize], distance: f64) -> Result<
     Ok(r.with_checked_history(h, &record::counts(&[b])))
 }
 
+/// How many times [`thicken`] halves a sheet's spline faces whose wall comes out too large.
+const MAX_HALVINGS: usize = 2;
+
 /// [`crate::thicken`] through SMLib: the sheet `b` grown by `thickness` along its faces'
-/// normals, or half each way when `symmetric`.
+/// normals, or half each way when `symmetric`. SMLib fits a free-form face's offset with a net
+/// that can outgrow what the evaluator takes (a tube swept along a spline, 430 × 9 control points,
+/// thickened outward: 864 × 415, past 2^18 points); then the sheet's spline faces are halved and
+/// the halves thickened, each fitted on its own ([`thicken_halved`]).
 pub(crate) fn thicken(b: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
+    thicken_within(b, thickness, symmetric, MAX_HALVINGS)
+}
+
+fn thicken_within(b: &Body, thickness: f64, symmetric: bool, halvings: usize) -> Result<Body> {
+    match thicken_once(b, thickness, symmetric) {
+        Err(e) if halvings > 0 && too_large(&e) => thicken_halved(b, thickness, symmetric, halvings - 1).map_err(|_| e),
+        other => other,
+    }
+}
+
+/// Whether `e` says a spline surface has more control points than the evaluator takes
+/// (`solidcraft_geom`'s `TooLarge`, reported through the export of SMLib's result).
+fn too_large(e: &KernelError) -> bool {
+    let text = e.to_string();
+    text.contains("a spline surface of") && text.contains("points")
+}
+
+/// [`thicken`] of `b` with each spline face cut in two by the plane of its iso curve half way
+/// along the direction with more control points (that curve must be flat: a swept section), the
+/// halves thickened, and the history composed back onto `b`'s faces and edges (3DCadCraft
+/// addition).
+fn thicken_halved(b: &Body, thickness: f64, symmetric: bool, halvings: usize) -> Result<Body> {
+    let r = b.record();
+    let mut cut = b.clone();
+    let mut inner: Option<History> = None;
+    for f in 0..r.faces.len() {
+        let Some(plane) = r.faces.get(f).and_then(middle_plane) else { continue };
+        // The faces of `cut` that are face f of `b`: before any split, f itself.
+        let faces: Vec<usize> = match &inner {
+            None => vec![f],
+            Some(h) => h
+                .faces
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.origins.iter().any(|o| matches!(o, FaceOrigin::Face { face, .. } if *face as usize == f)))
+                .map(|(i, _)| i)
+                .collect(),
+        };
+        let split = crate::splitface::split_faces(&cut, &faces, &crate::splitface::SplitTool::Plane(plane))?;
+        let h = split.history().cloned().ok_or_else(|| KernelError::Failed("thicken: the halved sheet has no history".into()))?;
+        inner = Some(match inner {
+            None => h,
+            Some(before) => h.substituted(0, &before).map_err(|e| KernelError::Failed(e.to_string()))?,
+        });
+        cut = split;
+    }
+    let Some(inner) = inner else { return Err(KernelError::Failed("thicken: no spline face to halve".into())) };
+    let made = thicken_within(&cut, thickness, symmetric, halvings)?;
+    let h = made.history().cloned().and_then(|h| h.substituted(0, &inner).ok());
+    Ok(made.with_checked_history(h, &record::counts(&[b])))
+}
+
+/// The plane of the iso curve of `face`'s spline surface half way along the parameter with more
+/// control points, where that curve is flat (within a millionth of its size).
+fn middle_plane(face: &solidcore_record::brep::Face) -> Option<solidcore_record::Plane> {
+    use solidcore_record::brep::Surface;
+    let (nu, nv) = match &face.surface {
+        Surface::Spline { points, .. } => (points.len(), points.first()?.len()),
+        Surface::RationalSpline { homogeneous, .. } => (homogeneous.len(), homogeneous.first()?.len()),
+        _ => return None,
+    };
+    let s = solidcraft_geom::brep::eval::SurfaceEval::new(face.parameters()).ok()?;
+    let [[u0, u1], [v0, v1]] = face.domain;
+    const SAMPLES: usize = 32;
+    let pts: Vec<Vec3> = (0..SAMPLES)
+        .map(|k| {
+            let t = k as f64 / SAMPLES as f64;
+            if nu >= nv { s.point([0.5 * (u0 + u1), v0 + t * (v1 - v0)]) } else { s.point([u0 + t * (u1 - u0), 0.5 * (v0 + v1)]) }
+        })
+        .collect::<Option<_>>()?;
+    let centre = pts.iter().fold(Vec3::ZERO, |a, p| a + *p) * (1.0 / SAMPLES as f64);
+    // Newell's normal of the closed polygon through the samples.
+    let mut n = Vec3::ZERO;
+    for (i, p) in pts.iter().enumerate() {
+        let q = pts.get((i + 1) % SAMPLES)?;
+        n = n + (*p - centre).cross(*q - centre);
+    }
+    let n = n.normalized()?;
+    let size = pts.iter().map(|p| p.dist(centre)).fold(0.0, f64::max);
+    if !(size > 0.0) || pts.iter().any(|p| (*p - centre).dot(n).abs() > 1e-6 * size.max(1.0)) {
+        return None;
+    }
+    let x = (*pts.first()? - centre).normalized()?;
+    let x = (x - n * x.dot(n)).normalized()?;
+    Some(solidcore_record::Plane { origin: centre, x, y: n.cross(x) })
+}
+
+fn thicken_once(b: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
     if !(thickness.is_finite() && thickness.abs() > 1e-9) {
         return Err(KernelError::Invalid("thickness must be non-zero".into()));
     }
@@ -220,7 +440,7 @@ fn faces_under(b: &Body, at: &[Vec3]) -> Result<Vec<usize>> {
 }
 
 /// One point inside each face `faces` of `b`: the centroid of its largest triangle.
-fn face_points(b: &Body, faces: &[usize]) -> Result<Vec<Vec3>> {
+pub(crate) fn face_points(b: &Body, faces: &[usize]) -> Result<Vec<Vec3>> {
     let mesh = b.mesh(&crate::MeshTolerance::chord((b.size() * 1e-3).max(1e-3)))?;
     faces
         .iter()

@@ -809,7 +809,14 @@ pub(crate) fn offset_faces(body: &Body, picked: &[usize], distance: f64, toleran
     if distance == 0.0 {
         return taken(body, r, &picked.iter().map(|f| (*f, false)).collect::<Vec<_>>());
     }
-    let moved = picked.iter().map(|f| imp::offset_face(r, *f, distance)).collect::<Result<Vec<_>>>()?;
+    let moved = match picked.iter().map(|f| imp::offset_face(r, *f, distance)).collect::<Result<Vec<_>>>() {
+        Ok(m) => m,
+        // SMLib's offset of a face on its own can fail where the same offset as a wall holds: a
+        // full turn of a revolved spline (its check finds the closed offset "self-intersecting")
+        // and a pole where the profile meets the axis ("folds, the largest wall that works is 0").
+        // Then the wall's offset faces, taken out of the thickened faces.
+        Err(e) => return offset_by_thicken(body, r, picked, distance).map_err(|_| e),
+    };
     let (parts, offsets) = Parts::joined(&moved.iter().collect::<Vec<_>>())?;
     let c = parts.canonical()?;
     let (result, h) = imp::stitched(&c.brep, tolerance.max(c.brep.tolerance))?;
@@ -820,6 +827,91 @@ pub(crate) fn offset_faces(body: &Body, picked: &[usize], distance: f64, toleran
     let rec = result.record();
     let h = faces.map(|faces| record_history(rec, 1, faces, |_, between, faces| record::meeting(between, faces)));
     Ok(result.with_checked_history(h, &record::counts(&[body])))
+}
+
+/// [`offset_faces`] through SMLib's thicken (3DCadCraft addition): the faces `picked` of `body`
+/// (its record `r`) as a sheet thickened by `distance` (a closed sheet hollowed by its shell), and
+/// the wall's moved copies of them taken out as the offset, each held along the normal of the
+/// face it came from. Which way the thicken grows depends on how SMLib holds the sheet, so the
+/// side is measured: a point of every moved face must lie along the outward normal of its face
+/// (against it for a negative distance), else the sheet is thickened the other way.
+fn offset_by_thicken(body: &Body, r: &Brep, picked: &[usize], distance: f64) -> Result<Body> {
+    let pairs: Vec<(usize, bool)> = picked.iter().map(|f| (*f, false)).collect();
+    let c = Parts::of(r, &pairs)?.canonical()?;
+    // The body's face each sheet face is.
+    let source: Vec<usize> = c.faces.iter().filter_map(|p| picked.get(*p).copied()).collect();
+    let (sheet, _) = record_body(&c.brep)?;
+    let sides = face_sides(r);
+    let reach = 2.0 * distance.abs() + 1e-3;
+    let mut last = failed("offset: no wall could be made");
+    for t in [distance, -distance] {
+        let thick = match crate::offset_backend::thicken(&sheet, t, false) {
+            Ok(b) => b,
+            Err(e) => {
+                last = e;
+                continue;
+            }
+        };
+        let Some(h) = thick.history() else { return Err(failed("offset: the thickened faces have no history")) };
+        // Each moved face of the wall with the body's face it is the offset of.
+        let moved: Vec<(usize, usize)> = h
+            .faces
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| match f.origins.as_slice() {
+                [FaceOrigin::Offset { face, .. }] => Some((i, *source.get(*face)?)),
+                _ => None,
+            })
+            .collect();
+        if moved.len() != source.len() {
+            last = failed("offset: the wall does not move every face");
+            continue;
+        }
+        let tr = thick.record();
+        let tsides = face_sides(tr);
+        let points = crate::offset_backend::face_points(&thick, &moved.iter().map(|m| m.0).collect::<Vec<_>>())?;
+        let (mut along, mut against) = (0, 0);
+        // Each moved face, turned where the wall holds it against its face's normal.
+        let mut turned = Vec::with_capacity(moved.len());
+        for (&(i, f), p) in moved.iter().zip(&points) {
+            let (Some((q, n)), Some((_, m))) = (normal_near(r, &sides, f, *p, reach), normal_near(tr, &tsides, i, *p, reach)) else {
+                return Err(failed("offset: a moved face cannot be measured"));
+            };
+            if (*p - q).dot(n) * distance > 0.0 {
+                along += 1;
+            } else {
+                against += 1;
+            }
+            turned.push((i, m.dot(n) < 0.0));
+        }
+        if along > 0 && against > 0 {
+            return Err(failed("offset: the faces' normals do not agree"));
+        }
+        if against > 0 {
+            last = failed("offset: the wall grew the other way");
+            continue;
+        }
+        let c2 = Parts::of(tr, &turned)?.canonical()?;
+        let faces = c2
+            .faces
+            .iter()
+            .map(|p| record::generated(vec![FaceOrigin::Offset { operand: 0, face: moved.get(*p).map_or(0, |m| m.1) }]))
+            .collect();
+        let hh = record_history(&c2.brep, 1, faces, |_, between, faces| record::meeting(between, faces));
+        let (result, same) = record_body(&c2.brep)?;
+        return with_history(result, same, hh, &record::counts(&[body]));
+    }
+    Err(last)
+}
+
+/// The point of face `f` of `r` nearest to `p` (within `reach`) and the face's outward unit
+/// normal there (`sides`: [`face_sides`] of `r`).
+fn normal_near(r: &Brep, sides: &[bool], f: usize, p: Vec3, reach: f64) -> Option<(Vec3, Vec3)> {
+    let s = solidcraft_geom::brep::eval::SurfaceEval::new(r.faces.get(f)?.parameters()).ok()?;
+    let uv = s.project(p, None, reach)?;
+    let (at, su, sv) = s.derivs(uv[0], uv[1])?;
+    let n = su.cross(sv).normalized()?;
+    Some((at, if sides.get(f).copied().unwrap_or(true) { n } else { n * -1.0 }))
 }
 
 /// A planar surface extended: the chosen straight edges (picked by points on them) move outward in

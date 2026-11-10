@@ -1408,6 +1408,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   name — revolve sectors), ties broken by the sample point. Thickening every face of a closed solid is
   `exact::offset_solid` (a Boolean with its own shell finds nothing). Check volumes with Steiner's formula
   ((V_out + V_in)/2 = A·t + 4π/3·t³ for a closed convex surface, A·t for an open smooth one) and Pappus.
+  On solidcore (`vendor/README.md`): SMLib's check can refuse a fitted offset whose exported net is fine but for a
+  seam a few nm open (straightened before giving up), a fitted wall can pass 2^18 control points, which
+  `solidcraft_geom` will not evaluate (the sheet is halved and thickened again), and an offset of a face on its own
+  (full-turn spline, pole) fails where the thicken of the same faces holds (`offset_by_thicken`).
 - **Face names must not depend on the display mesh's last bits**: `exact::face_samples` takes the largest
   triangle, and on a cylinder many are equal up to rounding, so the sample lands elsewhere on Linux.
   A name decided by "is the sample within a tolerance of X" must not have a face straddle that window
