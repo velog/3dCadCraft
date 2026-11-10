@@ -100,6 +100,7 @@ already does without its own matching).
 
 | File | Change | Effect |
 |---|---|---|
+| `build.rs` `loft_numbered_loops` (`same_way`) | normals more than a right angle apart mean a plane facing back only if the planes also face opposite ways along the step between the sections | two circles on planes turned 120 degrees about an axis were wound against each other: a ruled loft crossing itself, refused by SMLib's check |
 | `build.rs` `loft_matched`, `matched_wires`; `lib.rs` export | a loft through sections whose segments the caller has already paired (same count, same start, all oriented alike): no re-splitting, no turning to a new start, side face `i` numbered `i` | our stations (rails, map points, a twist the automatic matching would undo) keep their pairing |
 | `build.rs` `loft_matched_ring`; `lib.rs` export | a closed loop of matched sections: two smooth halves (`smooth_loft_faces`) sharing their end wires, closed into one shell without caps | Closed Loop gives a valid ring (the old smooth loft + ruled closing span + Union was invalid) |
 

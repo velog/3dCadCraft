@@ -2225,6 +2225,13 @@ pub fn shell(
     shell_with(s, open, thickness, side, false, prefix)
 }
 
+/// Whether some face of `s` lies on no analytic surface (a B-spline wall of a
+/// sweep or loft along a curve).
+pub fn has_free_form_faces(s: &ExactSolid) -> bool {
+    guarded("face surfaces", || Ok(sk::face_surfaces(&s.body)))
+        .is_ok_and(|kinds| kinds.iter().any(Option::is_none))
+}
+
 /// [`shell`] with Inventor's shell type: `rounded` (Rounded Corners) rounds
 /// the corners the offset makes, as a true offset would: the outer walls'
 /// sharp convex edges by the outward offset, the cavity's sharp concave

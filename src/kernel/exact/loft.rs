@@ -259,6 +259,31 @@ fn control_normals(segs: &[Bez]) -> Vec<V2> {
     out
 }
 
+/// How an end condition moves a section's control points in its plane:
+/// `inplane` along each point's control normal, and along each segment the
+/// part of its two corners' motion that runs along it, shared out from end to
+/// end. A sharp corner moves along its bisector, so it also slides along its
+/// edges: with the points between left behind, a corner leaning in further
+/// than the first of them made the net double back on itself. Smooth joints
+/// have no such part.
+fn inplane_rates(segs: &[Bez], inplane: &[Real]) -> Vec<V2> {
+    let mut rates: Vec<V2> = control_normals(segs)
+        .iter()
+        .zip(inplane)
+        .map(|(nu, w)| nu * *w)
+        .collect();
+    let unit = |d: V2| d.try_normalize(1e-300).unwrap_or_else(V2::zeros);
+    for (i, s) in segs.iter().enumerate() {
+        let first = rates[i * N].dot(&unit(s.deriv(0.0)));
+        let last = rates[i * N + N - 1].dot(&unit(s.deriv(1.0)));
+        for j in 1..N - 1 {
+            let f = j as Real / (N - 1) as Real;
+            rates[i * N + j] += unit(s.deriv(f)) * ((1.0 - f) * first + f * last);
+        }
+    }
+    rates
+}
+
 // ----------------------------------------------------------- sections ---
 
 /// A section (or station): a plane frame and a closed loop in it.
@@ -1336,20 +1361,14 @@ fn free_stations(
             && let Some(r) = start
         {
             moa = sa.n() * r.normal;
-            let nu = control_normals(&sa.segs);
-            for (i, x) in ma.iter_mut().enumerate() {
-                *x = nu[i] * r.inplane[i];
-            }
+            ma = inplane_rates(&sa.segs, &r.inplane);
         }
         if !closed
             && b == k - 1
             && let Some(r) = end
         {
             mob = secs[b].n() * r.normal;
-            let nu = control_normals(&unflat(&shape_b));
-            for (i, x) in mb.iter_mut().enumerate() {
-                *x = nu[i] * r.inplane[i];
-            }
+            mb = inplane_rates(&unflat(&shape_b), &r.inplane);
         }
         out.push(Station {
             sec: sa.clone(),

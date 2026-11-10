@@ -1222,9 +1222,9 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     let rounded = sh.corners == super::ShellCorners::Rounded;
     let r = exact::shell_with(&cur[target], &open, sh.thickness, side, rounded, &sh.id).map_err(
         |e| {
-            // The kernel offsets analytic faces only; a sweep or loft along
-            // a curve has free-form (B-spline) walls.
-            if e.contains("only bodies with planes") {
+            // A sweep or loft along a curve has free-form (B-spline) walls;
+            // the kernel's shell may fail on them with only a status number.
+            if exact::has_free_form_faces(&cur[target]) {
                 User(format!(
                     "free-form faces (a sweep or loft along a curve) cannot be offset yet ({e})"
                 ))
