@@ -934,3 +934,88 @@ fn revolve_around_a_work_axis() {
     assert!(err.is_err());
     assert_eq!(part.features.len(), n);
 }
+
+/// The name of the box's straight edge parallel to `dir` whose two ends
+/// both satisfy `at`.
+fn box_edge(part: &PartDocument, dir: usize, at: impl Fn(&Point3) -> bool) -> String {
+    let b = &part.body;
+    b.edges()
+        .find_map(|(id, e)| {
+            let d = b.edge_direction(id)?.normalize();
+            let (p, q) = (b.vertex(e.start)?.point, b.vertex(e.end)?.point);
+            (d[dir].abs() > 0.999 && at(&p) && at(&q)).then(|| e.name.clone())?
+        })
+        .expect("the box edge")
+}
+
+/// Revolve about a straight model edge (Inventor: an edge as the axis): a
+/// 10 × h rectangle beside the box's vertical edge at x = L, y = 0 (the XZ
+/// plane holds the box's front face) revolved full round is a cylinder
+/// r = 10. New Solid: π·100·h; Join: the box plus the three quarters
+/// outside it. Five box sizes; the result survives a save and load; an
+/// edge off the sketch plane is refused (the part unchanged).
+#[test]
+fn revolve_around_a_model_edge() {
+    for (l, w, h) in [
+        (40.0, 30.0, 20.0),
+        (10.0, 10.0, 10.0),
+        (25.0, 60.0, 5.0),
+        (80.0, 12.0, 33.0),
+        (15.0, 45.0, 50.0),
+    ] {
+        for op in [Operation::NewSolid, Operation::Join] {
+            let mut part = PartDocument::with_box("Box1", [l, w, h]).unwrap();
+            let (lo, hi) = part.body.bounding_box().unwrap();
+            let edge = box_edge(&part, 2, |p| {
+                (p.x - hi.x).abs() < 1e-9 && (p.y - lo.y).abs() < 1e-9
+            });
+            let xz = SketchPlacement::on_origin_plane(OriginPlane::XZ);
+            let i = part.create_sketch(xz, &opts()).unwrap();
+            let sk = &mut part.sketches[i].sketch;
+            // On XZ the sketch x is world X, y is world Z; the box's front
+            // face lies on y = lo.y = 0.
+            assert!(lo.y.abs() < 1e-9, "box front on the XZ plane");
+            sk.add_rectangle_two_point(Point2::new(hi.x, lo.z), Point2::new(hi.x + 10.0, hi.z))
+                .unwrap();
+            let r = sk.regions();
+            let pr = ProfileRef::of(&r[0], r[0].interior_point());
+            let mut rv = RevolveFeature::new(vec![pr], AxisRef::Edge(edge.clone()));
+            rv.operation = op;
+            part.add_revolve(i, rv).unwrap();
+            let cyl = PI * 100.0 * h;
+            let want = match op {
+                Operation::NewSolid => l * w * h + cyl,
+                _ => l * w * h + 0.75 * cyl,
+            };
+            close(exact_volume(&part), want, "revolve about a box edge");
+            assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+            // Round trip: the axis is stored by the edge's name.
+            let json = serde_json::to_string(&part).unwrap();
+            assert!(json.contains(&format!("\"Edge\":\"{edge}\"")), "{json}");
+            let mut back: PartDocument = serde_json::from_str(&json).unwrap();
+            back.regenerate().unwrap();
+            close(
+                exact_volume(&back),
+                want,
+                "revolve about a box edge, reloaded",
+            );
+        }
+    }
+    // An edge that does not lie in the sketch plane (the back vertical edge,
+    // y = w): refused, nothing added.
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let edge = box_edge(&part, 2, |p| {
+        (p.x - 40.0).abs() < 1e-9 && (p.y - 30.0).abs() < 1e-9
+    });
+    let xz = SketchPlacement::on_origin_plane(OriginPlane::XZ);
+    let i = part.create_sketch(xz, &opts()).unwrap();
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(40.0, 0.0), Point2::new(50.0, 20.0))
+        .unwrap();
+    let r = sk.regions();
+    let pr = ProfileRef::of(&r[0], r[0].interior_point());
+    let n = part.features.len();
+    let err = part.add_revolve(i, RevolveFeature::new(vec![pr], AxisRef::Edge(edge)));
+    assert!(err.is_err());
+    assert_eq!(part.features.len(), n);
+}

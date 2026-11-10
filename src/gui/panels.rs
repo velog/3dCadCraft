@@ -5840,6 +5840,7 @@ fn axis_label(axis: &crate::part::AxisRef, sketch: Option<&crate::sketch::Sketch
             }
         }
         crate::part::AxisRef::Work(id) => format!("Work axis {id}"),
+        crate::part::AxisRef::Edge(_) => "Model edge".to_owned(),
     }
 }
 

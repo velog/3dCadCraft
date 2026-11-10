@@ -581,7 +581,7 @@ Lines, splines and helices directly in space, plus intersection of surfaces and 
 
 ## 2.2 Revolve — 🟡 · L
 
-**Status (specification: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Done: profiles, axis (a line from the sketch, with automatic choice of the only centerline, X/Y/Z of the origin), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, angles as parameters, diameter dimension to a centerline. 🟡 (2026-10-19, Inventor 2027, waiting for a visual check): To (a face or plane through the axis, a point) with Minimum Solution, Predict Boolean Operation, Continue with right-click, breadcrumb, "+", Sphere and Torus primitives; fixed direction of Symmetric/Asymmetric in the exact kernel. To do: work axis and edge as the axis, To Next, Match Shape.
+**Status (specification: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Done: profiles, axis (a line from the sketch, with automatic choice of the only centerline, X/Y/Z of the origin), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, angles as parameters, diameter dimension to a centerline. 🟡 (2026-10-19, Inventor 2027, waiting for a visual check): To (a face or plane through the axis, a point) with Minimum Solution, Predict Boolean Operation, Continue with right-click, breadcrumb, "+", Sphere and Torus primitives; fixed direction of Symmetric/Asymmetric in the exact kernel. 🟡 (2026-11-10): a work axis (clicked in the view or from the panel) and a straight model edge (clicked; stored by its persistent name, read on the body before the revolve) as the axis. To do: To Next, Match Shape.
 
 **What it does.** Revolves a profile about an axis: shafts, bushings, flanges.
 

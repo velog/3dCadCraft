@@ -2118,18 +2118,71 @@ impl CadCraftApp {
             })
             .filter(|(dist, _)| *dist <= overlay::CURVE_SNAP_PX)
             .min_by(|a, b| a.0.total_cmp(&b.0));
-        let Some((_, line)) = best else {
-            self.file_status = Some(Err("Revolve: pick a line of the sketch as the axis".into()));
-            return;
+        let axis = match best {
+            Some((_, line)) => crate::part::AxisRef::SketchLine(line),
+            None => match self.model_axis_under(pos, rect) {
+                Ok(Some(a)) => a,
+                Ok(None) => {
+                    self.file_status = Some(Err(
+                        "Revolve: pick a sketch line, a work axis or a straight edge as the axis"
+                            .into(),
+                    ));
+                    return;
+                }
+                Err(e) => {
+                    self.file_status = Some(Err(format!("Revolve: {e}")));
+                    return;
+                }
+            },
         };
         if let Some(d) = self.extrude.as_mut()
             && let DraftDef::Revolve(r) = &mut d.def
         {
-            r.axis = crate::part::AxisRef::SketchLine(line);
+            r.axis = axis;
             d.axis_set = true;
             d.axis_pick = false;
             self.file_status = None;
         }
+    }
+
+    /// Revolve: a work axis or a straight model edge under the cursor as the
+    /// axis, checked against the profile sketch's plane. An edge's line is
+    /// put into the part's runtime work geometry for the draft (the
+    /// regeneration records it again from the body before the feature).
+    fn model_axis_under(
+        &mut self,
+        pos: egui::Pos2,
+        rect: egui::Rect,
+    ) -> Result<Option<crate::part::AxisRef>, String> {
+        use crate::part::work::LineRef;
+        let Some(sketch) = self.extrude.as_ref().map(|d| d.sketch) else {
+            return Ok(None);
+        };
+        let axis = if let Some(work::WpInput::Line(LineRef::Work(id))) =
+            self.work_axis_or_point_under(pos, rect)
+        {
+            crate::part::AxisRef::Work(id)
+        } else if let Some(e) = self.edge_under(pos, rect) {
+            let body = &self.part().body;
+            if body.edge_direction(e).is_none() {
+                return Err("a curved edge cannot be the axis".into());
+            }
+            let Some(name) = body.edge(e).and_then(|x| x.name.clone()) else {
+                return Err("the edge has no name".into());
+            };
+            let line = LineRef::Edge(name.clone()).resolve(body, &self.part().work)?;
+            self.part_mut().work.edge_lines.insert(name.clone(), line);
+            crate::part::AxisRef::Edge(name)
+        } else {
+            return Ok(None);
+        };
+        let part = self.part();
+        let ps = part
+            .sketches
+            .get(sketch)
+            .ok_or("the profile sketch is gone")?;
+        crate::part::revolve::resolve_axis_in(&axis, &ps.sketch, &part.work)?;
+        Ok(Some(axis))
     }
 
     /// Extrude: a click in the graphics window toggles the region under it
