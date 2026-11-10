@@ -168,12 +168,15 @@ pub(super) fn extrude_corners_apart(
 fn corners_apart(pieces: &mut [super::extrude::Piece]) -> bool {
     use crate::kernel::Segment2::Line;
     use std::collections::{HashMap, HashSet};
-    let key = |p: &nalgebra::Point2<Real>| ((p.x / 1e-5).round() as i64, (p.y / 1e-5).round() as i64);
+    let key =
+        |p: &nalgebra::Point2<Real>| ((p.x / 1e-5).round() as i64, (p.y / 1e-5).round() as i64);
     let mut owners: HashMap<(i64, i64), HashSet<usize>> = HashMap::new();
     for (k, piece) in pieces.iter().enumerate() {
         let n = piece.outer.len();
         for i in 0..n {
-            if let (Line { b, .. }, Line { .. }) = (&piece.outer[i].geometry, &piece.outer[(i + 1) % n].geometry) {
+            if let (Line { b, .. }, Line { .. }) =
+                (&piece.outer[i].geometry, &piece.outer[(i + 1) % n].geometry)
+            {
                 owners.entry(key(b)).or_default().insert(k);
             }
         }
@@ -183,20 +186,30 @@ fn corners_apart(pieces: &mut [super::extrude::Piece]) -> bool {
         let n = piece.outer.len();
         for i in 0..n {
             let j = (i + 1) % n;
-            let (Line { a: before, b: at }, Line { b: after, .. }) = (piece.outer[i].geometry.clone(), piece.outer[j].geometry.clone()) else {
+            let (Line { a: before, b: at }, Line { b: after, .. }) = (
+                piece.outer[i].geometry.clone(),
+                piece.outer[j].geometry.clone(),
+            ) else {
                 continue;
             };
             if owners.get(&key(&at)).is_none_or(|o| o.len() < 2) {
                 continue;
             }
-            let (Some(back), Some(on)) = ((before - at).try_normalize(1e-12), (after - at).try_normalize(1e-12)) else {
+            let (Some(back), Some(on)) = (
+                (before - at).try_normalize(1e-12),
+                (after - at).try_normalize(1e-12),
+            ) else {
                 continue;
             };
             let Some(mid) = (back + on).try_normalize(1e-9) else {
                 continue;
             };
             // The loop runs counter-clockwise: the material is on its left.
-            let inward = if on.x * back.y - on.y * back.x > 0.0 { mid } else { -mid };
+            let inward = if on.x * back.y - on.y * back.x > 0.0 {
+                mid
+            } else {
+                -mid
+            };
             let to = at + inward * CORNERS_APART;
             if let Line { b, .. } = &mut piece.outer[i].geometry {
                 *b = to;
