@@ -149,8 +149,44 @@ const TABLE: &[(&str, &str)] = &[
         "Perpendicular: щракнете две линии от 3D скицата",
     ),
     (
-        "3D Sketch: pick a tool in the panel, or Finish 3D Sketch (Esc)",
-        "3D Sketch: изберете инструмент в панела или Finish 3D Sketch (Esc)",
+        "3D Arc: click the start, the end, then a point on the arc (vertices, work points, faces or points of the sketch)",
+        "3D Arc: щракнете началото, края, после точка от дъгата (върхове, работни точки, стени или точки от скицата)",
+    ),
+    (
+        "3D Spline: click its points (vertices, work points, faces or points of the sketch), then Create Spline",
+        "3D Spline: щракнете точките ѝ (върхове, работни точки, стени или точки от скицата), после Create Spline",
+    ),
+    (
+        "Dimension: click a line (its length) or two points (their distance), then type the value in the box",
+        "Dimension: щракнете линия (дължината ѝ) или две точки (разстоянието), после въведете стойността в полето",
+    ),
+    (
+        "Angle: click two lines, then type the value in the box",
+        "Angle: щракнете две линии, после въведете стойността в полето",
+    ),
+    (
+        "Helical Curve: click a point on the axis, then the start point (pitch, turns and axis are in the panel)",
+        "Helical Curve: щракнете точка от оста, после началната точка (стъпка, навивки и ос са в панела)",
+    ),
+    (
+        "Include Geometry: click a model edge to copy it into the 3D sketch",
+        "Include Geometry: щракнете ръб на модела, за да го копирате в 3D скицата",
+    ),
+    (
+        "Fix: click a point of the 3D sketch to fix or free it",
+        "Fix: щракнете точка от 3D скицата, за да я фиксирате или освободите",
+    ),
+    (
+        "Equal: click two lines of the 3D sketch",
+        "Equal: щракнете две линии от 3D скицата",
+    ),
+    (
+        "Parallel to Axis: click a line (the axis is in the panel)",
+        "Parallel to Axis: щракнете линия (оста е в панела)",
+    ),
+    (
+        "3D Sketch: pick a tool on the 3D Sketch tab, select points or lines (3D Move: M), or Finish 3D Sketch (Esc)",
+        "3D Sketch: изберете инструмент от раздела 3D Sketch, изберете точки или линии (3D Move: M) или Finish 3D Sketch (Esc)",
     ),
     (
         "Sketch Driven Pattern: click the sketch whose centre points place the copies (or its browser row)",

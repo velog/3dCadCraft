@@ -35,6 +35,8 @@ impl CadCraftApp {
             Env::Assembly
         } else if self.editing.is_some() {
             Env::Sketch
+        } else if self.sketch3d.is_some() {
+            Env::Sketch3d
         } else {
             Env::Part
         }

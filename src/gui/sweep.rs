@@ -437,8 +437,9 @@ impl CadCraftApp {
                 return Some((Pick::Path(r), pts));
             }
         }
-        // A 3D sketch: its whole chain (Sweep's path only).
-        if self.sweep_draft.is_some()
+        // A 3D sketch: its whole chain (a sweep's path or rail, a loft's rail
+        // or centre line).
+        if (self.sweep_draft.is_some() || self.loft_draft.is_some())
             && sketch_on
             && let Some(k) = self.sketch3d_under(p, rect)
             && let Some(s) = part.sketches3d.get(k)

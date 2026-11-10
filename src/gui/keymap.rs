@@ -300,12 +300,13 @@ fn env_label(e: Env) -> &'static str {
         Env::Sketch => "Sketch",
         Env::Assembly => "Assembly",
         Env::Drawing => "Drawing",
+        Env::Sketch3d => "3D Sketch",
     }
 }
 
 /// The first environment a command runs in (for conflicts and the table).
 fn home_env(c: &Command) -> Env {
-    [Env::Part, Env::Sketch, Env::Assembly, Env::Drawing]
+    Env::ALL
         .into_iter()
         .find(|e| c.envs.has(*e))
         .unwrap_or(Env::Part)

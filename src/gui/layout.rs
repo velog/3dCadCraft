@@ -1333,6 +1333,13 @@ impl CadCraftApp {
                 drawing: self.is_drawing(),
                 in_place: self.in_place_now().is_some(),
                 drawing_sketch: vsk.is_some(),
+                sketch3d: self.sketch3d.is_some(),
+                sk3_tool: self
+                    .sketch3d
+                    .as_ref()
+                    .and_then(|e| e.tool)
+                    .map(|t| t.index()),
+                sk3_move: self.sketch3d.as_ref().is_some_and(|e| e.gizmo.is_some()),
                 asm_tool: self.asm_tool_action(),
                 rel_sick: self.cons.glyphs.sick,
                 asm_dof: self.cons.glyphs.dof,

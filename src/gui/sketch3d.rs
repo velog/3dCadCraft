@@ -8,7 +8,7 @@ use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke};
 use super::CadCraftApp;
 use super::icons::Icon;
 use super::panels::{plabel, psection, warning_box};
-use crate::kernel::{Point3, Real};
+use crate::kernel::{Point3, Real, Vector3};
 use crate::part::sketch3d::{Constraint3, Sketch3d};
 
 /// The tool running in the open 3D sketch.
@@ -26,9 +26,51 @@ pub(super) enum Tool3 {
     Parallel,
     /// Two lines square.
     Perpendicular,
+    /// A three-point arc: its two ends, then a point on it.
+    Arc,
+    /// A spline through (or controlled by) the clicked points.
+    Spline,
+    /// A helical curve: its axis point, then its start point.
+    Helix,
+    /// A model edge copied into the sketch.
+    Include,
+    /// A point keeps its place (a click toggles it).
+    Fix,
+    /// Two lines equally long.
+    Equal,
+    /// A line along X, Y or Z (the panel's choice).
+    AlongAxis,
+    /// Dimension: a line's length, or the distance of two points.
+    Dimension,
+    /// Dimension: the angle between two lines.
+    AngleDim,
 }
 
 impl Tool3 {
+    /// Every tool, in the order of the ribbon's actions (`Action::Sk3Tool`).
+    pub(super) const ALL: [Tool3; 15] = [
+        Tool3::Line,
+        Tool3::Point,
+        Tool3::Bend,
+        Tool3::Coincident,
+        Tool3::Parallel,
+        Tool3::Perpendicular,
+        Tool3::Arc,
+        Tool3::Spline,
+        Tool3::Helix,
+        Tool3::Include,
+        Tool3::Fix,
+        Tool3::Equal,
+        Tool3::AlongAxis,
+        Tool3::Dimension,
+        Tool3::AngleDim,
+    ];
+
+    /// Its index in [`Self::ALL`].
+    pub(super) fn index(self) -> u8 {
+        Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as u8
+    }
+
     fn label(self) -> &'static str {
         match self {
             Tool3::Line => "Line",
@@ -37,17 +79,15 @@ impl Tool3 {
             Tool3::Coincident => "Coincident",
             Tool3::Parallel => "Parallel",
             Tool3::Perpendicular => "Perpendicular",
-        }
-    }
-
-    fn icon(self) -> Icon {
-        match self {
-            Tool3::Line => Icon::Line,
-            Tool3::Point => Icon::Point,
-            Tool3::Bend => Icon::Fillet2d,
-            Tool3::Coincident => Icon::Coincident,
-            Tool3::Parallel => Icon::Parallel,
-            Tool3::Perpendicular => Icon::Perpendicular,
+            Tool3::Arc => "Arc",
+            Tool3::Spline => "Spline",
+            Tool3::Helix => "Helical Curve",
+            Tool3::Include => "Include Geometry",
+            Tool3::Fix => "Fix",
+            Tool3::Equal => "Equal",
+            Tool3::AlongAxis => "Parallel to Axis",
+            Tool3::Dimension => "Dimension",
+            Tool3::AngleDim => "Angle",
         }
     }
 
@@ -64,12 +104,36 @@ impl Tool3 {
             Tool3::Coincident => "Coincident: click two points of the 3D sketch",
             Tool3::Parallel => "Parallel: click two lines of the 3D sketch",
             Tool3::Perpendicular => "Perpendicular: click two lines of the 3D sketch",
+            Tool3::Arc => {
+                "3D Arc: click the start, the end, then a point on the arc (vertices, work points, faces or points of the sketch)"
+            }
+            Tool3::Spline => {
+                "3D Spline: click its points (vertices, work points, faces or points of the sketch), then Create Spline"
+            }
+            Tool3::Helix => {
+                "Helical Curve: click a point on the axis, then the start point (pitch, turns and axis are in the panel)"
+            }
+            Tool3::Include => "Include Geometry: click a model edge to copy it into the 3D sketch",
+            Tool3::Fix => "Fix: click a point of the 3D sketch to fix or free it",
+            Tool3::Equal => "Equal: click two lines of the 3D sketch",
+            Tool3::AlongAxis => "Parallel to Axis: click a line (the axis is in the panel)",
+            Tool3::Dimension => {
+                "Dimension: click a line (its length) or two points (their distance), then type the value in the box"
+            }
+            Tool3::AngleDim => "Angle: click two lines, then type the value in the box",
         }
     }
 
     /// The constraint tools pick lines.
     fn picks_lines(self) -> bool {
-        matches!(self, Tool3::Parallel | Tool3::Perpendicular)
+        matches!(
+            self,
+            Tool3::Parallel
+                | Tool3::Perpendicular
+                | Tool3::Equal
+                | Tool3::AlongAxis
+                | Tool3::AngleDim
+        )
     }
 }
 
@@ -90,6 +154,22 @@ pub(super) struct Sk3dEdit {
     pub radius: Real,
     /// Points or lines picked so far by a constraint tool.
     pub picks: Vec<u32>,
+    /// Spline: interpolation or control vertex.
+    pub spline_kind: crate::part::sketch3d::SplineKind,
+    /// Helical Curve: pitch (mm), turns, axis (0 X, 1 Y, 2 Z), clockwise.
+    pub helix: (Real, Real, usize, bool),
+    /// Parallel to Axis: which axis.
+    pub axis: usize,
+    /// Dimension / Angle: the value (mm or degrees).
+    pub value: Real,
+    /// Selected points (no tool running): what 3D Move moves.
+    pub sel: Vec<u32>,
+    /// The selected constraint glyph (Delete removes it).
+    pub sel_cons: Option<usize>,
+    /// The dimension edited in place, and whether its box was focused.
+    pub dim_edit: Option<(usize, bool)>,
+    /// The 3D Move triad, when on.
+    pub gizmo: Option<super::sketch3d_view::Gizmo>,
 }
 
 impl Sk3dEdit {
@@ -102,6 +182,14 @@ impl Sk3dEdit {
             relative: false,
             radius: 10.0,
             picks: Vec::new(),
+            spline_kind: Default::default(),
+            helix: (5.0, 3.0, 2, false),
+            axis: 2,
+            value: 50.0,
+            sel: Vec::new(),
+            sel_cons: None,
+            dim_edit: None,
+            gizmo: None,
         }
     }
 }
@@ -148,6 +236,16 @@ impl CadCraftApp {
         self.sketch3d = Some(Sk3dEdit::new(k));
         self.file_status = None;
         self.scene_dirty = true;
+        self.sketch3d_tab();
+    }
+
+    /// The 3D Sketch tab comes forward (Finish returns to the tab before).
+    fn sketch3d_tab(&mut self) {
+        use super::ribbon::Tab;
+        if self.tab != Tab::Sketch3d {
+            self.tab_before_sketch = self.tab;
+        }
+        self.tab = Tab::Sketch3d;
     }
 
     /// Edit 3D Sketch `k` (browser double click).
@@ -160,6 +258,7 @@ impl CadCraftApp {
         let mut e = Sk3dEdit::new(k);
         e.tool = None;
         self.sketch3d = Some(e);
+        self.sketch3d_tab();
     }
 
     /// Finish 3D Sketch: closes it; features using it are rebuilt.
@@ -167,6 +266,17 @@ impl CadCraftApp {
         let Some(e) = self.sketch3d.take() else {
             return;
         };
+        if self.tab == super::ribbon::Tab::Sketch3d {
+            self.tab = if self.tab_before_sketch.shown(false, false)
+                && !matches!(
+                    self.tab_before_sketch,
+                    super::ribbon::Tab::Sketch | super::ribbon::Tab::Sketch3d
+                ) {
+                self.tab_before_sketch
+            } else {
+                super::ribbon::Tab::Model
+            };
+        }
         let Some(id) = self.part().sketches3d.get(e.index).map(|s| s.id.clone()) else {
             return;
         };
@@ -183,9 +293,30 @@ impl CadCraftApp {
         }
     }
 
+    /// A tool of the 3D Sketch tab: on (off when it runs already).
+    pub(super) fn sketch3d_set_tool(&mut self, i: u8) {
+        let Some(t) = Tool3::ALL.get(i as usize).copied() else {
+            return;
+        };
+        let Some(e) = self.sketch3d.as_mut() else {
+            self.file_status = Some(Err(format!("{}: open a 3D sketch first", t.label())));
+            return;
+        };
+        e.tool = if e.tool == Some(t) { None } else { Some(t) };
+        e.picks.clear();
+        e.gizmo = None;
+        if e.tool != Some(Tool3::Line) {
+            e.last = None;
+        }
+    }
+
     /// Esc: stops the running tool, or finishes the sketch when none runs.
     pub(super) fn sketch3d_escape(&mut self) {
         match self.sketch3d.as_mut() {
+            Some(e) if e.gizmo.is_some() || e.dim_edit.is_some() => {
+                e.gizmo = None;
+                e.dim_edit = None;
+            }
             Some(e) if e.tool.is_some() => {
                 e.tool = None;
                 e.last = None;
@@ -267,6 +398,14 @@ impl CadCraftApp {
     /// Adds a point at `at` (Line: and a segment from the last point).
     fn sketch3d_add(&mut self, at: Point3, fixed: bool, own: Option<u32>) {
         let tool = self.sketch3d.as_ref().and_then(|e| e.tool);
+        if let Some(t @ (Tool3::Arc | Tool3::Spline)) = tool {
+            let hit = match own {
+                Some(id) => Hit3::Own(id),
+                None => Hit3::At(at, fixed),
+            };
+            self.sketch3d_pick_point(hit, t);
+            return;
+        }
         self.edit3d("3D Line", |s, e| {
             let id = own.unwrap_or_else(|| s.add_point(at, fixed));
             if tool == Some(Tool3::Line)
@@ -343,11 +482,22 @@ impl CadCraftApp {
     }
 
     /// A click in the view while the 3D sketch is open.
-    pub(super) fn sketch3d_click(&mut self, p: Pos2, rect: Rect) {
+    pub(super) fn sketch3d_click(&mut self, p: Pos2, rect: Rect, ctrl: bool) {
+        if self.sk3_gizmo_click(p, rect) {
+            return;
+        }
         let Some(tool) = self.sketch3d.as_ref().and_then(|e| e.tool) else {
+            self.sk3_select_click(p, rect, ctrl);
             return;
         };
-        let hit = self.sketch3d_hit(p, rect, tool.picks_lines());
+        let hit = match tool {
+            // Dimension: a point of the sketch (a distance), else a line.
+            Tool3::Dimension => match self.sketch3d_hit(p, rect, false) {
+                Some(h @ Hit3::Own(_)) => Some(h),
+                _ => self.sketch3d_hit(p, rect, true),
+            },
+            _ => self.sketch3d_hit(p, rect, tool.picks_lines()),
+        };
         match (tool, hit) {
             (Tool3::Line | Tool3::Point, Some(Hit3::Own(id))) => {
                 self.sketch3d_add(Point3::origin(), false, Some(id));
@@ -355,9 +505,112 @@ impl CadCraftApp {
             (Tool3::Line | Tool3::Point, Some(Hit3::At(q, fixed))) => {
                 self.sketch3d_add(q, fixed, None);
             }
+            (Tool3::Arc | Tool3::Spline, Some(hit @ (Hit3::Own(_) | Hit3::At(..)))) => {
+                self.sketch3d_pick_point(hit, tool);
+            }
             (Tool3::Bend, Some(Hit3::Own(id))) => {
                 self.edit3d("Bend", |s, e| s.add_bend(id, e.radius));
             }
+            (Tool3::Helix, Some(hit @ (Hit3::Own(_) | Hit3::At(..)))) => {
+                self.edit3d("Helical Curve", |s, e| {
+                    let id = match hit {
+                        Hit3::Own(id) => id,
+                        Hit3::At(q, fixed) => s.add_point(q, fixed),
+                        Hit3::Line(_) => return Ok(()),
+                    };
+                    if e.picks.is_empty() {
+                        e.picks.push(id);
+                        return Ok(());
+                    }
+                    let c = e.picks[0];
+                    e.picks.clear();
+                    let (pitch, turns, k, cw) = e.helix;
+                    let mut ax = Vector3::zeros();
+                    ax[k.min(2)] = 1.0;
+                    let h = s.add_helix(c, ax, id, pitch, turns, cw)?;
+                    e.last = s.helices.iter().find(|x| x.id == h).map(|x| x.end);
+                    Ok(())
+                });
+            }
+            (Tool3::Fix, Some(Hit3::Own(id))) => {
+                self.edit3d("Fix", |s, _| {
+                    let on = s.point(id).is_some_and(|p| !p.fixed);
+                    s.set_fixed(id, on)
+                });
+            }
+            (Tool3::Equal | Tool3::AngleDim, Some(Hit3::Line(id))) => {
+                let first = self
+                    .sketch3d
+                    .as_ref()
+                    .and_then(|e| e.picks.first().copied());
+                match first {
+                    Some(a) if a != id => self.edit3d(tool.label(), |s, e| {
+                        e.picks.clear();
+                        s.add_constraint(if tool == Tool3::Equal {
+                            Constraint3::Equal(a, id)
+                        } else {
+                            // The angle as it is: the box opens to change it.
+                            let d = |l: u32| {
+                                s.line(l)
+                                    .and_then(|x| Some(s.at(x.b)? - s.at(x.a)?))
+                                    .unwrap_or_else(Vector3::x)
+                            };
+                            let (x, y) = (d(a), d(id));
+                            Constraint3::Angle(a, id, x.cross(&y).norm().atan2(x.dot(&y)))
+                        })?;
+                        if tool == Tool3::AngleDim {
+                            e.dim_edit = Some((s.constraints.len() - 1, false));
+                        }
+                        Ok(())
+                    }),
+                    _ => {
+                        if let Some(e) = self.sketch3d.as_mut() {
+                            e.picks = vec![id];
+                        }
+                    }
+                }
+            }
+            (Tool3::AlongAxis, Some(Hit3::Line(id))) => {
+                self.edit3d("Parallel to Axis", |s, e| {
+                    s.add_constraint(Constraint3::AlongAxis(id, e.axis))
+                });
+            }
+            (Tool3::Dimension, Some(Hit3::Line(id))) => {
+                self.edit3d("Dimension", |s, e| {
+                    // The length as it is: the box opens to change it.
+                    let len = s
+                        .line(id)
+                        .and_then(|x| Some((s.at(x.b)? - s.at(x.a)?).norm()))
+                        .unwrap_or(e.value);
+                    s.add_constraint(Constraint3::Length(id, len))?;
+                    e.dim_edit = Some((s.constraints.len() - 1, false));
+                    Ok(())
+                });
+            }
+            (Tool3::Dimension, Some(Hit3::Own(id))) => {
+                let first = self
+                    .sketch3d
+                    .as_ref()
+                    .and_then(|e| e.picks.first().copied());
+                match first {
+                    Some(a) if a != id => self.edit3d("Dimension", |s, e| {
+                        e.picks.clear();
+                        let d = s
+                            .at(a)
+                            .zip(s.at(id))
+                            .map_or(e.value, |(p, q)| (q - p).norm());
+                        s.add_constraint(Constraint3::Distance(a, id, d))?;
+                        e.dim_edit = Some((s.constraints.len() - 1, false));
+                        Ok(())
+                    }),
+                    _ => {
+                        if let Some(e) = self.sketch3d.as_mut() {
+                            e.picks = vec![id];
+                        }
+                    }
+                }
+            }
+            (Tool3::Include, _) => self.sketch3d_include(p, rect),
             (Tool3::Coincident, Some(Hit3::Own(id))) => {
                 let first = self
                     .sketch3d
@@ -401,6 +654,81 @@ impl CadCraftApp {
             }
             _ => {}
         }
+    }
+
+    /// Arc / Spline: the clicked point (made when it is new) joins the
+    /// picks; the third arc point makes the arc.
+    fn sketch3d_pick_point(&mut self, hit: Hit3, tool: Tool3) {
+        let label = tool.label();
+        self.edit3d(label, |s, e| {
+            let id = match hit {
+                Hit3::Own(id) => id,
+                Hit3::At(q, fixed) => s.add_point(q, fixed),
+                Hit3::Line(_) => return Ok(()),
+            };
+            if e.picks.last() == Some(&id) {
+                return Ok(());
+            }
+            e.picks.push(id);
+            if tool == Tool3::Arc && e.picks.len() == 3 {
+                let (a, b, via) = (e.picks[0], e.picks[1], e.picks[2]);
+                e.picks.clear();
+                s.add_arc(a, via, b)?;
+                e.last = Some(b);
+            }
+            Ok(())
+        });
+    }
+
+    /// Include Geometry: the model edge under `p` copied in (a line, an
+    /// arc through its middle, or a spline through its samples).
+    fn sketch3d_include(&mut self, p: Pos2, rect: Rect) {
+        let Some(e) = self.edge_under(p, rect) else {
+            return;
+        };
+        let body = &self.part().body;
+        let straight = body.edge_direction(e).is_some();
+        let Ok(pts) = body.sample_edge(e, &crate::kernel::TessellationOptions::default()) else {
+            return;
+        };
+        if pts.len() < 2 {
+            return;
+        }
+        // A whole circle (one closed edge) goes in as a spline of its samples.
+        let closed = (pts[0] - pts[pts.len() - 1]).norm() < 1e-6;
+        let circular = !straight
+            && !closed
+            && matches!(
+                body.edge(e).and_then(|x| body.curve(x.curve)),
+                Some(crate::kernel::Curve::Circle(_))
+            );
+        let pick: Vec<Point3> = if straight {
+            vec![pts[0], pts[pts.len() - 1]]
+        } else if circular {
+            vec![pts[0], pts[pts.len() / 2], pts[pts.len() - 1]]
+        } else {
+            // At most 12 points along it.
+            let step = (pts.len() / 11).max(1);
+            let mut v: Vec<Point3> = pts.iter().step_by(step).copied().collect();
+            if v.last() != pts.last() {
+                v.push(pts[pts.len() - 1]);
+            }
+            v
+        };
+        self.edit3d("Include Geometry", |s, _| {
+            s.include(&pick, circular).map(|_| ())
+        });
+    }
+
+    /// Create Spline: the picked points as a spline.
+    fn sketch3d_make_spline(&mut self) {
+        self.edit3d("Spline", |s, e| {
+            let pts = std::mem::take(&mut e.picks);
+            let last = pts.last().copied();
+            s.add_spline(pts, e.spline_kind)?;
+            e.last = last;
+            Ok(())
+        });
     }
 
     /// The visible 3D sketch whose curves are under `p` (Sweep's path).
@@ -538,37 +866,63 @@ impl CadCraftApp {
         let mut add_typed = false;
         let mut restart = false;
         let mut finish = false;
-        psection(ui, "sk3_draw", "Draw", |ui| {
-            // One tool a row: Properties cannot widen (a wrapped row was cut).
-            for (k, t) in [
-                Tool3::Line,
-                Tool3::Point,
-                Tool3::Bend,
-                Tool3::Coincident,
-                Tool3::Parallel,
-                Tool3::Perpendicular,
-            ]
-            .into_iter()
-            .enumerate()
+        // The tools are on the 3D Sketch tab (the ribbon); the panel holds
+        // the running tool's options and the selection.
+        let mut chain = false;
+        let mut move_it = false;
+        let mut delete_cons = false;
+        psection(ui, "sk3_sel", "Selection", |ui| {
+            plabel(ui, "Tool");
+            ui.label(e.tool.map_or("Select (Esc)", Tool3::label));
+            ui.end_row();
+            plabel(ui, "Selected");
+            ui.label(format!("{} point(s)", e.sel.len()));
+            ui.end_row();
+            plabel(ui, "");
+            ui.vertical(|ui| {
+                if ui
+                    .add_enabled(!e.sel.is_empty(), egui::Button::new("Select Chain"))
+                    .on_hover_text("Every point of the chains through the selection")
+                    .clicked()
+                {
+                    chain = true;
+                }
+                if ui
+                    .add_enabled(!e.sel.is_empty(), egui::Button::new("3D Move (M)"))
+                    .on_hover_text("The triad on the selection: drag an arrow or a square, or click an arrow to type the distance")
+                    .clicked()
+                {
+                    move_it = true;
+                }
+            });
+            ui.end_row();
+            if let Some(k) = e.sel_cons
+                && let Some(c) = s.constraints.get(k)
             {
-                plabel(ui, ["Draw", "", "", "Constrain", "", ""][k]);
-                tool_toggle(ui, &mut e, t);
-                ui.end_row();
-            }
-            for (t, why) in [
-                ("Arc", "1.10 Arc"),
-                ("Spline", "1.10 Spline"),
-                ("Helical Curve", "1.10 Helical Curve"),
-                ("Include Geometry", "1.10 Include Geometry"),
-                ("Dimension", "1.10 Dimension"),
-            ] {
-                plabel(ui, t);
-                ui.add_enabled(false, egui::Button::new(t))
-                    .on_disabled_hover_text(format!("Comes later (spec {why})"));
+                plabel(ui, "Constraint");
+                ui.horizontal(|ui| {
+                    ui.label(c.label());
+                    if ui
+                        .small_button("Delete")
+                        .on_hover_text("Delete (Del)")
+                        .clicked()
+                    {
+                        delete_cons = true;
+                    }
+                });
                 ui.end_row();
             }
         });
-        if matches!(e.tool, Some(Tool3::Line | Tool3::Point)) {
+        if e.sel_cons.is_some()
+            && ui.ctx().memory(|m| m.focused().is_none())
+            && ui.input(|i| i.key_pressed(egui::Key::Delete))
+        {
+            delete_cons = true;
+        }
+        if matches!(
+            e.tool,
+            Some(Tool3::Line | Tool3::Point | Tool3::Arc | Tool3::Spline)
+        ) {
             psection(ui, "sk3_precise", "Precise Input", |ui| {
                 plabel(ui, "Mode");
                 ui.horizontal(|ui| {
@@ -610,6 +964,104 @@ impl CadCraftApp {
                         restart = true;
                     }
                 });
+                ui.end_row();
+            });
+        }
+        if e.tool == Some(Tool3::Helix) {
+            psection(ui, "sk3_helix", "Helical Curve", |ui| {
+                plabel(ui, "Axis");
+                ui.horizontal(|ui| {
+                    for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
+                        ui.selectable_value(&mut e.helix.2, k, *n);
+                    }
+                });
+                ui.end_row();
+                plabel(ui, "Pitch");
+                ui.add(
+                    super::valuefield::ExprValue::new(&mut e.helix.0)
+                        .range(0.001..=1e6)
+                        .suffix(" mm")
+                        .cursor("Pitch"),
+                );
+                ui.end_row();
+                plabel(ui, "Revolution");
+                ui.add(
+                    super::valuefield::ExprValue::new(&mut e.helix.1)
+                        .range(0.001..=1e4)
+                        .cursor("Revolution"),
+                );
+                ui.end_row();
+                plabel(ui, "Rotation");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut e.helix.3, false, "CCW");
+                    ui.selectable_value(&mut e.helix.3, true, "CW");
+                });
+                ui.end_row();
+            });
+        }
+        if e.tool == Some(Tool3::AlongAxis) {
+            psection(ui, "sk3_axis", "Parallel to Axis", |ui| {
+                plabel(ui, "Axis");
+                ui.horizontal(|ui| {
+                    for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
+                        ui.selectable_value(&mut e.axis, k, *n);
+                    }
+                });
+                ui.end_row();
+            });
+        }
+        let mut remove: Option<usize> = None;
+        if !s.constraints.is_empty() {
+            psection(ui, "sk3_cons", "Constraints", |ui| {
+                for (k, c) in s.constraints.iter().enumerate() {
+                    plabel(ui, &format!("{}", k + 1));
+                    ui.horizontal(|ui| {
+                        ui.label(c.label());
+                        if ui
+                            .small_button("x")
+                            .on_hover_text("Delete this constraint")
+                            .clicked()
+                        {
+                            remove = Some(k);
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+        }
+        let mut make_spline = false;
+        if e.tool == Some(Tool3::Spline) {
+            psection(ui, "sk3_spline", "Spline", |ui| {
+                plabel(ui, "Type");
+                ui.horizontal(|ui| {
+                    use crate::part::sketch3d::SplineKind;
+                    ui.selectable_value(
+                        &mut e.spline_kind,
+                        SplineKind::Interpolation,
+                        "Interpolation",
+                    )
+                    .on_hover_text("Through every point");
+                    ui.selectable_value(
+                        &mut e.spline_kind,
+                        SplineKind::ControlVertex,
+                        "Control Vertex",
+                    )
+                    .on_hover_text(
+                        "The points pull the curve (it passes through the first and last)",
+                    );
+                });
+                ui.end_row();
+                plabel(ui, "Points");
+                ui.label(format!("{} picked", e.picks.len()));
+                ui.end_row();
+                plabel(ui, "");
+                if ui
+                    .add_enabled(e.picks.len() >= 2, egui::Button::new("Create Spline"))
+                    .on_hover_text("The picked points as a spline")
+                    .clicked()
+                {
+                    make_spline = true;
+                }
                 ui.end_row();
             });
         }
@@ -667,6 +1119,24 @@ impl CadCraftApp {
         if add_typed {
             self.sketch3d_add_typed();
         }
+        if make_spline {
+            self.sketch3d_make_spline();
+        }
+        if chain {
+            self.sk3_select_chain();
+        }
+        if move_it {
+            self.sk3_start_move();
+        }
+        if delete_cons {
+            self.sk3_delete_selected_constraint();
+        }
+        if let Some(k) = remove {
+            self.edit3d("Delete Constraint", |s, _| {
+                s.remove_constraint(k);
+                Ok(())
+            });
+        }
         if finish {
             self.finish_sketch3d();
         }
@@ -675,23 +1145,4 @@ impl CadCraftApp {
 
 fn with_alpha(c: Color32) -> Color32 {
     super::theme::with_alpha(c, 140)
-}
-
-/// One tool button of the panel (a toggle).
-fn tool_toggle(ui: &mut egui::Ui, e: &mut Sk3dEdit, t: Tool3) {
-    let on = e.tool == Some(t);
-    let r = ui
-        .horizontal(|ui| {
-            super::panels::tree_icon(ui, t.icon());
-            ui.selectable_label(on, t.label())
-        })
-        .inner
-        .on_hover_text(t.prompt());
-    if r.clicked() {
-        e.tool = if on { None } else { Some(t) };
-        e.picks.clear();
-        if e.tool != Some(Tool3::Line) {
-            e.last = None;
-        }
-    }
 }

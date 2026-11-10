@@ -136,6 +136,7 @@ mod sheet_metal;
 mod shell;
 mod show_dims;
 mod sketch3d;
+mod sketch3d_view;
 mod sketch_marking;
 mod sketch_text;
 mod sketch_tools;
@@ -4574,6 +4575,9 @@ impl CadCraftApp {
             Action::Split => self.start_split(),
             Action::RectPattern => self.start_pattern(crate::part::PatternFeature::rectangular()),
             Action::Sketch3d => self.start_sketch3d(),
+            Action::Sk3Tool(i) => self.sketch3d_set_tool(i),
+            Action::Sk3Move => self.sk3_start_move(),
+            Action::Sk3Finish => self.finish_sketch3d(),
             Action::CircPattern => self.start_pattern(crate::part::PatternFeature::circular()),
             Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
             Action::Hole => self.start_hole(),
@@ -5457,7 +5461,8 @@ impl CadCraftApp {
         if in_asm {
             self.assembly_keys(ctx, letter);
         }
-        let letter = letter && !in_asm && !self.is_drawing();
+        // A 3D sketch has its own letters (`alias_input`, Env::Sketch3d).
+        let letter = letter && !in_asm && !self.is_drawing() && self.sketch3d.is_none();
         if cmd && shift && pressed(Key::S) {
             self.open_dialog(files::DialogPurpose::SaveAs);
         } else if cmd && pressed(Key::S) {
@@ -5538,6 +5543,12 @@ impl CadCraftApp {
             && self.layout.escape_target(ctx).is_none();
         if esc_returns {
             self.return_to_assembly();
+            return;
+        }
+        // In a 3D sketch Esc steps back one level (the box / triad, the
+        // tool, then the sketch) and touches nothing else.
+        if pressed(Key::Escape) && self.sketch3d.is_some() {
+            self.sketch3d_escape();
             return;
         }
         // Esc first closes the selection menu (Shift + right-click).
@@ -6197,7 +6208,8 @@ impl CadCraftApp {
             && response.clicked_by(PointerButton::Primary)
             && let (Some(p), None) = (pointer, on_cube)
         {
-            self.sketch3d_click(p, rect);
+            let ctrl = ui.input(|i| i.modifiers.ctrl);
+            self.sketch3d_click(p, rect, ctrl);
         }
         if self.pattern_draft.is_some() && response.clicked_by(PointerButton::Primary) {
             if let Some(f) = pat_face {
@@ -6997,6 +7009,10 @@ impl CadCraftApp {
             self.pattern_drag = None;
         }
 
+        // --- the 3D sketch's Move triad ---
+        if on_cube.is_none() {
+            self.sk3_gizmo_input(&response, ui, rect);
+        }
         // --- manipulators (before sketch dragging and orbiting) ---
         let handles = self.handles();
         let hot_handle = match (&handles, pointer) {
@@ -7638,6 +7654,8 @@ impl CadCraftApp {
             self.draw_split_arrow(&painter, rect);
             self.draw_pattern_refs(&painter, rect);
             self.draw_sketches3d(&painter, rect, pointer);
+            self.sk3_draw_view(&painter, rect, pointer);
+            self.sk3_view_boxes(ui.ctx(), rect);
             let want_hover = want_hover.filter(|_| self.select.prehighlight);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);
