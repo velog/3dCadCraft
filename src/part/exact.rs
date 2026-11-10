@@ -138,9 +138,89 @@ pub(super) fn extrude_from(
     if e.output == Output::Surface {
         return extrude_surface(e, body, works, sketch);
     }
+    let pieces = e.pieces(body, works, sketch).map_err(User)?;
+    extrude_pieces(pieces, body, sketch, overlap, grow)
+}
+
+/// How far [`extrude_corners_apart`] moves a corner into its profile, mm.
+const CORNERS_APART: Real = 1e-3;
+
+/// A Cut's profiles that touch only at corners (the sectors of a radial grille) leave material
+/// meeting along a line, which no solid can hold: the kernel refuses. Here each straight corner
+/// that several profiles share moves [`CORNERS_APART`] into its own profile along the corner's
+/// bisector, so a thread of material stays and the faces keep their names. `Ok(None)`: no two
+/// profiles share such a corner.
+pub(super) fn extrude_corners_apart(
+    e: &ExtrudeFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    sketch: &Sketch,
+) -> Result<Option<Vec<ExactSolid>>, Fail> {
+    let mut pieces = e.pieces(body, works, sketch).map_err(User)?;
+    if !corners_apart(&mut pieces) {
+        return Ok(None);
+    }
+    extrude_pieces(pieces, body, sketch, 0.0, 0.0)
+}
+
+/// Moves the corners between two straight segments that several pieces share (see
+/// [`extrude_corners_apart`]). Whether any moved.
+fn corners_apart(pieces: &mut [super::extrude::Piece]) -> bool {
+    use crate::kernel::Segment2::Line;
+    use std::collections::{HashMap, HashSet};
+    let key = |p: &nalgebra::Point2<Real>| ((p.x / 1e-5).round() as i64, (p.y / 1e-5).round() as i64);
+    let mut owners: HashMap<(i64, i64), HashSet<usize>> = HashMap::new();
+    for (k, piece) in pieces.iter().enumerate() {
+        let n = piece.outer.len();
+        for i in 0..n {
+            if let (Line { b, .. }, Line { .. }) = (&piece.outer[i].geometry, &piece.outer[(i + 1) % n].geometry) {
+                owners.entry(key(b)).or_default().insert(k);
+            }
+        }
+    }
+    let mut moved = false;
+    for piece in pieces.iter_mut() {
+        let n = piece.outer.len();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let (Line { a: before, b: at }, Line { b: after, .. }) = (piece.outer[i].geometry.clone(), piece.outer[j].geometry.clone()) else {
+                continue;
+            };
+            if owners.get(&key(&at)).is_none_or(|o| o.len() < 2) {
+                continue;
+            }
+            let (Some(back), Some(on)) = ((before - at).try_normalize(1e-12), (after - at).try_normalize(1e-12)) else {
+                continue;
+            };
+            let Some(mid) = (back + on).try_normalize(1e-9) else {
+                continue;
+            };
+            // The loop runs counter-clockwise: the material is on its left.
+            let inward = if on.x * back.y - on.y * back.x > 0.0 { mid } else { -mid };
+            let to = at + inward * CORNERS_APART;
+            if let Line { b, .. } = &mut piece.outer[i].geometry {
+                *b = to;
+            }
+            if let Line { a, .. } = &mut piece.outer[j].geometry {
+                *a = to;
+            }
+            moved = true;
+        }
+    }
+    moved
+}
+
+/// The solids of an Extrude's `pieces`, `overlap` and `grow` as in [`extrude_from`].
+fn extrude_pieces(
+    pieces: Vec<super::extrude::Piece>,
+    body: &BRep,
+    sketch: &Sketch,
+    overlap: Real,
+    grow: Real,
+) -> Result<Option<Vec<ExactSolid>>, Fail> {
     let plane = &sketch.plane;
     let mut out = Vec::new();
-    for piece in e.pieces(body, works, sketch).map_err(User)? {
+    for piece in pieces {
         let levels = &piece.span.levels;
         let prof = if grow != 0.0 {
             let grown = |l: &[crate::kernel::ProfileSegment]| {
