@@ -2926,6 +2926,14 @@ fn wedge_blend(
 
 /// The kernel's own fillet / chamfer of the edges through `points` (per
 /// solid).
+///
+/// A blend runs on along the edges its picked edges continue tangentially
+/// (Inventor: a fillet rolls on across tangent edges whether or not they
+/// were picked; the floor arc of an earlier round runs tangent into the
+/// floor's edge along the wall, `tests/fillet_tangent_rim.rs`). The kernel
+/// cannot end a blend at such a vertex, so where the picked edges alone fail
+/// and their tangent chain is longer, the chain is blended; the first error
+/// stands when that fails too.
 fn kernel_blend(
     bl: &BlendFeature,
     cur: &[ExactSolid],
@@ -2936,27 +2944,42 @@ fn kernel_blend(
         if pts.is_empty() {
             continue;
         }
-        out[i] = match bl.kind {
-            BlendKind::Fillet { radius } => {
-                exact::fillet(&cur[i], pts, radius, &bl.id).map_err(Kernel)?
-            }
-            BlendKind::Chamfer {
-                method,
-                distance,
-                distance2,
-                angle,
-                flip,
-            } => {
-                let second = match method {
-                    ChamferMethod::Distance => ChamferSecond::Same,
-                    ChamferMethod::TwoDistances => ChamferSecond::Distance(distance2),
-                    ChamferMethod::DistanceAngle => ChamferSecond::Angle(angle),
-                };
-                exact::chamfer(&cur[i], pts, distance, second, flip, &bl.id).map_err(Kernel)?
-            }
+        out[i] = match kernel_blend_one(bl, &cur[i], pts) {
+            Ok(s) => s,
+            Err(first) => match exact::tangent_chain(&cur[i], pts) {
+                Ok(chain) if chain.len() > pts.len() => {
+                    kernel_blend_one(bl, &cur[i], &chain).map_err(|_| Kernel(first))?
+                }
+                _ => return Err(Kernel(first)),
+            },
         };
     }
     Ok(out)
+}
+
+/// [`kernel_blend`] of one solid, exactly the edges through `pts`.
+fn kernel_blend_one(
+    bl: &BlendFeature,
+    s: &ExactSolid,
+    pts: &[Point3],
+) -> Result<ExactSolid, String> {
+    Ok(match bl.kind {
+        BlendKind::Fillet { radius } => exact::fillet(s, pts, radius, &bl.id)?,
+        BlendKind::Chamfer {
+            method,
+            distance,
+            distance2,
+            angle,
+            flip,
+        } => {
+            let second = match method {
+                ChamferMethod::Distance => ChamferSecond::Same,
+                ChamferMethod::TwoDistances => ChamferSecond::Distance(distance2),
+                ChamferMethod::DistanceAngle => ChamferSecond::Angle(angle),
+            };
+            exact::chamfer(s, pts, distance, second, flip, &bl.id)?
+        }
+    })
 }
 
 const CONE_NOT_YET: &str =
