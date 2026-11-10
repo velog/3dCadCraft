@@ -27,6 +27,10 @@ pub(super) enum PatternInput {
     Axis,
     /// Mirror: Mirror Plane.
     Plane,
+    /// Sketch Driven: the sketch whose centre points place the copies.
+    Sketch,
+    /// Sketch Driven: the Base Point (optional).
+    Base,
 }
 
 /// The open pattern / mirror command.
@@ -62,7 +66,80 @@ impl PatternDraft {
             PatternKind::Rectangular { .. } => PatternInput::Dir1,
             PatternKind::Circular { .. } => PatternInput::Axis,
             PatternKind::Mirror { .. } => PatternInput::Plane,
+            PatternKind::Sketch { .. } => PatternInput::Sketch,
         }
+    }
+
+    /// Whether the active selector takes curves as a path (any model edge,
+    /// sketch curves): the rectangular directions.
+    pub(super) fn picks_paths(&self) -> bool {
+        matches!(self.input, PatternInput::Dir1 | PatternInput::Dir2)
+    }
+
+    /// Whether the active selector takes a sketch.
+    pub(super) fn picks_sketch(&self) -> bool {
+        self.input == PatternInput::Sketch
+    }
+
+    /// Whether the active selector takes a point (vertex, work point).
+    pub(super) fn picks_points(&self) -> bool {
+        self.input == PatternInput::Base
+    }
+
+    /// Sets the active direction's path (a curved edge or sketch curves);
+    /// a sketch curve of the same sketch is added to the path (or dropped
+    /// when it is in it already).
+    pub(super) fn set_path(&mut self, path: crate::part::PathRef) -> bool {
+        use crate::part::PathRef;
+        let input = self.input;
+        let PatternKind::Rectangular { first, second } = &mut self.def.kind else {
+            return false;
+        };
+        let d = match input {
+            PatternInput::Dir1 => first,
+            PatternInput::Dir2 => second.get_or_insert_with(PatternDirection::new),
+            _ => return false,
+        };
+        let merged = match (d.path.take(), path) {
+            (
+                Some(PathRef::Sketch { sketch, mut curves }),
+                PathRef::Sketch {
+                    sketch: s2,
+                    curves: c2,
+                },
+            ) if sketch == s2 => {
+                for c in c2 {
+                    if let Some(i) = curves.iter().position(|x| *x == c) {
+                        curves.remove(i);
+                    } else {
+                        curves.push(c);
+                    }
+                }
+                PathRef::Sketch { sketch, curves }
+            }
+            (_, p) => p,
+        };
+        d.path = (!merged.is_empty()).then_some(merged);
+        d.dir = None;
+        true
+    }
+
+    /// Sketch Driven: sets the sketch (by id).
+    pub(super) fn set_sketch(&mut self, id: String) -> bool {
+        let PatternKind::Sketch { sketch, .. } = &mut self.def.kind else {
+            return false;
+        };
+        *sketch = Some(id);
+        true
+    }
+
+    /// Sketch Driven: sets the Base Point.
+    pub(super) fn set_base(&mut self, p: crate::part::PointRef) -> bool {
+        let PatternKind::Sketch { base, .. } = &mut self.def.kind else {
+            return false;
+        };
+        *base = Some(p);
+        true
     }
 
     /// Whether the active selector takes features / solids (faces).
@@ -125,11 +202,14 @@ impl PatternDraft {
                 // The selector stays: another click replaces the direction
                 // (Direction 2 is chosen in its own section).
                 first.dir = Some(p);
+                first.path = None;
                 true
             }
             (PatternKind::Rectangular { second, .. }, PatternInput::Dir2) => {
                 let Some(p) = pull else { return false };
-                second.get_or_insert_with(PatternDirection::new).dir = Some(p);
+                let s = second.get_or_insert_with(PatternDirection::new);
+                s.dir = Some(p);
+                s.path = None;
                 true
             }
             (PatternKind::Circular { axis, .. }, PatternInput::Axis) => {
@@ -155,6 +235,11 @@ impl CadCraftApp {
             super::Selection::Feature(k) => self.part().features.get(k).map(|f| f.id().to_owned()),
             _ => None,
         };
+        // Sketch Driven: a selected sketch is its Sketch input.
+        let pre_sketch = match self.selection {
+            super::Selection::Sketch(i) => self.part().sketches.get(i).map(|s| s.id.clone()),
+            _ => None,
+        };
         self.finish_sketch();
         self.mode = super::Mode::Normal;
         self.cancel_extrude();
@@ -166,6 +251,9 @@ impl CadCraftApp {
         let mut d = PatternDraft::new(def);
         if let Some(id) = pre {
             d.toggle_feature(&id);
+        }
+        if let Some(id) = pre_sketch {
+            d.set_sketch(id);
         }
         self.pattern_draft = Some(d);
     }
@@ -217,12 +305,94 @@ impl CadCraftApp {
     /// plane selector is active.
     pub(super) fn pattern_pick_ref(&mut self, edge: Option<EdgeId>, plane: Option<PlaneRef>) {
         let body = &self.part().body;
+        // A curved edge of a rectangular direction: the copies follow it.
+        let path = edge
+            .filter(|&e| body.edge_direction(e).is_none())
+            .and_then(|e| crate::part::blend::edge_ref(body, e))
+            .map(|r| crate::part::PathRef::Edges(vec![r]));
         let line = edge
             .filter(|&e| body.edge_direction(e).is_some())
             .and_then(|e| body.edge(e).and_then(|x| x.name.clone()))
             .map(LineRef::Edge);
         if let Some(d) = self.pattern_draft.as_mut() {
-            d.set_ref(line, plane);
+            match path {
+                Some(p) if d.picks_paths() => {
+                    d.set_path(p);
+                }
+                _ => {
+                    d.set_ref(line, plane);
+                }
+            }
+        }
+    }
+
+    /// A click that is no face, edge or plane: a sketch curve as a path, a
+    /// sketch for Sketch Driven, a vertex or work point as its Base Point.
+    pub(super) fn pattern_pick_other(&mut self, p: egui::Pos2, rect: Rect) {
+        let Some(d) = self.pattern_draft.as_ref() else {
+            return;
+        };
+        if d.picks_paths() {
+            let hit = self.part().sketches.iter().find_map(|ps| {
+                if !ps.visible {
+                    return None;
+                }
+                let (e, _) = super::overlay::pick_entity(
+                    &self.camera,
+                    rect,
+                    &ps.sketch,
+                    p,
+                    super::overlay::CURVE_SNAP_PX,
+                )?;
+                Some((ps.id.clone(), e))
+            });
+            if let Some((sketch, e)) = hit
+                && let Some(d) = self.pattern_draft.as_mut()
+            {
+                d.set_path(crate::part::PathRef::Sketch {
+                    sketch,
+                    curves: vec![e],
+                });
+            }
+        } else if d.picks_sketch() {
+            let id = self
+                .sketch_under(p, rect)
+                .and_then(|i| self.part().sketches.get(i))
+                .map(|ps| ps.id.clone());
+            if let Some(id) = id
+                && let Some(d) = self.pattern_draft.as_mut()
+                && d.set_sketch(id)
+            {
+                d.input = PatternInput::Base;
+            }
+        } else if d.picks_points() {
+            let at = match self.work_axis_or_point_under(p, rect) {
+                Some(super::work::WpInput::Point(r)) => Some(r),
+                _ => self.vertex_under(p, rect),
+            };
+            if let Some(r) = at
+                && let Some(d) = self.pattern_draft.as_mut()
+            {
+                d.set_base(r);
+            }
+        }
+    }
+
+    /// Sketch Driven: picks a sketch from the browser while its selector is
+    /// active. Returns whether it was used.
+    pub(super) fn pattern_pick_sketch_row(&mut self, index: usize) -> bool {
+        let Some(id) = self.part().sketches.get(index).map(|s| s.id.clone()) else {
+            return false;
+        };
+        match self.pattern_draft.as_mut() {
+            Some(d) if d.picks_sketch() => {
+                let set = d.set_sketch(id);
+                if set {
+                    d.input = PatternInput::Base;
+                }
+                set
+            }
+            _ => false,
         }
     }
 
@@ -333,15 +503,52 @@ impl CadCraftApp {
         };
         let orange = Color32::from_rgb(230, 120, 20);
         let blue = Color32::from_rgb(40, 120, 220);
+        // A path: drawn along its curve.
+        let path_line = |dir: &PatternDirection, col: Color32| {
+            let Some(path) = dir.path.as_ref() else {
+                return;
+            };
+            let Ok(g) = path.resolve(&part.sketches, body, c) else {
+                return;
+            };
+            let pts: Vec<egui::Pos2> = g
+                .polyline()
+                .iter()
+                .filter_map(|q| self.camera.project(q, rect))
+                .collect();
+            painter.add(egui::Shape::line(pts, Stroke::new(3.0, col)));
+        };
         match &d.def.kind {
             PatternKind::Rectangular { first, second } => {
+                path_line(first, orange);
                 if let Some(v) = first.dir.as_ref().and_then(|p| resolve(p, first.flip)) {
                     arrow(c, v, orange);
                 }
-                if let Some(s) = second
-                    && let Some(v) = s.dir.as_ref().and_then(|p| resolve(p, s.flip))
+                if let Some(s) = second {
+                    path_line(s, blue);
+                    if let Some(v) = s.dir.as_ref().and_then(|p| resolve(p, s.flip)) {
+                        arrow(c, v, blue);
+                    }
+                }
+            }
+            PatternKind::Sketch {
+                sketch: Some(id),
+                base,
+            } => {
+                // The centre points marked; the base point as a ring.
+                if let Some(ps) = part.sketches.iter().find(|s| &s.id == id) {
+                    let pl = &ps.sketch.plane;
+                    for q in crate::part::pattern::sketch_centres(&ps.sketch) {
+                        if let Some(s) = self.camera.project(&pl.point_at(q.x, q.y), rect) {
+                            painter.circle_filled(s, 4.0, orange);
+                        }
+                    }
+                }
+                if let Some(b) = base
+                    && let Ok(q) = crate::part::placement::point_of(b, body, &part.work)
+                    && let Some(s) = self.camera.project(&q, rect)
                 {
-                    arrow(c, v, blue);
+                    painter.circle_stroke(s, 7.0, Stroke::new(2.0, blue));
                 }
             }
             PatternKind::Circular {
@@ -431,6 +638,7 @@ pub(super) fn icon_of(p: &PatternFeature) -> super::icons::Icon {
         PatternKind::Rectangular { .. } => Icon::PatternRect,
         PatternKind::Circular { .. } => Icon::PatternCirc,
         PatternKind::Mirror { .. } => Icon::Mirror,
+        PatternKind::Sketch { .. } => Icon::SketchPattern,
     }
 }
 
@@ -446,8 +654,12 @@ pub(super) fn summary(p: &PatternFeature) -> String {
         format!("{} feature(s)", p.features.len())
     };
     match &p.kind {
+        PatternKind::Sketch { sketch, .. } => format!(
+            "{what} at the centre points of {}",
+            sketch.as_deref().unwrap_or("no sketch")
+        ),
         PatternKind::Rectangular { first, second } => {
-            match second.as_ref().filter(|d| d.dir.is_some()) {
+            match second.as_ref().filter(|d| d.is_set()) {
                 Some(s) => format!(
                     "{what}, {} x {:.2} mm by {} x {:.2} mm",
                     first.count, first.spacing, s.count, s.spacing

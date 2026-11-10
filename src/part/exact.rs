@@ -937,15 +937,42 @@ pub(super) fn as_user(f: Fail) -> Fail {
 /// new solids, or (Remove Original) replace it. Returns the solids and the
 /// tools the pattern applied (originals and copies, so a later pattern or
 /// mirror of this one copies every instance).
+#[allow(clippy::type_complexity)]
 pub(super) fn pattern(
     p: &super::PatternFeature,
     body: &BRep,
     works: &super::placement::WorkGeom,
+    sketches: &[super::PartSketch],
     cur: &[ExactSolid],
     sources: &[&super::pattern::ToolSet],
-) -> Result<(Vec<ExactSolid>, Vec<super::pattern::ToolSet>), Fail> {
+) -> Result<
+    (
+        Vec<ExactSolid>,
+        Vec<super::pattern::ToolSet>,
+        Vec<super::pattern::Placement>,
+    ),
+    Fail,
+> {
     use super::pattern::ToolSet;
-    let places = p.placements(body, works).map_err(User)?;
+    // Where the original is: the middle of its tools (features) or of the
+    // solids copied (paths start at their end nearer it; Sketch Driven's
+    // default base point is the centre point nearest it).
+    let originals: Vec<&ExactSolid> = if p.solid_mode {
+        cur.iter()
+            .filter(|s| {
+                p.solids.is_empty() || s.name.as_ref().is_some_and(|n| p.solids.contains(n))
+            })
+            .collect()
+    } else {
+        sources.iter().flat_map(|t| t.tools.iter()).collect()
+    };
+    let near = originals
+        .iter()
+        .filter_map(|s| exact::bounds(s))
+        .reduce(|(a, b), (c, d)| (a.inf(&c), b.sup(&d)))
+        .map(|(a, b)| nalgebra::center(&a, &b));
+    let ctx = super::pattern::PlaceCtx { sketches, near };
+    let places = p.placements_in(body, works, &ctx).map_err(User)?;
     let tag = |k: usize| format!("{}#{k}", p.id);
     let copy = |s: &ExactSolid, k: usize, m: &nalgebra::Matrix4<Real>, name: &str| {
         exact::transformed(s, m, &tag(k), Some(name))
@@ -1007,7 +1034,7 @@ pub(super) fn pattern(
             }
         }
         out.extend(extra);
-        return Ok((out, Vec::new()));
+        return Ok((out, Vec::new(), places));
     }
     if sources.is_empty() {
         return Err(User("select the features to copy".into()));
@@ -1051,7 +1078,7 @@ pub(super) fn pattern(
             solids: set.solids.clone(),
         });
     }
-    Ok((out, made))
+    Ok((out, made, places))
 }
 
 /// Whether every copy of `tools` at `places` stays clear of every other:

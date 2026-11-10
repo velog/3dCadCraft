@@ -485,11 +485,8 @@ impl Feature {
     /// `id` of the sketch it consumes, if any.
     pub fn sketch(&self) -> Option<&str> {
         match self {
-            Feature::Box(_)
-            | Feature::Work(_)
-            | Feature::Blend(_)
-            | Feature::Shell(_)
-            | Feature::Pattern(_) => None,
+            Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => None,
+            Feature::Pattern(p) => p.sketch_ids().first().copied(),
             Feature::Draft(d) => d.parting_sketch(),
             Feature::Thread(_) | Feature::Combine(_) => None,
             Feature::Split(sp) => sp.sketch(),
@@ -1428,14 +1425,12 @@ impl PartDocument {
                     };
                     match sources {
                         Ok(sources) => {
-                            exact::pattern(p, &body, &works, &solids, &sources).map(|(next, t)| {
+                            exact::pattern(p, &body, &works, &self.sketches, &solids, &sources).map(|(next, t, places)| {
                                 made = t;
                                 // Copies of holes are holes too (Hole Table,
                                 // `4x` notes): each source hole moved by
                                 // each copy's placement.
-                                if !p.solid_mode
-                                    && let Ok(places) = p.placements(&body, &works)
-                                {
+                                if !p.solid_mode {
                                     let src: Vec<HoleInstance> = hole_out
                                         .holes
                                         .iter()
@@ -1488,12 +1483,13 @@ impl PartDocument {
                 )),
                 BuildStep::Thread(th) if use_exact || !th.spec.modeled => {
                     match exact::thread(th, &body) {
-                        Ok((out, ring)) => {
+                        Ok((out, rings)) => {
                             extra = out;
-                            match ring {
-                                Some(r) => exact::combine(solids.clone(), vec![r], Operation::Cut, &[], false)
-                                    .map(Some),
-                                None => Ok(None),
+                            if rings.is_empty() {
+                                Ok(None)
+                            } else {
+                                exact::combine(solids.clone(), rings, Operation::Cut, &[], false)
+                                    .map(Some)
                             }
                         }
                         Err(e) => Err(e),

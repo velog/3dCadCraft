@@ -111,8 +111,17 @@ impl CadCraftApp {
             if d.picks_lines() {
                 v.extend([K::StraightEdge, K::Axis]);
             }
+            if d.picks_paths() {
+                v.extend([K::Edge, K::SketchCurve]);
+            }
             if d.picks_planes() {
                 v.extend([K::PlanarFace, K::Plane]);
+            }
+            if d.picks_sketch() {
+                v.extend([K::Sketch, K::SketchCurve]);
+            }
+            if d.picks_points() {
+                v.extend([K::Point]);
             }
             return Some(v);
         }

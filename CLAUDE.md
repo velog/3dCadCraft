@@ -991,6 +991,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Open profiles (Match Shape)** live in `ExtrudeFeature::open` (curves, side, flag); the
   loop is closed by a frame around the body's box (`extrude::open_loop`); a Join with Match
   Shape is also intersected with that box.
+- **Pattern placements need the sketches and the original's place** (`PatternFeature::placements_in` with `PlaceCtx`): a path direction or a Sketch Driven pattern without them errors. `exact::pattern` computes `near` (the middle of the copied tools / solids) and returns the placements it used; hole copies take those, never a second `placements` call. Suppressed copies keep their numbers (`all_placements` vs `placements_in`).
+- **A Revolve about a model edge reads the edge before the revolve**: `build_features` puts the edge's line into `WorkGeom::edge_lines` before the step (the edge may be gone after it); later readers (manipulators, the revolve-axis closure of work features) go through `world_axis_in(.., works)`, never `world_axis` (no work geometry).
 - **Feature patterns copy tools, not faces** (`part/pattern.rs`, `exact::pattern`): every
   Extrude/Revolve (and feature pattern) records its tools (`ToolSet`: solids before
   `combine`, operation, target `solids`) by feature id during `build_features` — also in

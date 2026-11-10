@@ -12,12 +12,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::kernel::{BRep, Real, Vector3};
+use crate::kernel::{BRep, Point3, Real, Vector3};
 
+use super::PartSketch;
 use super::boolean::Operation;
 use super::draft::PullRef;
 use super::params::FeatureParams;
-use super::placement::{PlaneRef, WorkGeom, plane_of};
+use super::placement::{PlaneRef, PointRef, WorkGeom, plane_of, point_of};
+use super::sweep::PathRef;
 use super::work::LineRef;
 
 /// Most instances (copies and original) one pattern may have (SolidCraft's
@@ -46,6 +48,16 @@ pub struct PatternDirection {
     /// extra one on the direction's side; Flip moves it).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub midplane: bool,
+    /// A curve the instances follow (Inventor: a line, arc, spline or edge
+    /// as the direction): the spacing is measured along it from its end
+    /// nearer the original; it replaces `dir` when set (format revision 71).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathRef>,
+    /// Orientation along a path: the copies turn with the curve's tangent
+    /// (Inventor's Orientation *Direction*); off, they keep the original's
+    /// orientation (*Identical*).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow: bool,
 }
 
 impl PatternDirection {
@@ -58,7 +70,14 @@ impl PatternDirection {
             spacing: 10.0,
             fitted: false,
             midplane: false,
+            path: None,
+            follow: false,
         }
+    }
+
+    /// Whether a direction (straight or a path) is chosen.
+    pub fn is_set(&self) -> bool {
+        self.dir.is_some() || self.path.as_ref().is_some_and(|p| !p.is_empty())
     }
 }
 
@@ -105,6 +124,29 @@ pub enum PatternKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         plane: Option<PlaneRef>,
     },
+    /// Copies at the centre points of a sketch (Inventor's Sketch Driven
+    /// Pattern, Orientation Fixed; format revision 71): each copy is the
+    /// original moved by (point − base) in the sketch plane.
+    Sketch {
+        /// `id` of the sketch whose centre points place the copies.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sketch: Option<String>,
+        /// The original's place (a vertex or work point); none: the centre
+        /// point nearest the original (its copy is the original itself).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<PointRef>,
+    },
+}
+
+/// What placing the copies needs besides the body: the part's sketches
+/// (paths, Sketch Driven) and where the original is (the middle of its
+/// tools or solids).
+#[derive(Clone, Copy, Default)]
+pub struct PlaceCtx<'a> {
+    /// The part's sketches.
+    pub sketches: &'a [PartSketch],
+    /// A point of the original (the middle of its box).
+    pub near: Option<Point3>,
 }
 
 fn yes() -> bool {
@@ -143,6 +185,11 @@ pub struct PatternFeature {
     /// Equations of its values.
     #[serde(default, skip_serializing_if = "FeatureParams::is_empty")]
     pub params: FeatureParams,
+    /// Copies turned off one by one (their numbers, 2 and up; Inventor's
+    /// Suppress of an occurrence). The others keep their numbers, so their
+    /// face names stay.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppressed: Vec<usize>,
 }
 
 /// A copy's placement: its number (the original is 1) and the rigid motion.
@@ -160,7 +207,16 @@ impl PatternFeature {
             operation: Operation::Join,
             remove_original: false,
             params: FeatureParams::default(),
+            suppressed: Vec::new(),
         }
+    }
+
+    /// A Sketch Driven Pattern without a sketch yet.
+    pub fn sketch_driven() -> Self {
+        Self::with_kind(PatternKind::Sketch {
+            sketch: None,
+            base: None,
+        })
     }
 
     /// A rectangular pattern with Inventor's defaults (2 × 10 mm).
@@ -188,6 +244,28 @@ impl PatternFeature {
         Self::with_kind(PatternKind::Mirror { plane: None })
     }
 
+    /// `id` of every sketch it reads: Sketch Driven's sketch first, then
+    /// the sketches of path directions.
+    pub fn sketch_ids(&self) -> Vec<&str> {
+        let mut v = Vec::new();
+        match &self.kind {
+            PatternKind::Sketch {
+                sketch: Some(s), ..
+            } => v.push(s.as_str()),
+            PatternKind::Rectangular { first, second } => {
+                for d in std::iter::once(first).chain(second.iter()) {
+                    if let Some(id) = d.path.as_ref().and_then(PathRef::sketch_id)
+                        && !v.contains(&id)
+                    {
+                        v.push(id);
+                    }
+                }
+            }
+            _ => {}
+        }
+        v
+    }
+
     /// The command (and id base): `RectangularPattern`, `CircularPattern`,
     /// `Mirror`.
     pub fn id_base(&self) -> &'static str {
@@ -195,6 +273,7 @@ impl PatternFeature {
             PatternKind::Rectangular { .. } => "RectangularPattern",
             PatternKind::Circular { .. } => "CircularPattern",
             PatternKind::Mirror { .. } => "Mirror",
+            PatternKind::Sketch { .. } => "SketchPattern",
         }
     }
 
@@ -204,6 +283,7 @@ impl PatternFeature {
             PatternKind::Rectangular { .. } => "Rectangular Pattern",
             PatternKind::Circular { .. } => "Circular Pattern",
             PatternKind::Mirror { .. } => "Mirror",
+            PatternKind::Sketch { .. } => "Sketch Driven Pattern",
         }
     }
 
@@ -214,18 +294,43 @@ impl PatternFeature {
                 first.count as usize
                     * second
                         .as_ref()
-                        .filter(|d| d.dir.is_some())
+                        .filter(|d| d.is_set())
                         .map_or(1, |d| d.count as usize)
             }
             PatternKind::Circular { count, .. } => *count as usize,
             PatternKind::Mirror { .. } => 2,
+            // Counted when placed (the sketch's centre points).
+            PatternKind::Sketch { .. } => 1,
         }
     }
 
-    /// The copies' placements (the original left out), resolved against
-    /// the body built so far. Errors are the user's (missing direction,
-    /// count out of range…).
+    /// [`Self::placements_in`] without sketches (straight directions, axes
+    /// and planes only).
     pub fn placements(&self, body: &BRep, works: &WorkGeom) -> Result<Vec<Placement>, String> {
+        self.placements_in(body, works, &PlaceCtx::default())
+    }
+
+    /// The copies' placements (the original and suppressed copies left
+    /// out), resolved against the body built so far. Errors are the user's
+    /// (missing direction, count out of range…).
+    pub fn placements_in(
+        &self,
+        body: &BRep,
+        works: &WorkGeom,
+        ctx: &PlaceCtx,
+    ) -> Result<Vec<Placement>, String> {
+        let mut out = self.all_placements(body, works, ctx)?;
+        out.retain(|(k, _)| !self.suppressed.contains(k));
+        Ok(out)
+    }
+
+    /// Every copy's placement, suppressed ones included.
+    pub fn all_placements(
+        &self,
+        body: &BRep,
+        works: &WorkGeom,
+        ctx: &PlaceCtx,
+    ) -> Result<Vec<Placement>, String> {
         use nalgebra::Matrix4;
         let n = self.instances();
         if n > MAX_INSTANCES {
@@ -234,24 +339,43 @@ impl PatternFeature {
         let mut out = Vec::new();
         match &self.kind {
             PatternKind::Rectangular { first, second } => {
-                let (d1, s1, o1) = direction(first, body, works, "Direction 1")?;
-                let (d2, s2, o2) = match second.as_ref().filter(|d| d.dir.is_some()) {
-                    Some(d) => direction(d, body, works, "Direction 2")?,
-                    None => (Vector3::zeros(), 0.0, vec![0]),
+                let m1 = moves(first, body, works, ctx, "Direction 1")?;
+                let two = second.as_ref().filter(|d| d.is_set());
+                let m2 = match two {
+                    Some(d) => moves(d, body, works, ctx, "Direction 2")?,
+                    None => vec![Some(Matrix4::identity())],
                 };
-                if (d1.cross(&d2).norm() < 1e-9) && o2.len() > 1 {
-                    return Err("Direction 1 and Direction 2 are parallel".into());
+                if m2.len() > 1 && first.path.is_none() && two.is_some_and(|d| d.path.is_none()) {
+                    let t = |m: &[Option<Matrix4<Real>>]| {
+                        m.iter()
+                            .flatten()
+                            .map(|x| Vector3::new(x[(0, 3)], x[(1, 3)], x[(2, 3)]))
+                            .find(|v| v.norm() > 1e-12)
+                    };
+                    if let (Some(a), Some(b)) = (t(&m1), t(&m2))
+                        && a.cross(&b).norm() < 1e-9 * a.norm() * b.norm()
+                    {
+                        return Err("Direction 1 and Direction 2 are parallel".into());
+                    }
                 }
+                // Instance `zero_of` of each direction is the original's
+                // place; a place off a path (`None`) keeps its number but
+                // makes no copy.
+                let (z1, z2) = (zero_of(first), two.map_or(0, zero_of));
                 let mut k = 1;
-                for &j in &o2 {
-                    for &i in &o1 {
-                        if i == 0 && j == 0 {
+                for (j, a) in m2.iter().enumerate() {
+                    for (i, b) in m1.iter().enumerate() {
+                        if i == z1 && j == z2 {
                             continue;
                         }
                         k += 1;
-                        let t = d1 * (s1 * i as Real) + d2 * (s2 * j as Real);
-                        out.push((k, Matrix4::new_translation(&t)));
+                        if let (Some(a), Some(b)) = (a, b) {
+                            out.push((k, b * a));
+                        }
                     }
+                }
+                if out.is_empty() && self.instances() > 1 {
+                    return Err("no instance lies on the path".into());
                 }
             }
             PatternKind::Circular {
@@ -313,9 +437,139 @@ impl PatternFeature {
                 let pl = plane_of(plane, body, works).map_err(|e| e.to_string())?;
                 out.push((2, mirror_matrix(pl.origin.coords, pl.normal.into_inner())));
             }
+            PatternKind::Sketch { sketch, base } => {
+                let id = sketch.as_ref().ok_or("select the sketch")?;
+                let ps = ctx
+                    .sketches
+                    .iter()
+                    .find(|s| &s.id == id)
+                    .ok_or_else(|| format!("the sketch {id} no longer exists"))?;
+                let pl = &ps.sketch.plane;
+                let onto = |p: &Point3| {
+                    let q = pl.project(p);
+                    pl.point_at(q.x, q.y)
+                };
+                let points: Vec<Point3> = sketch_centres(&ps.sketch)
+                    .into_iter()
+                    .map(|p| pl.point_at(p.x, p.y))
+                    .collect();
+                if points.is_empty() {
+                    return Err("the sketch has no centre points".into());
+                }
+                if points.len() > MAX_INSTANCES {
+                    return Err(format!(
+                        "too many instances ({}; at most {MAX_INSTANCES})",
+                        points.len()
+                    ));
+                }
+                // The original's place in the sketch plane.
+                let b = match base {
+                    Some(r) => onto(&point_of(r, body, works).map_err(|e| e.to_string())?),
+                    None => {
+                        let near = onto(&ctx.near.unwrap_or_else(Point3::origin));
+                        points
+                            .iter()
+                            .copied()
+                            .min_by(|a, b| (near - a).norm().total_cmp(&(near - b).norm()))
+                            .unwrap_or(near)
+                    }
+                };
+                let scale = 1.0 + b.coords.norm();
+                let mut k = 1;
+                for p in points {
+                    if (p - b).norm() <= 1e-9 * scale {
+                        continue; // the original
+                    }
+                    k += 1;
+                    out.push((k, Matrix4::new_translation(&(p - b))));
+                }
+                if out.is_empty() {
+                    return Err("the sketch has no centre point besides the original's".into());
+                }
+            }
         }
         Ok(out)
     }
+}
+
+/// The centre points of a sketch (Inventor's Sketch Driven Pattern takes
+/// these), in the sketch's point order.
+pub fn sketch_centres(sk: &crate::sketch::Sketch) -> Vec<crate::sketch::Point2> {
+    sk.points()
+        .filter(|(_, p)| p.style == crate::sketch::PointStyle::Center)
+        .map(|(_, p)| p.position)
+        .collect()
+}
+
+/// Index of the original's instance in a direction's list.
+fn zero_of(d: &PatternDirection) -> usize {
+    if d.midplane {
+        (d.count.max(1) as usize - 1) / 2
+    } else {
+        0
+    }
+}
+
+/// The motions of one direction's instances in order (the original's is
+/// the identity at [`zero_of`]); `None` for an instance past the ends of a
+/// path.
+fn moves(
+    d: &PatternDirection,
+    body: &BRep,
+    works: &WorkGeom,
+    ctx: &PlaceCtx,
+    what: &str,
+) -> Result<Vec<Option<nalgebra::Matrix4<Real>>>, String> {
+    use nalgebra::Matrix4;
+    let Some(path) = d.path.as_ref().filter(|p| !p.is_empty()) else {
+        let (dir, step, offs) = direction(d, body, works, what)?;
+        return Ok(offs
+            .into_iter()
+            .map(|i| Some(Matrix4::new_translation(&(dir * (step * i as Real)))))
+            .collect());
+    };
+    let near = ctx.near.unwrap_or_else(Point3::origin);
+    let geom = path.resolve(ctx.sketches, body, near)?;
+    let len = geom.length();
+    if len < 1e-9 {
+        return Err(format!("{what}: the path has no length"));
+    }
+    // Exact along lines and arcs (`PathGeom::eval`); `None` past the ends.
+    let tol = 1e-7 * (1.0 + len);
+    let walk = |s: Real| (s >= -tol && s <= len + tol).then(|| geom.eval(s.clamp(0.0, len)));
+    let n = d.count as usize;
+    if n < 1 {
+        return Err(format!("{what}: the count must be at least 1"));
+    }
+    if !d.spacing.is_finite() {
+        return Err(format!("{what}: the spacing is not a number"));
+    }
+    let step = match (d.fitted, n) {
+        (_, 1) => 0.0,
+        (true, _) => d.spacing / (n - 1) as Real,
+        (false, _) => d.spacing,
+    };
+    if n > 1 && step.abs() < 1e-9 {
+        return Err(format!("{what}: the spacing must not be 0"));
+    }
+    let step = if d.flip { -step } else { step };
+    let z = zero_of(d) as i64;
+    let (p0, t0) = geom.eval(0.0);
+    Ok((0..n as i64)
+        .map(|i| {
+            let (p, t) = walk(step * (i - z) as Real)?;
+            let mut m = Matrix4::new_translation(&(p - p0));
+            if d.follow
+                && let Some(r) = nalgebra::Rotation3::rotation_between(&t0, &t)
+            {
+                m = Matrix4::new_translation(&p.coords)
+                    * r.to_homogeneous()
+                    * Matrix4::new_translation(&-p.coords)
+                    * m;
+            }
+            Some(m)
+        })
+        .collect())
 }
 
 /// Unit direction, spacing and instance offsets (in steps; 0 = the
@@ -622,6 +876,285 @@ mod tests {
         assert!(e.contains("none of the copies"), "{e}");
         assert_eq!(part.features, features);
         assert!(part.feature_health.is_empty());
+    }
+
+    /// The middle of copy `k`'s faces (the display triangles' points).
+    fn copy_centre(part: &super::super::PartDocument, id: &str, k: usize) -> Option<Point3> {
+        let pre = format!("{id}#{k}:");
+        let pts: Vec<Point3> = part
+            .body
+            .faces()
+            .filter(|(_, f)| f.name.as_deref().is_some_and(|n| n.starts_with(&pre)))
+            .filter_map(|(_, f)| f.mesh.as_ref())
+            .flat_map(|m| m.positions.iter().copied())
+            .collect();
+        (!pts.is_empty()).then(|| {
+            pts.iter()
+                .fold(Point3::origin(), |a, p| a + p.coords / pts.len() as Real)
+        })
+    }
+
+    fn top_sketch(part: &mut super::super::PartDocument) -> usize {
+        use super::super::{SketchOptions, SketchPlacement};
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        part.create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap()
+    }
+
+    /// Suppress of single copies (Inventor: Suppress of an occurrence):
+    /// 4 holes along X with copy 3 suppressed cut 3 holes, the others keep
+    /// their numbers (names) and a save and load keeps it.
+    #[test]
+    fn suppressed_copies_are_left_out() {
+        let hole = std::f64::consts::PI * 9.0 * 10.0;
+        let cases: [(u32, &[usize]); 5] = [
+            (4, &[3]),
+            (4, &[2, 4]),
+            (5, &[5]),
+            (3, &[]),
+            (6, &[2, 3, 4, 5]),
+        ];
+        for (count, off) in cases {
+            let mut part = holed_box();
+            let mut p = PatternFeature::rectangular();
+            p.features = vec!["Extrusion1".into()];
+            if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+                first.dir = Some(PullRef::Line(LineRef::Origin(0)));
+                first.count = count;
+                first.spacing = 9.0;
+            }
+            p.suppressed = off.to_vec();
+            part.add_pattern(p).unwrap();
+            let holes = count as usize - off.len();
+            let v = volume(&part);
+            let want = 24_000.0 - holes as Real * hole;
+            assert!(
+                (v - want).abs() < 2e-3 * want,
+                "{count} {off:?}: {v} vs {want}"
+            );
+            for k in 2..=count as usize {
+                assert_eq!(
+                    copy_centre(&part, "RectangularPattern1", k).is_some(),
+                    !off.contains(&k),
+                    "copy {k} of {count}, suppressed {off:?}"
+                );
+            }
+            let text = serde_json::to_string(&part).unwrap();
+            let mut back: super::super::PartDocument = serde_json::from_str(&text).unwrap();
+            back.regenerate().unwrap();
+            assert!((volume(&back) - v).abs() < 1e-6);
+        }
+    }
+
+    /// Rectangular Pattern along a curve: the hole at (10, 10) copied along
+    /// a half circle of r 20 about (30, 10) on the top face. Fitted over the
+    /// arc length: copies at its top (30, 30) and its end (50, 10);
+    /// Incremental 10 mm: at arc lengths 10 and 20. Orientation Direction
+    /// turns them about the arc normal (a round hole looks the same: the
+    /// centres must still match).
+    #[test]
+    fn pattern_along_a_curve() {
+        use super::super::PathRef;
+        let hole = std::f64::consts::PI * 9.0 * 10.0;
+        for (fitted, follow) in [(true, false), (true, true), (false, false), (false, true)] {
+            let mut part = holed_box();
+            let j = top_sketch(&mut part);
+            let pl = part.sketches[j].sketch.plane.clone();
+            let at = |x: Real, y: Real| pl.project(&Point3::new(x, y, 10.0));
+            // Counter-clockwise in the sketch: through y = 30 one way round
+            // or the other, depending on the sketch axes.
+            let q = at(10.0, 10.0) - at(30.0, 10.0);
+            let turned = at(30.0, 10.0) + crate::sketch::Vector2::new(-q.y, q.x);
+            let top = pl.point_at(turned.x, turned.y).y > 10.0;
+            let sk = &mut part.sketches[j].sketch;
+            let c = sk.add_point(at(30.0, 10.0));
+            let a = sk.add_point(at(10.0, 10.0));
+            let b = sk.add_point(at(50.0, 10.0));
+            let arc = if top {
+                sk.add_arc(c, a, b).unwrap()
+            } else {
+                sk.add_arc(c, b, a).unwrap()
+            };
+            let sid = part.sketches[j].id.clone();
+            let mut p = PatternFeature::rectangular();
+            p.features = vec!["Extrusion1".into()];
+            let len = std::f64::consts::PI * 20.0;
+            if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+                first.path = Some(PathRef::Sketch {
+                    sketch: sid.clone(),
+                    curves: vec![arc],
+                });
+                first.count = 3;
+                first.fitted = fitted;
+                first.spacing = if fitted { len } else { 10.0 };
+                first.follow = follow;
+            }
+            part.add_pattern(p).unwrap();
+            let v = volume(&part);
+            let want = 24_000.0 - 3.0 * hole;
+            assert!((v - want).abs() < 2e-3 * want, "{v} vs {want}");
+            for k in [2usize, 3] {
+                let s = if fitted { len / 2.0 } else { 10.0 } * (k - 1) as Real;
+                let t = std::f64::consts::PI - s / 20.0;
+                let w = Point3::new(30.0 + 20.0 * t.cos(), 10.0 + 20.0 * t.sin(), 5.0);
+                let got = copy_centre(&part, "RectangularPattern1", k).expect("the copy");
+                // The hole walls are round: their middle is the centre (a
+                // polyline path: within the arc's sampling).
+                assert!(
+                    ((got.x - w.x).powi(2) + (got.y - w.y).powi(2)).sqrt() < 0.05,
+                    "copy {k} (fitted {fitted}, follow {follow}): {got} vs {w}"
+                );
+            }
+            // The path's sketch is the pattern's: a save and load builds
+            // the same.
+            assert_eq!(part.features[2].sketch_ids(), vec![sid.as_str()]);
+            let text = serde_json::to_string(&part).unwrap();
+            let mut back: super::super::PartDocument = serde_json::from_str(&text).unwrap();
+            back.regenerate().unwrap();
+            assert!((volume(&back) - v).abs() < 1e-6);
+        }
+    }
+
+    /// A path too short for the copies: the ones past its end are left out;
+    /// none on it is an error and the part is unchanged.
+    #[test]
+    fn copies_past_the_path_end_are_left_out() {
+        use super::super::PathRef;
+        let hole = std::f64::consts::PI * 9.0 * 10.0;
+        let mut part = holed_box();
+        let j = top_sketch(&mut part);
+        let pl = part.sketches[j].sketch.plane.clone();
+        let at = |x: Real, y: Real| pl.project(&Point3::new(x, y, 10.0));
+        let line = part.sketches[j]
+            .sketch
+            .add_line(at(10.0, 10.0), at(35.0, 10.0));
+        let sid = part.sketches[j].id.clone();
+        let make = |count: u32, flip: bool| {
+            let mut p = PatternFeature::rectangular();
+            p.features = vec!["Extrusion1".into()];
+            if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+                first.path = Some(PathRef::Sketch {
+                    sketch: sid.clone(),
+                    curves: vec![line],
+                });
+                first.count = count;
+                first.spacing = 10.0;
+                first.flip = flip;
+            }
+            p
+        };
+        // 5 asked, 10 mm apart on a 25 mm line: 0, 10, 20 fit.
+        let mut a = part.clone();
+        a.add_pattern(make(5, false)).unwrap();
+        let v = volume(&a);
+        assert!((v - (24_000.0 - 3.0 * hole)).abs() < 2e-3 * v, "{v}");
+        assert!(copy_centre(&a, "RectangularPattern1", 4).is_none());
+        // Flipped from the start: nothing lies on the path.
+        let features = part.features.clone();
+        let e = part.add_pattern(make(3, true)).unwrap_err().to_string();
+        assert!(e.contains("path"), "{e}");
+        assert_eq!(part.features, features);
+    }
+
+    /// Sketch Driven Pattern: the hole at (10, 10) copied to every centre
+    /// point of a sketch on the top face; the point at the original makes no
+    /// copy (default base point), a vertex as the base point moves them all
+    /// by (point - vertex). A save and load builds the same.
+    #[test]
+    fn sketch_driven_pattern() {
+        use super::super::PointRef;
+        let hole = std::f64::consts::PI * 9.0 * 10.0;
+        let cases: [(&[(Real, Real)], usize); 5] = [
+            (&[(10.0, 10.0), (30.0, 10.0), (50.0, 30.0)], 2),
+            (&[(10.0, 10.0), (20.0, 30.0)], 1),
+            (
+                &[
+                    (10.0, 10.0),
+                    (25.0, 20.0),
+                    (40.0, 20.0),
+                    (50.0, 10.0),
+                    (50.0, 30.0),
+                ],
+                4,
+            ),
+            // The original off every point: the nearest stands for it.
+            (&[(11.0, 10.0), (31.0, 10.0)], 1),
+            (&[(10.0, 10.0)], 0),
+        ];
+        for (points, copies) in cases {
+            let mut part = holed_box();
+            let j = top_sketch(&mut part);
+            let pl = part.sketches[j].sketch.plane.clone();
+            for &(x, y) in points {
+                let q = pl.project(&Point3::new(x, y, 10.0));
+                part.sketches[j].sketch.add_center_point(q);
+            }
+            // A plain point is no centre point: no copy there.
+            let q = pl.project(&Point3::new(40.0, 35.0, 10.0));
+            part.sketches[j].sketch.add_point(q);
+            let sid = part.sketches[j].id.clone();
+            let mut p = PatternFeature::sketch_driven();
+            p.features = vec!["Extrusion1".into()];
+            p.kind = PatternKind::Sketch {
+                sketch: Some(sid.clone()),
+                base: None,
+            };
+            if copies == 0 {
+                let before = part.features.clone();
+                assert!(part.add_pattern(p).is_err(), "no copy: nothing to do");
+                assert_eq!(part.features, before);
+                continue;
+            }
+            let id = part.add_pattern(p).unwrap();
+            assert_eq!(id, "SketchPattern1");
+            assert_eq!(part.features[2].name(), "Sketch Driven Pattern1");
+            let v = volume(&part);
+            let want = 24_000.0 - (1 + copies) as Real * hole;
+            assert!((v - want).abs() < 2e-3 * want, "{points:?}: {v} vs {want}");
+            let dx = points[0].0 - 10.0;
+            for (k, &(x, y)) in points.iter().skip(1).enumerate() {
+                let c = copy_centre(&part, &id, k + 2).expect("a copy");
+                assert!(
+                    (c.x - (x - dx)).abs() < 0.05 && (c.y - y).abs() < 0.05,
+                    "copy {} at {c}, want ({}, {y})",
+                    k + 2,
+                    x - dx
+                );
+            }
+            let text = serde_json::to_string(&part).unwrap();
+            let mut back: super::super::PartDocument = serde_json::from_str(&text).unwrap();
+            back.regenerate().unwrap();
+            assert!((volume(&back) - v).abs() < 1e-6);
+        }
+        // A vertex as the base point: the box corner (0, 0, 10); the centre
+        // point (15, 5) moves the hole at (10, 10) to (25, 15).
+        let mut part = holed_box();
+        let j = top_sketch(&mut part);
+        let pl = part.sketches[j].sketch.plane.clone();
+        let q = pl.project(&Point3::new(15.0, 5.0, 10.0));
+        part.sketches[j].sketch.add_center_point(q);
+        let corner = part
+            .body
+            .vertices()
+            .find(|(_, v)| (v.point - Point3::new(0.0, 0.0, 10.0)).norm() < 1e-9)
+            .and_then(|(_, v)| v.name.clone())
+            .expect("the corner name");
+        let mut p = PatternFeature::sketch_driven();
+        p.features = vec!["Extrusion1".into()];
+        p.kind = PatternKind::Sketch {
+            sketch: Some(part.sketches[j].id.clone()),
+            base: Some(PointRef::Vertex(corner)),
+        };
+        let id = part.add_pattern(p).unwrap();
+        let c = copy_centre(&part, &id, 2).expect("the copy");
+        assert!(
+            (c.x - 25.0).abs() < 0.05 && (c.y - 15.0).abs() < 0.05,
+            "{c}"
+        );
     }
 
     #[test]

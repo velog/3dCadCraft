@@ -6168,8 +6168,10 @@ impl CadCraftApp {
         let (pat_edge, pat_plane) = match (&self.pattern_draft, pointer, on_cube) {
             (Some(d), Some(p), None) if !d.picks_geometry() => {
                 let e = if d.picks_lines() {
-                    self.edge_under(p, rect)
-                        .filter(|&e| self.part().body.edge_direction(e).is_some())
+                    // A curved edge is a path of a rectangular direction.
+                    self.edge_under(p, rect).filter(|&e| {
+                        d.picks_paths() || self.part().body.edge_direction(e).is_some()
+                    })
                 } else {
                     None
                 };
