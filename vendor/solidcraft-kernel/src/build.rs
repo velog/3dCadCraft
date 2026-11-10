@@ -1205,8 +1205,19 @@ pub(crate) fn loft_numbered_loops(sections: &[(Plane, NumberedLoop)], reversed: 
         })
         .collect();
     let mut out = Vec::with_capacity(ordered.len());
+    let mut before: Option<Vec3> = None;
     for (p, l) in &ordered {
-        let back = p.normal().dot(normal) < 0.0;
+        // Normals more than a right angle apart mean the plane faces back, unless both planes
+        // face the same way along the step between the sections: two circles on planes turned
+        // 120 degrees round an axis, one wound against the other, made a loft crossing itself.
+        let here = p.to_world(l.lp.centroid());
+        let same_way = before.is_some_and(|c| {
+            let step = here - c;
+            let (a, b) = (normal.dot(step), p.normal().dot(step));
+            a * b > 0.0 && a.abs().min(b.abs()) > step.len() * 1e-3
+        });
+        before = Some(here);
+        let back = p.normal().dot(normal) < 0.0 && !same_way;
         let local: Vec<Vec2> = dirs.iter().map(|d| Vec2::new(d.dot(p.x), d.dot(p.y))).collect();
         // Break angles: the matched corners seen in this plane. A re-split circle runs counter-
         // clockwise in its plane; wound the other way when the plane faces back.

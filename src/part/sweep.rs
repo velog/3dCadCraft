@@ -886,6 +886,16 @@ impl SweepFeature {
                 };
                 (rot, sc)
             } else if self.orientation == SweepOrientation::Parallel {
+                // A closed profile carried along a direction in its own
+                // plane has wall points with no normal; the kernel's check
+                // refuses them from about here (measured: below 0.6 degrees
+                // at every size tried).
+                if t.dot(&pn).abs() < Real::to_radians(0.6).sin() {
+                    return Err(
+                        "with Parallel orientation the path lies in the profile's plane at some point: tilt the path, or use Path orientation"
+                            .into(),
+                    );
+                }
                 (Matrix3::identity(), Matrix3::identity())
             } else {
                 let rot = basis(*t, *rr) * f0.transpose();

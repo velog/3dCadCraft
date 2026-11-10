@@ -301,10 +301,52 @@ fn parallel_orientation_translates_the_profile() {
         (4.0, 40.0),
         (2.5, 15.0),
     ] {
-        let (mut p, a, b) = circle_and_path(r, |s| quarter(s, big));
+        // Stops short of horizontal: see the refusal's test below.
+        let (mut p, a, b, height) = circle_and_rising_arc(r, big, 10.0);
         sweep_of(&mut p, a, b, |d| d.orientation = SweepOrientation::Parallel).unwrap();
-        // The section stays horizontal and climbs `big`.
-        assert_vol(&p, PI * r * r * big, 1e-2);
+        // The section stays horizontal and climbs `height`.
+        assert_vol(&p, PI * r * r * height, 1e-2);
+    }
+}
+
+/// A circle on XY and an arc about (R, 0, 0) from the origin up to where its
+/// tangent stands `above` degrees over XY; also the height it climbs.
+fn circle_and_rising_arc(r: Real, big: Real, above: Real) -> (PartDocument, usize, usize, Real) {
+    let th = Real::to_radians(90.0 + above);
+    let (p, a, b) = circle_and_path(r, |s| {
+        let c = s.add_point(Point2::new(big, 0.0));
+        let end = s.add_point(Point2::new(big + big * th.cos(), big * th.sin()));
+        let o = s.add_point(Point2::new(0.0, 0.0));
+        s.add_arc(c, end, o).unwrap();
+    });
+    (p, a, b, big * th.sin())
+}
+
+/// A translated closed profile whose path runs in the profile's plane has
+/// walls with no normal there. Inventor refuses the quarter arc too.
+#[test]
+fn parallel_orientation_refuses_a_path_in_the_profiles_plane() {
+    let refused = |p: &mut PartDocument, a, b| {
+        let e = sweep_of(p, a, b, |d| d.orientation = SweepOrientation::Parallel).unwrap_err();
+        assert!(e.contains("lies in the profile's plane"), "{e}");
+        assert!(p.features.is_empty());
+    };
+    for (r, big) in [
+        (3.0, 30.0),
+        (2.0, 20.0),
+        (1.0, 10.0),
+        (4.0, 40.0),
+        (2.5, 15.0),
+    ] {
+        let (mut p, a, b) = circle_and_path(r, |s| quarter(s, big));
+        refused(&mut p, a, b);
+        // Just inside the limit: refused.
+        let (mut p, a, b, _) = circle_and_rising_arc(r, big, 0.59);
+        refused(&mut p, a, b);
+        // Just outside it: built.
+        let (mut p, a, b, height) = circle_and_rising_arc(r, big, 0.61);
+        sweep_of(&mut p, a, b, |d| d.orientation = SweepOrientation::Parallel).unwrap();
+        assert_vol(&p, PI * r * r * height, 1e-2);
     }
 }
 
