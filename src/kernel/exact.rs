@@ -1466,6 +1466,16 @@ pub fn fillet(
     Ok(blend_result(s, body, prefix, "Round"))
 }
 
+/// The tangent chains of the edges nearest `points`: `points` first, then a
+/// point on every further edge that continues one of them tangentially with
+/// the same convexity (the kernel's `tangent_chain`, which stops where a
+/// chain would turn from convex to concave or meet a smooth edge).
+pub fn tangent_chain(s: &ExactSolid, points: &[Point3]) -> Result<Vec<Point3>, String> {
+    let pts: Vec<sg::Vec3> = points.iter().map(v3).collect();
+    let chain = guarded("tangent chain", || sk::tangent_chain(&s.body, &pts))?;
+    Ok(chain.into_iter().map(p3).collect())
+}
+
 /// Fillet of the edges nearest `points`, each at its own radius (several
 /// edge sets of one feature).
 pub fn fillet_each(

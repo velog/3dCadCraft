@@ -744,6 +744,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   was "hidden" (unpickable). Highlights skip hidden pieces via `draw_visible_polyline`.
 - **Edge middle**: `sample_edge` of a straight edge has 2 points, so `pts[len / 2]` is an
   *end*; use `select::polyline_middle` (convexity was wrong at pocket corners).
+- **A blend that runs on tangentially** (an earlier round's floor arc into the floor's wall edge): SMLib cannot end it at
+  that vertex (status 1001, "continues tangentially"); `part/exact.rs::kernel_blend` then blends the picks' tangent chain
+  (`exact::tangent_chain`, same convexity only), as Inventor's fillets roll on. A cusp where a convex and a concave edge
+  leave one vertex along one tangent is not built (solidcore #2256; `tests/fillet_tangent_rim.rs`, ignored case).
 - **Fillet types** (`BlendFeature::fillet_type`: Constant / Variable / Chord / FullRound) and
   further constant sets (`sets`, fields `radius2..9`) go through `part/exact.rs::special_fillet`
   (kernel `fillet_each` / `fillet_variable_points` / `fillet_chord`); failures are feature
