@@ -1851,5 +1851,26 @@
     "Face1:Flange1.4:top",
     "Face1:base:bottom",
     "Face1:base:top"
+  ],
+  "r71/part_r71.3dcadcraft": [
+    "?",
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top",
+    "Extrusion1:Side:1v1:0",
+    "RectangularPattern1#2:Extrusion1:Side:1v1:0",
+    "Revolution1:End",
+    "Revolution1:Side:1v1:0",
+    "Revolution1:Side:2v1:0",
+    "Revolution1:Side:3v1:0",
+    "Revolution1:Start",
+    "SketchPattern1#2:Extrusion1:Side:1v1:0",
+    "Sweep1:End",
+    "Sweep1:Side:1v1:0",
+    "Sweep1:Side:1v1:0",
+    "Sweep1:Start"
   ]
 }

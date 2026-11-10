@@ -3238,6 +3238,174 @@ fn work_context_r68() -> PartDocument {
     part
 }
 
+/// Revision 71: a box revolved about its own vertical edge (a quarter
+/// ring joined), a hole copied by a Sketch Driven Pattern and by a pattern
+/// along an arc (one copy suppressed), and a Ø6 tube swept along a 3D
+/// sketch with a bend.
+fn part_completion_r71() -> PartDocument {
+    use cadcraft3d::part::sketch3d::Sketch3d;
+    use cadcraft3d::part::{
+        AxisRef, Extent, ExtentDirection, ExtrudeFeature, Operation, OriginPlane, PathRef,
+        PatternFeature, PatternKind, ProfileRef, RevolveExtent, RevolveFeature, SketchOptions,
+        SketchPlacement, SweepFeature,
+    };
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    // The vertical edge at x = 40, y = 0.
+    let b = &part.body;
+    let edge = b
+        .edges()
+        .find_map(|(id, e)| {
+            let d = b.edge_direction(id)?.normalize();
+            let (p, q) = (b.vertex(e.start)?.point, b.vertex(e.end)?.point);
+            let on = |p: &Point3| (p.x - 40.0).abs() < 1e-9 && p.y.abs() < 1e-9;
+            (d.z.abs() > 0.999 && on(&p) && on(&q)).then(|| e.name.clone())?
+        })
+        .unwrap();
+    let i = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts)
+        .unwrap();
+    part.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(40.0, 0.0), Point2::new(50.0, 20.0))
+        .unwrap();
+    let r = part.sketches[i].sketch.regions();
+    let mut rv = RevolveFeature::new(
+        vec![ProfileRef::of(&r[0], r[0].interior_point())],
+        AxisRef::Edge(edge),
+    );
+    rv.extent = RevolveExtent::Angle;
+    rv.angle = std::f64::consts::FRAC_PI_2;
+    rv.operation = Operation::NewSolid;
+    part.add_revolve(i, rv).unwrap();
+    // A through hole r 3 at (10, 10) from the top.
+    let j = part
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+        .unwrap();
+    let pl = part.sketches[j].sketch.plane.clone();
+    let at = |x: Real, y: Real| pl.project(&Point3::new(x, y, 20.0));
+    part.sketches[j]
+        .sketch
+        .add_circle(at(10.0, 10.0), 3.0)
+        .unwrap();
+    let r = part.sketches[j].sketch.regions();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 1.0);
+    ex.operation = Operation::Cut;
+    ex.extent = Extent::ThroughAll;
+    ex.direction = ExtentDirection::Flipped;
+    part.add_extrude(j, ex).unwrap();
+    let hole = part.features.last().unwrap().id().to_owned();
+    // Sketch Driven: centre points at (10, 10) (the original) and (30, 20).
+    let k = part
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+        .unwrap();
+    for (x, y) in [(10.0, 10.0), (30.0, 20.0)] {
+        let q = part.sketches[k]
+            .sketch
+            .plane
+            .project(&Point3::new(x, y, 20.0));
+        part.sketches[k].sketch.add_center_point(q);
+    }
+    let mut p = PatternFeature::sketch_driven();
+    p.features = vec![hole.clone()];
+    p.kind = PatternKind::Sketch {
+        sketch: Some(part.sketches[k].id.clone()),
+        base: None,
+    };
+    part.add_pattern(p).unwrap();
+    // Along a line of the top face, 3 instances 8 mm apart, the third off.
+    let m = part
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+        .unwrap();
+    let pl = part.sketches[m].sketch.plane.clone();
+    let line = part.sketches[m].sketch.add_line(
+        pl.project(&Point3::new(10.0, 10.0, 20.0)),
+        pl.project(&Point3::new(10.0, 28.0, 20.0)),
+    );
+    let mut p = PatternFeature::rectangular();
+    p.features = vec![hole];
+    if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+        first.path = Some(PathRef::Sketch {
+            sketch: part.sketches[m].id.clone(),
+            curves: vec![line],
+        });
+        first.count = 3;
+        first.spacing = 8.0;
+    }
+    p.suppressed = vec![3];
+    part.add_pattern(p).unwrap();
+    // A tube along a 3D sketch: (0, -20, 0) → (0, -20, 40) → (30, -20, 40), bend r 8.
+    let mut s3 = Sketch3d::new("Sketch3D1", "3D Sketch1");
+    let a = s3.add_point(Point3::new(0.0, -20.0, 0.0), false);
+    let b = s3.add_point(Point3::new(0.0, -20.0, 40.0), false);
+    let c = s3.add_point(Point3::new(30.0, -20.0, 40.0), false);
+    s3.add_line(a, b).unwrap();
+    s3.add_line(b, c).unwrap();
+    s3.add_bend(b, 8.0).unwrap();
+    part.sketches3d.push(s3);
+    let n = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts)
+        .unwrap();
+    part.sketches[n]
+        .sketch
+        .add_circle(Point2::new(0.0, -20.0), 3.0)
+        .unwrap();
+    let r = part.sketches[n].sketch.regions();
+    let mut sw = SweepFeature::new(
+        vec![ProfileRef::of(&r[0], r[0].interior_point())],
+        PathRef::Sketch3d {
+            sketch: "Sketch3D1".into(),
+        },
+    );
+    sw.operation = Operation::NewSolid;
+    part.add_sweep(n, sw).unwrap();
+    part
+}
+
+#[test]
+fn part_completion_r71_reads() {
+    use cadcraft3d::part::{AxisRef, Feature, PathRef, PatternKind};
+    let f = root().join("r71/part_r71.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let part = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .expect("a part");
+    assert!(
+        part.features
+            .iter()
+            .any(|f| matches!(f, Feature::Revolve(r) if matches!(r.axis, AxisRef::Edge(_))))
+    );
+    assert!(
+        part.features.iter().any(
+            |f| matches!(f, Feature::Pattern(p) if matches!(p.kind, PatternKind::Sketch { .. }))
+        )
+    );
+    assert!(
+        part.features
+            .iter()
+            .any(|f| matches!(f, Feature::Pattern(p) if p.suppressed == [3]))
+    );
+    assert!(
+        part.features
+            .iter()
+            .any(|f| matches!(f, Feature::Sweep(s) if matches!(s.path, PathRef::Sketch3d { .. })))
+    );
+    assert_eq!(part.sketches3d.len(), 1);
+    assert_eq!(part.sketches3d[0].bends.len(), 1);
+}
+
 /// Revision 64: a wall with a thread boss, a snap fit hook, a rest and a grill, then a rule fillet.
 fn plastic_r64() -> PartDocument {
     use cadcraft3d::part::plastic::boss::BossOp;
@@ -4244,6 +4412,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             bolted_r66().save(&f).unwrap();
+        }
+        let f = root().join("r71/part_r71.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("PartR71");
+            project.add_document("Part1", DocumentData::Part(part_completion_r71()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r68/work_context_r68.3dcadcraft");
         if !f.exists() {

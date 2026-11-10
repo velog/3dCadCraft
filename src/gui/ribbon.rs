@@ -168,6 +168,8 @@ pub enum Action {
     Split,
     /// Rectangular Pattern of features or solids.
     RectPattern,
+    /// Start 3D Sketch: a new 3D sketch and its panel.
+    Sketch3d,
     /// Circular Pattern of features or solids.
     CircPattern,
     /// Mirror of features or solids across a plane.

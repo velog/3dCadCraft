@@ -67,6 +67,7 @@ pub mod rib;
 pub mod select;
 pub mod sheet_metal;
 pub mod shell;
+pub mod sketch3d;
 pub mod split;
 pub mod standards;
 pub mod surface_op;
@@ -504,12 +505,21 @@ impl Feature {
         }
     }
 
+    /// `id` of every 3D sketch it uses (a sweep's path).
+    pub fn sketch3d_ids(&self) -> Vec<&str> {
+        match self {
+            Feature::Sweep(s) => s.path.sketch3d_id().into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// `id` of every sketch it uses (a sweep's profile and path sketches, a
     /// loft's sections); the first is [`Feature::sketch`].
     pub fn sketch_ids(&self) -> Vec<&str> {
         match self {
             Feature::Sweep(s) => s.sketch_ids(),
             Feature::Loft(l) => l.sketch_ids(),
+            Feature::Pattern(p) => p.sketch_ids(),
             Feature::SheetOp(o) => match &o.op {
                 sheet_metal::SheetOp::LoftedFlange {
                     sketch1, sketch2, ..
@@ -955,6 +965,10 @@ pub struct PartDocument {
     pub features: Vec<Feature>,
     /// Sketches in creation order.
     pub sketches: Vec<PartSketch>,
+    /// 3D sketches in creation order (`docs/spec/1.10-3d-sketch.md`;
+    /// format revision 71).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sketches3d: Vec<sketch3d::Sketch3d>,
     /// The B-Rep body (a cache of `features` when there are any).
     pub body: BRep,
     /// Features that failed at the last regeneration (id → problem); they
@@ -1305,6 +1319,19 @@ impl PartDocument {
                 .map(|ps| &ps.sketch)
                 .collect();
             let mut key = step_key(prev_key, f, &used);
+            // A 3D sketch the feature reads is part of its key too.
+            let spaces = f.sketch3d_ids();
+            if !spaces.is_empty() {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                key.hash(&mut h);
+                for id in spaces {
+                    if let Some(s) = self.sketches3d.iter().find(|s| s.id == id) {
+                        serde_json::to_vec(s).unwrap_or_default().hash(&mut h);
+                    }
+                }
+                key = h.finish();
+            }
             // Sheet metal steps also follow the rule (a new thickness
             // rebuilds them).
             if matches!(
@@ -1498,7 +1525,7 @@ impl PartDocument {
                 BuildStep::Thread(_) => Err(exact::Fail::User(
                     "a modeled thread needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
-                BuildStep::Swept(sw) if use_exact => match sw.build(&self.sketches, &body) {
+                BuildStep::Swept(sw) if use_exact => match sw.build(&self.sketches, &self.sketches3d, &body) {
                     // Output Surface: new surface bodies, no operation.
                     Ok(added) if sw.output == Output::Surface => {
                         let mut next = solids.clone();

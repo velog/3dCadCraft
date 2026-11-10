@@ -37,6 +37,12 @@ pub enum PathRef {
     },
     /// Model edges (each by its two faces and a point on it).
     Edges(Vec<EdgeRef>),
+    /// The whole chain of a 3D sketch (lines and bends; format revision
+    /// 71).
+    Sketch3d {
+        /// `id` of the 3D sketch.
+        sketch: String,
+    },
 }
 
 impl PathRef {
@@ -44,7 +50,15 @@ impl PathRef {
     pub fn sketch_id(&self) -> Option<&str> {
         match self {
             PathRef::Sketch { sketch, .. } => Some(sketch),
-            PathRef::Edges(_) => None,
+            PathRef::Edges(_) | PathRef::Sketch3d { .. } => None,
+        }
+    }
+
+    /// The 3D sketch it uses, if any.
+    pub fn sketch3d_id(&self) -> Option<&str> {
+        match self {
+            PathRef::Sketch3d { sketch } => Some(sketch),
+            _ => None,
         }
     }
 
@@ -53,17 +67,35 @@ impl PathRef {
         match self {
             PathRef::Sketch { curves, .. } => curves.is_empty(),
             PathRef::Edges(e) => e.is_empty(),
+            PathRef::Sketch3d { sketch } => sketch.is_empty(),
         }
     }
 
-    /// The path in model space, chained from the end nearest `near`.
+    /// The path in model space, chained from the end nearest `near` (no
+    /// 3D sketches: [`Self::resolve_with`]).
     pub fn resolve(
         &self,
         sketches: &[PartSketch],
         body: &BRep,
         near: Point3,
     ) -> Result<PathGeom, String> {
+        self.resolve_with(sketches, &[], body, near)
+    }
+
+    /// [`Self::resolve`] with the part's 3D sketches.
+    pub fn resolve_with(
+        &self,
+        sketches: &[PartSketch],
+        spaces: &[super::sketch3d::Sketch3d],
+        body: &BRep,
+        near: Point3,
+    ) -> Result<PathGeom, String> {
         let pieces = match self {
+            PathRef::Sketch3d { sketch } => spaces
+                .iter()
+                .find(|s| &s.id == sketch)
+                .ok_or_else(|| format!("the 3D sketch {sketch} is missing"))?
+                .pieces()?,
             PathRef::Sketch { sketch, curves } => {
                 let ps = sketches
                     .iter()
@@ -638,6 +670,7 @@ impl SweepFeature {
     pub(super) fn build(
         &self,
         sketches: &[PartSketch],
+        spaces: &[super::sketch3d::Sketch3d],
         body: &BRep,
     ) -> Result<Vec<ExactSolid>, Fail> {
         use Fail::User;
@@ -668,7 +701,10 @@ impl SweepFeature {
         }
         let c = chosen[0].interior_point();
         let near = plane.point_at(c.x, c.y);
-        let path = self.path.resolve(sketches, body, near).map_err(User)?;
+        let path = self
+            .path
+            .resolve_with(sketches, spaces, body, near)
+            .map_err(User)?;
         let len = path.length();
         if len < 1e-6 {
             return Err(User("the path has no length".into()));

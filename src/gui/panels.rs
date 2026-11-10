@@ -19,6 +19,12 @@ enum BrowserCmd {
     Doc(super::documents::DocCmd, crate::document::DocumentId),
     NewSketchOn(PlaneRef),
     Edit(usize),
+    /// Edit 3D Sketch k (`gui/sketch3d.rs`).
+    Edit3d(usize),
+    /// Delete 3D Sketch k.
+    Delete3d(usize),
+    /// Visibility of 3D Sketch k.
+    Visible3d(usize, bool),
     Finish,
     Redefine(usize),
     LookAt(usize),
@@ -506,6 +512,9 @@ impl CadCraftApp {
                 self.plane_picked(plane);
             }
             BrowserCmd::Edit(i) => self.edit_sketch(i),
+            BrowserCmd::Edit3d(k) => self.edit_sketch3d(k),
+            BrowserCmd::Delete3d(k) => self.delete_sketch3d(k),
+            BrowserCmd::Visible3d(k, on) => self.show_sketch3d(k, on),
             BrowserCmd::Finish => self.finish_sketch(),
             BrowserCmd::Redefine(i) => {
                 self.finish_sketch();
@@ -830,6 +839,9 @@ impl CadCraftApp {
                     if !done {
                         self.sketch_row(ui, i, cmds);
                     }
+                }
+                for k in 0..part.sketches3d.len() {
+                    self.sketch3d_row(ui, k, cmds);
                 }
             });
     }
@@ -1232,6 +1244,51 @@ impl CadCraftApp {
 
     /// One sketch in the browser: visibility, name, context menu (with
     /// Share / Unshare for sketches used by features).
+    /// A 3D sketch in the browser: visibility, icon, name; double click
+    /// edits it, its menu has Edit 3D Sketch and Delete.
+    fn sketch3d_row(&self, ui: &mut egui::Ui, k: usize, cmds: &mut Vec<BrowserCmd>) {
+        let Some(s) = self.part().sketches3d.get(k) else {
+            return;
+        };
+        let editing = self.sketch3d.as_ref().is_some_and(|e| e.index == k);
+        ui.horizontal(|ui| {
+            let mut visible = s.visible;
+            let changed = in_fold_column(ui, |ui| {
+                ui.checkbox(&mut visible, "")
+                    .on_hover_text("Visibility")
+                    .changed()
+            });
+            if changed {
+                cmds.push(BrowserCmd::Visible3d(k, visible));
+            }
+            tree_icon(ui, Icon::Sketch3d);
+            let text = if editing {
+                RichText::new(&s.name).strong()
+            } else {
+                RichText::new(&s.name)
+            };
+            let r = ui.selectable_label(editing, text).on_hover_text(format!(
+                "{} point(s), {} line(s), {} bend(s)",
+                s.points.len(),
+                s.lines.len(),
+                s.bends.len()
+            ));
+            if r.double_clicked() {
+                cmds.push(BrowserCmd::Edit3d(k));
+            }
+            r.context_menu(|ui| {
+                if ui.button("Edit 3D Sketch").clicked() {
+                    cmds.push(BrowserCmd::Edit3d(k));
+                    ui.close();
+                }
+                if ui.button("Delete").clicked() {
+                    cmds.push(BrowserCmd::Delete3d(k));
+                    ui.close();
+                }
+            });
+        });
+    }
+
     fn sketch_row(&self, ui: &mut egui::Ui, i: usize, cmds: &mut Vec<BrowserCmd>) {
         let part = self.part();
         let ps = &part.sketches[i];
@@ -1441,6 +1498,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         }
         if self.pattern_draft.is_some() {
             self.pattern_feature_dialog(ui);
+            return;
+        }
+        if self.sketch3d.is_some() {
+            self.sketch3d_panel(ui);
             return;
         }
         if self.hole_draft.is_some() {
@@ -5345,11 +5406,19 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
+                (Mode::Normal, None) if self.sketch3d.is_some() => {
+                    let text = self
+                        .sketch3d
+                        .as_ref()
+                        .and_then(|e| e.tool)
+                        .map_or("3D Sketch: pick a tool in the panel, or Finish 3D Sketch (Esc)", |t| t.prompt());
+                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                }
                 (Mode::Normal, None) if self.thread_draft.is_some() => {
                     let text = if self.thread_draft.as_ref().is_some_and(|d| d.face.is_none()) {
                         "Thread: click a cylindrical face near the end the thread starts at"
                     } else {
-                        "Thread: set the size and the length, then OK (another click picks another face)"
+                        "Thread: set the size and the length, then OK (another face of the same diameter adds it)"
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }

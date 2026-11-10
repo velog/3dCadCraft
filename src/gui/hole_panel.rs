@@ -1478,7 +1478,21 @@ impl CadCraftApp {
         }
         psection(ui, &format!("thread_in_{k}"), "Thread", |ui| {
             plabel(ui, "Face");
-            ui.label(&t.face.face);
+            if t.faces.is_empty() {
+                ui.label(&t.face.face);
+            } else {
+                ui.label(format!("{} faces", 1 + t.faces.len()))
+                    .on_hover_text(
+                        std::iter::once(&t.face)
+                            .chain(&t.faces)
+                            .map(|f| f.face.as_str())
+                            .collect::<Vec<_>>()
+                            .join(
+                                "
+",
+                            ),
+                    );
+            }
             ui.end_row();
             plabel(ui, "Thread");
             ui.label(t.spec.note());

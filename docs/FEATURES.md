@@ -537,9 +537,11 @@ Triangulation with holes (`kernel::triangulate_with_holes`) connects every hole 
 
 **Inventor equivalent.** The Profile selection in Extrude/Revolve.
 
-## 1.10 3D sketch — ⬜ · L
+## 1.10 3D sketch — 🟡 · L
 
 Lines, splines and helices directly in space, plus intersection of surfaces and projection onto faces. Used for paths (sweep, tubes, frames).
+
+**Specification:** [spec/1.10-3d-sketch.md](spec/1.10-3d-sketch.md). 🟡 first slice (2026-11-10): Start 3D Sketch (`S3`), lines and points by Precise Input (absolute / relative coordinates with expressions) or by clicks on model vertices, work points, faces and the sketch's own points; Bend (a tangent arc of a radius at a corner); Coincident, Parallel, Perpendicular (a 3D solver); the browser node (edit, visibility, delete); a Sweep path (the whole chain). To do: arcs, splines, helices, Include Geometry, project / intersection curves, dimensions, the triad, Auto-Bend, frames and lofts.
 
 **Inventor equivalent.** 3D Sketch.
 

@@ -191,7 +191,11 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   `Intersection`) (2026-11-09).
 /// - 70: drawing text fields `Field::Parameter`, `Field::Physical`
 ///   (2026-11-09).
-pub const FORMAT_REVISION: u32 = 70;
+/// - 71: part completion (2026-11-10): Revolve about a straight model edge
+///   (`AxisRef::Edge`), Sketch Driven Pattern (`PatternKind::Sketch`), pattern
+///   directions along a path (`PatternDirection::path`), 3D sketches
+///   (`PartDocument::sketches3d`) and sweeps along them (`PathRef::Sketch3d`).
+pub const FORMAT_REVISION: u32 = 71;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

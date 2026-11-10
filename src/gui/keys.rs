@@ -133,7 +133,7 @@ impl CadCraftApp {
             && (self.tools.pattern_dialog.is_some()
                 || self.tools.has_dialog()
                 || self.tools.edit_pattern.is_some());
-        let open: [(bool, &'static str); 30] = [
+        let open: [(bool, &'static str); 31] = [
             (self.text_draft.is_some(), "Text"),
             (self.drw_open(), "Drawing View"),
             (matches!(self.mode, super::Mode::PickPlane(_)), "Pick Plane"),
@@ -157,6 +157,7 @@ impl CadCraftApp {
                 "Section View",
             ),
             (self.pattern_draft.is_some(), "Pattern / Mirror"),
+            (self.sketch3d.is_some(), "3D Sketch"),
             (self.hole_draft.is_some(), "Hole"),
             (self.thread_draft.is_some(), "Thread"),
             (self.target_pick.is_some(), "Pick Target"),

@@ -592,10 +592,12 @@ pub static COMMANDS: &[Command] = &[
         .tip("Pick an origin plane or a planar face to sketch on")
         .spec("1.1-sketch.md"),
     c("part.start_3d_sketch", "Start 3D Sketch", "Нова 3D скица", Icon::Sketch3d)
+        .run(Action::Sketch3d)
         .alias(&["S3"])
         .at(&[M_SKETCH])
         .env(PART)
-        .todo("1.10"),
+        .tip("A sketch in space: lines by coordinates or model points, bends, Parallel / Perpendicular; a path for Sweep")
+        .spec("1.10-3d-sketch.md"),
     c("part.extrude", "Extrude", "Изтегляне (екструдиране)", Icon::Extrude)
         .run(Action::Extrude)
         .alias(&["E"])
@@ -3061,6 +3063,7 @@ pub fn repeats(action: Action) -> bool {
         | Action::RectPattern
         | Action::CircPattern
         | Action::MirrorFeature
+        | Action::Sketch3d
         | Action::Hole
         | Action::Thread
         | Action::Thicken

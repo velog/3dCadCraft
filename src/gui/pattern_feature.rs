@@ -674,6 +674,31 @@ pub(super) fn summary(p: &PatternFeature) -> String {
     }
 }
 
+/// How a direction of a rectangular pattern is shown: its straight
+/// direction or its path.
+pub(super) fn describe_direction(d: &PatternDirection) -> Option<String> {
+    use crate::part::PathRef;
+    match (&d.dir, &d.path) {
+        (_, Some(PathRef::Sketch { sketch, curves })) => {
+            Some(format!("path: {} curve(s) of {sketch}", curves.len()))
+        }
+        (_, Some(PathRef::Edges(e))) => Some(format!("path: {} edge(s)", e.len())),
+        (_, Some(PathRef::Sketch3d { sketch })) => Some(format!("path: {sketch}")),
+        (Some(p), None) => Some(describe_pull(p)),
+        (None, None) => None,
+    }
+}
+
+/// How a point (Sketch Driven's Base Point) is shown in the panel.
+pub(super) fn describe_point(p: &crate::part::PointRef) -> String {
+    use crate::part::PointRef;
+    match p {
+        PointRef::Vertex(n) => format!("Vertex {n}"),
+        PointRef::Work(id) => id.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
 /// How a direction / axis / plane is shown in the panel.
 pub(super) fn describe_pull(p: &PullRef) -> String {
     match p {

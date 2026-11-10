@@ -135,6 +135,7 @@ mod select;
 mod sheet_metal;
 mod shell;
 mod show_dims;
+mod sketch3d;
 mod sketch_marking;
 mod sketch_text;
 mod sketch_tools;
@@ -978,6 +979,8 @@ struct CadCraftApp {
     relink: Option<(usize, usize)>,
     /// The open Thread command.
     thread_draft: Option<hole::ThreadDraft>,
+    /// The open 3D sketch (`gui/sketch3d.rs`).
+    sketch3d: Option<sketch3d::Sk3dEdit>,
     /// The open Work Plane / Axis / Point command.
     work_draft: Option<work::WorkDraft>,
     /// A feature deletion waiting for confirmation, with what it breaks.
@@ -1252,6 +1255,7 @@ impl CadCraftApp {
             project_geometry: false,
             relink: None,
             thread_draft: None,
+            sketch3d: None,
             last_pick: None,
             box_select: None,
             offset_edit: None,
@@ -1658,6 +1662,8 @@ impl CadCraftApp {
                     Some(crate::part::Feature::Combine(_) | crate::part::Feature::Split(_))))
         {
             "2.13-combine-split.md"
+        } else if self.sketch3d.is_some() {
+            "1.10-3d-sketch.md"
         } else if let Some(d) = &self.pattern_draft {
             match d.def.kind {
                 crate::part::PatternKind::Mirror { .. } => "2.12-mirror.md",
@@ -1870,6 +1876,7 @@ impl CadCraftApp {
         self.pattern_draft = None;
         self.hole_draft = None;
         self.thread_draft = None;
+        self.finish_sketch3d();
         if let Some(d) = self.extrude.take()
             && d.temp_sketch
         {
@@ -4566,6 +4573,7 @@ impl CadCraftApp {
             Action::Combine => self.start_combine(),
             Action::Split => self.start_split(),
             Action::RectPattern => self.start_pattern(crate::part::PatternFeature::rectangular()),
+            Action::Sketch3d => self.start_sketch3d(),
             Action::CircPattern => self.start_pattern(crate::part::PatternFeature::circular()),
             Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
             Action::Hole => self.start_hole(),
@@ -5563,6 +5571,7 @@ impl CadCraftApp {
             self.pattern_draft = None;
             self.cancel_hole();
             self.thread_draft = None;
+            self.sketch3d_escape();
             self.sm.draft = None;
             self.end_feature_edit();
             self.face_sel = None;
@@ -6184,11 +6193,19 @@ impl CadCraftApp {
             }
             _ => (None, None),
         };
+        if self.sketch3d.is_some()
+            && response.clicked_by(PointerButton::Primary)
+            && let (Some(p), None) = (pointer, on_cube)
+        {
+            self.sketch3d_click(p, rect);
+        }
         if self.pattern_draft.is_some() && response.clicked_by(PointerButton::Primary) {
             if let Some(f) = pat_face {
                 self.pattern_pick_face(f);
             } else if pat_edge.is_some() || pat_plane.is_some() {
                 self.pattern_pick_ref(pat_edge, pat_plane.clone());
+            } else if let (Some(p), None) = (pointer, on_cube) {
+                self.pattern_pick_other(p, rect);
             }
         }
         // --- Work Plane command: picks planes, edges and points ---
@@ -7620,6 +7637,7 @@ impl CadCraftApp {
             self.draw_cursor_value(ui.ctx(), &painter, rect, pointer);
             self.draw_split_arrow(&painter, rect);
             self.draw_pattern_refs(&painter, rect);
+            self.draw_sketches3d(&painter, rect, pointer);
             let want_hover = want_hover.filter(|_| self.select.prehighlight);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);
