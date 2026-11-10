@@ -692,6 +692,7 @@ impl CadCraftApp {
                             name: None,
                             expr: v.expr.as_deref(),
                             table: &table,
+                            quantity: None,
                         };
                         commit = super::valuefield::value_field(ui, &spec);
                         if let Some(d) = self.hole_draft.as_mut()

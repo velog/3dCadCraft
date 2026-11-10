@@ -24,11 +24,10 @@ pub(super) fn is_key(d: &PartDialog) -> bool {
 }
 
 fn rows(ui: &mut egui::Ui, id: &str, rows: &[(String, String)]) {
-    egui::Grid::new(id).show(ui, |ui| {
+    ui.vertical(|ui| {
+        let _ = id;
         for (a, b) in rows {
-            ui.label(a.as_str());
-            ui.label(b.as_str());
-            ui.end_row();
+            ui.label(format!("{a}: {b}"));
         }
     });
 }
@@ -66,6 +65,8 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
     let pair = pair_of(d);
     let n = |l: &str, def: f64| d.num(1, l).unwrap_or(def);
     ui.vertical(|ui| {
+        fit(ui);
+        wrap(ui);
         let g = match pair.geometry() {
             Ok(g) => g,
             Err(e) => {
@@ -100,8 +101,8 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                 format!("{:.3}", g.overlap_ratio),
             ),
         ];
-        let power = n("Power", 10.0) * 1000.0;
-        let rpm = n("Speed", 1500.0);
+        let power = n("Power (kW)", 10.0) * 1000.0;
+        let rpm = n("Speed (rpm)", 1500.0);
         if power > 0.0 && rpm > 0.0 {
             let t = gear::torque_from_power(power, rpm);
             let (wt, wn) = gear::tooth_loads(&g, t);
@@ -115,7 +116,7 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             };
             let face = pair.face[0].min(pair.face[1]);
             let sb = bending_stress(wt, face, pair.module, &f);
-            let allowed = n("Allowable Bending Stress", 250.0);
+            let allowed = n("Allowable Bending Stress (MPa)", 250.0);
             r.push((
                 "Bending Stress (eq. 53)".into(),
                 format!("{sb:.1} MPa, safety {:.2}", allowed / sb),
@@ -124,7 +125,7 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             match tooth_life(&g, &pair, wn, face, helical) {
                 Ok(life) => {
                     let factor = n("Life Factor (material)", 1.0);
-                    let rel = (n("Reliability", 90.0) / 100.0).clamp(0.01, 0.99999);
+                    let rel = (n("Reliability (%)", 90.0) / 100.0).clamp(0.01, 0.99999);
                     let t10 = life.t10 * factor;
                     let g10 = gear::gear_life(t10, pair.teeth[0]);
                     let hours = |cycles_m: f64| cycles_m * 1e6 / rpm / 60.0;
@@ -164,6 +165,8 @@ pub(super) fn key_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
     };
     let keys = d.num(0, "Number of Keys").unwrap_or(1.0).round().max(1.0) as u32;
     ui.vertical(|ui| {
+        fit(ui);
+        wrap(ui);
         let k = match key::size_for(dia) {
             Ok(k) => k,
             Err(e) => {
@@ -171,9 +174,12 @@ pub(super) fn key_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                 return;
             }
         };
-        let t = n("Torque", 100.0) * 1000.0;
+        let t = n("Torque (N·m)", 100.0) * 1000.0;
         let l = n("Key Length", 50.0);
-        let (ts, tp) = (n("Allowed Shear", 80.0), n("Allowed Pressure", 150.0));
+        let (ts, tp) = (
+            n("Allowed Shear (MPa)", 80.0),
+            n("Allowed Pressure (MPa)", 150.0),
+        );
         let mut r = vec![(
             "Key (DIN 6885 A)".to_owned(),
             format!(
@@ -211,4 +217,14 @@ pub(super) fn key_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
         ui.label(RichText::new("Kimball & Barr, Elements of Machine Design, §69").weak());
     });
     ui.end_row();
+}
+
+/// Keeps a cell inside the Properties panel.
+fn fit(ui: &mut egui::Ui) {
+    super::bolted::fit_cell(ui);
+}
+
+/// Wraps the text of a cell of results.
+fn wrap(ui: &mut egui::Ui) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
 }

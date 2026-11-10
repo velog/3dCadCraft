@@ -497,6 +497,7 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
                 name,
                 expr: pm.as_ref().and_then(|p| p.expr.as_deref()),
                 table: fx.table,
+                quantity: None,
             };
             let mut done = ui.input(|i| i.key_pressed(egui::Key::Escape));
             egui::Area::new(edit_id.with(("area", *field)))

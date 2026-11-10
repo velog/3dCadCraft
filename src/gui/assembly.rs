@@ -2099,6 +2099,7 @@ impl CadCraftApp {
         self.in_place_scene(g);
         self.interference_scene(g);
         self.pattern_preview_scene(g);
+        self.shaft_preview_scene(g);
     }
 
     /// The cosmetic threads of occurrence `o` at `place`, a subassembly's parts
@@ -2514,6 +2515,7 @@ impl CadCraftApp {
         self.asm_sub_overlay(&painter, rect);
         self.asm_sketch_overlay(&painter, rect);
         self.bolt_follow();
+        self.shaft_follow(&ctx);
         self.bolt_preview(&painter, rect, pointer.filter(|_| on_view));
         self.bolt_view_menu(&ctx);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));

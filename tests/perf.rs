@@ -1076,6 +1076,7 @@ fn speed_budgets() {
                     at: 10.0,
                     width: 1.2,
                     depth: 0.6,
+                    relief: false,
                 });
                 d.sections.push(s);
             }

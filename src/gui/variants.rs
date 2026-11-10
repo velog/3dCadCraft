@@ -1040,6 +1040,7 @@ fn cell(
                     name: None,
                     expr: Some(text),
                     table: params,
+                    quantity: None,
                 };
                 if let Some(new) = valuefield::value_field(ui, &spec)
                     && new.trim() != text

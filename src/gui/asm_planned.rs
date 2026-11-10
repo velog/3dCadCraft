@@ -1510,30 +1510,26 @@ impl AsmPlanned {
                     ],
                 ),
             ],
-            Shaft => &[
-                Page(
-                    "Design",
-                    &[
-                        Sel(
-                            "axis",
-                            "Axis",
-                            "select an axis or cylindrical face for the shaft",
-                            LINE,
-                        ),
-                        Sel(
-                            "start",
-                            "Start Plane",
-                            "select the start plane (optional)",
-                            PLANE,
-                        ),
-                        Check("Flip", false),
-                        Head("Sections"),
-                        Button("Insert Cylinder"),
-                    ],
-                ),
-                Page("Calculation", &[Button("Calculate")]),
-                Page("Graphs", &[Note("Shear force, bending moment, deflection")]),
-            ],
+            Shaft => &[Page(
+                "Design",
+                &[
+                    Sel(
+                        "axis",
+                        "Axis",
+                        "select an axis or cylindrical face for the shaft",
+                        LINE,
+                    ),
+                    Sel(
+                        "start",
+                        "Start Plane",
+                        "select the start plane (optional)",
+                        PLANE,
+                    ),
+                    Check("Flip", false),
+                    Head("Sections"),
+                    Button("Insert Cylinder"),
+                ],
+            )],
             SpurGear | WormGear | BevelGear => &[
                 Page(
                     "Design",
@@ -1593,17 +1589,17 @@ impl AsmPlanned {
                 Page(
                     "Calculation",
                     &[
-                        Num("Power", 10.0, " kW"),
-                        Num("Speed", 1500.0, " rpm"),
+                        Num("Power (kW)", 10.0, " kW"),
+                        Num("Speed (rpm)", 1500.0, " rpm"),
                         Head("Bending (AGMA 218.01 per NASA RP-1152)"),
                         Num("Geometry Factor J", 0.35, ""),
                         Num("Application Factor Ka", 1.0, ""),
                         Num("Load Distribution Factor Km", 1.3, ""),
                         Num("Dynamic Factor Kv", 0.8, ""),
-                        Num("Allowable Bending Stress", 250.0, " MPa"),
+                        Num("Allowable Bending Stress (MPa)", 250.0, " MPa"),
                         Head("Surface Life (NASA RP-1152)"),
                         Num("Life Factor (material)", 1.0, ""),
-                        Num("Reliability", 90.0, " %"),
+                        Num("Reliability (%)", 90.0, " %"),
                         Button("Calculate"),
                     ],
                 ),
@@ -1667,11 +1663,11 @@ impl AsmPlanned {
                 Page(
                     "Calculation",
                     &[
-                        Num("Torque", 100.0, " N·m"),
+                        Num("Torque (N·m)", 100.0, " N·m"),
                         Num("Shaft Diameter", 40.0, " mm"),
                         Num("Key Length", 50.0, " mm"),
-                        Num("Allowed Shear", 80.0, " MPa"),
-                        Num("Allowed Pressure", 150.0, " MPa"),
+                        Num("Allowed Shear (MPa)", 80.0, " MPa"),
+                        Num("Allowed Pressure (MPa)", 150.0, " MPa"),
                         Button("Calculate"),
                     ],
                 ),

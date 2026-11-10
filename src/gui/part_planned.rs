@@ -2511,9 +2511,6 @@ impl PartDialog {
                 ui.label(RichText::new(t).strong());
                 ui.end_row();
             }
-            Note(_) if super::shaft::is_shaft(self) && at.0 == 2 => {
-                super::shaft::graphs_ui(self, ui);
-            }
             Note(t) => {
                 plabel(ui, "");
                 ui.label(RichText::new(t).weak().italics());
@@ -2536,9 +2533,6 @@ impl PartDialog {
             }
             Button("Insert Cylinder") if super::shaft::is_shaft(self) => {
                 super::shaft::sections_ui(self, ui);
-            }
-            Button("Calculate") if super::shaft::is_shaft(self) => {
-                super::shaft::calculation_ui(self, ui);
             }
             Button("Calculate") if super::gear_key::is_spur(self) => {
                 super::gear_key::gear_ui(self, ui);

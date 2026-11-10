@@ -164,7 +164,14 @@ impl CadCraftApp {
         rect: Rect,
         pointer: Option<Pos2>,
     ) {
-        self.cv.in_view = pointer.is_some_and(|p| rect.contains(p));
+        // A floating window over the view (the Shaft Generator) is not the
+        // view: digits typed there are its fields' own.
+        self.cv.in_view = pointer.is_some_and(|p| {
+            rect.contains(p)
+                && ctx
+                    .layer_id_at(p)
+                    .is_none_or(|l| l.order == egui::Order::Background)
+        });
         if !self.cursor_value_on(ctx) {
             self.cursor_value_close();
             self.cv.current = 0;
@@ -240,6 +247,7 @@ impl CadCraftApp {
                             name: f.name.as_deref(),
                             expr: f.expr.as_deref(),
                             table: &table,
+                            quantity: None,
                         };
                         commit = valuefield::value_field(ui, &spec);
                         if flip

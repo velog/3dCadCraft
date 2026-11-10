@@ -11,7 +11,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::kernel::Point3;
 use crate::part::axial::{AxialOp, AxialRun, AxialSeg, AxialShape};
+use crate::part::hole::{ThreadFeature, ThreadSpec};
+use crate::part::standards::{ISO_METRIC, Standards};
 use crate::part::{BodyOp, BodyOpFeature, PartDocument, PartError};
 
 /// The shape of one section.
@@ -61,6 +64,10 @@ pub struct RingGroove {
     pub width: f64,
     /// Depth below the cylinder.
     pub depth: f64,
+    /// A relief groove (undercut) at a shoulder rather than a ring's groove;
+    /// the same geometry, named `Relief<n>`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub relief: bool,
 }
 
 /// One section of the shaft.
@@ -83,6 +90,10 @@ pub struct Section {
     /// the diameter, `design::key`): its length, centred. Not modelled yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyway: Option<f64>,
+    /// An ISO metric coarse thread over the whole cylinder (a cosmetic
+    /// thread of the part, M<d>).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub thread: bool,
 }
 
 impl Section {
@@ -95,6 +106,7 @@ impl Section {
             end: EdgeFeature::None,
             grooves: Vec::new(),
             keyway: None,
+            thread: false,
         }
     }
 
@@ -349,7 +361,11 @@ impl ShaftDesign {
                 }
             }
             for (g, gr) in s.grooves.iter().enumerate() {
-                let gt = format!("{tag}:Groove{}", g + 1);
+                let gt = if gr.relief {
+                    format!("{tag}:Relief{}", g + 1)
+                } else {
+                    format!("{tag}:Groove{}", g + 1)
+                };
                 let (a, b) = (z0 + gr.at, z0 + gr.at + gr.width);
                 segs.push(line(r1, a, &tag));
                 segs.push(line(r1 - gr.depth, a, &format!("{gt}:Side1")));
@@ -533,6 +549,34 @@ fn arc(r: f64, z: f64, centre: [f64; 2], role: &str) -> AxialSeg {
 }
 
 fn turned(from: [f64; 2], segs: Vec<AxialSeg>, after: &str) -> AxialRun {
+    // A groove at a section's very start or end repeats a point, or goes on
+    // along the shoulder: drop segments of no length, join straight ones in line.
+    let mut out: Vec<AxialSeg> = Vec::with_capacity(segs.len());
+    let mut last = from;
+    let mut before = from;
+    for s in segs {
+        if (s.to[0] - last[0]).hypot(s.to[1] - last[1]) <= 1e-9 {
+            continue;
+        }
+        let a = [last[0] - before[0], last[1] - before[1]];
+        let b = [s.to[0] - last[0], s.to[1] - last[1]];
+        // Only radial lines (a groove's side going on along a shoulder): walls
+        // in line keep their own section names.
+        let in_line = a[1].abs() <= 1e-12 && b[1].abs() <= 1e-12 && a[0] * b[0] > 0.0;
+        if let Some(p) = out.last_mut()
+            && p.arc.is_none()
+            && s.arc.is_none()
+            && in_line
+        {
+            p.to = s.to;
+            last = s.to;
+            continue;
+        }
+        before = last;
+        last = s.to;
+        out.push(s);
+    }
+    let segs = out;
     AxialRun {
         shape: AxialShape::Turned { from, segs },
         after: Some(after.to_owned()),
@@ -547,8 +591,32 @@ pub fn part(design: &ShaftDesign) -> Result<PartDocument, String> {
         exact_only: true,
         ..Default::default()
     };
-    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(op)))
+    let id = part
+        .add_body_op(BodyOpFeature::new(BodyOp::Axial(op)))
         .map_err(|e: PartError| e.to_string())?;
+    let starts = design.starts();
+    for (k, s) in design.sections.iter().enumerate() {
+        if !s.thread {
+            continue;
+        }
+        let SectionShape::Cylinder { d } = s.shape else {
+            return Err(format!("section {}: threads go on cylinders", k + 1));
+        };
+        let name = format!("M{}", num(d));
+        let spec = ThreadSpec::from_table(Standards::global(), ISO_METRIC, &name, false)
+            .ok_or_else(|| format!("section {}: no ISO metric thread {name}", k + 1))?;
+        let role = format!("{id}:S{}", k + 1);
+        let z = starts[k] + s.length / 2.0;
+        let hint = Point3::new(d / 2.0, 0.0, z);
+        let face = part
+            .body
+            .faces()
+            .find(|(_, f)| f.name.as_deref() == Some(role.as_str()))
+            .and_then(|(fid, _)| crate::part::shell::face_ref(&part.body, fid, Some(hint)))
+            .ok_or_else(|| format!("section {}: its cylinder was not found", k + 1))?;
+        part.add_thread(ThreadFeature::new(face, spec))
+            .map_err(|e| e.to_string())?;
+    }
     Ok(part)
 }
 
@@ -630,7 +698,15 @@ mod tests {
             at: 30.0,
             width: 1.6,
             depth: 1.0,
+            relief: false,
         });
+        d.sections[1].grooves.push(RingGroove {
+            at: 56.0,
+            width: 2.0,
+            depth: 0.4,
+            relief: true,
+        });
+        d.sections[0].thread = true;
         d.sections.push(Section::cone(40.0, 34.0, 20.0));
         d.sections.push(Section::polygon(6, 30.0, 15.0));
         let p = built(&d);
@@ -638,7 +714,14 @@ mod tests {
         let want = volume(&d);
         assert!((want - v).abs() / want < 0.01, "{v} vs {want}");
         let names: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
-        for role in ["Start", "End", "S2:Fillet", "S4:Groove1:Floor", "S6:1"] {
+        for role in [
+            "Start",
+            "End",
+            "S2:Fillet",
+            "S4:Groove1:Floor",
+            "S2:Relief1:Floor",
+            "S6:1",
+        ] {
             assert!(
                 names.iter().any(|n| n.ends_with(&format!(":{role}"))),
                 "{role} missing in {names:?}"
@@ -670,6 +753,7 @@ mod tests {
             at: 1.0,
             width: 1.0,
             depth: 20.0,
+            relief: false,
         });
         assert!(part(&d).is_err());
         assert!(part(&ShaftDesign::default()).is_err());
