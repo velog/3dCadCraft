@@ -29,6 +29,7 @@
     clippy::unreachable
 )]
 
+pub mod analysis;
 pub mod api;
 pub mod assembly;
 pub mod command;

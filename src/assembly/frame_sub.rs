@@ -226,6 +226,11 @@ pub fn skeleton_down(
             to: Box::new(skeleton_down(project, linked, t, to)?),
             to_end: *to_end,
         },
+        Skeleton::Chain(list) => Skeleton::Chain(
+            list.iter()
+                .map(|x| skeleton_down(project, linked, t, x))
+                .collect::<Result<_, _>>()?,
+        ),
     })
 }
 
@@ -311,6 +316,9 @@ pub fn skeleton_up(top: &AssemblyDocument, frame: u32, s: &Skeleton) -> Skeleton
             to: Box::new(skeleton_up(top, frame, to)),
             to_end: *to_end,
         },
+        Skeleton::Chain(list) => {
+            Skeleton::Chain(list.iter().map(|x| skeleton_up(top, frame, x)).collect())
+        }
     }
 }
 

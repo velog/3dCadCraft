@@ -31,6 +31,7 @@ use super::documents::DocCmd;
 use super::drawing::DrwCmd;
 use super::drawing_holetable::HtMode;
 use super::drawing_planned::Planned as Dp;
+use super::frame_analysis::FaCmd;
 use super::icons::Icon;
 use super::layout::{Element, UiCmd, VisKind};
 use super::material::MatCmd;
@@ -549,6 +550,31 @@ const fn ap(id: &'static str, name: &'static str, bg: &'static str, icon: Icon, 
         .tip("Opens the panel; the command's logic comes next (spec 3.0)")
         .run(Action::AsmPlanned(k))
 }
+
+/// A command of the Frame Analysis environment.
+const fn fa(
+    id: &'static str,
+    name: &'static str,
+    bg: &'static str,
+    icon: Icon,
+    k: FaCmd,
+    at: &'static [Place],
+) -> Command {
+    Command::new(id, name, bg, icon)
+        .env(ASSEMBLY)
+        .spec("7.1a-frame-analysis.md")
+        .at(at)
+        .run(Action::Fa(k))
+}
+
+const FA_MANAGE: &[Place] = &[Place::Ribbon("Frame Analysis", "Manage")];
+const FA_SOLVE: &[Place] = &[Place::Ribbon("Frame Analysis", "Solve")];
+const FA_BEAMS: &[Place] = &[Place::Ribbon("Frame Analysis", "Beams")];
+const FA_HOLD: &[Place] = &[Place::Ribbon("Frame Analysis", "Constraints")];
+const FA_LOADS: &[Place] = &[Place::Ribbon("Frame Analysis", "Loads")];
+const FA_CONN: &[Place] = &[Place::Ribbon("Frame Analysis", "Connections")];
+const FA_RESULT: &[Place] = &[Place::Ribbon("Frame Analysis", "Result")];
+const FA_EXIT: &[Place] = &[Place::Ribbon("Frame Analysis", "Exit")];
 
 /// A sketch tool: name = `Tool::label`, valid in a sketch.
 const fn t(
@@ -2422,6 +2448,52 @@ pub static COMMANDS: &[Command] = &[
         .short("Belleville")
         .alias(&["BSP"])
         .at(&[X_SPRING]),
+    // Frame Analysis (spec 7.1a).
+    c("env.frame_analysis", "Frame Analysis", "Анализ на рамка", Icon::FaBegin)
+        .alias(&["FAN"])
+        .at(&[A_ENV])
+        .env(ASSEMBLY)
+        .spec("7.1a-frame-analysis.md")
+        .tip("Analyses the assembly's frames as beams")
+        .run(Action::Fa(FaCmd::Begin)),
+    fa("fa.create", "Create Simulation", "Нова симулация", Icon::FaCreate, FaCmd::Create, FA_MANAGE).tip("A new static or modal simulation of the frame")
+        .alias(&["FCS"]),
+    fa("fa.simulate", "Simulate", "Изчисли", Icon::FaSimulate, FaCmd::Simulate, FA_SOLVE).tip("Solves the active simulation and shows its results")
+        .alias(&["FSI"]),
+    fa("fa.beam", "Beam Properties", "Свойства на гредата", Icon::FaBeam, FaCmd::Beam, FA_BEAMS).tip("Overrides the section and material numbers of a beam")
+        .alias(&["FBP"]),
+    fa("fa.node", "Custom Node", "Възел", Icon::FaNode, FaCmd::Node, FA_BEAMS).tip("Adds a node at a place on a beam")
+        .alias(&["FCN"]),
+    fa("fa.fixed", "Fixed", "Запъване", Icon::FaFixed, FaCmd::Fixed, FA_HOLD).tip("Holds all six degrees of freedom of a place")
+        .alias(&["FFX"]),
+    fa("fa.pinned", "Pinned", "Шарнир", Icon::FaPinned, FaCmd::Pinned, FA_HOLD).tip("Holds the three displacements; rotation stays free")
+        .alias(&["FPN"]),
+    fa("fa.floating", "Floating Pinned", "Подвижен шарнир", Icon::FaFloating, FaCmd::Floating, FA_HOLD).tip("Holds the displacement along one direction")
+        .alias(&["FFL"]),
+    fa("fa.custom", "Custom Constraint", "Опора по избор", Icon::FaCustom, FaCmd::Custom, FA_HOLD).tip("Holds the degrees of freedom you choose")
+        .alias(&["FCC"]),
+    fa("fa.force", "Force", "Сила", Icon::FaForce, FaCmd::Force, FA_LOADS).tip("A force at a node or a place on a beam")
+        .alias(&["FFO"]),
+    fa("fa.continuous", "Continuous Load", "Разпределен товар", Icon::FaContinuous, FaCmd::Continuous, FA_LOADS).tip("A uniform load over a beam or a stretch of it")
+        .alias(&["FCL"]),
+    fa("fa.moment", "Moment", "Момент", Icon::FaMoment, FaCmd::Moment, FA_LOADS).tip("A moment by its components")
+        .alias(&["FMO"]),
+    fa("fa.axial", "Axial Moment", "Усукващ момент", Icon::FaAxial, FaCmd::Axial, FA_LOADS).tip("A torque about the beam")
+        .alias(&["FAM"]),
+    fa("fa.bending", "Bending Moment", "Огъващ момент", Icon::FaBending, FaCmd::Bending, FA_LOADS).tip("A moment in a plane of the beam")
+        .alias(&["FBE"]),
+    fa("fa.gravity", "Gravity", "Гравитация", Icon::FaGravity, FaCmd::Gravity, FA_LOADS).tip("The weight of every beam")
+        .alias(&["FGR"]),
+    fa("fa.release", "Release", "Освобождаване", Icon::FaRelease, FaCmd::Release, FA_CONN).tip("What a beam end does not carry")
+        .alias(&["FRL"]),
+    fa("fa.link", "Rigid Link", "Твърда връзка", Icon::FaLink, FaCmd::Link, FA_CONN).tip("Child points that move rigidly with a parent point")
+        .alias(&["FRK"]),
+    fa("fa.detail", "Beam Detail", "Диаграми на гредата", Icon::FaDetail, FaCmd::Detail, FA_RESULT).tip("The diagrams of the selected beam")
+        .alias(&["FBD"]),
+    fa("fa.animate", "Animate", "Анимация", Icon::FaAnimate, FaCmd::Animate, FA_RESULT).tip("Moves the deformed shape back and forth")
+        .alias(&["FAT"]),
+    fa("fa.finish", "Finish Frame Analysis", "Край на анализа", Icon::FaFinish, FaCmd::Finish, FA_EXIT).tip("Back to the assembly")
+        .alias(&["FFN"]),
     // Environments of an assembly
     c("env.tube_pipe", "Tube & Pipe", "Тръбопроводи", Icon::TubePipe)
         .alias(&["TAP"])

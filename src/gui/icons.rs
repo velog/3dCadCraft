@@ -473,6 +473,46 @@ pub enum Icon {
     AnalysisVisibility,
     /// Inventor Studio (a camera).
     Studio,
+    /// Frame Analysis.
+    FaBegin,
+    /// Create Simulation.
+    FaCreate,
+    /// Simulate.
+    FaSimulate,
+    /// Beam Properties.
+    FaBeam,
+    /// Custom Node.
+    FaNode,
+    /// Fixed.
+    FaFixed,
+    /// Pinned.
+    FaPinned,
+    /// Floating Pinned.
+    FaFloating,
+    /// Custom Constraint.
+    FaCustom,
+    /// Force.
+    FaForce,
+    /// Continuous Load.
+    FaContinuous,
+    /// Moment.
+    FaMoment,
+    /// Axial Moment.
+    FaAxial,
+    /// Bending Moment.
+    FaBending,
+    /// Gravity.
+    FaGravity,
+    /// Release.
+    FaRelease,
+    /// Rigid Link.
+    FaLink,
+    /// Beam Detail.
+    FaDetail,
+    /// Animate.
+    FaAnimate,
+    /// Finish.
+    FaFinish,
     /// Stress Analysis (a beam with a load).
     StressAnalysis,
     /// Shape Generator (an optimised bracket).
@@ -3048,6 +3088,103 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.rect(1.5, 5.0, 11.0, 12.0, ink);
             p.closed(&[(11.0, 7.0), (15.0, 5.0), (15.0, 12.0), (11.0, 10.0)], acc);
             p.circle(6.0, 8.5, 2.0, acc);
+        }
+        FaBegin => {
+            p.line(&[(2.0, 13.0), (2.0, 4.0), (14.0, 4.0), (14.0, 13.0)], ink);
+            p.line(&[(8.0, 4.0), (8.0, 12.0)], acc);
+            p.head((8.0, 14.0), (0.0, 1.0), acc);
+        }
+        FaCreate => {
+            p.line(&[(2.0, 12.0), (14.0, 12.0)], ink);
+            p.circle(3.0, 12.0, 1.3, ink);
+            p.circle(13.0, 12.0, 1.3, ink);
+            p.line(&[(8.0, 2.5), (8.0, 8.5)], acc);
+            p.line(&[(5.0, 5.5), (11.0, 5.5)], acc);
+        }
+        FaSimulate => {
+            p.closed(&[(4.0, 2.5), (13.0, 8.0), (4.0, 13.5)], acc);
+        }
+        FaBeam => {
+            p.rect(1.5, 5.0, 14.5, 11.0, ink);
+            p.line(&[(1.5, 8.0), (14.5, 8.0)], acc);
+        }
+        FaNode => {
+            p.line(&[(1.5, 8.0), (14.5, 8.0)], ink);
+            p.circle(8.0, 8.0, 2.5, acc);
+        }
+        FaFixed => {
+            p.line(&[(4.0, 2.0), (4.0, 14.0)], ink);
+            p.line(&[(4.0, 8.0), (14.0, 8.0)], acc);
+            for y in [3.5, 7.0, 10.5] {
+                p.line(&[(4.0, y), (1.5, y + 2.5)], ink);
+            }
+        }
+        FaPinned => {
+            p.closed(&[(8.0, 5.0), (3.5, 12.0), (12.5, 12.0)], ink);
+            p.line(&[(1.5, 5.0), (14.5, 5.0)], acc);
+            p.line(&[(2.5, 14.0), (13.5, 14.0)], ink);
+        }
+        FaFloating => {
+            p.closed(&[(8.0, 4.0), (4.0, 10.0), (12.0, 10.0)], ink);
+            p.line(&[(1.5, 4.0), (14.5, 4.0)], acc);
+            p.circle(5.5, 12.5, 1.5, ink);
+            p.circle(10.5, 12.5, 1.5, ink);
+        }
+        FaCustom => {
+            p.line(&[(1.5, 6.0), (14.5, 6.0)], acc);
+            p.circle(8.0, 11.0, 3.0, ink);
+            p.line(&[(8.0, 6.0), (8.0, 8.0)], ink);
+        }
+        FaForce => {
+            p.line(&[(1.5, 13.0), (14.5, 13.0)], ink);
+            p.line(&[(8.0, 2.0), (8.0, 9.5)], warn);
+            p.head((8.0, 11.5), (0.0, 1.0), warn);
+        }
+        FaContinuous => {
+            p.line(&[(1.5, 13.0), (14.5, 13.0)], ink);
+            p.line(&[(2.5, 3.0), (13.5, 3.0)], warn);
+            for x in [3.0, 8.0, 13.0] {
+                p.line(&[(x, 3.0), (x, 9.0)], warn);
+                p.head((x, 11.0), (0.0, 1.0), warn);
+            }
+        }
+        FaMoment => {
+            p.arc(8.0, 8.0, 5.5, 20.0, 300.0, warn);
+            p.circle(8.0, 8.0, 1.5, ink);
+        }
+        FaAxial => {
+            p.line(&[(1.5, 8.0), (14.5, 8.0)], ink);
+            p.arc(8.0, 8.0, 4.5, 30.0, 330.0, warn);
+        }
+        FaBending => {
+            p.arc(8.0, 15.0, 11.0, 215.0, 325.0, ink);
+            p.arc(8.0, 8.0, 3.0, 20.0, 300.0, warn);
+        }
+        FaGravity => {
+            p.circle(8.0, 4.0, 2.5, ink);
+            p.line(&[(8.0, 7.0), (8.0, 12.0)], warn);
+            p.head((8.0, 14.0), (0.0, 1.0), warn);
+        }
+        FaRelease => {
+            p.line(&[(1.5, 8.0), (6.0, 8.0)], ink);
+            p.line(&[(10.0, 8.0), (14.5, 8.0)], ink);
+            p.circle(8.0, 8.0, 2.2, acc);
+        }
+        FaLink => {
+            p.circle(3.5, 12.0, 1.8, ink);
+            p.circle(12.5, 4.0, 1.8, ink);
+            p.line(&[(4.8, 10.8), (11.2, 5.2)], acc);
+        }
+        FaDetail => {
+            p.line(&[(2.0, 2.0), (2.0, 14.0), (14.0, 14.0)], ink);
+            p.line(&[(3.0, 12.0), (7.0, 5.0), (10.0, 9.0), (13.5, 3.5)], acc);
+        }
+        FaAnimate => {
+            p.arc(8.0, 8.0, 5.5, 40.0, 320.0, ink);
+            p.closed(&[(6.5, 5.5), (11.0, 8.0), (6.5, 10.5)], acc);
+        }
+        FaFinish => {
+            p.closed(&[(2.5, 8.5), (6.5, 12.5), (13.5, 3.5)], acc);
         }
         StressAnalysis => {
             p.rect(1.0, 9.0, 15.0, 12.0, ink);

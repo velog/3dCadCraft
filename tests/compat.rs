@@ -2736,6 +2736,101 @@ fn between_r58_project() -> Project {
     p
 }
 
+/// Revision 71: Merge Frame Members — a line, a tangent arc and a line of one
+/// sketch as one bent member (300 + a quarter of radius 150 long).
+fn chain_r71_project() -> Project {
+    use cadcraft3d::assembly::frame::{InsertOptions, Skeleton, insert};
+    use cadcraft3d::assembly::tree::Linked;
+    use cadcraft3d::document::{AssemblyDocument, DocRef};
+    use cadcraft3d::kernel::Transform3;
+    use cadcraft3d::part::frame::Library;
+    use cadcraft3d::part::{OriginPlane, SketchOptions, SketchPlacement};
+    use cadcraft3d::sketch::Point2;
+    let mut sk = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let i = sk
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let s = &mut sk.sketches[i].sketch;
+    let a = s.add_point(Point2::new(0.0, 200.0));
+    let b = s.add_point(Point2::new(0.0, 0.0));
+    let c = s.add_point(Point2::new(150.0, 0.0));
+    let d = s.add_point(Point2::new(150.0, -150.0));
+    let e = s.add_point(Point2::new(250.0, -150.0));
+    let curves = [
+        s.add_line_between(a, b).unwrap(),
+        s.add_arc(c, b, d).unwrap(),
+        s.add_line_between(d, e).unwrap(),
+    ];
+    let sketch = sk.sketches[i].id.clone();
+    let mut p = Project::new("ChainR71");
+    let skd = p.add_document("Skeleton", DocumentData::Part(sk));
+    let mut asm = AssemblyDocument::default();
+    asm.place(
+        DocRef::local(skd),
+        "Skeleton:1",
+        Transform3::identity(),
+        true,
+    );
+    let aid = p.add_document("Frame", DocumentData::Assembly(asm));
+    let chain = Skeleton::Chain(
+        curves
+            .iter()
+            .map(|&line| Skeleton::SketchLine {
+                occurrence: 1,
+                sub: Vec::new(),
+                sketch: sketch.clone(),
+                line,
+            })
+            .collect(),
+    );
+    let o = InsertOptions {
+        family: "Square hollow section (EN 10219)".into(),
+        size: "40x40x3".into(),
+        material: Some("Steel S235".into()),
+        orientation: Default::default(),
+        corners: Default::default(),
+        layout: Default::default(),
+    };
+    insert(
+        &mut p,
+        &Linked::new(),
+        aid,
+        &[chain],
+        &o,
+        Library::builtin(),
+        None,
+    )
+    .unwrap();
+    p
+}
+
+/// The revision 71 frame reads back and needs no rebuild: one member along
+/// the three curves.
+#[test]
+fn chain_r71_reads() {
+    use cadcraft3d::assembly::frame::solve;
+    use cadcraft3d::assembly::tree::Linked;
+    let f = root().join("r71/chain_r71.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let mut project = Project::load(&f).unwrap();
+    let aid = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Assembly(_)))
+        .unwrap()
+        .id;
+    let done = solve(&mut project, &Linked::new(), aid).unwrap();
+    assert!(done.sick.is_empty(), "{:?}", done.sick);
+    assert_eq!(done.moved, 0);
+}
+
 /// The revision 58 frame reads back: its member runs 500 between the points.
 #[test]
 fn between_r58_reads() {
@@ -4286,6 +4381,11 @@ fn old_files_still_open() {
             let mut project = Project::new("FreeformR59");
             project.add_document("Part1", DocumentData::Part(freeform_r59()));
             project.save(&f).unwrap();
+        }
+        let f = root().join("r71/chain_r71.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            chain_r71_project().save(&f).unwrap();
         }
         let f = root().join("r58/between_r58.3dcadcraft");
         if !f.exists() {

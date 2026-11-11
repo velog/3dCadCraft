@@ -191,7 +191,9 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   `Intersection`) (2026-11-09).
 /// - 70: drawing text fields `Field::Parameter`, `Field::Physical`
 ///   (2026-11-09).
-pub const FORMAT_REVISION: u32 = 70;
+/// - 71: Merge Frame Members (`Skeleton::Chain`: curves joined end to end, one
+///   swept member) (2026-11-09).
+pub const FORMAT_REVISION: u32 = 71;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

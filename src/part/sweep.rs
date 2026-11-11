@@ -97,7 +97,7 @@ impl PathRef {
 }
 
 /// A sketch curve as a path piece in model space.
-fn sketch_piece(plane: &Plane, c: &ProfileCurve) -> PathPiece {
+pub(crate) fn sketch_piece(plane: &Plane, c: &ProfileCurve) -> PathPiece {
     let w = |p: crate::sketch::Point2| plane.point_at(p.x, p.y);
     match c {
         ProfileCurve::Line { a, b } => PathPiece::Line { a: w(*a), b: w(*b) },
@@ -141,7 +141,7 @@ fn sketch_piece(plane: &Plane, c: &ProfileCurve) -> PathPiece {
 
 /// A model edge as a path piece: lines and circles exactly, other curves
 /// by their points.
-fn edge_piece(body: &BRep, r: &EdgeRef) -> Result<PathPiece, String> {
+pub(crate) fn edge_piece(body: &BRep, r: &EdgeRef) -> Result<PathPiece, String> {
     let named = |n: &str| -> Vec<crate::kernel::FaceId> {
         body.faces()
             .filter(|(_, f)| f.name.as_deref() == Some(n))
@@ -216,7 +216,7 @@ pub struct PathGeom {
     pub closed: bool,
 }
 
-fn ends(p: &PathPiece) -> (Point3, Point3) {
+pub(crate) fn ends(p: &PathPiece) -> (Point3, Point3) {
     match p {
         PathPiece::Line { a, b } => (*a, *b),
         PathPiece::Arc {
@@ -237,7 +237,7 @@ fn rotate(p: Point3, c: Point3, axis: Vector3, angle: Real) -> Point3 {
     c + nalgebra::Rotation3::from_axis_angle(&k, angle) * (p - c)
 }
 
-fn reversed(p: &PathPiece) -> PathPiece {
+pub(crate) fn reversed(p: &PathPiece) -> PathPiece {
     match p {
         PathPiece::Line { a, b } => PathPiece::Line { a: *b, b: *a },
         PathPiece::Arc {

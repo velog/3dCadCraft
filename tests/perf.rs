@@ -924,6 +924,104 @@ fn speed_budgets() {
     // (case, budget ms, median ms, usage)
     let mut rows = Rows::default();
 
+    // Frame Analysis: a grid of 312 beams, static and 8 modes.
+    {
+        use cadcraft3d::analysis::beam::{Beam, BeamMaterial, BeamSection, Load, Model, V3};
+        let n = 12;
+        let at = |i: usize, j: usize| i * (n + 1) + j;
+        let section = BeamSection {
+            area: 421.0,
+            iu: 9.32e4,
+            iv: 9.32e4,
+            j: 15.7e4,
+            wu: 4.66e3,
+            wv: 4.66e3,
+            wt: 7.0e3,
+            au: 210.0,
+            av: 210.0,
+        };
+        let material = BeamMaterial {
+            e: 210_000.0,
+            g: 81_000.0,
+            rho: 7.85e-9,
+        };
+        let mut m = Model::default();
+        for i in 0..=n {
+            for j in 0..=n {
+                m.nodes
+                    .push(V3::new(i as f64 * 500.0, j as f64 * 500.0, 0.0));
+            }
+        }
+        let beam = |start, end, u| Beam {
+            start,
+            end,
+            u,
+            section,
+            material,
+            release_start: [false; 6],
+            release_end: [false; 6],
+        };
+        for i in 0..=n {
+            for j in 0..n {
+                m.beams.push(beam(at(i, j), at(i, j + 1), V3::x()));
+                m.beams.push(beam(at(j, i), at(j + 1, i), V3::y()));
+            }
+        }
+        for c in [at(0, 0), at(0, n), at(n, 0), at(n, n)] {
+            m.held.push((c, [true; 6]));
+        }
+        m.loads.push(Load::Node {
+            node: at(n / 2, n / 2),
+            force: V3::new(0.0, 0.0, -1000.0),
+            moment: V3::zeros(),
+        });
+        rows.push((
+            "frame analysis: static run of a grid of 312 beams",
+            100.0,
+            median_ms(5, || {
+                m.solve_static(21).unwrap();
+            }),
+        ));
+        rows.push((
+            "frame analysis: the 8 lowest modes of a grid of 312 beams",
+            2000.0,
+            median_ms(3, || {
+                m.solve_modes(8, 4).unwrap();
+            }),
+        ));
+    }
+    // A bent member: the section swept along a line, an arc and a line.
+    {
+        use cadcraft3d::part::frame::{Library, MemberPiece};
+        let lib = Library::builtin();
+        let s = lib
+            .find("Square hollow section (EN 10219)", "40x40x3")
+            .unwrap();
+        let path = [
+            MemberPiece::Line {
+                a: [0.0, 0.0, 0.0],
+                b: [0.0, 0.0, 200.0],
+            },
+            MemberPiece::Arc {
+                a: [0.0, 0.0, 200.0],
+                center: [150.0, 0.0, 200.0],
+                axis: [0.0, 1.0, 0.0],
+                angle: std::f64::consts::FRAC_PI_2,
+            },
+            MemberPiece::Line {
+                a: [150.0, 0.0, 350.0],
+                b: [250.0, 0.0, 350.0],
+            },
+        ];
+        rows.push((
+            "frame: a bent SHS 40x40x3 member (line, arc, line)",
+            200.0,
+            median_ms(3, || {
+                s.member_part_path(&path, None).unwrap();
+            }),
+        ));
+    }
+
     // Selection: filtering, resolving and ordering 10k candidates under the
     // cursor (Select Other over a dense faceted part) stays far below a frame.
     {

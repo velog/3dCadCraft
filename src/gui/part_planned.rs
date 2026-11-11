@@ -1653,7 +1653,7 @@ impl Planned {
             }
             (
                 Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame),
-                "Merge Frame Members" | "Apply Appearance to Part",
+                "Apply Appearance to Part",
                 None,
             ) => Some("Comes with stage F3 (spec 6.1 Insert Frame)"),
             (

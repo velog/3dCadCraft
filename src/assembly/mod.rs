@@ -18,6 +18,7 @@ pub mod create;
 pub mod features;
 pub mod flexible;
 pub mod frame;
+pub mod frame_analysis;
 pub mod frame_sub;
 pub mod import;
 pub mod interference;

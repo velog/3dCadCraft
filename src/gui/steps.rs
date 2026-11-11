@@ -18,7 +18,7 @@ use crate::command::flow::{Flow, PickKind as K, Selector, colors};
 const SLOTS: [u8; 3] = [40, 120, 230];
 
 /// A selector of a command outside the shared flow.
-fn input(
+pub(super) fn input(
     key: &'static str,
     label: &'static str,
     accepts: &'static [K],
@@ -55,6 +55,9 @@ fn transform_target(t: Tool) -> Option<(&'static str, &'static [K])> {
 impl CadCraftApp {
     /// The inputs of whatever command is open.
     pub(super) fn step_flow(&self) -> Option<Flow> {
+        if let Some(f) = self.fa_flow() {
+            return Some(f);
+        }
         if let Some(f) = self.command_flow() {
             return Some(f);
         }
@@ -356,6 +359,9 @@ impl CadCraftApp {
 
     /// Makes input `key` of the open command active.
     fn step_activate(&mut self, key: &str) {
+        if self.fa_step_activate(key) {
+            return;
+        }
         if self.command_flow().is_some() {
             self.command_activate(key);
             return;
@@ -609,6 +615,7 @@ mod tests {
         "Thread",
         "Sketch Dialog",
         "Constrain",
+        "Frame Analysis",
     ];
     /// Those without: one pick and they are done, or not a command with inputs.
     const NO_STEPS: &[&str] = &[

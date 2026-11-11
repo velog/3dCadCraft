@@ -572,6 +572,84 @@ impl Section {
         }
     }
 
+    /// Torsion constant (mm⁴), torsional modulus (mm³) and the shear areas
+    /// along the section's horizontal and vertical axes (mm²): EN 10219's
+    /// formulas for hollow sections, thin-wall sums for open ones,
+    /// Saint-Venant's approximation for a solid outline of ours.
+    pub fn torsion(&self) -> (Real, Real, Real, Real) {
+        use std::f64::consts::PI;
+        let p = self.properties();
+        let a = p.area;
+        let (h, b, t, tw, tf) = (self.h, self.b, self.t, self.tw, self.tf);
+        let solid = |a: Real, ip: Real, r: Real| {
+            let j = a.powi(4) / (40.0 * ip);
+            (j, j / r, 5.0 / 6.0 * a, 5.0 / 6.0 * a)
+        };
+        let ip = p.ix + p.iy;
+        match self.shape {
+            Shape::Shs | Shape::Rhs => {
+                let rc = (self.r1 + self.r2) / 2.0;
+                let hp = 2.0 * ((b - t) + (h - t)) - 2.0 * rc * (4.0 - PI);
+                let ah = (b - t) * (h - t) - rc * rc * (4.0 - PI);
+                let k = 2.0 * ah * t / hp;
+                let j = t.powi(3) * hp / 3.0 + 2.0 * k * ah;
+                (j, j / (t + k / t), a * b / (b + h), a * h / (b + h))
+            }
+            Shape::Chs => {
+                let d = h - 2.0 * t;
+                let j = PI / 32.0 * (h.powi(4) - d.powi(4));
+                (j, 2.0 * j / h, 2.0 * a / PI, 2.0 * a / PI)
+            }
+            Shape::Bar => (
+                PI * h.powi(4) / 32.0,
+                PI * h.powi(3) / 16.0,
+                0.9 * a,
+                0.9 * a,
+            ),
+            Shape::Flat | Shape::SquareBar => {
+                let (w, d) = self.extent();
+                let (l, s) = (w.max(d), w.min(d));
+                let j =
+                    l * s.powi(3) * (1.0 / 3.0 - 0.21 * (s / l) * (1.0 - (s / l).powi(4) / 12.0));
+                (
+                    j,
+                    l * l * s * s / (3.0 * l + 1.8 * s),
+                    5.0 / 6.0 * a,
+                    5.0 / 6.0 * a,
+                )
+            }
+            Shape::HexBar => solid(a, ip, h / 2.0),
+            Shape::Custom => {
+                let (w, d) = self.extent();
+                solid(a, ip, w.max(d) / 2.0)
+            }
+            Shape::IBeam | Shape::IBeamTapered => {
+                let j = (2.0 * b * tf.powi(3) + (h - 2.0 * tf) * tw.powi(3)) / 3.0;
+                (j, j / tf.max(tw), 2.0 * b * tf, tw * (h - 2.0 * tf))
+            }
+            Shape::Channel | Shape::ChannelTapered => {
+                let j = (2.0 * b * tf.powi(3) + (h - 2.0 * tf) * tw.powi(3)) / 3.0;
+                (j, j / tf.max(tw), 2.0 * b * tf, tw * (h - 2.0 * tf))
+            }
+            Shape::Tee => {
+                let j = (b * tf.powi(3) + (h - tf) * tw.powi(3)) / 3.0;
+                (j, j / tf.max(tw), b * tf, tw * h)
+            }
+            Shape::Angle => {
+                let j = (h + b - t) * t.powi(3) / 3.0;
+                (j, j / t, b * t, h * t)
+            }
+            Shape::ZedFormed => {
+                let j = (h + 2.0 * b) * t.powi(3) / 3.0;
+                (j, j / t, 2.0 * b * t, h * t)
+            }
+            Shape::ChannelFormed => {
+                let j = (h + 2.0 * b + 2.0 * tf) * t.powi(3) / 3.0;
+                (j, j / t, 2.0 * b * t, h * t)
+            }
+        }
+    }
+
     /// Draws the outline into `sk` (sketch coordinates = section
     /// coordinates). Corners with a radius become tangent arcs; points are
     /// shared along each loop.
@@ -867,6 +945,153 @@ impl Section {
         Ok(part)
     }
 
+    /// A curved member's part (spec 6.1 Merge Frame Members, arcs and
+    /// splines): this section on the XY plane swept along `path`, which
+    /// starts in that plane going +Z and lies in one plane. The path is
+    /// copied into the part as a sketch (rule 8).
+    pub fn member_part_path(
+        &self,
+        path: &[MemberPiece],
+        material: Option<&str>,
+    ) -> Result<PartDocument, PartError> {
+        let (origin, n) = path_plane(path).ok_or_else(|| {
+            PartError::Feature("the curves of a member must lie in one plane".into())
+        })?;
+        self.fits_bends(path, n)?;
+        let mut part = PartDocument {
+            exact_only: true,
+            ..Default::default()
+        };
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = part.create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts)?;
+        self.draw(&mut part.sketches[i].sketch)?;
+        let w = part.add_work(hidden(WorkDef::Ucs(UcsDef::Offsets {
+            x: origin.x,
+            y: origin.y,
+            z: origin.z,
+            rx: (-n.y).clamp(-1.0, 1.0).asin(),
+            ry: n.x.atan2(n.z),
+            rz: 0.0,
+        })))?;
+        let placement = SketchPlacement {
+            plane: PlaneRef::Work(format!("{w}:XY")),
+            ..Default::default()
+        };
+        let k = part.create_sketch(placement, &opts)?;
+        let bad = |e: crate::sketch::SketchError| PartError::Feature(e.to_string());
+        let curves = {
+            let sk = &mut part.sketches[k].sketch;
+            let pl = sk.plane.clone();
+            let flat = |p: &[Real; 3]| {
+                let q = pl.project(&Point3::new(p[0], p[1], p[2]));
+                Point2::new(q.x, q.y)
+            };
+            let mut curves = Vec::new();
+            let mut last = None;
+            for piece in path {
+                let from = match last {
+                    Some(id) => id,
+                    None => sk.add_point(flat(&piece.first())),
+                };
+                match piece {
+                    MemberPiece::Line { b, .. } => {
+                        let to = sk.add_point(flat(b));
+                        curves.push(sk.add_line_between(from, to).map_err(bad)?);
+                        last = Some(to);
+                    }
+                    MemberPiece::Arc {
+                        center,
+                        axis,
+                        angle,
+                        ..
+                    } => {
+                        let to = sk.add_point(flat(&piece.last()));
+                        let c = sk.add_point(flat(center));
+                        let up = Vector3::new(axis[0], axis[1], axis[2]).dot(&pl.normal);
+                        curves.push(if up * angle > 0.0 {
+                            sk.add_arc(c, from, to).map_err(bad)?
+                        } else {
+                            sk.add_arc(c, to, from).map_err(bad)?
+                        });
+                        last = Some(to);
+                    }
+                    MemberPiece::Points(v) => {
+                        let mut ids = vec![from];
+                        let step = (v.len().saturating_sub(1) / SPLINE_POINTS).max(1);
+                        for (j, p) in v.iter().enumerate().skip(1) {
+                            if j % step == 0 || j + 1 == v.len() {
+                                ids.push(sk.add_point(flat(p)));
+                            }
+                        }
+                        last = ids.last().copied();
+                        curves.push(sk.add_interp_spline(ids).map_err(bad)?);
+                    }
+                }
+            }
+            curves
+        };
+        let seed = self.material_point();
+        let regions = part.sketches[i].sketch.regions();
+        let r = regions
+            .iter()
+            .find(|r| r.contains(seed))
+            .ok_or_else(|| PartError::Feature("the section has no closed profile".into()))?;
+        let def = crate::part::sweep::SweepFeature::new(
+            vec![ProfileRef::of(r, seed)],
+            crate::part::sweep::PathRef::Sketch {
+                sketch: part.sketches[k].id.clone(),
+                curves,
+            },
+        );
+        part.add_sweep(i, def)?;
+        part.sketches[i].visible = false;
+        part.sketches[k].visible = false;
+        if let Some(m) = material {
+            let _ = part.set_material(Some(m), crate::materials::with_user());
+        }
+        Ok(part)
+    }
+
+    /// Refuses a section reaching past the centre of an arc of `path`
+    /// (plane normal `n`; the section stands square to the path at its
+    /// start, which goes +Z): the sweep would fold through itself.
+    fn fits_bends(&self, path: &[MemberPiece], n: Vector3) -> Result<(), PartError> {
+        let start = path.first().map_or([0.0; 3], MemberPiece::first);
+        let left = n.cross(&Vector3::z());
+        let (mut lo, mut hi) = (Real::INFINITY, Real::NEG_INFINITY);
+        for v in self.outline() {
+            let w = (v.x - start[0]) * left.x + (v.y - start[1]) * left.y;
+            lo = lo.min(w);
+            hi = hi.max(w);
+        }
+        for p in path {
+            if let MemberPiece::Arc {
+                a,
+                center,
+                axis,
+                angle,
+            } = p
+            {
+                let r = (0..3)
+                    .map(|k| (a[k] - center[k]).powi(2))
+                    .sum::<Real>()
+                    .sqrt();
+                let up = axis[0] * n.x + axis[1] * n.y + axis[2] * n.z;
+                let reach = if up * angle > 0.0 { hi } else { -lo };
+                if reach >= r - 1e-6 {
+                    return Err(PartError::Feature(format!(
+                        "the section does not fit a bend of radius {r:.1} mm"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Notch cuts of a member part: each prism a sketch on a work UCS and an
     /// Extrude Cut.
     fn add_notches(
@@ -1056,6 +1281,136 @@ pub(crate) fn hidden(def: WorkDef) -> WorkFeature {
     let mut w = WorkFeature::new(def);
     w.visible = false;
     w
+}
+
+/// One piece of a curved member's path, in the member part's coordinates
+/// (kept in `assembly::frame::Shape` to tell when the part must be rebuilt).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum MemberPiece {
+    /// Straight from `a` to `b`.
+    Line {
+        /// Start.
+        a: [Real; 3],
+        /// End.
+        b: [Real; 3],
+    },
+    /// From `a` about the axis through `center` (right hand) by `angle`.
+    Arc {
+        /// Start.
+        a: [Real; 3],
+        /// Centre.
+        center: [Real; 3],
+        /// Unit axis.
+        axis: [Real; 3],
+        /// Signed angle (radians).
+        angle: Real,
+    },
+    /// A free-form curve by its points.
+    Points(Vec<[Real; 3]>),
+}
+
+/// How many spans a free-form path piece keeps in the member's sketch.
+const SPLINE_POINTS: usize = 32;
+
+impl MemberPiece {
+    /// Its first point.
+    pub fn first(&self) -> [Real; 3] {
+        match self {
+            MemberPiece::Line { a, .. } | MemberPiece::Arc { a, .. } => *a,
+            MemberPiece::Points(v) => v.first().copied().unwrap_or([0.0; 3]),
+        }
+    }
+
+    /// Its last point.
+    pub fn last(&self) -> [Real; 3] {
+        match self {
+            MemberPiece::Line { b, .. } => *b,
+            MemberPiece::Arc {
+                a,
+                center,
+                axis,
+                angle,
+            } => {
+                let c = Point3::new(center[0], center[1], center[2]);
+                let k = nalgebra::Unit::new_normalize(Vector3::new(axis[0], axis[1], axis[2]));
+                let q = c + nalgebra::Rotation3::from_axis_angle(&k, *angle)
+                    * (Point3::new(a[0], a[1], a[2]) - c);
+                [q.x, q.y, q.z]
+            }
+            MemberPiece::Points(v) => v.last().copied().unwrap_or([0.0; 3]),
+        }
+    }
+
+    /// Its numbers, to compare two paths.
+    pub fn numbers(&self) -> Vec<Real> {
+        match self {
+            MemberPiece::Line { a, b } => a.iter().chain(b).copied().collect(),
+            MemberPiece::Arc {
+                a,
+                center,
+                axis,
+                angle,
+            } => a
+                .iter()
+                .chain(center)
+                .chain(axis)
+                .copied()
+                .chain([*angle])
+                .collect(),
+            MemberPiece::Points(v) => v.iter().flatten().copied().collect(),
+        }
+    }
+}
+
+/// A point and the unit normal of the plane `path` lies in, or `None` when
+/// it leaves every plane. A path along one line takes any plane through it.
+pub fn path_plane(path: &[MemberPiece]) -> Option<(Point3, Vector3)> {
+    let p3 = |p: [Real; 3]| Point3::new(p[0], p[1], p[2]);
+    let mut pts = Vec::new();
+    let mut normal = None;
+    for piece in path {
+        pts.push(p3(piece.first()));
+        pts.push(p3(piece.last()));
+        match piece {
+            MemberPiece::Arc { axis, center, .. } => {
+                normal = normal.or(Some(Vector3::new(axis[0], axis[1], axis[2]).normalize()));
+                pts.push(p3(*center));
+            }
+            MemberPiece::Points(v) => pts.extend(v.iter().map(|p| p3(*p))),
+            MemberPiece::Line { .. } => {}
+        }
+    }
+    let o = *pts.first()?;
+    let size = pts.iter().map(|p| (p - o).norm()).fold(0.0, Real::max);
+    let n = match normal {
+        Some(n) => n,
+        None => {
+            // The widest triangle from the start and its farthest point.
+            let far = *pts
+                .iter()
+                .max_by(|a, b| (*a - o).norm().total_cmp(&(*b - o).norm()))?;
+            let d = far - o;
+            let best = pts
+                .iter()
+                .map(|p| d.cross(&(p - o)))
+                .max_by(|a, b| a.norm().total_cmp(&b.norm()))?;
+            match best.try_normalize(1e-9 * size.max(1.0).powi(2)) {
+                Some(n) => n,
+                None => {
+                    let d = d.try_normalize(1e-12)?;
+                    let other = if d.x.abs() < 0.9 {
+                        Vector3::x()
+                    } else {
+                        Vector3::y()
+                    };
+                    d.cross(&other).normalize()
+                }
+            }
+        }
+    };
+    pts.iter()
+        .all(|p| (p - o).dot(&n).abs() <= 1e-5 * size.max(1.0))
+        .then_some((o, n))
 }
 
 /// A planar end cut of a member, in its part's coordinates: the material
@@ -1733,6 +2088,25 @@ mod tests {
             (got - want).abs() <= rel * want.abs(),
             "{what}: {got} vs {want}"
         );
+    }
+
+    /// EN 10219-2 tabulates It = 15.7 cm⁴ for SHS 40x40x3; a round bar is
+    /// πd⁴/32 exactly.
+    #[test]
+    fn torsion_constants() {
+        let s = sec("Square hollow section (EN 10219)", "40x40x3");
+        close(s.torsion().0, 15.7e4, 0.01, "SHS It");
+        let lib = Library::builtin();
+        let chs = lib
+            .standards()
+            .iter()
+            .flat_map(|st| lib.families(st))
+            .find(|f| f.contains("Circular hollow"))
+            .and_then(|f| lib.sizes(f).first().and_then(|z| lib.find(f, z)))
+            .unwrap();
+        let d = chs.h - 2.0 * chs.t;
+        let want = std::f64::consts::PI / 32.0 * (chs.h.powi(4) - d.powi(4));
+        close(chs.torsion().0, want, 1e-12, "CHS");
     }
 
     #[test]

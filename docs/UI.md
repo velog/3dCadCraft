@@ -268,8 +268,8 @@ Shaft **SHF**, Spur / Worm / Bevel Gear **SPG WGR BVG**, Bearing **BRG**, Key **
 Belts **SBT**, Roller Chains **RCH**, Disc / Linear / Cylindrical Cam **DCM LCM CCM**, Involute / Parallel Splines
 **ISP PSP**, O-Ring **ORG**, Compression / Extension / Torsion / Belleville Spring **CSP ESP TSP BSP**), Inspect ›
 Analyze Interference **INT**, Manage › Create Assembly Family **CAF**, View › Degrees of Freedom **DOF**, Environments
-(Tube & Pipe **TAP**, Cable & Harness **CAH**, Dynamic Simulation **DSI**, Stress Analysis **STA**, Studio **STU**,
-Presentation **PRS**). Each opens its panel in Properties: selectors take a component (click it) or a face / edge of
+(Tube & Pipe **TAP**, Cable & Harness **CAH**, Dynamic Simulation **DSI**, Frame Analysis **FAN**, Stress Analysis **STA**, Studio **STU**,
+Presentation **PRS**), Frame Analysis tab (Create Simulation **FCS**, Simulate **FSI**, Beam Properties **FBP**, Custom Node **FCN**, Fixed / Pinned / Floating Pinned / Custom **FFX FPN FFL FCC**, Force **FFO**, Continuous Load **FCL**, Moment / Axial / Bending **FMO FAM FBE**, Gravity **FGR**, Release **FRL**, Rigid Link **FRK**, Beam Detail **FBD**, Animate **FAT**, Finish **FFN**). Each opens its panel in Properties: selectors take a component (click it) or a face / edge of
 one; the selected components fill the first selector; Enter / right-click Continue / Esc as in the other
 commands. A component's right-click menu offers Replace, Pattern, Mirror, Copy and Analyze Interference with it.
 

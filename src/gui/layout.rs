@@ -1333,6 +1333,7 @@ impl CadCraftApp {
                 drawing: self.is_drawing(),
                 in_place: self.in_place_now().is_some(),
                 drawing_sketch: vsk.is_some(),
+                frame_analysis: self.fa.active,
                 asm_tool: self.asm_tool_action(),
                 rel_sick: self.cons.glyphs.sick,
                 asm_dof: self.cons.glyphs.dof,

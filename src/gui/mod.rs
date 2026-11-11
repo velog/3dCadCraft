@@ -85,6 +85,7 @@ mod file_explorer;
 mod files;
 mod format_text;
 mod frame;
+mod frame_analysis;
 mod frame_ctx;
 mod frame_edit;
 mod frame_select;
@@ -734,6 +735,8 @@ struct CadCraftApp {
     file_status: Option<Result<String, String>>,
     /// The assembly environment (`assembly.rs`).
     asm: assembly::AsmUi,
+    /// The Frame Analysis environment (spec 7.1a).
+    fa: frame_analysis::FaUi,
     /// Drawing environment state (`drawing.rs`).
     drw: drawing::DrwUi,
     /// Assembly constraints (`constrain.rs`).
@@ -1131,6 +1134,7 @@ impl CadCraftApp {
             window_title: String::new(),
             file_status: None,
             asm: Default::default(),
+            fa: Default::default(),
             drw: Default::default(),
             cons: Default::default(),
             constrain_current_offset: false,
@@ -4434,6 +4438,7 @@ impl CadCraftApp {
             Action::AsmPlanned(k)
                 if !k.reps_allow_in_position() && self.reps_refuse_structure() => {}
             Action::AsmPlanned(k) => self.start_asm_planned(k),
+            Action::Fa(k) => self.fa_command(k),
             Action::Thicken => self.start_thicken(),
             Action::DeleteFace => self.start_delete_face(),
             Action::MoveBodies => self.start_move_bodies(),

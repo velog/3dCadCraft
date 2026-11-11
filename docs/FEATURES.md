@@ -1317,6 +1317,12 @@ Parting line and parting surface, cores and cavities, runner system, cooling, ch
 - Contacts between the parts of an assembly.
 - Mesh size.
 
+### 7.1a Frame Analysis — 🟡 · L
+
+**Specification:** [spec/7.1a-frame-analysis.md](spec/7.1a-frame-analysis.md)
+
+Environments › Frame Analysis: the frames' straight members as beams, Static and Modal simulations; constraints, forces, continuous loads, moments, gravity, releases and rigid links; displacement, section forces and stresses in colour on the deformed frame, reactions, safety factor, Beam Detail diagrams, natural frequencies.
+
 ## 7.2 Dynamic simulation — ⬜ · L
 
 Kinematics and dynamics of mechanisms derived from the joints (3.3): forces, moments, friction, springs, drivers, graphs of the quantities, export of the loads to FEA.
