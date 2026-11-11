@@ -5755,6 +5755,26 @@ fn library_flange_and_tee_build_directly() {
     }
 }
 
+/// Spec 6.3 §6.5c, rule 20: every T-slot profile (Bosch Rexroth's 90x180 the largest) builds
+/// within 200 ms, its section's fit included. The old cavity model took 0.5 s (80x80L) and 1.0 s (90x180).
+#[test]
+fn library_t_slot_profiles_build_within_budget() {
+    use cadcraft3d::components::samples::Kind;
+    let every = cadcraft3d::components::samples::all();
+    let profiles: Vec<_> = every
+        .iter()
+        .filter(|s| matches!(s.kind, Kind::Shape(f, ..) if f.contains("slot")))
+        .collect();
+    assert!(profiles.len() >= 22, "{} profiles", profiles.len());
+    for s in profiles {
+        let ms = median_ms(3, || {
+            s.part().unwrap();
+        });
+        println!("library {}: {ms:.0} ms", s.designation());
+        assert!(ms < 200.0, "{}: {ms:.0} ms > 200 ms", s.designation());
+    }
+}
+
 /// A solve works out each component's free motions (View > Degrees of Freedom).
 #[test]
 fn free_motions_stay_small_in_a_solve() {

@@ -1,10 +1,15 @@
-# ISO 7040: Hexagon lock nut with a polymer insert. Nominal values in mm, typed for this library; compared with fasten.it.
+# ISO 7040: Hexagon lock nut with a polymer insert. Nominal values in mm, typed for this library; compared with fasten.it; M3, M14, M24, M30, M36 from globalfastener.com (ISO 7040:1997 table).
 size,d,P,s,m
+M3,3,0.5,5.5,4.5
 M4,4,0.7,7,6
 M5,5,0.8,8,6.8
 M6,6,1,10,8
 M8,8,1.25,13,9.5
 M10,10,1.5,16,11.9
 M12,12,1.75,18,14.9
+M14,14,2,21,17
 M16,16,2,24,19.1
 M20,20,2.5,30,22.8
+M24,24,3,36,27.1
+M30,30,3.5,46,32.6
+M36,36,4,55,38.9
