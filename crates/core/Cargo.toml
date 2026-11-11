@@ -1,0 +1,64 @@
+# Everything below the GUI. The sources stay in the repository's `src/`, next to
+# `src/gui`: an edit in the interface then recompiles only the root package.
+[package]
+name = "cadcraft3d-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88" # let-chains
+description = "3DCadCraft below the GUI: B-Rep kernel, sketch solver, parts, assemblies, drawings, documents."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "cadcraft3d_core"
+path = "../../src/core_lib.rs"
+
+[dependencies]
+# --- Math & kernel ---------------------------------------------------------
+nalgebra = { version = "0.35", features = ["serde-serialize"] }
+# Generational arenas: stable, typed IDs for topology without `unsafe` or Rc cycles.
+slotmap = { version = "1.1", features = ["serde"] }
+
+# Exact B-rep kernel: SolidCraft's kernel crate (MIT OR Apache-2.0, built on
+# truck, Apache-2.0), pinned to a reviewed commit. See ATTRIBUTION.md.
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
+# Sheet metal (5.6): SolidCraft's sheet body model (flat pattern, bends, flanges),
+# reached only through `kernel::exact::sheet_metal`. See ATTRIBUTION.md.
+solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+
+# --- Serialization (file format + JSON-RPC/MCP payloads) -------------------
+serde = { version = "1.0", features = ["derive", "rc"] }
+# Exact f64 round-trips: a CAD file must reload bit-identical coordinates.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+# Project container (.3dcadcraft = ZIP). Deflate only, backed by pure-Rust zlib-rs.
+zip = { version = "9", default-features = false, features = ["deflate"] }
+# Preview pictures (thumbnail.png) in project files.
+png = "0.18"
+# Drawings: PDF export (vector, embedded subsetted fonts; MIT OR Apache-2.0).
+krilla = { version = "0.8.2", default-features = false, features = ["simple-text"] }
+# Globally unique, copy-safe identities for projects and documents.
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Glyph outlines of sketch text, advance widths of the drawing font (MIT OR Apache-2.0).
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+
+# --- Errors & diagnostics --------------------------------------------------
+thiserror = "2.0"
+log = "0.4"
+
+[dev-dependencies]
+approx = "0.5"
+tempfile = "3"
+# Resource log of the speed tests (CPU time, memory, machine load): tests/perf.rs.
+sysinfo = { version = "0.35", default-features = false, features = ["system"] }
+
+[lints.rust]
+# Project policy: no unsafe code anywhere in this crate. Graphics FFI lives
+# inside wgpu/winit, not here.
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+

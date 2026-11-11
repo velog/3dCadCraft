@@ -526,9 +526,34 @@ name = "cadcraft3d"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "cadcraft3d-core",
  "chrono",
  "eframe",
  "image",
+ "krilla",
+ "log",
+ "nalgebra",
+ "png",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "solidcore-record",
+ "solidcraft-doc",
+ "solidcraft-geom",
+ "solidcraft-kernel",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.21",
+ "ttf-parser",
+ "uuid",
+ "zip",
+]
+
+[[package]]
+name = "cadcraft3d-core"
+version = "0.1.0"
+dependencies = [
+ "approx",
  "krilla",
  "log",
  "nalgebra",

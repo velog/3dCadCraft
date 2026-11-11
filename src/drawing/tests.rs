@@ -1535,7 +1535,8 @@ fn styles_drive_annotations() {
 fn iso_and_ansi_defaults() {
     use super::style::{DrawingStyles, LineType, TextOrientation};
     let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/drawing_defaults.json"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/data/drawing_defaults.json"),
     )
     .unwrap();
     let r: serde_json::Value = serde_json::from_str(&text).unwrap();

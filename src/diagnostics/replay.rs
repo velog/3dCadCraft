@@ -4,8 +4,8 @@
 //! where "something stopped working" — and a ready test case:
 //!
 //! ```no_run
-//! let steps = cadcraft3d::diagnostics::replay::replay("session-journal.jsonl".as_ref()).unwrap();
-//! if let Some(s) = cadcraft3d::diagnostics::replay::first_difference(&steps) {
+//! let steps = cadcraft3d_core::diagnostics::replay::replay("session-journal.jsonl".as_ref()).unwrap();
+//! if let Some(s) = cadcraft3d_core::diagnostics::replay::first_difference(&steps) {
 //!     panic!("step {} ({}): {:?}", s.seq, s.label, s.difference);
 //! }
 //! ```

@@ -287,7 +287,7 @@ pub fn locate(
 /// (`\\?\C:\x` → `C:\x`, `\\?\UNC\srv\share` → `\\srv\share`): the plain
 /// form is what users read, and a verbatim path written with `/` (library
 /// paths across drives) no longer parses as one.
-pub(crate) fn without_verbatim(path: PathBuf) -> PathBuf {
+pub fn without_verbatim(path: PathBuf) -> PathBuf {
     let Some(s) = path.to_str() else {
         return path;
     };
