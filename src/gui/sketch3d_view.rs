@@ -190,7 +190,7 @@ impl CadCraftApp {
         {
             let cols = [c.axis_x, c.axis_y, c.axis_z];
             let hot = pointer.and_then(|p| self.sk3_gizmo_hit(p, rect));
-            for k in 0..3 {
+            for (k, &col) in cols.iter().enumerate() {
                 let tip = o + axis(k) * len;
                 if let (Some(a), Some(b)) = (
                     self.camera.project(&o, rect),
@@ -201,7 +201,7 @@ impl CadCraftApp {
                     } else {
                         2.5
                     };
-                    painter.arrow(a, b - a, Stroke::new(w, cols[k]));
+                    painter.arrow(a, b - a, Stroke::new(w, col));
                 }
                 // The plane square between the two other axes.
                 let (i, j) = ((k + 1) % 3, (k + 2) % 3);
@@ -212,7 +212,7 @@ impl CadCraftApp {
                     painter.rect_filled(
                         r,
                         1.0,
-                        super::theme::with_alpha(cols[k], if on { 220 } else { 110 }),
+                        super::theme::with_alpha(col, if on { 220 } else { 110 }),
                     );
                 }
             }
@@ -355,10 +355,9 @@ impl CadCraftApp {
                 && let Some(cursor) = response.interact_pointer_pos()
                 && let Some(at) = self.sk3_on_handle(h, at0, cursor, rect)
                 && let Some(moved) = Self::sk3_moved(&start, &sel, at - at0)
+                && let Some(slot) = self.part_mut().sketches3d.get_mut(index)
             {
-                if let Some(slot) = self.part_mut().sketches3d.get_mut(index) {
-                    *slot = moved;
-                }
+                *slot = moved;
             }
             if response.drag_stopped() {
                 if let Some(g) = self.sketch3d.as_mut().and_then(|e| e.gizmo.as_mut()) {
