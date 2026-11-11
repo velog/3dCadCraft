@@ -56,6 +56,8 @@ enum BrowserCmd {
     BreakContext(usize),
     /// Break Link of a Reference Model import (it stops following its file).
     BreakImportLink(usize),
+    /// Convert to Slot of the Hole feature at `k` (one way).
+    ConvertToSlot(usize),
     /// Break Link of a derived feature (spec 3.10 §3.5).
     BreakDeriveLink(usize),
     /// Suppress if... (the condition window for feature k).
@@ -580,6 +582,7 @@ impl CadCraftApp {
             }
             BrowserCmd::Suppress(k, on) => self.set_suppressed(k, on),
             BrowserCmd::BreakImportLink(k) => self.break_import_link(k),
+            BrowserCmd::ConvertToSlot(k) => self.convert_to_slot(k),
             BrowserCmd::BreakDeriveLink(k) => self.break_derive_link(k),
             BrowserCmd::BreakContext(i) => {
                 self.checkpoint("Break Link");
@@ -1017,6 +1020,16 @@ impl CadCraftApp {
             && ui.button("Edit Sketch").clicked()
         {
             cmds.push(BrowserCmd::Edit(i));
+            ui.close();
+        }
+        // No hover text on a menu item (it eats the click, CLAUDE.md).
+        if let Feature::Hole(h) = f
+            && !h.is_slot()
+            && ui
+                .add_enabled(!rolled, egui::Button::new("Convert to Slot"))
+                .clicked()
+        {
+            cmds.push(BrowserCmd::ConvertToSlot(k));
             ui.close();
         }
         if let Feature::BodyOp(b) = f
@@ -5393,7 +5406,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 }
                 (Mode::Normal, None) if self.hole_draft.is_some() => {
                     let d = self.hole_draft.as_ref();
-                    let text = if d.is_some_and(|d| d.dir_pick) {
+                    let slot = d.is_some_and(|d| d.def.is_slot());
+                    let text = if d.is_some_and(|d| d.slot_pick) {
+                        "Slot: click a straight edge for the slot's direction"
+                    } else if d.is_some_and(|d| d.dir_pick) {
                         "Hole: click a planar face (its normal) or a straight edge for the direction"
                     } else if d.is_some_and(|d| d.to_pick) {
                         "Hole: click the face where the hole ends (planar or curved)"
@@ -5404,7 +5420,15 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     } else {
                         "Hole: click more centres (a click on one removes it), straight edges to dimension the last one, then OK"
                     };
-                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                    // A slot says so (the same steps as Hole's).
+                    let text = if slot {
+                        text.replacen("Hole:", "Slot:", 1)
+                            .replace("the hole's", "the slot's")
+                            .replace("the hole", "the slot")
+                    } else {
+                        super::i18n::tr(text).to_string()
+                    };
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.sketch3d.is_some() => {
                     let text = self
@@ -7487,7 +7511,11 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
             format!("Loft through {} sections", l.sections.len()),
         ),
         Feature::Hole(h) => (
-            Icon::Hole,
+            if h.is_slot() {
+                Icon::SlotFeature
+            } else {
+                Icon::Hole
+            },
             format!("{} centre(s): {}", h.centers.len(), h.spec.note_ascii()),
         ),
         Feature::Thread(t) => (

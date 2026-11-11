@@ -26,13 +26,33 @@ pub(super) struct Gizmo {
     /// The drag running: axis (0..3) or plane (3 + the normal's axis), the
     /// sketch when it began, where on the axis / plane it began.
     pub drag: Option<(usize, Sketch3d, Point3)>,
-    /// An arrow clicked: its axis and the distance being typed; whether
-    /// the box has been focused.
+    /// An arrow (or a ring) clicked: its handle and the distance (angle,
+    /// radians) being typed; whether the box has been focused.
     pub typing: Option<(usize, Real, bool)>,
 }
 
+/// How far out the rotation rings lie, as a fraction of the arrows' length.
+const RING: Real = 0.75;
+
+/// Points round ring `k` of a triad at `o` with arrows `len` long.
+fn ring_points(o: Point3, len: Real, k: usize) -> Vec<Point3> {
+    let (i, j) = ((k + 1) % 3, (k + 2) % 3);
+    (0..=48)
+        .map(|n| {
+            let a = std::f64::consts::TAU * n as Real / 48.0;
+            o + (axis(i) * a.cos() + axis(j) * a.sin()) * (RING * len)
+        })
+        .collect()
+}
+
+/// `q` turned by `angle` about the axis `k` through `o`.
+fn turned(q: Point3, o: Point3, k: usize, angle: Real) -> Point3 {
+    let r = nalgebra::Rotation3::from_axis_angle(&nalgebra::Unit::new_normalize(axis(k)), angle);
+    o + r * (q - o)
+}
+
 /// A handle of the triad: axis arrows 0..3, plane squares 3..6 (3 + the
-/// plane's normal axis).
+/// plane's normal axis), rotation rings 6..9 (6 + the axis turned about).
 fn axis(k: usize) -> Vector3 {
     let mut a = Vector3::zeros();
     a[k % 3] = 1.0;
@@ -215,6 +235,19 @@ impl CadCraftApp {
                         super::theme::with_alpha(col, if on { 220 } else { 110 }),
                     );
                 }
+                // The rotation ring about this axis.
+                let on = hot == Some(6 + k) || g.drag.as_ref().is_some_and(|d| d.0 == 6 + k);
+                let pts: Vec<Pos2> = ring_points(o, len, k)
+                    .iter()
+                    .filter_map(|q| self.camera.project(q, rect))
+                    .collect();
+                painter.add(egui::Shape::line(
+                    pts,
+                    Stroke::new(
+                        if on { 3.0 } else { 1.5 },
+                        super::theme::with_alpha(col, if on { 255 } else { 170 }),
+                    ),
+                ));
             }
         }
     }
@@ -253,7 +286,7 @@ impl CadCraftApp {
                 return Some(3 + k);
             }
         }
-        (0..3).find(|&k| {
+        let arrow = (0..3).find(|&k| {
             match (
                 self.camera.project(&(o + axis(k) * (0.2 * len)), rect),
                 self.camera.project(&(o + axis(k) * len), rect),
@@ -261,6 +294,22 @@ impl CadCraftApp {
                 (Some(a), Some(b)) => seg_dist(p, a, b) <= 8.0,
                 _ => false,
             }
+        });
+        arrow.or_else(|| {
+            (0..3)
+                .filter_map(|k| {
+                    let pts: Vec<Pos2> = ring_points(o, len, k)
+                        .iter()
+                        .filter_map(|q| self.camera.project(q, rect))
+                        .collect();
+                    let d = pts
+                        .windows(2)
+                        .map(|w| seg_dist(p, w[0], w[1]))
+                        .fold(f32::MAX, f32::min);
+                    (d <= 6.0).then_some((d, 6 + k))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, h)| h)
         })
     }
 
@@ -268,6 +317,16 @@ impl CadCraftApp {
     fn sk3_on_handle(&self, h: usize, o: Point3, p: Pos2, rect: Rect) -> Option<Point3> {
         let (ro, rd) = self.camera.ray(p, rect)?;
         let rd = rd.try_normalize(1e-12)?;
+        if h >= 6 {
+            // A ring: where the ray meets its plane.
+            let n = axis(h - 6);
+            let den = rd.dot(&n);
+            if den.abs() < 1e-9 {
+                return None;
+            }
+            let t = (o - ro).dot(&n) / den;
+            return Some(ro + rd * t);
+        }
         if h < 3 {
             let a = axis(h);
             let w = ro - o;
@@ -293,11 +352,22 @@ impl CadCraftApp {
     /// while the rest of the sketch follows its constraints; `None` when the
     /// constraints cannot be met.
     fn sk3_moved(start: &Sketch3d, sel: &[u32], d: Vector3) -> Option<Sketch3d> {
+        Self::sk3_transformed(start, sel, |q| q + d)
+    }
+
+    /// [`Self::sk3_moved`] for any motion `f` of the selected points (a turn
+    /// about a ring's axis).
+    pub(super) fn sk3_transformed(
+        start: &Sketch3d,
+        sel: &[u32],
+        f: impl Fn(Point3) -> Point3,
+    ) -> Option<Sketch3d> {
         let mut s = start.clone();
         let mut held = Vec::new();
         for p in &mut s.points {
             if sel.contains(&p.id) && !p.fixed {
-                p.at = [p.at[0] + d.x, p.at[1] + d.y, p.at[2] + d.z];
+                let q = f(Point3::from(p.at));
+                p.at = [q.x, q.y, q.z];
                 p.fixed = true;
                 held.push(p.id);
             }
@@ -351,7 +421,29 @@ impl CadCraftApp {
             .and_then(|e| e.gizmo.as_ref())
             .and_then(|g| g.drag.clone());
         if let Some((h, start, at0)) = drag {
-            if response.dragged_by(egui::PointerButton::Primary)
+            if h >= 6 {
+                // A turn: the angle about the ring's axis from where it began,
+                // in 5 degree steps (Ctrl: free).
+                if response.dragged_by(egui::PointerButton::Primary)
+                    && let Some(o) = Self::sel_middle(&start, &sel)
+                    && let Some(cursor) = response.interact_pointer_pos()
+                    && let Some(at) = self.sk3_on_handle(h, o, cursor, rect)
+                {
+                    let k = h - 6;
+                    let n = axis(k);
+                    let (u, v) = (at0 - o, at - o);
+                    let mut a = n.dot(&u.cross(&v)).atan2(u.dot(&v));
+                    if !ui.input(|i| i.modifiers.ctrl) {
+                        let step = 5f64.to_radians();
+                        a = (a / step).round() * step;
+                    }
+                    if let Some(moved) = Self::sk3_transformed(&start, &sel, |q| turned(q, o, k, a))
+                        && let Some(slot) = self.part_mut().sketches3d.get_mut(index)
+                    {
+                        *slot = moved;
+                    }
+                }
+            } else if response.dragged_by(egui::PointerButton::Primary)
                 && let Some(cursor) = response.interact_pointer_pos()
                 && let Some(at) = self.sk3_on_handle(h, at0, cursor, rect)
                 && let Some(moved) = Self::sk3_moved(&start, &sel, at - at0)
@@ -370,10 +462,20 @@ impl CadCraftApp {
         false
     }
 
-    /// A click on an arrow of the triad: the distance box opens there.
+    /// The middle of the points `sel` of `s`.
+    fn sel_middle(s: &Sketch3d, sel: &[u32]) -> Option<Point3> {
+        let pts: Vec<Point3> = sel.iter().filter_map(|id| s.at(*id)).collect();
+        (!pts.is_empty()).then(|| {
+            pts.iter()
+                .fold(Point3::origin(), |a, p| a + p.coords / pts.len() as Real)
+        })
+    }
+
+    /// A click on an arrow (a ring) of the triad: the distance (angle) box
+    /// opens there.
     pub(super) fn sk3_gizmo_click(&mut self, p: Pos2, rect: Rect) -> bool {
         match self.sk3_gizmo_hit(p, rect) {
-            Some(h) if h < 3 => {
+            Some(h) if !(3..6).contains(&h) => {
                 if let Some(g) = self.sketch3d.as_mut().and_then(|e| e.gizmo.as_mut()) {
                     g.typing = Some((h, 0.0, false));
                 }
@@ -462,8 +564,21 @@ impl CadCraftApp {
         if let Some(g) = &e.gizmo
             && let Some((k, d, focused)) = g.typing
             && let Some((o, len)) = self.sk3_gizmo_frame(rect)
-            && let Some(tip) = self.camera.project(&(o + axis(k) * len), rect)
+            && let Some(tip) = self.camera.project(
+                &if k >= 6 {
+                    ring_points(o, len, k - 6)[6]
+                } else {
+                    o + axis(k) * len
+                },
+                rect,
+            )
         {
+            let ring = k >= 6;
+            let unit = if ring {
+                crate::part::expr::Unit::Deg
+            } else {
+                crate::part::expr::Unit::Mm
+            };
             let id = egui::Id::new(("sk3_move", e.index, k));
             let mut commit = None;
             egui::Area::new(id.with("area"))
@@ -473,12 +588,17 @@ impl CadCraftApp {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_width(130.0);
                         ui.label(
-                            RichText::new(format!("Move along {}", ["X", "Y", "Z"][k])).small(),
+                            RichText::new(if ring {
+                                format!("Rotate about {}", ["X", "Y", "Z"][k - 6])
+                            } else {
+                                format!("Move along {}", ["X", "Y", "Z"][k])
+                            })
+                            .small(),
                         );
                         let spec = super::valuefield::FieldSpec {
                             id,
                             value: d,
-                            unit: crate::part::expr::Unit::Mm,
+                            unit,
                             name: None,
                             expr: None,
                             table: &table,
@@ -496,15 +616,17 @@ impl CadCraftApp {
                 g.typing = Some((k, d, true));
             }
             if let Some(text) = commit {
-                match crate::part::params::eval_field_in(
-                    &table,
-                    &text,
-                    crate::part::expr::Unit::Mm,
-                    None,
-                ) {
+                match crate::part::params::eval_field_in(&table, &text, unit, None) {
                     Ok((_, dist, _)) => {
                         let start = self.part().sketches3d.get(e.index).cloned();
-                        match start.and_then(|s| Self::sk3_moved(&s, &e.sel, axis(k) * dist)) {
+                        let moved = start.and_then(|s| {
+                            if ring {
+                                Self::sk3_transformed(&s, &e.sel, |q| turned(q, o, k - 6, dist))
+                            } else {
+                                Self::sk3_moved(&s, &e.sel, axis(k) * dist)
+                            }
+                        });
+                        match moved {
                             Some(moved) => {
                                 self.checkpoint("3D Move");
                                 self.history.break_coalescing();
@@ -620,6 +742,9 @@ impl CadCraftApp {
                     e.sel.push(id);
                 }
             }
+            // A selection shows the triad at once (as the 2D sketch's
+            // selection moves by dragging): arrows, squares and rings.
+            e.gizmo = (!e.sel.is_empty()).then(Gizmo::default);
         }
         true
     }
@@ -641,6 +766,7 @@ impl CadCraftApp {
             }
         }
         if let Some(e) = self.sketch3d.as_mut() {
+            e.gizmo = (!sel.is_empty()).then(Gizmo::default);
             e.sel = sel;
         }
     }

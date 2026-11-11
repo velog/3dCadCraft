@@ -1873,5 +1873,27 @@
     "Sweep1:Side:1v1:0",
     "Sweep1:Start"
   ],
-  "r72/chain_r72.3dcadcraft": []
+  "r72/chain_r72.3dcadcraft": [],
+  "r73/slot_r73.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top",
+    "Slot1:BoreEnd1:1",
+    "Slot1:BoreEnd2:1",
+    "Slot1:BoreSide1:1",
+    "Slot1:BoreSide2:1",
+    "Slot1:CBoreEnd1:1",
+    "Slot1:CBoreEnd2:1",
+    "Slot1:CBoreFloor:1",
+    "Slot1:CBoreSide1:1",
+    "Slot1:CBoreSide2:1",
+    "Slot2:BoreEnd1:1",
+    "Slot2:BoreEnd2:1",
+    "Slot2:BoreSide1:1",
+    "Slot2:BoreSide2:1",
+    "Slot2:Bottom:1"
+  ]
 }

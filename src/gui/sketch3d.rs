@@ -44,11 +44,24 @@ pub(super) enum Tool3 {
     Dimension,
     /// Dimension: the angle between two lines.
     AngleDim,
+    /// Mirror: curves, then the mirror plane.
+    Mirror,
+    /// Equation Curve: x(t), y(t), z(t) in the panel.
+    Equation,
+    /// Project to Surface: faces and a sketch's curves.
+    ProjectSurface,
+    /// Intersection Curve: two faces or planes.
+    Intersection,
+    /// Silhouette Curve: a body's outline along a direction.
+    Silhouette,
+    /// Auto-Bend: a toggle (a bend of the panel's radius at each new corner
+    /// of Line), not a tool.
+    AutoBend,
 }
 
 impl Tool3 {
     /// Every tool, in the order of the ribbon's actions (`Action::Sk3Tool`).
-    pub(super) const ALL: [Tool3; 15] = [
+    pub(super) const ALL: [Tool3; 21] = [
         Tool3::Line,
         Tool3::Point,
         Tool3::Bend,
@@ -64,6 +77,12 @@ impl Tool3 {
         Tool3::AlongAxis,
         Tool3::Dimension,
         Tool3::AngleDim,
+        Tool3::Mirror,
+        Tool3::Equation,
+        Tool3::ProjectSurface,
+        Tool3::Intersection,
+        Tool3::Silhouette,
+        Tool3::AutoBend,
     ];
 
     /// Its index in [`Self::ALL`].
@@ -71,7 +90,7 @@ impl Tool3 {
         Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as u8
     }
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Tool3::Line => "Line",
             Tool3::Point => "Point",
@@ -88,6 +107,12 @@ impl Tool3 {
             Tool3::AlongAxis => "Parallel to Axis",
             Tool3::Dimension => "Dimension",
             Tool3::AngleDim => "Angle",
+            Tool3::Mirror => "Mirror",
+            Tool3::Equation => "Equation Curve",
+            Tool3::ProjectSurface => "Project to Surface",
+            Tool3::Intersection => "Intersection Curve",
+            Tool3::Silhouette => "Silhouette Curve",
+            Tool3::AutoBend => "Auto-Bend",
         }
     }
 
@@ -121,6 +146,20 @@ impl Tool3 {
                 "Dimension: click a line (its length) or two points (their distance), then type the value in the box"
             }
             Tool3::AngleDim => "Angle: click two lines, then type the value in the box",
+            Tool3::Mirror => {
+                "Mirror: click the curves to mirror, then a planar face, a work or an origin plane"
+            }
+            Tool3::Equation => {
+                "Equation Curve: type the expressions of t in the panel, then Create"
+            }
+            Tool3::ProjectSurface => {
+                "Project to Surface: click the faces, switch to Curves and click a 2D sketch, then Create"
+            }
+            Tool3::Intersection => "Intersection Curve: click two faces or planes",
+            Tool3::Silhouette => {
+                "Silhouette Curve: click a face of the body (the direction is in the panel)"
+            }
+            Tool3::AutoBend => "Auto-Bend: Line puts a bend of the panel's radius at each corner",
         }
     }
 
@@ -170,6 +209,10 @@ pub(super) struct Sk3dEdit {
     pub dim_edit: Option<(usize, bool)>,
     /// The 3D Move triad, when on.
     pub gizmo: Option<super::sketch3d_view::Gizmo>,
+    /// Auto-Bend: Line bends each new corner by `radius`.
+    pub auto_bend: bool,
+    /// Mirror, Equation / Intersection / Silhouette Curve, Project to Surface.
+    pub ins: super::sketch3d_insert::Sk3Insert,
 }
 
 impl Sk3dEdit {
@@ -190,6 +233,8 @@ impl Sk3dEdit {
             sel_cons: None,
             dim_edit: None,
             gizmo: None,
+            auto_bend: false,
+            ins: Default::default(),
         }
     }
 }
@@ -302,7 +347,18 @@ impl CadCraftApp {
             self.file_status = Some(Err(format!("{}: open a 3D sketch first", t.label())));
             return;
         };
+        if t == Tool3::AutoBend {
+            e.auto_bend = !e.auto_bend;
+            return;
+        }
         e.tool = if e.tool == Some(t) { None } else { Some(t) };
+        // Mirror takes what is selected as what it mirrors.
+        e.ins.mirror = if e.tool == Some(Tool3::Mirror) {
+            std::mem::take(&mut e.sel)
+        } else {
+            Vec::new()
+        };
+        e.ins.first = None;
         e.picks.clear();
         e.gizmo = None;
         if e.tool != Some(Tool3::Line) {
@@ -360,7 +416,7 @@ impl CadCraftApp {
 
     /// Changes the open 3D sketch through `f` on a copy: one Undo step,
     /// nothing changes when `f` fails (rule 5).
-    fn edit3d(
+    pub(super) fn edit3d(
         &mut self,
         label: &str,
         f: impl FnOnce(&mut Sketch3d, &mut Sk3dEdit) -> Result<(), String>,
@@ -413,6 +469,17 @@ impl CadCraftApp {
                 && last != id
             {
                 s.add_line(last, id)?;
+                // Auto-Bend: the corner just made gets a bend (when one fits;
+                // the line stays without it otherwise).
+                if e.auto_bend
+                    && s.lines_at(last).len() == 2
+                    && !s.bends.iter().any(|b| b.corner == last)
+                {
+                    let mut t = s.clone();
+                    if t.add_bend(last, e.radius).is_ok() {
+                        *s = t;
+                    }
+                }
             }
             e.last = Some(id);
             if let Some(p) = s.at(id) {
@@ -490,6 +557,9 @@ impl CadCraftApp {
             self.sk3_select_click(p, rect, ctrl);
             return;
         };
+        if self.sk3_insert_click(tool, p, rect) {
+            return;
+        }
         let hit = match tool {
             // Dimension: a point of the sketch (a distance), else a line.
             Tool3::Dimension => match self.sketch3d_hit(p, rect, false) {
@@ -965,6 +1035,25 @@ impl CadCraftApp {
                     }
                 });
                 ui.end_row();
+            });
+        }
+        self.sk3_insert_panel(ui, &mut e);
+        if e.tool == Some(Tool3::Line) {
+            psection(ui, "sk3_autobend", "Auto-Bend", |ui| {
+                plabel(ui, "Auto-Bend");
+                ui.checkbox(&mut e.auto_bend, "")
+                    .on_hover_text("A bend at each corner Line makes, of this radius");
+                ui.end_row();
+                if e.auto_bend {
+                    plabel(ui, "Radius");
+                    ui.add(
+                        super::valuefield::ExprValue::new(&mut e.radius)
+                            .range(0.0..=1e6)
+                            .suffix(" mm")
+                            .cursor("Radius"),
+                    );
+                    ui.end_row();
+                }
             });
         }
         if e.tool == Some(Tool3::Helix) {

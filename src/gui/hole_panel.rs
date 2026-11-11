@@ -369,9 +369,11 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
     );
     arrow(egui::pos2(wall_l, bore_y), egui::vec2(1.0, 0.0));
     arrow(egui::pos2(wall_r, bore_y), egui::vec2(-1.0, 0.0));
+    // A slot's sizes are widths: no diameter sign.
+    let dia = if spec.slot.is_some() { "" } else { "Ø" };
     let mut labels: Vec<(&'static str, String, egui::Pos2, egui::Align2)> = vec![(
         "diameter",
-        format!("Ø{}", n(2.0 * r)),
+        format!("{dia}{}", n(2.0 * r)),
         egui::pos2(wall_l - 14.0, bore_y),
         egui::Align2::RIGHT_CENTER,
     )];
@@ -394,7 +396,7 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
             across(to(-face, 0.0).x, to(face, 0.0).x, band, top);
             labels.push((
                 "seat_diameter",
-                format!("Ø{}", n(spec.seat_diameter)),
+                format!("{dia}{}", n(spec.seat_diameter)),
                 egui::pos2(to(face, 0.0).x + 6.0, band),
                 egui::Align2::LEFT_CENTER,
             ));
@@ -411,7 +413,7 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
             across(to(-face, 0.0).x, to(face, 0.0).x, band, top);
             labels.push((
                 "csink_diameter",
-                format!("Ø{}", n(spec.csink_diameter)),
+                format!("{dia}{}", n(spec.csink_diameter)),
                 egui::pos2(to(face, 0.0).x + 6.0, band),
                 egui::Align2::LEFT_CENTER,
             ));
@@ -588,6 +590,69 @@ fn set_type(spec: &mut HoleSpec, ty: HoleType) {
     }
 }
 
+/// The Slot section of the Hole panel (Inventor 2027's Slot): corners,
+/// direction (Horizontal / Vertical / an edge) and the rotation's sense; the
+/// sizes are in Dimensions.
+fn slot_rows(ui: &mut egui::Ui, d: &mut super::hole::HoleDraft) {
+    use crate::part::hole::{SlotCorners, SlotDirection};
+    let axis = d.def.slot_axis.clone();
+    let Some(s) = d.def.spec.slot.as_mut() else {
+        return;
+    };
+    let mut pick = d.slot_pick;
+    psection(ui, "slot_shape", "Slot", |ui| {
+        plabel(ui, "Corners");
+        let items: Vec<(String, SlotCorners)> = SlotCorners::ALL
+            .iter()
+            .map(|c| (c.label().to_owned(), *c))
+            .collect();
+        if let Some(c) = combo(ui, "slot_corners", &s.corners, s.corners.label(), &items) {
+            s.corners = c;
+        }
+        ui.end_row();
+        plabel(ui, "Direction");
+        ui.horizontal_wrapped(|ui| {
+            for dir in SlotDirection::ALL {
+                let r = ui.radio(s.direction == dir, dir.label());
+                if r.clicked() {
+                    s.direction = dir;
+                    pick = dir == SlotDirection::Custom && axis.is_none();
+                }
+            }
+        });
+        ui.end_row();
+        if s.direction == SlotDirection::Custom {
+            plabel(ui, "Along");
+            ui.horizontal(|ui| {
+                let text = match &axis {
+                    Some(crate::part::LineRef::Edge(n)) => format!("edge {n}"),
+                    Some(l) => format!("{l:?}"),
+                    None => "click a straight edge".into(),
+                };
+                ui.label(text);
+                if ui
+                    .selectable_label(pick, "Pick")
+                    .on_hover_text("The next click on a straight edge sets the slot's direction")
+                    .clicked()
+                {
+                    pick = !pick;
+                }
+            });
+            ui.end_row();
+        }
+        plabel(ui, "Rotation");
+        ui.checkbox(&mut s.flip_rotation, "Flip").on_hover_text(
+            "The rotation (in Dimensions) turns clockwise seen from above the start face",
+        );
+        ui.end_row();
+    });
+    if pick {
+        d.dir_pick = false;
+        d.to_pick = false;
+    }
+    d.slot_pick = pick;
+}
+
 /// Is this preview message a problem? Not while nothing is picked yet: an empty
 /// message (no draft) or the request for the first centre, which the status bar
 /// shows anyway. A warning before any action reads as an error.
@@ -604,11 +669,21 @@ impl CadCraftApp {
         let Some(mut d) = self.hole_draft.clone() else {
             return;
         };
+        let is_slot = d.def.is_slot();
         let title = match d.edit {
             Some(_) => d.def.name.clone(),
+            None if is_slot => "Slot".into(),
             None => "Hole".into(),
         };
-        self.panel_header(ui, Icon::Hole, &title);
+        self.panel_header(
+            ui,
+            if is_slot {
+                Icon::SlotFeature
+            } else {
+                Icon::Hole
+            },
+            &title,
+        );
         // Breadcrumb `Sketch > Hole1` and the panel menu (Inventor).
         let mut to_sketch = false;
         let mut rename: Option<String> = None;
@@ -893,11 +968,20 @@ impl CadCraftApp {
             self.hole_to_sketch();
             return;
         }
+        if is_slot {
+            slot_rows(ui, &mut d);
+        }
         let spec = &mut d.def.spec;
+        let sharp = spec
+            .slot
+            .as_ref()
+            .is_some_and(|s| s.corners == hole::SlotCorners::Sharp);
         psection(ui, "hole_type", "Type", |ui| {
-            plabel(ui, "Hole");
+            plabel(ui, if is_slot { "Slot" } else { "Hole" });
+            // A slot has no thread (Inventor: Simple or Clearance).
             let items: Vec<(String, HoleType)> = HoleType::ALL
                 .iter()
+                .filter(|t| !is_slot || matches!(t, HoleType::Simple | HoleType::Clearance))
                 .map(|t| (t.label().to_owned(), *t))
                 .collect();
             if let Some(t) = combo(
@@ -915,7 +999,13 @@ impl CadCraftApp {
                 .iter()
                 .map(|t| (t.label().to_owned(), *t))
                 .collect();
-            if let Some(t) = combo(ui, "hole_seat", &spec.seat, spec.seat.label(), &items) {
+            // Sharp corners take no seat (Inventor ignores it there).
+            let chosen = ui
+                .add_enabled_ui(!sharp, |ui| {
+                    combo(ui, "hole_seat", &spec.seat, spec.seat.label(), &items)
+                })
+                .inner;
+            if let Some(t) = chosen.filter(|_| !sharp) {
                 spec.seat = t;
                 let r = spec.bore_radius();
                 if spec.seat_diameter <= 2.0 * r {
@@ -1098,7 +1188,8 @@ impl CadCraftApp {
             ui.horizontal(|ui| {
                 ui.radio_value(&mut dir2, false, "Direction 1");
                 ui.radio_value(&mut dir2, true, "Direction 2");
-                let can_sym = spec.termination == Termination::ThroughAll
+                let can_sym = !is_slot
+                    && spec.termination == Termination::ThroughAll
                     && spec.seat == SeatType::None
                     && matches!(spec.hole_type, HoleType::Simple | HoleType::Clearance);
                 if can_sym {
@@ -1110,18 +1201,25 @@ impl CadCraftApp {
             });
             spec.flip = dir2;
             ui.end_row();
-            plabel(ui, "Drill Point");
+            // A slot's end mill is Flat or Angled (Inventor), sharp corners flat.
+            plabel(ui, if is_slot { "End Mill" } else { "Drill Point" });
             let items: Vec<(String, DrillPoint)> = DrillPoint::ALL
                 .iter()
+                .filter(|x| !is_slot || matches!(x, DrillPoint::Flat | DrillPoint::Angle))
                 .map(|x| (x.label().to_owned(), *x))
                 .collect();
-            if let Some(v) = combo(
-                ui,
-                "hole_point",
-                &spec.drill_point,
-                spec.drill_point.label(),
-                &items,
-            ) {
+            let picked = ui
+                .add_enabled_ui(!sharp, |ui| {
+                    combo(
+                        ui,
+                        "hole_point",
+                        &spec.drill_point,
+                        spec.drill_point.label(),
+                        &items,
+                    )
+                })
+                .inner;
+            if let Some(v) = picked {
                 spec.drill_point = v;
             }
             ui.end_row();
@@ -1130,11 +1228,13 @@ impl CadCraftApp {
                 "The hole starts above its start plane even inside the material (removes leftover slivers)",
             );
             ui.end_row();
-            plabel(ui, "Far side");
-            ui.checkbox(&mut spec.far_csink, "Countersink").on_hover_text(
-                "A countersink (chamfer) where the hole comes out of the body; its size is in Dimensions",
-            );
-            ui.end_row();
+            if !is_slot {
+                plabel(ui, "Far side");
+                ui.checkbox(&mut spec.far_csink, "Countersink").on_hover_text(
+                    "A countersink (chamfer) where the hole comes out of the body; its size is in Dimensions",
+                );
+                ui.end_row();
+            }
         });
         if let Some(t) = spec
             .thread
@@ -1171,16 +1271,26 @@ impl CadCraftApp {
         let snapshot = Feature::Hole(d.def.clone());
         let spec = d.def.spec.clone();
         psection(ui, "hole_dims", "Dimensions", |ui| {
+            let seat_w = |hole: &'static str, slot: &'static str| if is_slot { slot } else { hole };
             for (field, label) in [
-                ("diameter", "Diameter"),
+                ("diameter", if is_slot { "Width" } else { "Diameter" }),
+                ("slot_length", "Length"),
+                ("slot_rotation", "Rotation"),
                 ("depth", "Depth"),
-                ("point_angle", "Point angle"),
+                (
+                    "point_angle",
+                    if is_slot {
+                        "End mill angle"
+                    } else {
+                        "Point angle"
+                    },
+                ),
                 (
                     "seat_diameter",
                     if spec.seat == SeatType::Spotface {
-                        "SF diameter"
+                        seat_w("SF diameter", "SF width")
                     } else {
-                        "CBore diameter"
+                        seat_w("CBore diameter", "CBore width")
                     },
                 ),
                 (
@@ -1191,7 +1301,7 @@ impl CadCraftApp {
                         "CBore depth"
                     },
                 ),
-                ("csink_diameter", "CSink diameter"),
+                ("csink_diameter", seat_w("CSink diameter", "CSink width")),
                 ("csink_angle", "CSink angle"),
                 ("far_csink_diameter", "Far CSink diameter"),
                 ("far_csink_angle", "Far CSink angle"),
@@ -1209,8 +1319,9 @@ impl CadCraftApp {
         ui.label(RichText::new(format!("Note: {}", spec.note_ascii())).weak())
             .on_hover_text("The hole note a drawing writes (the symbols as text here)");
         // Invalid values in red (Inventor), e.g. a thread longer than the hole.
-        if let Err(e) = spec.validate() {
-            ui.label(RichText::new(format!("Hole: {e}")).color(super::theme::tokens().error));
+        if let Err(e) = spec.effective().validate() {
+            let cmd = if is_slot { "Slot" } else { "Hole" };
+            ui.label(RichText::new(format!("{cmd}: {e}")).color(super::theme::tokens().error));
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
@@ -1403,7 +1514,12 @@ impl CadCraftApp {
         k: usize,
         h: crate::part::HoleFeature,
     ) {
-        self.panel_header(ui, Icon::Hole, &h.name);
+        let icon = if h.is_slot() {
+            Icon::SlotFeature
+        } else {
+            Icon::Hole
+        };
+        self.panel_header(ui, icon, &h.name);
         if let Some(e) = self.part().feature_health.get(&h.id) {
             warning_box(ui, e);
         }

@@ -3461,6 +3461,64 @@ fn part_completion_r71() -> PartDocument {
     part
 }
 
+/// Revision 73: slots on a 40 × 30 × 20 box — a round-ended one through all
+/// with a counterbore, and a sharp-cornered blind one turned 90°.
+fn slot_r73() -> PartDocument {
+    use cadcraft3d::part::hole::{HoleCenter, SlotCorners};
+    use cadcraft3d::part::{HoleFeature, HoleSpec, SeatType, Termination};
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let (i, ids) = part
+        .create_hole_sketch(
+            "Box1:Top",
+            &[Point3::new(20.0, 8.0, 20.0), Point3::new(20.0, 22.0, 20.0)],
+        )
+        .unwrap();
+    let sketch = part.sketches[i].id.clone();
+    let mut s = HoleSpec::slot(6.0, 20.0);
+    s.seat = SeatType::Counterbore;
+    s.seat_diameter = 10.0;
+    s.seat_depth = 3.0;
+    let mut def = HoleFeature::new(s);
+    def.sketch = sketch.clone();
+    def.centers = vec![HoleCenter::Point(ids[0])];
+    part.add_hole(def).unwrap();
+    let mut s = HoleSpec::slot(4.0, 12.0);
+    s.termination = Termination::Distance;
+    s.depth = 6.0;
+    let sl = s.slot.as_mut().unwrap();
+    sl.corners = SlotCorners::Sharp;
+    sl.rotation = std::f64::consts::FRAC_PI_2;
+    let mut def = HoleFeature::new(s);
+    def.sketch = sketch;
+    def.centers = vec![HoleCenter::Point(ids[1])];
+    part.add_hole(def).unwrap();
+    part
+}
+
+#[test]
+fn slot_r73_reads() {
+    use cadcraft3d::part::Feature;
+    let f = root().join("r73/slot_r73.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let part = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .expect("a part");
+    let slots = part
+        .features
+        .iter()
+        .filter(|f| matches!(f, Feature::Hole(h) if h.is_slot()))
+        .count();
+    assert_eq!(slots, 2);
+}
+
 #[test]
 fn part_completion_r71_reads() {
     use cadcraft3d::part::{AxisRef, Feature, PathRef, PatternKind};
@@ -4507,6 +4565,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             bolted_r66().save(&f).unwrap();
+        }
+        let f = root().join("r73/slot_r73.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("SlotR73");
+            project.add_document("Part1", DocumentData::Part(slot_r73()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r71/part_r71.3dcadcraft");
         if !f.exists() {

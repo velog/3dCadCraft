@@ -197,7 +197,10 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (`PartDocument::sketches3d`) and sweeps along them (`PathRef::Sketch3d`).
 /// - 72: Merge Frame Members (`Skeleton::Chain`: curves joined end to end, one
 ///   swept member) (2026-11-09).
-pub const FORMAT_REVISION: u32 = 72;
+/// - 73: Slot (`HoleSpec::slot`, `HoleFeature::slot_axis`: a hole with an
+///   oblong or rectangular outline; older builds would drill a round hole)
+///   (2026-11-11).
+pub const FORMAT_REVISION: u32 = 73;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

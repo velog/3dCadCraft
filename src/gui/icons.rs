@@ -469,6 +469,8 @@ pub enum Icon {
     S3Helix,
     /// Bend (the 2D icon with a 3D triad).
     S3Bend,
+    /// Auto-Bend (3D sketch): a bend with a small "A".
+    S3AutoBend,
     /// 3D Point (the 2D icon with a 3D triad).
     S3Point,
     /// Equation Curve (the 2D icon with a 3D triad).
@@ -3168,6 +3170,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
         S3Bend => {
             paint(painter, rect, Fillet2d, k);
             badge3d(p, hot);
+        }
+        S3AutoBend => {
+            paint(painter, rect, Fillet2d, k);
+            badge3d(p, hot);
+            // "A": automatic.
+            p.text(12.5, 4.5, "A", 6.0, acc);
         }
         S3Point => {
             paint(painter, rect, Point, k);

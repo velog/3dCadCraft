@@ -139,6 +139,7 @@ mod sheet_metal;
 mod shell;
 mod show_dims;
 mod sketch3d;
+mod sketch3d_insert;
 mod sketch3d_view;
 mod sketch_marking;
 mod sketch_text;
@@ -4588,6 +4589,7 @@ impl CadCraftApp {
             Action::CircPattern => self.start_pattern(crate::part::PatternFeature::circular()),
             Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
             Action::Hole => self.start_hole(),
+            Action::Slot => self.start_slot(),
             Action::Thread => self.start_thread(),
             Action::WorkPlane | Action::WorkAxis | Action::WorkPoint | Action::Ucs => {
                 self.blend_draft = None;
@@ -6277,6 +6279,9 @@ impl CadCraftApp {
             && self.sm.draft.is_none()
             && self.ff_edit.is_none()
             && !ff_took
+            // The open 3D sketch takes the view's clicks itself (its tools,
+            // its own selection and triad).
+            && self.sketch3d.is_none()
             && on_cube.is_none();
         // Edges first (vertex > edge > face, 0-ui §3.2); the other
         // categories come from `sel_item_at` (one pick order, one filter).

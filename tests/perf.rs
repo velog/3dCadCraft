@@ -1051,197 +1051,9 @@ fn speed_budgets() {
         ));
     }
 
-    // Part completion (2026-11-10): Sketch Driven Pattern, a pattern along an
-    // arc, a sweep along a 3D sketch with bends, a revolve about a model edge.
-    {
-        use cadcraft3d::part::sketch3d::Sketch3d;
-        use cadcraft3d::part::{
-            AxisRef, OriginPlane, PathRef, PatternFeature, PatternKind, RevolveFeature,
-            SweepFeature,
-        };
-        let opts = SketchOptions {
-            auto_project_origin: false,
-            auto_reference_edges: false,
-            ..Default::default()
-        };
-        let timed = |p: &PartDocument| {
-            median_ms(3, || {
-                let mut c = p.clone();
-                c.build_cache = Default::default();
-                c.regenerate().unwrap();
-            })
-        };
-        // 36 holes: the hole at (10, 10) and 35 more centre points 10 mm apart.
-        let mut sdp = box_with_circle([80.0, 80.0, 10.0], 10.0, 10.0, 2.0, true, 1.0);
-        let k = sdp
-            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
-            .unwrap();
-        for i in 0..6 {
-            for j in 0..6 {
-                let q = sdp.sketches[k].sketch.plane.project(&Point3::new(
-                    10.0 + 10.0 * i as Real,
-                    10.0 + 10.0 * j as Real,
-                    10.0,
-                ));
-                sdp.sketches[k].sketch.add_center_point(q);
-            }
-        }
-        let mut p = PatternFeature::sketch_driven();
-        p.features = vec!["Extrusion1".into()];
-        p.kind = PatternKind::Sketch {
-            sketch: Some(sdp.sketches[k].id.clone()),
-            base: None,
-        };
-        sdp.add_pattern(p).unwrap();
-        rows.push((
-            "Sketch Driven Pattern: 36 holes, regenerate",
-            2500.0,
-            timed(&sdp),
-        ));
-        // 12 holes along a half circle.
-        let mut arc = box_with_circle([80.0, 60.0, 10.0], 10.0, 10.0, 2.0, true, 1.0);
-        let k = arc
-            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
-            .unwrap();
-        let pl = arc.sketches[k].sketch.plane.clone();
-        let at = |x: Real, y: Real| pl.project(&Point3::new(x, y, 10.0));
-        let sk = &mut arc.sketches[k].sketch;
-        let (c, a, b) = (
-            sk.add_point(at(40.0, 10.0)),
-            sk.add_point(at(10.0, 10.0)),
-            sk.add_point(at(70.0, 10.0)),
-        );
-        let e = sk.add_arc(c, a, b).unwrap();
-        let mut p = PatternFeature::rectangular();
-        p.features = vec!["Extrusion1".into()];
-        if let PatternKind::Rectangular { first, .. } = &mut p.kind {
-            first.path = Some(PathRef::Sketch {
-                sketch: arc.sketches[k].id.clone(),
-                curves: vec![e],
-            });
-            first.count = 12;
-            first.fitted = true;
-            first.spacing = std::f64::consts::PI * 30.0;
-        }
-        arc.add_pattern(p).unwrap();
-        rows.push((
-            "Pattern along an arc: 12 holes, regenerate",
-            1500.0,
-            timed(&arc),
-        ));
-        // A Ø10 tube along a 3D route of four lines and three bends.
-        use nalgebra::Point2;
-        let mut tube = PartDocument::default();
-        let mut s3 = Sketch3d::new("Sketch3D1", "3D Sketch1");
-        let ids: Vec<u32> = [
-            [0.0, 0.0, 0.0],
-            [80.0, 0.0, 0.0],
-            [80.0, 50.0, 30.0],
-            [40.0, 90.0, 90.0],
-            [40.0, 90.0, 200.0],
-        ]
-        .iter()
-        .map(|p| s3.add_point(Point3::from(*p), false))
-        .collect();
-        for w in ids.windows(2) {
-            s3.add_line(w[0], w[1]).unwrap();
-        }
-        for &c in &ids[1..4] {
-            s3.add_bend(c, 15.0).unwrap();
-        }
-        tube.sketches3d.push(s3);
-        let i = tube
-            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::YZ), &opts)
-            .unwrap();
-        tube.sketches[i]
-            .sketch
-            .add_circle(Point2::new(0.0, 0.0), 5.0)
-            .unwrap();
-        let rg = tube.sketches[i].sketch.regions();
-        tube.add_sweep(
-            i,
-            SweepFeature::new(
-                vec![ProfileRef::of(&rg[0], rg[0].interior_point())],
-                PathRef::Sketch3d {
-                    sketch: "Sketch3D1".into(),
-                },
-            ),
-        )
-        .unwrap();
-        rows.push((
-            "Sweep along a 3D sketch: 4 lines, 3 bends, regenerate",
-            800.0,
-            timed(&tube),
-        ));
-        // A 3D sketch route of 60 lines with 59 bends and 30 Perpendicular
-        // constraints: solve + path pieces (per edit in the panel).
-        {
-            use cadcraft3d::part::sketch3d::Constraint3;
-            let mut s = Sketch3d::new("Sketch3D1", "3D Sketch1");
-            let ids: Vec<u32> = (0..61)
-                .map(|k| {
-                    let t = k as Real;
-                    s.add_point(
-                        Point3::new(40.0 * t, 25.0 * (t * 0.7).sin(), 30.0 * (t * 0.3).cos()),
-                        k == 0,
-                    )
-                })
-                .collect();
-            let lines: Vec<u32> = ids
-                .windows(2)
-                .map(|w| s.add_line(w[0], w[1]).unwrap())
-                .collect();
-            for &c in &ids[1..60] {
-                s.add_bend(c, 3.0).unwrap();
-            }
-            let cons: Vec<Constraint3> = (0..30)
-                .map(|k| Constraint3::Perpendicular(lines[2 * k], lines[2 * k + 1]))
-                .collect();
-            rows.push((
-                "3D sketch: 60 lines, 59 bends, 30 constraints: solve + pieces",
-                250.0,
-                median_ms(3, || {
-                    let mut c = s.clone();
-                    c.constraints = cons.clone();
-                    c.solve().unwrap();
-                    let _ = c.pieces();
-                }),
-            ));
-        }
-        // A ring revolved about a box's vertical edge, joined.
-        let mut rev = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
-        let b = &rev.body;
-        let edge = b
-            .edges()
-            .find_map(|(id, e)| {
-                let d = b.edge_direction(id)?.normalize();
-                let (p, q) = (b.vertex(e.start)?.point, b.vertex(e.end)?.point);
-                let on = |p: &Point3| (p.x - 40.0).abs() < 1e-9 && p.y.abs() < 1e-9;
-                (d.z.abs() > 0.999 && on(&p) && on(&q)).then(|| e.name.clone())?
-            })
-            .unwrap();
-        let i = rev
-            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts)
-            .unwrap();
-        rev.sketches[i]
-            .sketch
-            .add_rectangle_two_point(Point2::new(40.0, 0.0), Point2::new(50.0, 20.0))
-            .unwrap();
-        let rg = rev.sketches[i].sketch.regions();
-        rev.add_revolve(
-            i,
-            RevolveFeature::new(
-                vec![ProfileRef::of(&rg[0], rg[0].interior_point())],
-                AxisRef::Edge(edge),
-            ),
-        )
-        .unwrap();
-        rows.push((
-            "Revolve about a model edge, joined, regenerate",
-            400.0,
-            timed(&rev),
-        ));
-    }
+    // Part completion (2026-11-10, spec 1.10 / 2.3 / 2.9): also alone in
+    // `part_completion_within_budget`.
+    part_completion_rows(&mut rows);
 
     // Plastic parts: a grill with ribs, four thread bosses, a rule fillet (no cache hits).
     {
@@ -5443,6 +5255,266 @@ fn speed_budgets() {
             println!("resource log: {}", file.display());
         }
     }
+    assert!(over.is_empty(), "over budget:\n{}", over.join("\n"));
+}
+
+/// Part completion (2026-11-10 / 11): Sketch Driven Pattern, a pattern along
+/// an arc, a sweep along a 3D sketch with bends, a revolve about a model
+/// edge, the 3D sketch solver, slots and the 3D sketch's curves from faces.
+fn part_completion_rows(rows: &mut Rows<'_>) {
+    use cadcraft3d::part::sketch3d::Sketch3d;
+    use cadcraft3d::part::{
+        AxisRef, OriginPlane, PathRef, PatternFeature, PatternKind, RevolveFeature, SweepFeature,
+    };
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let timed = |p: &PartDocument| {
+        median_ms(3, || {
+            let mut c = p.clone();
+            c.build_cache = Default::default();
+            c.regenerate().unwrap();
+        })
+    };
+    // 36 holes: the hole at (10, 10) and 35 more centre points 10 mm apart.
+    let mut sdp = box_with_circle([80.0, 80.0, 10.0], 10.0, 10.0, 2.0, true, 1.0);
+    let k = sdp
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+        .unwrap();
+    for i in 0..6 {
+        for j in 0..6 {
+            let q = sdp.sketches[k].sketch.plane.project(&Point3::new(
+                10.0 + 10.0 * i as Real,
+                10.0 + 10.0 * j as Real,
+                10.0,
+            ));
+            sdp.sketches[k].sketch.add_center_point(q);
+        }
+    }
+    let mut p = PatternFeature::sketch_driven();
+    p.features = vec!["Extrusion1".into()];
+    p.kind = PatternKind::Sketch {
+        sketch: Some(sdp.sketches[k].id.clone()),
+        base: None,
+    };
+    sdp.add_pattern(p).unwrap();
+    rows.push((
+        "Sketch Driven Pattern: 36 holes, regenerate",
+        2500.0,
+        timed(&sdp),
+    ));
+    // 12 holes along a half circle.
+    let mut arc = box_with_circle([80.0, 60.0, 10.0], 10.0, 10.0, 2.0, true, 1.0);
+    let k = arc
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+        .unwrap();
+    let pl = arc.sketches[k].sketch.plane.clone();
+    let at = |x: Real, y: Real| pl.project(&Point3::new(x, y, 10.0));
+    let sk = &mut arc.sketches[k].sketch;
+    let (c, a, b) = (
+        sk.add_point(at(40.0, 10.0)),
+        sk.add_point(at(10.0, 10.0)),
+        sk.add_point(at(70.0, 10.0)),
+    );
+    let e = sk.add_arc(c, a, b).unwrap();
+    let mut p = PatternFeature::rectangular();
+    p.features = vec!["Extrusion1".into()];
+    if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+        first.path = Some(PathRef::Sketch {
+            sketch: arc.sketches[k].id.clone(),
+            curves: vec![e],
+        });
+        first.count = 12;
+        first.fitted = true;
+        first.spacing = std::f64::consts::PI * 30.0;
+    }
+    arc.add_pattern(p).unwrap();
+    rows.push((
+        "Pattern along an arc: 12 holes, regenerate",
+        1500.0,
+        timed(&arc),
+    ));
+    // A Ø10 tube along a 3D route of four lines and three bends.
+    use nalgebra::Point2;
+    let mut tube = PartDocument::default();
+    let mut s3 = Sketch3d::new("Sketch3D1", "3D Sketch1");
+    let ids: Vec<u32> = [
+        [0.0, 0.0, 0.0],
+        [80.0, 0.0, 0.0],
+        [80.0, 50.0, 30.0],
+        [40.0, 90.0, 90.0],
+        [40.0, 90.0, 200.0],
+    ]
+    .iter()
+    .map(|p| s3.add_point(Point3::from(*p), false))
+    .collect();
+    for w in ids.windows(2) {
+        s3.add_line(w[0], w[1]).unwrap();
+    }
+    for &c in &ids[1..4] {
+        s3.add_bend(c, 15.0).unwrap();
+    }
+    tube.sketches3d.push(s3);
+    let i = tube
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::YZ), &opts)
+        .unwrap();
+    tube.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 5.0)
+        .unwrap();
+    let rg = tube.sketches[i].sketch.regions();
+    tube.add_sweep(
+        i,
+        SweepFeature::new(
+            vec![ProfileRef::of(&rg[0], rg[0].interior_point())],
+            PathRef::Sketch3d {
+                sketch: "Sketch3D1".into(),
+            },
+        ),
+    )
+    .unwrap();
+    rows.push((
+        "Sweep along a 3D sketch: 4 lines, 3 bends, regenerate",
+        800.0,
+        timed(&tube),
+    ));
+    // A 3D sketch route of 60 lines with 59 bends and 30 Perpendicular
+    // constraints: solve + path pieces (per edit in the panel).
+    {
+        use cadcraft3d::part::sketch3d::Constraint3;
+        let mut s = Sketch3d::new("Sketch3D1", "3D Sketch1");
+        let ids: Vec<u32> = (0..61)
+            .map(|k| {
+                let t = k as Real;
+                s.add_point(
+                    Point3::new(40.0 * t, 25.0 * (t * 0.7).sin(), 30.0 * (t * 0.3).cos()),
+                    k == 0,
+                )
+            })
+            .collect();
+        let lines: Vec<u32> = ids
+            .windows(2)
+            .map(|w| s.add_line(w[0], w[1]).unwrap())
+            .collect();
+        for &c in &ids[1..60] {
+            s.add_bend(c, 3.0).unwrap();
+        }
+        let cons: Vec<Constraint3> = (0..30)
+            .map(|k| Constraint3::Perpendicular(lines[2 * k], lines[2 * k + 1]))
+            .collect();
+        rows.push((
+            "3D sketch: 60 lines, 59 bends, 30 constraints: solve + pieces",
+            250.0,
+            median_ms(3, || {
+                let mut c = s.clone();
+                c.constraints = cons.clone();
+                c.solve().unwrap();
+                let _ = c.pieces();
+            }),
+        ));
+    }
+    // A ring revolved about a box's vertical edge, joined.
+    let mut rev = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let b = &rev.body;
+    let edge = b
+        .edges()
+        .find_map(|(id, e)| {
+            let d = b.edge_direction(id)?.normalize();
+            let (p, q) = (b.vertex(e.start)?.point, b.vertex(e.end)?.point);
+            let on = |p: &Point3| (p.x - 40.0).abs() < 1e-9 && p.y.abs() < 1e-9;
+            (d.z.abs() > 0.999 && on(&p) && on(&q)).then(|| e.name.clone())?
+        })
+        .unwrap();
+    let i = rev
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts)
+        .unwrap();
+    rev.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(40.0, 0.0), Point2::new(50.0, 20.0))
+        .unwrap();
+    let rg = rev.sketches[i].sketch.regions();
+    rev.add_revolve(
+        i,
+        RevolveFeature::new(
+            vec![ProfileRef::of(&rg[0], rg[0].interior_point())],
+            AxisRef::Edge(edge),
+        ),
+    )
+    .unwrap();
+    rows.push((
+        "Revolve about a model edge, joined, regenerate",
+        400.0,
+        timed(&rev),
+    ));
+    slot_rows(rows);
+}
+
+/// Slots (spec 2.3 §3a): 24 round-ended slots with a counterbore on a plate,
+/// and the Intersection Curve of a plane with a 36-hole plate's faces.
+fn slot_rows(rows: &mut Rows<'_>) {
+    use cadcraft3d::part::hole::HoleCenter;
+    use cadcraft3d::part::{HoleFeature, HoleSpec, SeatType, Termination};
+    let mut part = PartDocument::with_box("Box1", [200.0, 120.0, 10.0]).unwrap();
+    let pts: Vec<Point3> = (0..6)
+        .flat_map(|i| {
+            (0..4).map(move |j| Point3::new(20.0 + 32.0 * i as Real, 15.0 + 30.0 * j as Real, 10.0))
+        })
+        .collect();
+    let (i, ids) = part.create_hole_sketch("Box1:Top", &pts).unwrap();
+    let mut s = HoleSpec::slot(6.0, 20.0);
+    s.termination = Termination::ThroughAll;
+    s.seat = SeatType::Counterbore;
+    s.seat_diameter = 10.0;
+    s.seat_depth = 3.0;
+    let mut def = HoleFeature::new(s);
+    def.sketch = part.sketches[i].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(def).unwrap();
+    rows.push((
+        "Slot: 24 slots with counterbores, regenerate",
+        2500.0,
+        median_ms(3, || {
+            let mut c = part.clone();
+            c.build_cache = Default::default();
+            c.regenerate().unwrap();
+        }),
+    ));
+    // Intersection Curve: the plane x = 97 through every face of the slotted plate.
+    use cadcraft3d::part::sketch3d_curves as curves;
+    let faces: Vec<_> = part.body.faces().map(|(f, _)| f).collect();
+    let tris = curves::face_triangles(&part.body, &faces);
+    let plane = cadcraft3d::kernel::Plane::new(
+        Point3::new(97.0, 0.0, 0.0),
+        cadcraft3d::kernel::Vector3::y(),
+        cadcraft3d::kernel::Vector3::z(),
+    )
+    .unwrap();
+    rows.push((
+        "3D sketch: a plane's Intersection Curve with a slotted plate",
+        50.0,
+        median_ms(5, || {
+            let segs = curves::plane_section(&tris, &plane);
+            std::hint::black_box(curves::chain_segments(&segs, 1e-4));
+        }),
+    ));
+}
+
+/// The part completion cases alone (`cargo test --release --test perf part_completion`).
+#[test]
+fn part_completion_within_budget() {
+    if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some() {
+        return;
+    }
+    let mut rows = Rows::default();
+    part_completion_rows(&mut rows);
+    let over: Vec<String> = rows
+        .0
+        .iter()
+        .filter(|(_, budget, ms, _)| ms > budget)
+        .map(|(case, budget, ms, _)| format!("{case}: {ms:.0} ms > {budget:.0} ms"))
+        .collect();
     assert!(over.is_empty(), "over budget:\n{}", over.join("\n"));
 }
 

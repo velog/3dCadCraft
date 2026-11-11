@@ -37,6 +37,7 @@ pub(super) enum Entry {
     NewSketch,
     PressPull,
     Hole,
+    Slot,
     Shell,
     FaceDraft,
     Thread,
@@ -69,6 +70,7 @@ impl Entry {
             Entry::NewSketch => "New Sketch",
             Entry::PressPull => "Extrude (Press/Pull)",
             Entry::Hole => "Hole",
+            Entry::Slot => "Slot",
             Entry::Shell => "Shell (remove these faces)",
             Entry::FaceDraft => "Face Draft",
             Entry::Thread => "Thread",
@@ -105,6 +107,7 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
             E::NewSketch,
             E::PressPull,
             E::Hole,
+            E::Slot,
             E::Planned(Pp::Emboss),
             E::Separator,
             E::Shell,
@@ -170,6 +173,7 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
             E::Extrude,
             E::Revolve,
             E::Hole,
+            E::Slot,
             E::Planned(Pp::Emboss),
             E::Planned(Pp::Grill),
             E::Planned(Pp::Boss),
@@ -459,6 +463,7 @@ impl CadCraftApp {
                 }
             }
             E::Hole => self.apply(Action::Hole),
+            E::Slot => self.apply(Action::Slot),
             E::ExportFace => self.export_face_start(),
             E::Shell => self.apply(Action::Shell),
             E::FaceDraft => {

@@ -5962,7 +5962,9 @@ mod hole_tests;
 
 mod coil;
 pub mod emboss;
+mod slot;
 pub use coil::{CoilMesh, CoilMotion, CoilZone, coil, coil_boolean, coil_mesh};
+pub use slot::{SLOT_PARTS, SlotOutline, slot_tool};
 
 mod loft;
 pub use loft::{
