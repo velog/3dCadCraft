@@ -381,7 +381,7 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 13] = [
+    const ALL: [Tab; 14] = [
         Tab::FrameAnalysis,
         Tab::PlaceViews,
         Tab::Annotate,

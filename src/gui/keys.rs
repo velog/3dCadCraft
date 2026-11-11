@@ -133,7 +133,7 @@ impl CadCraftApp {
             && (self.tools.pattern_dialog.is_some()
                 || self.tools.has_dialog()
                 || self.tools.edit_pattern.is_some());
-        let open: [(bool, &'static str); 31] = [
+        let open: [(bool, &'static str); 32] = [
             (self.fa_tool_open(), "Frame Analysis"),
             (self.text_draft.is_some(), "Text"),
             (self.drw_open(), "Drawing View"),
