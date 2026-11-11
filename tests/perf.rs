@@ -1375,6 +1375,35 @@ fn speed_budgets() {
             cadcraft3d::design::shaft::part(&d).unwrap()
         };
         rows.push(("Shaft: 12 sections, regenerate", 100.0, timed(&shaft)));
+        // The starter shaft with two keyways and a bore at each end (Extrude Cuts).
+        let keyed = {
+            use cadcraft3d::design::shaft::{Bore, ShaftDesign};
+            let mut d = ShaftDesign::starter();
+            d.sections[1].keyway = Some(45.0);
+            d.sections[3].keyway = Some(45.0);
+            d.bore_left = Some(Bore {
+                d: 10.0,
+                depth: 30.0,
+            });
+            d.bore_right = Some(Bore {
+                d: 10.0,
+                depth: 20.0,
+            });
+            cadcraft3d::design::shaft::part(&d).unwrap()
+        };
+        rows.push((
+            "Shaft: 2 keyways and 2 bores, regenerate",
+            1500.0,
+            timed(&keyed),
+        ));
+        // A 40-tooth spur gear: its tooth outline as arcs, one extrusion.
+        let gear = {
+            use cadcraft3d::design::gear::GearPair;
+            let pair = GearPair::default();
+            let g = pair.geometry().unwrap();
+            cadcraft3d::design::gear_model::gear_part(&pair, &g, 1, 20.0).unwrap()
+        };
+        rows.push(("Spur gear: 40 teeth, regenerate", 1500.0, timed(&gear)));
         let mut snap = PartDocument::with_box("Box1", [200.0, 100.0, 3.0]).unwrap();
         let i = sketch_at(&mut snap, 3.0);
         for (x, y) in [(30.0, 25.0), (170.0, 25.0), (30.0, 75.0), (170.0, 75.0)] {

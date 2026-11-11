@@ -3105,6 +3105,11 @@ impl CadCraftApp {
             self.bolt_edit(b);
             ui.close();
         }
+        if ids.len() == 1 && self.shaft_of(ids[0]).is_some() && ui.button("Edit Shaft...").clicked()
+        {
+            self.shaft_edit(ids[0]);
+            ui.close();
+        }
         if self.change_size_offered(ids) && ui.button("Change Size...").clicked() {
             self.change_size_start(ids);
             ui.close();

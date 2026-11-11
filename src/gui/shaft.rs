@@ -25,7 +25,7 @@ use super::part_planned::{PartDialog, Planned};
 use super::valuefield::ExprValue;
 use crate::assembly::relation::{ASSEMBLY, Geom};
 use crate::design::key;
-use crate::design::shaft::{EdgeFeature, RingGroove, Section, SectionShape, ShaftDesign};
+use crate::design::shaft::{Bore, EdgeFeature, RingGroove, Section, SectionShape, ShaftDesign};
 use crate::design::shaft_calc::{
     Load, Material, ReducedStress, Reliability, ShaftLoads, ShaftResults, Support, SupportKind,
     calculate,
@@ -61,6 +61,10 @@ pub enum Dim {
     Keyway(usize),
     /// A groove's width.
     GrooveWidth(usize, usize),
+    /// A bore's diameter (false: the left one).
+    BoreD(bool),
+    /// A bore's depth.
+    BoreDepth(bool),
 }
 
 /// The in-place edit box of a dimension.
@@ -119,6 +123,11 @@ pub struct ShaftPanel {
     pub drag: Option<usize>,
     /// The toolbar's open choice of edges (Chamfer / Fillet / Relief).
     pub edge_menu: Option<(Glyph, Pos2)>,
+    /// Editing a placed shaft: its part document and occurrence (OK replaces
+    /// the part; the occurrence stays where it is).
+    pub editing: Option<(DocRef, u32)>,
+    /// The view was framed on the first preview (it stands above the window).
+    pub framed: bool,
 }
 
 impl Default for ShaftPanel {
@@ -168,6 +177,8 @@ impl Default for ShaftPanel {
             placing: None,
             drag: None,
             edge_menu: None,
+            editing: None,
+            framed: false,
         }
     }
 }
@@ -253,11 +264,13 @@ fn window(d: &mut PartDialog, ctx: &egui::Context) {
     }
     let mut open = true;
     let screen = ctx.content_rect();
+    let (pos, size) = window_place(screen);
     egui::Window::new("Shaft Generator")
         .id(egui::Id::new("shaft_generator_window"))
         .open(&mut open)
-        .default_size([800.0, 640.0])
-        .default_pos(Pos2::new(screen.left() + 260.0, screen.top() + 175.0))
+        .default_size(size)
+        .max_width(size.x)
+        .default_pos(pos)
         .resizable(true)
         .collapsible(false)
         .show(ctx, |ui| {
@@ -303,6 +316,18 @@ fn window(d: &mut PartDialog, ctx: &egui::Context) {
     dim_edit_box(p, ctx);
 }
 
+/// Where the window opens: along the bottom of the view, over the lower part
+/// of the browser and the view, so the upper half of the view (where the
+/// preview stands) stays free and Properties (Axis, Start Plane) stays
+/// reachable on the right.
+fn window_place(screen: Rect) -> (Pos2, Vec2) {
+    let w = (screen.width() - 560.0).clamp(560.0, 840.0);
+    let h = (screen.height() * 0.5).clamp(360.0, 560.0);
+    let x = screen.left() + 250.0;
+    let y = screen.bottom() - h - 60.0;
+    (Pos2::new(x, y.max(screen.top() + 120.0)), Vec2::new(w, h))
+}
+
 fn num(v: f64) -> String {
     let s = format!("{v:.3}");
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
@@ -342,6 +367,10 @@ pub enum Glyph {
     MoveRight,
     /// Flip the shaft end for end.
     Flip,
+    /// A bore into the left end.
+    BoreLeft,
+    /// A bore into the right end.
+    BoreRight,
 }
 
 /// Draws glyph `g` in `r`.
@@ -447,6 +476,15 @@ fn glyph(p: &egui::Painter, r: Rect, g: Glyph, col: Color32) {
             line(&[(0.15, 0.5), (0.85, 0.5)]);
             line(&[(0.6, 0.25), (0.85, 0.5), (0.6, 0.75)]);
         }
+        Glyph::BoreLeft | Glyph::BoreRight => {
+            cyl();
+            let (a, b) = if g == Glyph::BoreLeft {
+                (0.08, 0.55)
+            } else {
+                (0.45, 0.92)
+            };
+            p.rect_filled(Rect::from_two_pos(at(a, 0.42), at(b, 0.58)), 0.0, accent);
+        }
         Glyph::Flip => {
             line(&[(0.1, 0.35), (0.9, 0.35)]);
             line(&[(0.7, 0.18), (0.9, 0.35), (0.7, 0.52)]);
@@ -545,6 +583,7 @@ fn flip(p: &mut ShaftPanel) {
             g.at = l - g.at - g.width;
         }
     }
+    std::mem::swap(&mut p.design.bore_left, &mut p.design.bore_right);
     let n = p.design.sections.len();
     p.selected = n.saturating_sub(1).saturating_sub(p.selected);
     p.edit = None;
@@ -587,7 +626,45 @@ fn add_feature(p: &mut ShaftPanel, k: usize, g: Glyph, right: bool) {
         }
         _ => {}
     }
+    clear_overlaps(&mut p.design, k, g, right);
     p.selected = k;
+}
+
+/// A relief takes the place of the chamfer or fillet at its end (and an edge
+/// feature added later takes the relief's): the two would run the outline
+/// back on itself.
+fn clear_overlaps(d: &mut ShaftDesign, k: usize, g: Glyph, right: bool) {
+    let n = d.sections.len();
+    if k >= n {
+        return;
+    }
+    if g == Glyph::Relief {
+        // This section's edge first, then the neighbour's that reaches in.
+        for _ in 0..2 {
+            if d.edge_extent(k, right) <= 0.0 {
+                break;
+            }
+            let s = &mut d.sections[k];
+            let own = if right { &mut s.end } else { &mut s.start };
+            if *own != EdgeFeature::None {
+                *own = EdgeFeature::None;
+            } else if right && k + 1 < n {
+                d.sections[k + 1].start = EdgeFeature::None;
+            } else if !right && k > 0 {
+                d.sections[k - 1].end = EdgeFeature::None;
+            }
+        }
+    } else if matches!(g, Glyph::Chamfer | Glyph::Fillet) {
+        // Every section next to the corner: reliefs the new edge reaches.
+        let near = [k.checked_sub(1), Some(k), (k + 1 < n).then_some(k + 1)];
+        for i in near.into_iter().flatten() {
+            let (a0, a1) = (d.edge_extent(i, false), d.edge_extent(i, true));
+            let len = d.sections[i].length;
+            d.sections[i].grooves.retain(|gr| {
+                !gr.relief || (gr.at >= a0 - 1e-9 && gr.at + gr.width <= len - a1 + 1e-9)
+            });
+        }
+    }
 }
 
 fn design_tab(p: &mut ShaftPanel, ui: &mut egui::Ui) {
@@ -731,10 +808,23 @@ fn toolbar(p: &mut ShaftPanel, ui: &mut egui::Ui) {
             false,
         );
         ui.separator();
-        for t in ["Split", "Bore Left", "Bore Right"] {
-            ui.add_enabled(false, egui::Button::new(t).small())
-                .on_disabled_hover_text("Spec 6.2-design-calculators §3.1: comes later");
+        for (g, end, name) in [
+            (Glyph::BoreLeft, false, "Bore on the Left"),
+            (Glyph::BoreRight, true, "Bore on the Right"),
+        ] {
+            let on = if end {
+                p.design.bore_right.is_some()
+            } else {
+                p.design.bore_left.is_some()
+            };
+            let tip =
+                format!("{name}: a cylindrical hole into that end (click again to remove it)");
+            if icon_button(ui, g, &tip, n > 0, on).clicked() {
+                toggle_bore(&mut p.design, end);
+            }
         }
+        ui.add_enabled(false, egui::Button::new("Split").small())
+            .on_disabled_hover_text("Spec 6.2-design-calculators §3.1: comes later");
     });
 }
 
@@ -769,6 +859,66 @@ fn edge_menu(p: &mut ShaftPanel, ctx: &egui::Context) {
                 .is_some_and(|q| !area.response.rect.contains(q) && q.y > at.y + 2.0))
     {
         p.edge_menu = None;
+    }
+}
+
+/// Adds a bore at one end (a third of the end section's diameter, half its
+/// length deep), or takes it away.
+fn toggle_bore(d: &mut ShaftDesign, end: bool) {
+    let slot = if end {
+        &mut d.bore_right
+    } else {
+        &mut d.bore_left
+    };
+    if slot.take().is_some() {
+        return;
+    }
+    let s = if end {
+        d.sections.last()
+    } else {
+        d.sections.first()
+    };
+    if let Some(s) = s {
+        let (d0, d1) = s.diameters();
+        let dia = (if end { d1 } else { d0 } / 3.0).round().max(1.0);
+        *slot = Some(Bore {
+            d: dia,
+            depth: (s.length / 2.0).round().max(1.0),
+        });
+    }
+}
+
+/// The bores' rows under the section list.
+fn bore_rows(p: &mut ShaftPanel, ui: &mut egui::Ui) {
+    for (end, g, name) in [
+        (false, Glyph::BoreLeft, "Bore on the Left"),
+        (true, Glyph::BoreRight, "Bore on the Right"),
+    ] {
+        let b = if end {
+            &mut p.design.bore_right
+        } else {
+            &mut p.design.bore_left
+        };
+        let Some(b) = b.as_mut() else {
+            continue;
+        };
+        let mut gone = false;
+        ui.horizontal_wrapped(|ui| {
+            glyph_label(ui, g);
+            ui.label(name);
+            ui.label("D");
+            mm(ui, &mut b.d);
+            ui.label("depth");
+            mm(ui, &mut b.depth);
+            gone = ui.small_button("Delete").clicked();
+        });
+        if gone {
+            if end {
+                p.design.bore_right = None;
+            } else {
+                p.design.bore_left = None;
+            }
+        }
     }
 }
 
@@ -811,6 +961,7 @@ fn section_list(p: &mut ShaftPanel, ui: &mut egui::Ui) {
         });
         z += s.length;
     }
+    bore_rows(p, ui);
 }
 
 /// A length field in mm.
@@ -868,8 +1019,8 @@ fn section_editor(p: &mut ShaftPanel, ui: &mut egui::Ui) {
         if ui
             .add_enabled(cylinder, egui::Checkbox::new(&mut on, "Keyway Groove"))
             .on_hover_text(
-                "Sets the keyway's notch factor in the calculation (RP-1123 Table V); the \
-                 groove in the model comes later",
+                "A DIN 6885 form A groove for a parallel key, centred on the section and cut \
+                 into the model; the calculation takes its notch factor (RP-1123 Table V)",
             )
             .changed()
         {
@@ -1168,6 +1319,41 @@ fn profile(p: &mut ShaftPanel, ui: &mut egui::Ui) {
         );
         dims.push((r, Dim::Length(k)));
     }
+    // Bores: dashed lines inside, their diameter and depth clickable.
+    for (end, b) in p.design.bores() {
+        let (za, zb) = if end {
+            (len - b.depth, len)
+        } else {
+            (0.0, b.depth)
+        };
+        let r = b.d / 2.0;
+        let dash = Stroke::new(1.2, t.accent);
+        for (q0, q1) in [
+            (pt(za, r), pt(zb, r)),
+            (pt(za, -r), pt(zb, -r)),
+            (
+                pt(if end { za } else { zb }, r),
+                pt(if end { za } else { zb }, -r),
+            ),
+        ] {
+            painter.add(egui::Shape::dashed_line(&[q0, q1], dash, 5.0, 3.0));
+        }
+        let x = (pt(za, 0.0).x + pt(zb, 0.0).x) / 2.0;
+        let rd = dim_text(
+            &painter,
+            Pos2::new(x, pt(0.0, r).y - 8.0),
+            &format!("Ø{}", num(b.d)),
+            t.accent,
+        );
+        dims.push((rd, Dim::BoreD(end)));
+        let rl = dim_text(
+            &painter,
+            Pos2::new(x, pt(0.0, -r).y + 8.0),
+            &format!("bore {}", num(b.depth)),
+            t.accent,
+        );
+        dims.push((rl, Dim::BoreDepth(end)));
+    }
     // Overall length.
     let y = bottom + 60.0;
     let (a, b) = (pt(0.0, 0.0).x, pt(len, 0.0).x);
@@ -1294,7 +1480,7 @@ fn profile(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                         at: r.left_bottom() + Vec2::new(-8.0, 3.0),
                         fresh: 2,
                     });
-                    p.selected = dim_section(dim);
+                    p.selected = dim_section(dim, p.design.sections.len());
                 }
             }
         }
@@ -1398,7 +1584,7 @@ fn profile(p: &mut ShaftPanel, ui: &mut egui::Ui) {
     });
 }
 
-fn dim_section(d: &Dim) -> usize {
+fn dim_section(d: &Dim, n: usize) -> usize {
     match *d {
         Dim::Length(k)
         | Dim::Diameter(k)
@@ -1406,6 +1592,13 @@ fn dim_section(d: &Dim) -> usize {
         | Dim::Edge(k, _)
         | Dim::Keyway(k)
         | Dim::GrooveWidth(k, _) => k,
+        Dim::BoreD(end) | Dim::BoreDepth(end) => {
+            if end {
+                n.saturating_sub(1)
+            } else {
+                0
+            }
+        }
     }
 }
 
@@ -1422,7 +1615,23 @@ fn dim_text(painter: &egui::Painter, at: Pos2, text: &str, color: Color32) -> Re
 
 /// The value a dimension stands for.
 fn dim_value(design: &mut ShaftDesign, dim: Dim) -> Option<&mut f64> {
-    let s = design.sections.get_mut(dim_section(&dim))?;
+    match dim {
+        Dim::BoreD(end) | Dim::BoreDepth(end) => {
+            let b = if end {
+                design.bore_right.as_mut()
+            } else {
+                design.bore_left.as_mut()
+            }?;
+            return Some(if matches!(dim, Dim::BoreD(_)) {
+                &mut b.d
+            } else {
+                &mut b.depth
+            });
+        }
+        _ => {}
+    }
+    let n = design.sections.len();
+    let s = design.sections.get_mut(dim_section(&dim, n))?;
     match dim {
         Dim::Length(_) => Some(&mut s.length),
         Dim::Diameter(_) => match &mut s.shape {
@@ -1439,6 +1648,7 @@ fn dim_value(design: &mut ShaftDesign, dim: Dim) -> Option<&mut f64> {
         },
         Dim::Keyway(_) => s.keyway.as_mut(),
         Dim::GrooveWidth(_, g) => s.grooves.get_mut(g).map(|g| &mut g.width),
+        Dim::BoreD(_) | Dim::BoreDepth(_) => None,
     }
 }
 
@@ -1616,17 +1826,19 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
         p.loads.supports.remove(k);
     }
     ui.horizontal(|ui| {
-        let two = p.loads.supports.len() >= 2;
         for (kind, text) in [
             (SupportKind::Fixed, "Add Fixed Support"),
             (SupportKind::Free, "Add Free Support"),
         ] {
             if ui
-                .add_enabled(!two, egui::Button::new(text))
-                .on_disabled_hover_text("The calculation takes two supports (more come later)")
+                .button(text)
+                .on_hover_text(
+                    "Three or more supports make the shaft statically indeterminate: their                      reactions follow from the deflections",
+                )
                 .clicked()
             {
-                p.loads.supports.push(Support { z: len, kind });
+                let z = free_place(&p.loads.supports, len);
+                p.loads.supports.push(Support { z, kind });
             }
         }
     });
@@ -1669,6 +1881,15 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                     mm(ui, z);
                     ui.label("T");
                     qty(ui, torque, "N·m", 1000.0);
+                }
+                Load::Moment { z, moment, angle } => {
+                    ui.label(RichText::new("Bending Moment").strong());
+                    ui.label("z");
+                    mm(ui, z);
+                    ui.label("M");
+                    qty(ui, moment, "N·m", 1000.0);
+                    ui.label("plane");
+                    angle_field(ui, angle);
                 }
             }
             if ui.small_button("Delete").clicked() {
@@ -1716,8 +1937,19 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                 torque: -100e3,
             });
         }
-        ui.add_enabled(false, egui::Button::new("Add Bending Moment"))
-            .on_disabled_hover_text("Spec 6.2-design-calculators §3.2: comes later");
+        if ui
+            .button("Add Bending Moment")
+            .on_hover_text(
+                "A moment at a place along the shaft, bending it in the plane of its angle",
+            )
+            .clicked()
+        {
+            p.loads.loads.push(Load::Moment {
+                z: mid,
+                moment: 20e3,
+                angle: 0.0,
+            });
+        }
     });
     ui.add_space(6.0);
     let f = &mut p.loads.fatigue;
@@ -1753,6 +1985,16 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
             ui.add(ExprValue::new(&mut f.safety));
             ui.end_row();
         });
+}
+
+/// A place for a new support: the middle of the longest stretch without one.
+fn free_place(supports: &[Support], len: f64) -> f64 {
+    let mut z: Vec<f64> = supports.iter().map(|s| s.z).collect();
+    z.extend([0.0, len]);
+    z.sort_by(f64::total_cmp);
+    z.windows(2)
+        .max_by(|a, b| (a[1] - a[0]).total_cmp(&(b[1] - b[0])))
+        .map_or(len / 2.0, |w| ((w[0] + w[1]) / 2.0).round())
 }
 
 fn calc_results(p: &mut ShaftPanel, ui: &mut egui::Ui) {
@@ -1829,7 +2071,7 @@ fn calc_results(p: &mut ShaftPanel, ui: &mut egui::Ui) {
     ui.label(RichText::new("Formulas").strong());
     for line in [
         "σb = 32 M / (π d³), τt = 16 T / (π d³), σred = √(σ² + 3τ²) (HMH)",
-        "Deflection: y'' = M / (E I), I = π d⁴ / 64, y = 0 at both supports",
+        "Deflection: y'' = M / (E I), I = π (d⁴ − di⁴) / 64, y = 0 at every support (three or more: the inner reactions from the deflections)",
         "Safety: FS = π d³ / (32 √((M/σf)² + ¾ (T/σy)²)), RP-1123 eq. 17",
         "σf = ka·kb·kc·kd·ke·kf·kg·kh·ki·σ'f, eq. 19; kb eq. 21 / 22; ke = 1 / (1 + q (Kt − 1)), eq. 25",
         "Twist θ = 584 T L / (d⁴ G), eq. 32; critical speed ωc = √(g ΣWδ / ΣWδ²), eq. 33",
@@ -1983,11 +2225,22 @@ impl CadCraftApp {
             return;
         };
         let rev = d.shaft.preview.lock().map_or(0, |s| s.rev);
+        let mut frame = None;
         if rev != d.shaft.seen {
             d.shaft.seen = rev;
-            self.scene_dirty = true;
             ctx.data_mut(|d| d.insert_temp(key, true));
+            if !d.shaft.framed && d.shaft.editing.is_none() {
+                d.shaft.framed = true;
+                frame = Some(d.clone());
+            }
+            self.scene_dirty = true;
         }
+        if let Some(f) = frame {
+            self.shaft_frame_view(&f);
+        }
+        let Some(d) = self.part_planned.as_mut() else {
+            return;
+        };
         if std::mem::take(&mut d.shaft.cancel) {
             self.part_planned = None;
             return;
@@ -1998,6 +2251,32 @@ impl CadCraftApp {
                 self.part_planned = None;
             }
         }
+    }
+
+    /// Frames the first preview in the upper half of the view: the generator
+    /// window lies along the bottom.
+    fn shaft_frame_view(&mut self, d: &PartDialog) {
+        let part = d
+            .shaft
+            .preview
+            .lock()
+            .ok()
+            .and_then(|s| s.done.as_ref().and_then(|(_, r)| r.as_ref().ok().cloned()));
+        let Some((lo, hi)) = part.and_then(|p| p.body.bounding_box()) else {
+            return;
+        };
+        let place = self
+            .shaft_placement(d)
+            .unwrap_or_else(|_| Transform3::identity());
+        let (a, b) = (place * lo, place * hi);
+        let (min, max) = (a.inf(&b), a.sup(&b));
+        self.camera.fit(min, max);
+        let radius = nalgebra::distance(&min, &max) / 2.0;
+        let (_, up) = self.camera.frame();
+        // Twice as far, the box's centre raised by its radius on the screen.
+        self.camera.distance *= 2.0;
+        self.camera.target -= up * radius * 1.1;
+        self.scene_dirty = true;
     }
 
     /// The preview in the scene: the built part, see-through, where OK puts it.
@@ -2026,6 +2305,47 @@ impl CadCraftApp {
         );
     }
 
+    /// The shaft part made by the Shaft Generator that occurrence `occ` of
+    /// the active assembly places (a part of this file): its document and the
+    /// generator's inputs.
+    pub(super) fn shaft_of(&self, occ: u32) -> Option<(DocRef, ShaftDesign, Option<ShaftLoads>)> {
+        let a = self.assembly()?;
+        let o = a.find(occ)?;
+        if o.component.library.is_some() {
+            return None;
+        }
+        let r = o.component.base();
+        match &self.project.document(r.document)?.data {
+            DocumentData::Part(p) => match &p.generator {
+                Some(crate::design::Generator::Shaft { design, loads }) => {
+                    Some((r, design.clone(), loads.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Edit Shaft (Inventor: Edit using Design Accelerator): the generator
+    /// opens on the placed shaft's sections and loads; OK rebuilds its part.
+    pub(super) fn shaft_edit(&mut self, occ: u32) {
+        let Some((doc, design, loads)) = self.shaft_of(occ) else {
+            return;
+        };
+        let mut d = PartDialog::new(AsmPlanned::Shaft);
+        d.shaft.design = design;
+        if let Some(l) = loads {
+            d.shaft.loads = l;
+            d.shaft.preset = crate::design::shaft_calc::Material::presets()
+                .iter()
+                .position(|m| *m == d.shaft.loads.material)
+                .unwrap_or(usize::MAX);
+        }
+        d.shaft.editing = Some((doc, occ));
+        d.active = None;
+        self.part_planned = Some(d);
+    }
+
     /// The Shaft panel's OK: the part, its document and its occurrence (one
     /// Undo step). Returns whether the panel can close.
     pub(super) fn shaft_ok(&mut self, d: &PartDialog) -> bool {
@@ -2037,6 +2357,13 @@ impl CadCraftApp {
                 return false;
             }
         };
+        part.generator = Some(crate::design::Generator::Shaft {
+            design: design.clone(),
+            loads: Some(d.shaft.loads.clone()),
+        });
+        if let Some((doc, occ)) = d.shaft.editing {
+            return self.shaft_replace(part, doc, occ);
+        }
         let place = match self.shaft_placement(d) {
             Ok(t) => t,
             Err(e) => {
@@ -2084,9 +2411,54 @@ impl CadCraftApp {
         true
     }
 
+    /// Edit Shaft's OK: the part document gets the new shaft (its name, id
+    /// and occurrences stay). One Undo step.
+    fn shaft_replace(&mut self, mut part: PartDocument, doc: DocRef, occ: u32) -> bool {
+        if let Err(e) = part.regenerate() {
+            self.file_status = Some(Err(format!("Shaft: {e}")));
+            return false;
+        }
+        if let Some((_, msg)) = part.feature_health.iter().next() {
+            self.file_status = Some(Err(format!("Shaft: {msg}")));
+            return false;
+        }
+        let mut trial = self.project.clone();
+        let Some(x) = trial.document_mut(doc.document) else {
+            self.file_status = Some(Err("Shaft: the shaft's part no longer exists".into()));
+            return false;
+        };
+        let name = x.name.clone();
+        x.data = DocumentData::Part(part);
+        self.history.break_coalescing();
+        self.checkpoint("Edit Shaft");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.asm_solve(None);
+        self.asm.sel = vec![occ];
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        self.file_status = Some(Ok(format!("Shaft: {name} rebuilt")));
+        true
+    }
+
     /// Where the shaft goes: its start on the Start plane, along the Axis
     /// (or the plane's normal), reversed by Flip; the origin without picks.
     fn shaft_placement(&self, d: &PartDialog) -> Result<Transform3, String> {
+        let (t, _) = self.axis_placement(d, "axis", "start", d.check(0, "Flip"))?;
+        Ok(t)
+    }
+
+    /// A placement on the axis picked in selector `axis_key` (a cylindrical
+    /// face, an axis or a circular edge) starting at the plane of `start_key`,
+    /// its Z along the axis (reversed by `flip`); the origin without picks.
+    /// Also the picked cylinder's radius, when the axis is one.
+    pub(super) fn axis_placement(
+        &self,
+        d: &PartDialog,
+        axis_key: &str,
+        start_key: &str,
+        flip: bool,
+    ) -> Result<(Transform3, Option<f64>), String> {
         let a = self.assembly().ok_or("no assembly")?;
         let geom = |key: &str| -> Result<Option<Geom>, String> {
             let Some(r) = d.refs.get(key).and_then(|v| v.first()) else {
@@ -2102,13 +2474,21 @@ impl CadCraftApp {
                 g.moved(&o.transform)
             }))
         };
-        let axis = match geom("axis")? {
-            Some(Geom::Axis { p, d } | Geom::Cylinder { p, d, .. }) => Some((p, d)),
-            Some(Geom::Circle { c, n, .. }) => Some((c, n)),
+        let mut radius = None;
+        let axis = match geom(axis_key)? {
+            Some(Geom::Cylinder { p, d, r }) => {
+                radius = Some(r);
+                Some((p, d))
+            }
+            Some(Geom::Axis { p, d }) => Some((p, d)),
+            Some(Geom::Circle { c, n, r }) => {
+                radius = Some(r);
+                Some((c, n))
+            }
             Some(_) => return Err("the axis must be a cylindrical face, an axis or an edge".into()),
             None => None,
         };
-        let plane = match geom("start")? {
+        let plane = match geom(start_key)? {
             Some(Geom::Plane { p, n }) => Some((p, n)),
             Some(_) => return Err("the start must be a planar face or a plane".into()),
             None => None,
@@ -2127,7 +2507,27 @@ impl CadCraftApp {
             (None, Some((q, n))) => (q, n),
             (None, None) => (Point3::origin(), Vector3::z()),
         };
-        let dir = if d.check(0, "Flip") { -dir } else { dir };
-        Ok(crate::assembly::create::frame_on(o, dir))
+        let dir = if flip { -dir } else { dir };
+        Ok((crate::assembly::create::frame_on(o, dir), radius))
+    }
+
+    /// Places `part` as a new document of the design file in the active
+    /// assembly at `place`, named after `base`; returns the occurrence. The
+    /// caller made the Undo checkpoint.
+    pub(super) fn place_generated(
+        &mut self,
+        trial: &mut crate::document::Project,
+        part: PartDocument,
+        base: &str,
+        place: Transform3,
+    ) -> Result<u32, String> {
+        let asm = self.part_id;
+        let name = trial.free_name(base);
+        let id = trial.add_document(name.clone(), DocumentData::Part(part));
+        let Some(DocumentData::Assembly(a)) = trial.document_mut(asm).map(|x| &mut x.data) else {
+            return Err("no assembly is open".into());
+        };
+        let first = a.occurrences.is_empty();
+        Ok(a.place(DocRef::local(id), &name, place, first))
     }
 }

@@ -1,7 +1,8 @@
-//! The Calculation pages of Spur Gears and Parallel Key (spec
-//! 6.2-design-calculators §3.3–3.4): the planned panel's values through
-//! `design::gear` and `design::key`, shown live under Calculate. The models
-//! (gear teeth, key grooves) come later, so OK stays off for both.
+//! The Calculation pages of Spur Gears, Parallel Key, Bearing and Compression
+//! Spring (spec 6.2-design-calculators §3.3–3.5): the planned panel's values
+//! through `design::gear`, `design::key`, `design::bearing` and
+//! `design::spring`, shown live under Calculate; OK of Spur Gears and Key
+//! places their parts (`design::gear_model`).
 
 use eframe::egui::{self, RichText};
 
@@ -11,7 +12,9 @@ use super::part_planned::{PartDialog, Planned};
 use crate::design::gear::{
     self, BendingFactors, GEAR_WEIBULL, GearPair, bending_stress, life_at, tooth_life,
 };
+use crate::design::gear_model as gear_parts;
 use crate::design::key::{self, Ends};
+use crate::design::{bearing, spring};
 
 /// Whether `d` is the Spur Gears panel.
 pub(super) fn is_spur(d: &PartDialog) -> bool {
@@ -21,6 +24,24 @@ pub(super) fn is_spur(d: &PartDialog) -> bool {
 /// Whether `d` is the Key panel.
 pub(super) fn is_key(d: &PartDialog) -> bool {
     d.kind == Planned::Asm(AsmPlanned::Key)
+}
+
+/// Whether `d` is the Bearing panel.
+pub(super) fn is_bearing(d: &PartDialog) -> bool {
+    d.kind == Planned::Asm(AsmPlanned::Bearing)
+}
+
+/// Whether `d` is one of the spring panels.
+pub(super) fn is_spring(d: &PartDialog) -> bool {
+    matches!(
+        d.kind,
+        Planned::Asm(
+            AsmPlanned::CompressionSpring
+                | AsmPlanned::ExtensionSpring
+                | AsmPlanned::TorsionSpring
+                | AsmPlanned::BellevilleSpring
+        )
+    )
 }
 
 fn rows(ui: &mut egui::Ui, id: &str, rows: &[(String, String)]) {
@@ -108,20 +129,36 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             let (wt, wn) = gear::tooth_loads(&g, t);
             r.push(("Torque (gear 1)".into(), format!("{:.2} N·m", t / 1000.0)));
             r.push(("Tangential Force".into(), format!("{wt:.1} N")));
-            let f = BendingFactors {
-                j: n("Geometry Factor J", 0.35),
-                ka: n("Application Factor Ka", 1.0),
-                km: n("Load Distribution Factor Km", 1.3),
-                kv: n("Dynamic Factor Kv", 0.8),
-            };
-            let face = pair.face[0].min(pair.face[1]);
-            let sb = bending_stress(wt, face, pair.module, &f);
-            let allowed = n("Allowable Bending Stress (MPa)", 250.0);
+            // Kv from the pitch-line speed and the accuracy level (Fig. 25).
+            let level = n("Accuracy Level (AGMA)", 8.0).round().clamp(3.0, 11.0) as u32;
+            let v = gear::pitch_line_velocity(g.pitch[0], rpm);
+            let kv = gear::dynamic_factor(level, v);
             r.push((
-                "Bending Stress (eq. 53)".into(),
-                format!("{sb:.1} MPa, safety {:.2}", allowed / sb),
+                "Pitch-Line Velocity".into(),
+                format!("{v:.2} m/s, Kv {kv:.3} (level {level}, Fig. 25)"),
             ));
+            let tip = d.check(1, "Load at the Tip");
+            let allowed = n("Allowable Bending Stress (MPa)", 250.0);
+            for k in 0..2 {
+                // J laid out from the tooth (spur), typed for helical gears.
+                let j = match gear::geometry_factor(&pair, &g, k, tip) {
+                    Ok(f) => f.j,
+                    Err(_) => n("Geometry Factor J (helical)", 0.35),
+                };
+                let f = BendingFactors {
+                    j,
+                    ka: n("Application Factor Ka", 1.0),
+                    km: n("Load Distribution Factor Km", 1.3),
+                    kv,
+                };
+                let sb = bending_stress(wt, pair.face[k], pair.module, &f);
+                r.push((
+                    format!("Gear {} Bending Stress (eq. 53)", k + 1),
+                    format!("J {j:.3}, {sb:.1} MPa, safety {:.2}", allowed / sb),
+                ));
+            }
             let helical = pair.helix.abs() > 1e-9 && g.overlap_ratio > 2.0;
+            let face = pair.face[0].min(pair.face[1]);
             match tooth_life(&g, &pair, wn, face, helical) {
                 Ok(life) => {
                     let factor = n("Life Factor (material)", 1.0);
@@ -146,8 +183,11 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             ui.colored_label(super::theme::tokens().warning, format!("Warning: {w}"));
         }
         ui.label(
-            RichText::new("J and Kv are read off RP-1152 Fig. 27 / 25; the gear model comes later")
-                .weak(),
+            RichText::new(
+                "J from the tooth laid out by its rack (Lewis parabola, Dolan and Broghamer), \
+                 Kv of RP-1152 Fig. 25",
+            )
+            .weak(),
         );
     });
     ui.end_row();
@@ -219,6 +259,147 @@ pub(super) fn key_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
     ui.end_row();
 }
 
+/// The Bearing panel's Calculate row: equivalent load, L10 and the adjusted life.
+pub(super) fn bearing_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
+    plabel(ui, "Results");
+    let n = |l: &str, def: f64| d.num(1, l).unwrap_or(def);
+    let kind = if d.index(1, "Bearing Type") == 1 {
+        bearing::Kind::Roller
+    } else {
+        bearing::Kind::Ball
+    };
+    ui.vertical(|ui| {
+        fit(ui);
+        wrap(ui);
+        let tok = super::theme::tokens();
+        let need = n("Required Life (h)", 10000.0);
+        match bearing::check(
+            n("Radial Load (N)", 2000.0),
+            n("Axial Load (N)", 0.0),
+            n("Radial Factor X", 1.0),
+            n("Axial Factor Y", 0.0),
+            n("Basic Dynamic Load Rating C (N)", 14000.0),
+            n("Speed (rpm)", 1500.0),
+            kind,
+            n("Life Adjustment Factors (D·E·F·G·H)", 1.0),
+            n("Required Reliability (%)", 90.0) / 100.0,
+            need,
+        ) {
+            Ok(b) => {
+                rows(
+                    ui,
+                    "bearing_results",
+                    &[
+                        ("Equivalent Load Fe".into(), format!("{:.1} N", b.fe)),
+                        (
+                            "Basic Life L10 = (C/Fe)^m".into(),
+                            format!("{:.2} million revolutions, {:.0} h", b.l10, b.l10_hours),
+                        ),
+                        ("Required C".into(), format!("{:.0} N", b.required_c)),
+                    ],
+                );
+                let col = if b.adjusted_hours >= need {
+                    tok.ok
+                } else {
+                    tok.error
+                };
+                ui.colored_label(
+                    col,
+                    format!(
+                        "Adjusted life at the reliability: {:.0} h (required {need:.0} h)",
+                        b.adjusted_hours
+                    ),
+                );
+            }
+            Err(e) => {
+                ui.colored_label(tok.error, format!("Bearing: {e}"));
+            }
+        }
+        ui.label(
+            RichText::new("Hamrock and Anderson, Rolling-Element Bearings, NASA RP-1105, §12")
+                .weak(),
+        );
+    });
+    ui.end_row();
+}
+
+/// A spring panel's Calculate row: rate, deflection, stress and lengths.
+pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
+    plabel(ui, "Results");
+    let compression = d.kind == Planned::Asm(AsmPlanned::CompressionSpring);
+    let n0 = |l: &str, def: f64| d.num(0, l).unwrap_or(def);
+    let n1 = |l: &str, def: f64| d.num(1, l).unwrap_or(def);
+    let wire = n0("Wire Diameter", 2.0);
+    let s = spring::Spring {
+        wire,
+        mean_diameter: n0("Outer Diameter", 20.0) - wire,
+        active: n0("Active Coils", 6.0),
+        free_length: n0("Free Length", 50.0),
+        ends: match d.index(0, "Ends") {
+            1 => spring::Ends::Closed,
+            2 => spring::Ends::Open,
+            _ => spring::Ends::ClosedGround,
+        },
+        g: n1("Shear Modulus G (MPa)", spring::G_SPRING_STEEL),
+    };
+    ui.vertical(|ui| {
+        fit(ui);
+        wrap(ui);
+        let tok = super::theme::tokens();
+        if !compression {
+            ui.label(RichText::new("The calculation covers compression springs yet").weak());
+            return;
+        }
+        if let Err(e) = s.validate() {
+            ui.colored_label(tok.error, format!("Compression Spring: {e}"));
+            return;
+        }
+        let p = n1("Working Load (N)", 100.0);
+        let typed = n1("Allowed Stress (MPa)", 0.0);
+        let allowed = if typed > 0.0 {
+            typed
+        } else {
+            spring::safe_stress(wire)
+        };
+        let defl = s.deflection(p);
+        let stress = s.stress(p);
+        rows(
+            ui,
+            "spring_results",
+            &[
+                ("Rate".into(), format!("{:.3} N/mm", s.rate())),
+                ("Deflection (eq. 2)".into(), format!("{defl:.3} mm")),
+                (
+                    "Working Length".into(),
+                    format!("{:.3} mm", s.free_length - defl),
+                ),
+                ("Solid Length".into(), format!("{:.3} mm", s.solid_length())),
+                ("Stress (eq. 4)".into(), format!("{stress:.1} MPa")),
+                (
+                    "Deflection at the Allowed Stress (eq. 7)".into(),
+                    format!("{:.3} mm", s.deflection_at_stress(allowed)),
+                ),
+            ],
+        );
+        let ok = stress <= allowed && defl <= s.travel();
+        let col = if ok { tok.ok } else { tok.error };
+        let why = if defl > s.travel() {
+            "the spring goes solid before the load".to_owned()
+        } else {
+            format!("stress {stress:.0} of {allowed:.0} MPa allowed")
+        };
+        ui.colored_label(col, why);
+        ui.label(
+            RichText::new(
+                "Kimball and Barr, Elements of Machine Design, §43 (torsion of the wire, no \
+                 curvature correction); allowed stress by eq. 12 unless typed",
+            )
+            .weak(),
+        );
+    });
+    ui.end_row();
+}
+
 /// Keeps a cell inside the Properties panel.
 fn fit(ui: &mut egui::Ui) {
     super::bolted::fit_cell(ui);
@@ -227,4 +408,150 @@ fn fit(ui: &mut egui::Ui) {
 /// Wraps the text of a cell of results.
 fn wrap(ui: &mut egui::Ui) {
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+}
+
+impl super::CadCraftApp {
+    /// Spur Gears OK: each gear whose model is Component becomes a part (its
+    /// teeth extruded, a bore the size of its picked cylinder) placed on its
+    /// axis; without picks gear 1 stands at the origin and gear 2 beside it
+    /// at the centre distance, turned half a pitch so the teeth mesh. One
+    /// Undo step; nothing is made on an error (rule 5).
+    pub(super) fn gear_ok(&mut self, d: &PartDialog) -> bool {
+        match self.gear_make(d) {
+            Ok(text) => {
+                self.file_status = Some(Ok(text));
+                true
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("Spur Gears: {e}")));
+                false
+            }
+        }
+    }
+
+    fn gear_make(&mut self, d: &PartDialog) -> Result<String, String> {
+        let pair = pair_of(d);
+        let g = pair.geometry()?;
+        let mut parts = Vec::new();
+        for k in 0..2 {
+            if d.index(0, if k == 0 { "Gear 1" } else { "Gear 2" }) != 0 {
+                continue;
+            }
+            let keys = [("cyl1", "start1"), ("cyl2", "start2")][k];
+            let picked = d.refs.get(keys.0).is_some_and(|v| !v.is_empty());
+            let (mut place, radius) = self.axis_placement(d, keys.0, keys.1, false)?;
+            let bore = radius.map_or(0.0, |r| 2.0 * r);
+            let mut part = gear_parts::gear_part(&pair, &g, k, bore)?;
+            part.regenerate().map_err(|e| e.to_string())?;
+            if let Some((_, msg)) = part.feature_health.iter().next() {
+                return Err(msg.clone());
+            }
+            if k == 1 && !picked {
+                // Beside gear 1, a space facing its tooth.
+                let (base, _) = self.axis_placement(d, "cyl1", "start1", false)?;
+                let turn = std::f64::consts::PI + std::f64::consts::PI / f64::from(pair.teeth[1]);
+                let local = crate::kernel::Transform3::new(
+                    crate::kernel::Vector3::new(g.center_distance, 0.0, 0.0),
+                    crate::kernel::Vector3::z() * turn,
+                );
+                place = base * local;
+            }
+            parts.push((part, place, k));
+        }
+        if parts.is_empty() {
+            return Err("both gears are set to No Model or Feature".into());
+        }
+        let mut trial = self.project.clone();
+        let mut occs = Vec::new();
+        for (part, place, k) in parts {
+            occs.push(self.place_generated(
+                &mut trial,
+                part,
+                &format!("Spur Gear {}", k + 1),
+                place,
+            )?);
+        }
+        self.history.break_coalescing();
+        self.checkpoint("Spur Gears");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.asm_solve(None);
+        self.asm.sel = occs.clone();
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        Ok(format!(
+            "Spur Gears: {} placed, centre distance {:.3} mm",
+            occs.len(),
+            g.center_distance
+        ))
+    }
+
+    /// Key OK: the DIN 6885 key for the shaft (the picked cylinder, else the
+    /// Shaft Diameter) placed in its groove: on the axis, its bottom at the
+    /// groove's floor, from the start plane. One Undo step.
+    pub(super) fn key_ok(&mut self, d: &PartDialog) -> bool {
+        match self.key_make(d) {
+            Ok(text) => {
+                self.file_status = Some(Ok(text));
+                true
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("Key: {e}")));
+                false
+            }
+        }
+    }
+
+    fn key_make(&mut self, d: &PartDialog) -> Result<String, String> {
+        let (place, radius) = self.axis_placement(d, "shaft", "start", false)?;
+        let dia = radius.map_or_else(|| d.num(1, "Shaft Diameter").unwrap_or(40.0), |r| 2.0 * r);
+        let k = key::size_for(dia)?;
+        let l = d.num(1, "Key Length").unwrap_or(50.0);
+        let ends = if d.index(0, "Groove") == 1 {
+            Ends::Square
+        } else {
+            Ends::Rounded
+        };
+        let mut part = crate::design::gear_model::key_part(&k, l, ends)?;
+        part.regenerate().map_err(|e| e.to_string())?;
+        if let Some((_, msg)) = part.feature_health.iter().next() {
+            return Err(msg.clone());
+        }
+        let keys = d
+            .num(0, "Number of Keys")
+            .unwrap_or(1.0)
+            .round()
+            .clamp(1.0, 2.0) as u32;
+        let mut trial = self.project.clone();
+        let mut occs = Vec::new();
+        for n in 0..keys {
+            // A second key opposite the first.
+            let turn = crate::kernel::Transform3::new(
+                crate::kernel::Vector3::zeros(),
+                crate::kernel::Vector3::z() * (std::f64::consts::PI * f64::from(n)),
+            );
+            let floor = crate::kernel::Transform3::new(
+                crate::kernel::Vector3::new(dia / 2.0 - k.t1, 0.0, 0.0),
+                crate::kernel::Vector3::zeros(),
+            );
+            occs.push(self.place_generated(
+                &mut trial,
+                part.clone(),
+                "Key",
+                place * turn * floor,
+            )?);
+        }
+        self.history.break_coalescing();
+        self.checkpoint("Parallel Key");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.asm_solve(None);
+        self.asm.sel = occs;
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        Ok(format!(
+            "Key: DIN 6885 A {} × {} × {l} placed for a Ø{dia:.1} shaft",
+            k.b, k.h
+        ))
+    }
 }

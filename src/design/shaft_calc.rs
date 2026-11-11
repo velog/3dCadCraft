@@ -12,11 +12,13 @@
 
 use std::f64::consts::PI;
 
+use serde::{Deserialize, Serialize};
+
 use super::G_MM_S2;
 use super::shaft::ShaftDesign;
 
 /// The shaft's material.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Material {
     /// Its name.
     pub name: String,
@@ -90,7 +92,7 @@ impl Material {
 }
 
 /// A support.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SupportKind {
     /// Takes radial and axial load.
     #[default]
@@ -100,7 +102,7 @@ pub enum SupportKind {
 }
 
 /// A support at `z` from the shaft's start.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Support {
     /// Where.
     pub z: f64,
@@ -110,7 +112,7 @@ pub struct Support {
 
 /// A load. Radial directions are angles about the axis from +Y (0: along +Y,
 /// 90°: along +X); gravity acts along −Y.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Load {
     /// A radial force (N) at `z`.
     Radial {
@@ -146,10 +148,22 @@ pub enum Load {
         /// Its size, about +Z.
         torque: f64,
     },
+    /// A bending moment (N·mm) applied at `z` (a gear's axial force acting at
+    /// its pitch radius, a coupling's misalignment). It bends the shaft in the
+    /// plane of `angle` (the plane a radial force at that angle bends it in);
+    /// positive: the internal moment steps up by it.
+    Moment {
+        /// Where.
+        z: f64,
+        /// Its size.
+        moment: f64,
+        /// The plane it bends in.
+        angle: f64,
+    },
 }
 
 /// How the reduced stress combines bending and torsion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ReducedStress {
     /// Distortion energy: √(σ² + 3τ²).
     #[default]
@@ -159,7 +173,7 @@ pub enum ReducedStress {
 }
 
 /// Reliability levels of Table III.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Reliability {
     /// 50 %.
     R50,
@@ -219,7 +233,7 @@ impl Reliability {
 }
 
 /// The fatigue-life modifying factors of eq. 19 the user gives.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FatigueFactors {
     /// Surface factor ka, read off Fig. 3 for the finish and σu (machined
     /// ≈ 0.7 … 0.8 for usual steels).
@@ -330,7 +344,7 @@ pub fn twist_degrees(t: f64, l: f64, d: f64, g: f64) -> f64 {
 }
 
 /// The calculation's inputs.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ShaftLoads {
     /// The material.
     pub material: Material,
@@ -412,19 +426,30 @@ impl ShaftResults {
     }
 }
 
-/// A point force in one plane for the beam.
+/// A point force (or, in the moment list, a point moment `f`) in one plane.
+#[derive(Clone, Copy)]
 struct Point {
     z: f64,
     f: f64,
 }
 
-/// Beam in one plane: reactions at the two supports, then shear and moment at the nodes.
-fn plane(points: &[Point], za: f64, zb: f64, nodes: &[f64]) -> (f64, f64, Vec<f64>, Vec<f64>) {
+/// Beam in one plane on two supports: their reactions, then shear and moment
+/// at the nodes. The internal moment at z is the moment of everything left
+/// of z: Σ f (z − zi) + Σ C.
+fn plane(
+    points: &[Point],
+    moments: &[Point],
+    za: f64,
+    zb: f64,
+    nodes: &[f64],
+) -> (f64, f64, Vec<f64>, Vec<f64>) {
     let sum: f64 = points.iter().map(|p| p.f).sum();
     let moment_a: f64 = points.iter().map(|p| p.f * (p.z - za)).sum();
-    let rb = -moment_a / (zb - za);
+    let couples: f64 = moments.iter().map(|c| c.f).sum();
+    // Nothing is left past the right end: Σ f = 0 and Σ f (L − zi) + Σ C = 0.
+    let rb = (couples - moment_a) / (zb - za);
     let ra = -sum - rb;
-    let mut all: Vec<Point> = points.iter().map(|p| Point { z: p.z, f: p.f }).collect();
+    let mut all: Vec<Point> = points.to_vec();
     all.push(Point { z: za, f: ra });
     all.push(Point { z: zb, f: rb });
     let mut v = Vec::with_capacity(nodes.len());
@@ -435,10 +460,125 @@ fn plane(points: &[Point], za: f64, zb: f64, nodes: &[f64]) -> (f64, f64, Vec<f6
             vz += p.f;
             mz += p.f * (z - p.z);
         }
+        for c in moments.iter().filter(|c| c.z < z - 1e-12) {
+            mz += c.f;
+        }
         v.push(vz);
         m.push(mz);
     }
     (ra, rb, v, m)
+}
+
+/// One plane of the beam on any number of supports (`sup`, at least two
+/// apart): each support's reaction, shear, moment and deflection at the nodes.
+///
+/// Statically indeterminate for three or more: the flexibility method — the
+/// outermost two supports carry the loads, the others are unknown forces
+/// whose deflections on that base must vanish (one linear equation per inner
+/// support, the deflections from the same M / (E I) integration).
+struct PlaneResult {
+    reactions: Vec<f64>,
+    shear: Vec<f64>,
+    moment: Vec<f64>,
+    deflection: Vec<f64>,
+}
+
+fn plane_n(
+    points: &[Point],
+    moments: &[Point],
+    sup: &[f64],
+    nodes: &[f64],
+    ei: &[f64],
+) -> Result<PlaneResult, String> {
+    let ia = (0..sup.len())
+        .min_by(|&a, &b| sup[a].total_cmp(&sup[b]))
+        .ok_or("no supports")?;
+    let ib = (0..sup.len())
+        .max_by(|&a, &b| sup[a].total_cmp(&sup[b]))
+        .ok_or("no supports")?;
+    let (za, zb) = (sup[ia], sup[ib]);
+    let inner: Vec<usize> = (0..sup.len()).filter(|&k| k != ia && k != ib).collect();
+    let base = |pts: &[Point], cs: &[Point]| {
+        let (ra, rb, v, m) = plane(pts, cs, za, zb, nodes);
+        let y = deflection(nodes, &m, ei, za, zb);
+        (ra, rb, v, m, y)
+    };
+    let mut forces = vec![0.0; inner.len()];
+    if !inner.is_empty() {
+        let (_, _, _, _, y0) = base(points, moments);
+        let n = inner.len();
+        // a[j][k]: deflection at inner support j from a unit force at k.
+        let mut a = vec![vec![0.0; n + 1]; n];
+        for (k, &sk) in inner.iter().enumerate() {
+            let (_, _, _, _, yk) = base(&[Point { z: sup[sk], f: 1.0 }], &[]);
+            for (j, &sj) in inner.iter().enumerate() {
+                a[j][k] = interp(nodes, &yk, sup[sj]);
+            }
+        }
+        for (j, &sj) in inner.iter().enumerate() {
+            a[j][n] = -interp(nodes, &y0, sup[sj]);
+        }
+        forces = solve_linear(a).ok_or("two supports stand at the same place")?;
+    }
+    let mut all = points.to_vec();
+    for (k, &sk) in inner.iter().enumerate() {
+        all.push(Point {
+            z: sup[sk],
+            f: forces[k],
+        });
+    }
+    let (ra, rb, v, m, y) = base(&all, moments);
+    let mut reactions = vec![0.0; sup.len()];
+    reactions[ia] = ra;
+    reactions[ib] = rb;
+    for (k, &sk) in inner.iter().enumerate() {
+        reactions[sk] = forces[k];
+    }
+    Ok(PlaneResult {
+        reactions,
+        shear: v,
+        moment: m,
+        deflection: y,
+    })
+}
+
+/// The value of `y` (given at `nodes`) at `z`, linear between nodes.
+fn interp(nodes: &[f64], y: &[f64], z: f64) -> f64 {
+    let n = nodes.len();
+    if n < 2 {
+        return y.first().copied().unwrap_or(0.0);
+    }
+    let k = nodes.partition_point(|&x| x < z).clamp(1, n - 1);
+    let (x0, x1) = (nodes[k - 1], nodes[k]);
+    let t = if x1 > x0 { (z - x0) / (x1 - x0) } else { 0.0 };
+    y[k - 1] + t * (y[k] - y[k - 1])
+}
+
+/// Gaussian elimination with partial pivoting on the augmented matrix `a`
+/// (n rows of n + 1); `None` when singular.
+fn solve_linear(mut a: Vec<Vec<f64>>) -> Option<Vec<f64>> {
+    let n = a.len();
+    let scale = a
+        .iter()
+        .flat_map(|r| r[..n].iter())
+        .fold(0.0f64, |m, v| m.max(v.abs()));
+    for c in 0..n {
+        let p = (c..n).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
+        if a[p][c].abs() <= 1e-12 * scale {
+            return None;
+        }
+        a.swap(c, p);
+        let pivot = a[c].clone();
+        for (r, row) in a.iter_mut().enumerate() {
+            if r != c {
+                let f = row[c] / pivot[c];
+                for (x, p) in row.iter_mut().zip(&pivot).skip(c) {
+                    *x -= f * p;
+                }
+            }
+        }
+    }
+    Some((0..n).map(|i| a[i][n] / a[i][i]).collect())
 }
 
 /// Deflection from the moment: two integrations of M / (E I) by trapezoids,
@@ -452,13 +592,7 @@ fn deflection(nodes: &[f64], m: &[f64], ei: &[f64], za: f64, zb: f64) -> Vec<f64
         slope[i] = slope[i - 1] + h * (m[i] / ei[i] + m[i - 1] / ei[i - 1]) / 2.0;
         y[i] = y[i - 1] + h * (slope[i] + slope[i - 1]) / 2.0;
     }
-    let at = |z: f64| -> f64 {
-        let k = nodes.partition_point(|&x| x < z).clamp(1, n - 1);
-        let (x0, x1) = (nodes[k - 1], nodes[k]);
-        let t = if x1 > x0 { (z - x0) / (x1 - x0) } else { 0.0 };
-        y[k - 1] + t * (y[k] - y[k - 1])
-    };
-    let (ya, yb) = (at(za), at(zb));
+    let (ya, yb) = (interp(nodes, &y, za), interp(nodes, &y, zb));
     let c1 = (yb - ya) / (zb - za);
     nodes
         .iter()
@@ -471,30 +605,66 @@ fn deflection(nodes: &[f64], m: &[f64], ei: &[f64], za: f64, zb: f64) -> Vec<f64
 pub fn calculate(shaft: &ShaftDesign, loads: &ShaftLoads) -> Result<ShaftResults, String> {
     shaft.validate()?;
     let len = shaft.length();
-    if loads.supports.len() != 2 {
-        return Err("the calculation needs exactly two supports".into());
+    if loads.supports.len() < 2 {
+        return Err("the calculation needs at least two supports".into());
     }
-    let (za, zb) = (loads.supports[0].z, loads.supports[1].z);
-    for z in [za, zb] {
+    let sup: Vec<f64> = loads.supports.iter().map(|s| s.z).collect();
+    for &z in &sup {
         if !(0.0..=len).contains(&z) {
             return Err(format!("the support at z = {z} lies outside the shaft"));
         }
     }
-    if (zb - za).abs() < 1e-6 {
-        return Err("the two supports must stand apart".into());
+    for (i, &a) in sup.iter().enumerate() {
+        if sup[i + 1..].iter().any(|&b| (a - b).abs() < 1e-6) {
+            return Err("two supports stand at the same place".into());
+        }
     }
-    let (za, zb) = (za.min(zb), za.max(zb));
     let n = loads.divisions.max(10);
-    let nodes: Vec<f64> = (0..=n).map(|i| len * i as f64 / n as f64).collect();
+    // Even divisions, plus a node at every support and point load (the
+    // reactions and the inner supports' zero deflection are read there).
+    let mut nodes: Vec<f64> = (0..=n).map(|i| len * i as f64 / n as f64).collect();
+    let mut extra = sup.clone();
+    for l in &loads.loads {
+        match *l {
+            Load::Radial { z, .. } | Load::Moment { z, .. } => extra.push(z),
+            _ => {}
+        }
+    }
+    for z in extra {
+        let z = z.clamp(0.0, len);
+        if nodes.iter().all(|&x| (x - z).abs() > 1e-9 * len.max(1.0)) {
+            nodes.push(z);
+        }
+    }
+    nodes.sort_by(f64::total_cmp);
+    let n = nodes.len() - 1;
     let d: Vec<f64> = nodes.iter().map(|&z| shaft.diameter_at(z)).collect();
+    // A bore makes the section hollow (RP-1123 eq. 4: B = 1 / (1 - (di/do)^4)).
+    let di: Vec<f64> = nodes.iter().map(|&z| shaft.inner_at(z)).collect();
     let mat = &loads.material;
-    let ei: Vec<f64> = d.iter().map(|&d| mat.e * PI * d.powi(4) / 64.0).collect();
-    // Point forces per plane: Y (angle 0) and X (90°).
+    let ei: Vec<f64> = d
+        .iter()
+        .zip(&di)
+        .map(|(&d, &i)| mat.e * PI * (d.powi(4) - i.powi(4)) / 64.0)
+        .collect();
+    // Point forces and moments per plane: Y (angle 0) and X (90°).
     let (mut py, mut px) = (Vec::new(), Vec::new());
+    let (mut cy, mut cx) = (Vec::new(), Vec::new());
     let mut torques = Vec::new();
     let mut axials = Vec::new();
     for l in &loads.loads {
         match *l {
+            Load::Moment { z, moment, angle } => {
+                check_on(z, len)?;
+                cy.push(Point {
+                    z,
+                    f: moment * angle.cos(),
+                });
+                cx.push(Point {
+                    z,
+                    f: moment * angle.sin(),
+                });
+            }
             Load::Radial { z, force, angle } => {
                 check_on(z, len)?;
                 py.push(Point {
@@ -547,8 +717,11 @@ pub fn calculate(shaft: &ShaftDesign, loads: &ShaftLoads) -> Result<ShaftResults
     let mut mass = 0.0;
     for i in 0..n {
         let (a, b) = (nodes[i], nodes[i + 1]);
-        let dm = shaft.diameter_at((a + b) / 2.0);
-        let kg = mat.density * 1e-9 * PI / 4.0 * dm * dm * (b - a);
+        let (dm, im) = (
+            shaft.diameter_at((a + b) / 2.0),
+            shaft.inner_at((a + b) / 2.0),
+        );
+        let kg = mat.density * 1e-9 * PI / 4.0 * (dm * dm - im * im) * (b - a);
         mass += kg;
         weights.push(Point {
             z: (a + b) / 2.0,
@@ -558,10 +731,10 @@ pub fn calculate(shaft: &ShaftDesign, loads: &ShaftLoads) -> Result<ShaftResults
     if loads.use_density {
         py.extend(weights.iter().map(|w| Point { z: w.z, f: w.f }));
     }
-    let (ray, rby, vy, my) = plane(&py, za, zb, &nodes);
-    let (rax, rbx, vx, mx) = plane(&px, za, zb, &nodes);
-    let yy = deflection(&nodes, &my, &ei, za, zb);
-    let yx = deflection(&nodes, &mx, &ei, za, zb);
+    let pyr = plane_n(&py, &cy, &sup, &nodes, &ei)?;
+    let pxr = plane_n(&px, &cx, &sup, &nodes, &ei)?;
+    let (vy, my, yy) = (&pyr.shear, &pyr.moment, &pyr.deflection);
+    let (vx, mx, yx) = (&pxr.shear, &pxr.moment, &pxr.deflection);
     // Torque and axial force at each node (from the start).
     let torque: Vec<f64> = nodes
         .iter()
@@ -594,12 +767,12 @@ pub fn calculate(shaft: &ShaftDesign, loads: &ShaftLoads) -> Result<ShaftResults
     };
     let ff = &loads.fatigue;
     for i in 0..=n {
-        let di = d[i];
+        let (dd, b) = (d[i], 1.0 / (1.0 - (di[i] / d[i]).powi(4)));
         let m = my[i].hypot(mx[i]);
         let t = torque[i];
-        let sb = 32.0 * m / (PI * di.powi(3));
-        let st = 16.0 * t.abs() / (PI * di.powi(3));
-        let sa = axial[i] / (PI * di * di / 4.0);
+        let sb = 32.0 * b * m / (PI * dd.powi(3));
+        let st = 16.0 * b * t.abs() / (PI * dd.powi(3));
+        let sa = axial[i] / (PI * (dd * dd - di[i] * di[i]) / 4.0);
         let s = sb + sa.abs();
         let red = match loads.reduced {
             ReducedStress::Hmh => (s * s + 3.0 * st * st).sqrt(),
@@ -613,7 +786,7 @@ pub fn calculate(shaft: &ShaftDesign, loads: &ShaftLoads) -> Result<ShaftResults
         } else {
             notch_factor(ff.kt_bending, ff.notch_sensitivity)
         };
-        let sf = corrected_limit(mat, ff, di, ke);
+        let sf = corrected_limit(mat, ff, dd, ke);
         r.shear.push(vy[i].hypot(vx[i]));
         r.moment.push(m);
         r.torque.push(t);
@@ -623,32 +796,27 @@ pub fn calculate(shaft: &ShaftDesign, loads: &ShaftLoads) -> Result<ShaftResults
         r.torsion_stress.push(st);
         r.reduced_stress.push(red);
         r.safety
-            .push(safety_eq17(di, 1.0, m, t.abs(), sf, mat.yield_strength));
+            .push(safety_eq17(dd, b, m, t.abs(), sf, mat.yield_strength));
     }
     let axial_at = |z: f64| if Some(z) == fixed { -fsum } else { 0.0 };
     r.reactions = loads
         .supports
         .iter()
-        .map(|s| {
-            let (ry, rx) = if (s.z - za).abs() < 1e-12 {
-                (ray, rax)
-            } else {
-                (rby, rbx)
-            };
-            [ry, rx, axial_at(s.z)]
-        })
+        .enumerate()
+        .map(|(k, s)| [pyr.reactions[k], pxr.reactions[k], axial_at(s.z)])
         .collect();
     // Twist: θ summed over the divisions (eq. 32 per piece).
     r.twist = (0..n)
         .map(|i| {
             let t = (torque[i] + torque[i + 1]) / 2.0;
-            let dm = shaft.diameter_at((nodes[i] + nodes[i + 1]) / 2.0);
+            let zm = (nodes[i] + nodes[i + 1]) / 2.0;
+            // A hollow piece: d⁴ becomes do⁴ - di⁴.
+            let dm = (shaft.diameter_at(zm).powi(4) - shaft.inner_at(zm).powi(4)).powf(0.25);
             twist_degrees(t.abs(), nodes[i + 1] - nodes[i], dm, mat.g)
         })
         .sum();
     // Eq. 33: Rayleigh–Ritz from the static deflection under the own weight.
-    let (_, _, _, mw) = plane(&weights, za, zb, &nodes);
-    let yw = deflection(&nodes, &mw, &ei, za, zb);
+    let yw = plane_n(&weights, &[], &sup, &nodes, &ei)?.deflection;
     let (mut num, mut den) = (0.0, 0.0);
     for (i, w) in weights.iter().enumerate() {
         let y = (yw[i] + yw[i + 1]) / 2.0;
@@ -743,6 +911,7 @@ mod tests {
     fn plain(d: f64, l: f64) -> ShaftDesign {
         ShaftDesign {
             sections: vec![Section::cylinder(d, l)],
+            ..ShaftDesign::default()
         }
     }
 
@@ -843,6 +1012,134 @@ mod tests {
         let got = r.critical_rpm.unwrap();
         assert!(got >= rpm * 0.999 && got < rpm * 1.003, "{got} vs {rpm}");
         assert!(close(r.mass, 7850.0 * PI / 4.0 * 0.02 * 0.02 * 1.0, 1e-6));
+    }
+
+    fn supports(z: &[f64]) -> Vec<Support> {
+        z.iter()
+            .map(|&z| Support {
+                z,
+                kind: SupportKind::Free,
+            })
+            .collect()
+    }
+
+    /// A continuous beam on three equal spans' supports: two spans L under a
+    /// uniform load q carry 3/8 qL at the ends and 10/8 qL in the middle; two
+    /// spans with a central force P each, 5/16 P and 22/16 P (the classical
+    /// results of the three-moment equation).
+    #[test]
+    fn three_supports() {
+        let s = plain(40.0, 2000.0);
+        let q = 2.0;
+        let loads = ShaftLoads {
+            supports: supports(&[0.0, 1000.0, 2000.0]),
+            loads: vec![Load::Continuous {
+                z0: 0.0,
+                z1: 2000.0,
+                q,
+                angle: 0.0,
+            }],
+            use_density: false,
+            ..ShaftLoads::default()
+        };
+        let r = calculate(&s, &loads).unwrap();
+        let ql = q * 1000.0;
+        assert!(
+            close(-r.reactions[0][0], 3.0 / 8.0 * ql, 2e-3),
+            "{:?}",
+            r.reactions
+        );
+        assert!(close(-r.reactions[1][0], 10.0 / 8.0 * ql, 2e-3));
+        assert!(close(-r.reactions[2][0], 3.0 / 8.0 * ql, 2e-3));
+        // Over the middle support M = qL² / 8.
+        assert!(close(
+            ShaftResults::max_abs(&r.moment),
+            ql * 1000.0 / 8.0,
+            3e-3
+        ));
+        let p = 1000.0;
+        // The middle support listed first: the order of the list does not matter.
+        let loads = ShaftLoads {
+            supports: supports(&[1000.0, 0.0, 2000.0]),
+            loads: vec![
+                Load::Radial {
+                    z: 500.0,
+                    force: p,
+                    angle: 90f64.to_radians(),
+                },
+                Load::Radial {
+                    z: 1500.0,
+                    force: p,
+                    angle: 90f64.to_radians(),
+                },
+            ],
+            use_density: false,
+            ..ShaftLoads::default()
+        };
+        let r = calculate(&s, &loads).unwrap();
+        assert!(
+            close(-r.reactions[0][1], 22.0 / 16.0 * p, 1e-3),
+            "{:?}",
+            r.reactions
+        );
+        assert!(close(-r.reactions[1][1], 5.0 / 16.0 * p, 1e-3));
+        assert!(close(-r.reactions[2][1], 5.0 / 16.0 * p, 1e-3));
+        // Four supports: the reactions still sum to the load.
+        let loads = ShaftLoads {
+            supports: supports(&[0.0, 600.0, 1300.0, 2000.0]),
+            ..loads
+        };
+        let r = calculate(&s, &loads).unwrap();
+        let sum: f64 = r.reactions.iter().map(|x| x[1]).sum();
+        assert!(close(-sum, 2.0 * p, 1e-9));
+        for k in [1, 2] {
+            let z = loads.supports[k].z;
+            let i = r.z.iter().position(|&x| (x - z).abs() < 1e-9).unwrap();
+            assert!(r.deflection[i].abs() < 1e-9, "{}", r.deflection[i]);
+        }
+    }
+
+    /// A bending moment C at the end of a simply supported shaft: the
+    /// reactions are ±C / L, the moment grows linearly to C, the slope at the
+    /// far support is C L / (6 E I) and the middle deflects C L² / (16 E I).
+    #[test]
+    fn bending_moment_load() {
+        let s = plain(30.0, 600.0);
+        let c = 50e3;
+        let loads = ShaftLoads {
+            supports: supports(&[0.0, 600.0]),
+            loads: vec![Load::Moment {
+                z: 600.0,
+                moment: c,
+                angle: 0.0,
+            }],
+            use_density: false,
+            ..ShaftLoads::default()
+        };
+        // A moment at the very end acts left of nothing: put it just inside.
+        let mut l2 = loads.clone();
+        l2.loads = vec![Load::Moment {
+            z: 600.0 - 1e-6,
+            moment: c,
+            angle: 0.0,
+        }];
+        let r = calculate(&s, &l2).unwrap();
+        assert!(
+            close(r.reactions[0][0].abs(), c / 600.0, 1e-6),
+            "{:?}",
+            r.reactions
+        );
+        assert!(close(r.reactions[0][0], -r.reactions[1][0], 1e-9));
+        assert!(close(ShaftResults::max_abs(&r.moment), c, 1e-3));
+        let i = PI * 30f64.powi(4) / 64.0;
+        let want = c * 600f64.powi(2) / (16.0 * 206_000.0 * i);
+        let mid = r.z.iter().position(|&z| (z - 300.0).abs() < 1e-9).unwrap();
+        assert!(
+            close(r.deflection[mid], want, 2e-3),
+            "{} vs {want}",
+            r.deflection[mid]
+        );
+        assert!(calculate(&s, &loads).is_ok());
     }
 
     #[test]

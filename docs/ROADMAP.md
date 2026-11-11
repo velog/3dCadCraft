@@ -293,7 +293,7 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 - Frame Generator (6.1): [spec](spec/6.1-frame-generator.md) written 2026-10-29, stages F0–F5. 2026-11-09: the frame is a subassembly (§3.6a); Unit QTY = length, cut details, Cut List, End Cap, Reuse done; arcs, splines and Merge done; next Change Reuse, Frame Member Naming, File Naming Defaults, Base Unit. Frame Analysis ([spec](spec/7.1a-frame-analysis.md)): solver, conversion, environment, results, modal done; Report, Settings, Edit of loads next.
 - Libraries of standard components (6.3): [spec](spec/6.3-content-center.md) rewritten 2026-11-02 with the plan CC0–CC7 (interface, families [5.7](spec/5.7-part-families.md), library and fasteners, profiles in the tree, everyday use, AutoDrop, own libraries and publishing, breadth); waiting for the owner's decisions (its §7).
   Fasteners built directly, no Boolean, 2026-11-02 (spec 6.3 §6.0b, format revision 61): all 2586 members build in 17 s, worst family 33.7 ms.
-- Bolted connections, shafts and gears (6.2).
+- Bolted connections, shafts and gears (6.2). 2026-11-11: shaft keyways, bores, 3+ supports, moments, Edit Shaft; gear J and Kv computed, gear and key parts placed; bearing life and compression springs calculated. Next: splines (free source), hub groove, spring and bearing models.
 - Weldments (6.4): [spec](spec/6.4-weldments.md) written 2026-10-29, stages W0–W5.
 - Tube & pipe and cables (6.5, 6.6).
 
