@@ -1574,6 +1574,7 @@ impl Planned {
                     | PartPlanned::AuthorFrameProfile
                     | PartPlanned::CreatePartFamily
                     | PartPlanned::Connection
+                    | PartPlanned::SketchDrivenPattern
             )
         )
     }
@@ -2695,6 +2696,12 @@ impl CadCraftApp {
         if kind == PartPlanned::CreatePartFamily {
             self.finish_sketch();
             self.part_family_start();
+            return;
+        }
+        // Sketch Driven Pattern is one of the pattern commands
+        // (`gui/pattern_feature.rs`): its panel is theirs.
+        if kind == PartPlanned::SketchDrivenPattern {
+            self.start_pattern(crate::part::PatternFeature::sketch_driven());
             return;
         }
         let kind = Planned::Part(kind);

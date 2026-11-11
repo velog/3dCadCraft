@@ -58,11 +58,19 @@ pub enum Env {
     Assembly,
     /// A drawing is the active document.
     Drawing,
+    /// A 3D sketch is open (its tab, its aliases).
+    Sketch3d,
 }
 
 impl Env {
     /// Every environment (for tests and the keymap's filter).
-    pub const ALL: [Env; 4] = [Env::Part, Env::Sketch, Env::Assembly, Env::Drawing];
+    pub const ALL: [Env; 5] = [
+        Env::Part,
+        Env::Sketch,
+        Env::Assembly,
+        Env::Drawing,
+        Env::Sketch3d,
+    ];
 
     /// English name, as in messages ("not available in a sketch").
     pub fn label(self) -> &'static str {
@@ -71,6 +79,7 @@ impl Env {
             Env::Sketch => "a sketch",
             Env::Assembly => "an assembly",
             Env::Drawing => "a drawing",
+            Env::Sketch3d => "a 3D sketch",
         }
     }
 }
@@ -92,6 +101,8 @@ impl Envs {
     pub const PART_ASSEMBLY: Envs = Envs(5);
     /// Only in a drawing.
     pub const DRAWING: Envs = Envs(8);
+    /// Only while a 3D sketch is open.
+    pub const SKETCH3D: Envs = Envs(16);
     /// The part, its sketches and drawings.
     pub const PART_DRAWING: Envs = Envs(11);
     /// The part, its sketches and assemblies (the 3D documents).
@@ -107,6 +118,7 @@ impl Envs {
             Env::Sketch => 2,
             Env::Assembly => 4,
             Env::Drawing => 8,
+            Env::Sketch3d => 16,
         };
         self.0 & bit != 0
     }
@@ -360,7 +372,7 @@ impl Command {
     /// exports do not (they export the part).
     pub fn valid_in(&self, env: Env) -> bool {
         self.envs.has(env)
-            || (matches!(env, Env::Assembly | Env::Drawing)
+            || (matches!(env, Env::Assembly | Env::Drawing | Env::Sketch3d)
                 && (self.id.starts_with("view.")
                     || self.id.starts_with("help.")
                     || (self.id.starts_with("file.") && !self.id.starts_with("file.export"))
@@ -469,6 +481,28 @@ const PART: Envs = Envs::PART;
 const ASSEMBLY: Envs = Envs::ASSEMBLY;
 const SKETCH: Envs = Envs::SKETCH;
 const DRAWING: Envs = Envs::DRAWING;
+const SKETCH3D: Envs = Envs::SKETCH3D;
+const S3_DRAW: Place = Place::Ribbon("3D Sketch", "Draw");
+const S3_CONSTRAIN: Place = Place::Ribbon("3D Sketch", "Constrain");
+const S3_MODIFY: Place = Place::Ribbon("3D Sketch", "Modify");
+const S3_INSERT: Place = Place::Ribbon("3D Sketch", "Insert");
+const S3_EXIT: Place = Place::Ribbon("3D Sketch", "Exit");
+
+/// A tool of the 3D Sketch tab (`gui/sketch3d.rs`, `Tool3::ALL[i]`).
+const fn s3(id: &'static str, i: u8, name: &'static str, bg: &'static str, icon: Icon) -> Command {
+    Command::new(id, name, bg, icon)
+        .run(Action::Sk3Tool(i))
+        .env(SKETCH3D)
+        .spec("1.10-3d-sketch.md")
+}
+
+/// A 3D Sketch command whose logic comes later (grey, rules 7 and 18).
+const fn s3_todo(id: &'static str, name: &'static str, bg: &'static str, icon: Icon) -> Command {
+    Command::new(id, name, bg, icon)
+        .env(SKETCH3D)
+        .spec("1.10-3d-sketch.md")
+        .todo("1.10")
+}
 
 /// A drawing command (`docs/spec/4-drawings.md`); planned ones add their
 /// FEATURES section with `.todo`.
@@ -592,10 +626,109 @@ pub static COMMANDS: &[Command] = &[
         .tip("Pick an origin plane or a planar face to sketch on")
         .spec("1.1-sketch.md"),
     c("part.start_3d_sketch", "Start 3D Sketch", "Нова 3D скица", Icon::Sketch3d)
+        .run(Action::Sketch3d)
         .alias(&["S3"])
         .at(&[M_SKETCH])
         .env(PART)
-        .todo("1.10"),
+        .tip("A sketch in space: lines by coordinates or model points, bends, Parallel / Perpendicular; a path for Sweep")
+        .spec("1.10-3d-sketch.md"),
+    // --- 3D Sketch tab (spec 1.10): the order of `Tool3::ALL` ---
+    s3("s3d.line", 0, "Line", "3D линия", Icon::S3Line)
+        .alias(&["L"])
+        .at(&[S3_DRAW])
+        .tip("Connected lines in space: click vertices, work points, faces or points of the sketch, or type X / Y / Z"),
+    s3("s3d.point", 1, "Point", "3D точка", Icon::S3Point)
+        .alias(&["PT"])
+        .at(&[S3_DRAW])
+        .tip("A point in space (clicked or typed)"),
+    s3("s3d.bend", 2, "Bend", "Огъване (3D)", Icon::S3Bend)
+        .alias(&["B"])
+        .at(&[S3_DRAW])
+        .tip("A tangent arc of a radius at the corner of two lines"),
+    s3("s3d.coincident", 3, "Coincident Constraint", "Съвпадение (3D)", Icon::S3Coincident)
+        .short("Coincident")
+        .alias(&["CO"])
+        .at(&[S3_CONSTRAIN])
+        .tip("Two points become one"),
+    s3("s3d.parallel", 4, "Parallel Constraint", "Успоредност (3D)", Icon::S3Parallel)
+        .short("Parallel")
+        .alias(&["PA"])
+        .at(&[S3_CONSTRAIN])
+        .tip("Two lines run the same way"),
+    s3("s3d.perpendicular", 5, "Perpendicular Constraint", "Перпендикулярност (3D)", Icon::S3Perpendicular)
+        .short("Perpendicular")
+        .alias(&["PE"])
+        .at(&[S3_CONSTRAIN])
+        .tip("Two lines square to each other"),
+    s3("s3d.arc", 6, "Three Point Arc", "3D дъга през три точки", Icon::S3Arc)
+        .short("Arc")
+        .alias(&["A"])
+        .at(&[S3_DRAW])
+        .tip("An arc in space: its start, its end, then a point on it"),
+    s3("s3d.spline", 7, "Spline", "3D сплайн", Icon::S3Spline)
+        .alias(&["SPL"])
+        .at(&[S3_DRAW])
+        .tip("A spline in space through (or controlled by) the clicked points"),
+    s3("s3d.helix", 8, "Helical Curve", "Спирала (3D)", Icon::S3Helix)
+        .alias(&["HC"])
+        .at(&[S3_DRAW])
+        .tip("A helix: a point on its axis, then its start point; pitch and turns in the panel"),
+    s3("s3d.include", 9, "Include Geometry", "Включване на геометрия", Icon::S3Include)
+        .alias(&["IG"])
+        .at(&[S3_INSERT])
+        .tip("A model edge copied into the 3D sketch (line, arc or spline)"),
+    s3("s3d.fix", 10, "Fix Constraint", "Фиксиране (3D)", Icon::S3Fix)
+        .short("Fix")
+        .alias(&["FX"])
+        .at(&[S3_CONSTRAIN])
+        .tip("A point keeps its place (a click fixes or frees it)"),
+    s3("s3d.equal", 11, "Equal Constraint", "Равенство (3D)", Icon::S3Equal)
+        .short("Equal")
+        .alias(&["EQ"])
+        .at(&[S3_CONSTRAIN])
+        .tip("Two lines equally long"),
+    s3("s3d.along_axis", 12, "Parallel to Axis", "Успоредно на ос (3D)", Icon::S3AlongAxis)
+        .alias(&["PX"])
+        .at(&[S3_CONSTRAIN])
+        .tip("A line along X, Y or Z (the choice in the panel)"),
+    s3("s3d.dimension", 13, "Dimension", "3D размер", Icon::S3Dimension)
+        .alias(&["D"])
+        .at(&[S3_CONSTRAIN])
+        .tip("A line length or the distance of two points; drawn on the sketch, a click edits it"),
+    s3("s3d.angle", 14, "Angle Dimension", "Ъглов размер (3D)", Icon::S3Angle)
+        .short("Angle")
+        .alias(&["AN"])
+        .at(&[S3_CONSTRAIN])
+        .tip("The angle between two lines"),
+    Command::new("s3d.move", "3D Move", "Преместване (3D)", Icon::S3Move)
+        .run(Action::Sk3Move)
+        .env(SKETCH3D)
+        .spec("1.10-3d-sketch.md")
+        .alias(&["M"])
+        .at(&[S3_MODIFY])
+        .tip("The triad on the selected points or lines: drag an arrow or a square, or click an arrow and type the distance"),
+    Command::new("s3d.finish", "Finish 3D Sketch", "Край на 3D скицата", Icon::S3Finish)
+        .run(Action::Sk3Finish)
+        .env(SKETCH3D)
+        .spec("1.10-3d-sketch.md")
+        .alias(&["FS"])
+        .at(&[S3_EXIT])
+        .tip("Close the 3D sketch (Esc with no tool running)"),
+    s3_todo("s3d.equation", "Equation Curve", "Крива по уравнение (3D)", Icon::S3Equation)
+        .alias(&["EC"])
+        .at(&[S3_DRAW]),
+    s3_todo("s3d.mirror", "Mirror", "Огледално (3D)", Icon::S3Mirror)
+        .alias(&["MI"])
+        .at(&[S3_MODIFY]),
+    s3_todo("s3d.project_surface", "Project to Surface", "Проектиране върху повърхнина", Icon::S3ProjectSurface)
+        .alias(&["PS"])
+        .at(&[S3_INSERT]),
+    s3_todo("s3d.intersection", "Intersection Curve", "Крива на пресичане", Icon::S3Intersection)
+        .alias(&["IC"])
+        .at(&[S3_INSERT]),
+    s3_todo("s3d.silhouette", "Silhouette Curve", "Силуетна крива", Icon::S3Silhouette)
+        .alias(&["SC"])
+        .at(&[S3_INSERT]),
     c("part.extrude", "Extrude", "Изтегляне (екструдиране)", Icon::Extrude)
         .run(Action::Extrude)
         .alias(&["E"])
@@ -3061,6 +3194,9 @@ pub fn repeats(action: Action) -> bool {
         | Action::RectPattern
         | Action::CircPattern
         | Action::MirrorFeature
+        | Action::Sketch3d
+        | Action::Sk3Tool(_)
+        | Action::Sk3Move
         | Action::Hole
         | Action::Thread
         | Action::Thicken
@@ -3460,12 +3596,15 @@ mod tests {
         assert_eq!(first("d", Sketch, &[]), "sketch.dimension");
         assert_eq!(first("d", Part, &[]), "part.draft");
         assert_eq!(first("SW", Part, &[]), "part.sweep");
-        // S: the exact alias first, then the longer ones (S3 is planned: last).
+        // S: the exact alias first, then the longer ones (S3 among them).
         let s = ids("s", Part);
         assert_eq!(s[0], "part.start_sketch");
-        let pos = |id: &str| s.iter().position(|x| *x == id).unwrap_or(usize::MAX);
-        assert!(pos("part.shell") < pos("part.start_3d_sketch"));
-        assert!(pos("part.sweep") < pos("part.start_3d_sketch"));
+        assert!(s.contains(&"part.start_3d_sketch"), "{s:?}");
+        assert_eq!(first("S3", Part, &[]), "part.start_3d_sketch");
+        // In a 3D sketch its own letters.
+        assert_eq!(first("L", Env::Sketch3d, &[]), "s3d.line");
+        assert_eq!(first("D", Env::Sketch3d, &[]), "s3d.dimension");
+        assert_eq!(first("M", Env::Sketch3d, &[]), "s3d.move");
         // Recent before alias prefix and word prefix.
         assert_eq!(first("s", Part, &["part.shell"]), "part.start_sketch");
         assert_eq!(first("sh", Part, &[]), "part.shell");

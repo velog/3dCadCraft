@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 use crate::kernel::Real;
 
 /// Built-in files: (file name, contents).
-const BUILTIN: [(&str, &str); 7] = [
+const BUILTIN: [(&str, &str); 8] = [
     (
         THREADS_ISO,
         include_str!("../../data/standards/iso_metric_threads.csv"),
@@ -48,6 +48,10 @@ const BUILTIN: [(&str, &str); 7] = [
         THREADS_ISO_TAPER,
         include_str!("../../data/standards/iso_taper_threads.csv"),
     ),
+    (
+        THREADS_ISO_PIPE,
+        include_str!("../../data/standards/iso_pipe_threads.csv"),
+    ),
 ];
 
 const THREADS_ISO: &str = "iso_metric_threads.csv";
@@ -57,6 +61,7 @@ const COUNTERBORES: &str = "counterbores.csv";
 const COUNTERSINKS: &str = "countersinks.csv";
 const THREADS_NPT: &str = "npt_threads.csv";
 const THREADS_ISO_TAPER: &str = "iso_taper_threads.csv";
+const THREADS_ISO_PIPE: &str = "iso_pipe_threads.csv";
 
 /// Thread type names (Inventor's Thread Type list).
 pub const ISO_METRIC: &str = "ISO Metric profile";
@@ -66,6 +71,8 @@ pub const ANSI_UNIFIED: &str = "ANSI Unified Screw Threads";
 pub const NPT: &str = "NPT";
 /// ISO 7 internal taper pipe threads, Rc (Taper Tapped holes).
 pub const ISO_TAPER: &str = "ISO Taper Internal";
+/// ISO 228-1 parallel pipe threads, G (Tapped holes, Thread).
+pub const ISO_PIPE: &str = "ISO Pipe Threads";
 
 /// Taper of a taper pipe thread: 1 in 16 on the diameter.
 pub const PIPE_TAPER: Real = 1.0 / 16.0;
@@ -352,6 +359,13 @@ impl Standards {
             true,
             &mut w,
         );
+        let threads_g = threads(
+            ISO_PIPE,
+            THREADS_ISO_PIPE,
+            &text(THREADS_ISO_PIPE),
+            false,
+            &mut w,
+        );
         let clearance = parse_csv(&text(CLEARANCE)).each(CLEARANCE, &mut w, |get| {
             Ok(ClearanceRow {
                 standard: get("standard")?,
@@ -365,7 +379,7 @@ impl Standards {
         let countersinks = seats(COUNTERSINKS, &text(COUNTERSINKS), "angle", &mut w);
         (
             Self {
-                threads: vec![threads_iso, threads_un, threads_npt, threads_rc],
+                threads: vec![threads_iso, threads_un, threads_npt, threads_rc, threads_g],
                 clearance,
                 counterbores,
                 countersinks,
@@ -497,6 +511,35 @@ mod tests {
                 .iter()
                 .any(|r| r.size == "1/4" && r.value == 82.0)
         );
+    }
+
+    /// ISO 228-1 parallel pipe threads: straight (Tapped holes and Thread,
+    /// not Taper Tapped), minor = major - 2 x 0.640327 P, pitch 25.4 / TPI.
+    #[test]
+    fn iso_pipe_threads_are_straight_whitworth_sizes() {
+        let s = Standards::builtin();
+        let g = s.thread_table(ISO_PIPE).unwrap();
+        assert!(!g.taper);
+        assert_eq!(g.rows.len(), 14);
+        for (d, tpi, major) in [
+            ("G 1/8", 28.0, 9.728),
+            ("G 1/4", 19.0, 13.157),
+            ("G 1/2", 14.0, 20.955),
+            ("G 1", 11.0, 33.249),
+            ("G 2", 11.0, 59.614),
+        ] {
+            let r = g.row(d).unwrap();
+            assert!((r.pitch - 25.4 / tpi).abs() < 1e-3, "{d} pitch");
+            assert!((r.major - major).abs() < 1e-9, "{d} major");
+            let minor = r.major - 2.0 * 0.640327 * r.pitch;
+            assert!(
+                (r.minor - minor).abs() < 2e-3,
+                "{d}: {} vs {minor}",
+                r.minor
+            );
+            assert!(r.tap_drill > r.minor && r.tap_drill < r.major, "{d} drill");
+            assert_eq!(r.classes_external, ["A", "B"]);
+        }
     }
 
     #[test]

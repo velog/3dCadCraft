@@ -211,7 +211,12 @@ impl CadCraftApp {
         let part = self.part();
         let mut out = Vec::new();
         let mut path = |r: &PathRef| {
-            if let Ok(g) = r.resolve(&part.sketches, &part.body, Point3::origin()) {
+            if let Ok(g) = r.resolve_with(
+                &part.sketches,
+                &part.sketches3d,
+                &part.body,
+                Point3::origin(),
+            ) {
                 out.push(g.polyline());
             }
         };
@@ -432,6 +437,18 @@ impl CadCraftApp {
                 return Some((Pick::Path(r), pts));
             }
         }
+        // A 3D sketch: its whole chain (a sweep's path or rail, a loft's rail
+        // or centre line).
+        if (self.sweep_draft.is_some() || self.loft_draft.is_some())
+            && sketch_on
+            && let Some(k) = self.sketch3d_under(p, rect)
+            && let Some(s) = part.sketches3d.get(k)
+        {
+            let r = PathRef::Sketch3d {
+                sketch: s.id.clone(),
+            };
+            return Some((Pick::Path(r), s.polylines()));
+        }
         let e = self.edge_under(p, rect)?;
         let er = crate::part::blend::edge_ref(&part.body, e)?;
         let pts = part
@@ -559,7 +576,7 @@ impl CadCraftApp {
             (SweepInput::Path, Pick::Edge(e)) => {
                 let mut list = match &d.def.path {
                     PathRef::Edges(v) => v.clone(),
-                    PathRef::Sketch { .. } => Vec::new(),
+                    PathRef::Sketch { .. } | PathRef::Sketch3d { .. } => Vec::new(),
                 };
                 if let Some(k) = list.iter().position(|x| x == &e) {
                     list.remove(k);
@@ -1267,6 +1284,14 @@ pub(super) fn describe_path(r: &PathRef, part: &crate::part::PartDocument) -> St
         }
         PathRef::Edges(e) if e.is_empty() => "none".into(),
         PathRef::Edges(e) => format!("{} edge(s)", e.len()),
+        PathRef::Sketch3d { sketch } => {
+            let name = part
+                .sketches3d
+                .iter()
+                .find(|s| &s.id == sketch)
+                .map_or(sketch.as_str(), |s| s.name.as_str());
+            format!("{name} (3D sketch)")
+        }
     }
 }
 

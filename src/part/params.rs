@@ -379,7 +379,7 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
                 v
             }
             super::PatternKind::Circular { .. } => vec![("count", Unit::Ul), ("angle", Unit::Deg)],
-            super::PatternKind::Mirror { .. } => Vec::new(),
+            super::PatternKind::Mirror { .. } | super::PatternKind::Sketch { .. } => Vec::new(),
         },
         Feature::Hole(h) => h.fields(),
         Feature::Sweep(s) => s.fields(),

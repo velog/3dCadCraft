@@ -19,6 +19,12 @@ enum BrowserCmd {
     Doc(super::documents::DocCmd, crate::document::DocumentId),
     NewSketchOn(PlaneRef),
     Edit(usize),
+    /// Edit 3D Sketch k (`gui/sketch3d.rs`).
+    Edit3d(usize),
+    /// Delete 3D Sketch k.
+    Delete3d(usize),
+    /// Visibility of 3D Sketch k.
+    Visible3d(usize, bool),
     Finish,
     Redefine(usize),
     LookAt(usize),
@@ -437,6 +443,9 @@ impl CadCraftApp {
             // The pattern command's Features selector takes browser rows.
             BrowserCmd::Select(Selection::Feature(k))
                 if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
+            // Sketch Driven Pattern's Sketch selector takes sketch rows.
+            BrowserCmd::Select(Selection::Sketch(i))
+                if self.pattern_draft.is_some() && self.pattern_pick_sketch_row(i) => {}
             // Rule Fillet's feature selectors and the plastic commands' sketch selectors take
             // browser rows.
             BrowserCmd::Select(Selection::Feature(k)) if self.plastic_pick_feature(k) => {}
@@ -503,6 +512,9 @@ impl CadCraftApp {
                 self.plane_picked(plane);
             }
             BrowserCmd::Edit(i) => self.edit_sketch(i),
+            BrowserCmd::Edit3d(k) => self.edit_sketch3d(k),
+            BrowserCmd::Delete3d(k) => self.delete_sketch3d(k),
+            BrowserCmd::Visible3d(k, on) => self.show_sketch3d(k, on),
             BrowserCmd::Finish => self.finish_sketch(),
             BrowserCmd::Redefine(i) => {
                 self.finish_sketch();
@@ -827,6 +839,9 @@ impl CadCraftApp {
                     if !done {
                         self.sketch_row(ui, i, cmds);
                     }
+                }
+                for k in 0..part.sketches3d.len() {
+                    self.sketch3d_row(ui, k, cmds);
                 }
             });
     }
@@ -1229,6 +1244,51 @@ impl CadCraftApp {
 
     /// One sketch in the browser: visibility, name, context menu (with
     /// Share / Unshare for sketches used by features).
+    /// A 3D sketch in the browser: visibility, icon, name; double click
+    /// edits it, its menu has Edit 3D Sketch and Delete.
+    fn sketch3d_row(&self, ui: &mut egui::Ui, k: usize, cmds: &mut Vec<BrowserCmd>) {
+        let Some(s) = self.part().sketches3d.get(k) else {
+            return;
+        };
+        let editing = self.sketch3d.as_ref().is_some_and(|e| e.index == k);
+        ui.horizontal(|ui| {
+            let mut visible = s.visible;
+            let changed = in_fold_column(ui, |ui| {
+                ui.checkbox(&mut visible, "")
+                    .on_hover_text("Visibility")
+                    .changed()
+            });
+            if changed {
+                cmds.push(BrowserCmd::Visible3d(k, visible));
+            }
+            tree_icon(ui, Icon::Sketch3d);
+            let text = if editing {
+                RichText::new(&s.name).strong()
+            } else {
+                RichText::new(&s.name)
+            };
+            let r = ui.selectable_label(editing, text).on_hover_text(format!(
+                "{} point(s), {} line(s), {} bend(s)",
+                s.points.len(),
+                s.lines.len(),
+                s.bends.len()
+            ));
+            if r.double_clicked() {
+                cmds.push(BrowserCmd::Edit3d(k));
+            }
+            r.context_menu(|ui| {
+                if ui.button("Edit 3D Sketch").clicked() {
+                    cmds.push(BrowserCmd::Edit3d(k));
+                    ui.close();
+                }
+                if ui.button("Delete").clicked() {
+                    cmds.push(BrowserCmd::Delete3d(k));
+                    ui.close();
+                }
+            });
+        });
+    }
+
     fn sketch_row(&self, ui: &mut egui::Ui, i: usize, cmds: &mut Vec<BrowserCmd>) {
         let part = self.part();
         let ps = &part.sketches[i];
@@ -1438,6 +1498,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         }
         if self.pattern_draft.is_some() {
             self.pattern_feature_dialog(ui);
+            return;
+        }
+        if self.sketch3d.is_some() {
+            self.sketch3d_panel(ui);
             return;
         }
         if self.hole_draft.is_some() {
@@ -3888,7 +3952,9 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
     /// The Rectangular / Circular Pattern and Mirror panel
     /// (`docs/spec/2.11-patterns.md`, `docs/spec/2.12-mirror.md`).
     fn pattern_feature_dialog(&mut self, ui: &mut egui::Ui) {
-        use super::pattern_feature::{PatternInput, describe_line, describe_plane, describe_pull};
+        use super::pattern_feature::{
+            PatternInput, describe_direction, describe_line, describe_plane,
+        };
         use crate::part::{Operation, PatternDirection, PatternKind, PullRef};
         let Some(mut d) = self.pattern_draft.clone() else {
             return;
@@ -3996,16 +4062,15 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             PatternKind::Rectangular { first, second } => {
                 psection(ui, "pat_dir1", "Direction 1", |ui| {
                     plabel(ui, "Direction");
-                    let text = first
-                        .dir
-                        .as_ref()
-                        .map_or("click an edge or a plane".into(), describe_pull);
+                    let text = describe_direction(first)
+                        .unwrap_or_else(|| "click an edge, a curve or a plane".into());
                     if selector(ui, input == PatternInput::Dir1, text) {
                         new_input = Some(PatternInput::Dir1);
                     }
                     ui.end_row();
                     if let Some(l) = axis_buttons(ui) {
                         first.dir = Some(PullRef::Line(l));
+                        first.path = None;
                     }
                     pattern_direction_rows(ui, first, &mut fx, &snapshot, "count1", "spacing1");
                 });
@@ -4023,16 +4088,15 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     ui.end_row();
                     if let Some(s) = second {
                         plabel(ui, "Direction");
-                        let text = s
-                            .dir
-                            .as_ref()
-                            .map_or("click an edge or a plane".into(), describe_pull);
+                        let text = describe_direction(s)
+                            .unwrap_or_else(|| "click an edge, a curve or a plane".into());
                         if selector(ui, input == PatternInput::Dir2, text) {
                             new_input = Some(PatternInput::Dir2);
                         }
                         ui.end_row();
                         if let Some(l) = axis_buttons(ui) {
                             s.dir = Some(PullRef::Line(l));
+                            s.path = None;
                         }
                         pattern_direction_rows(ui, s, &mut fx, &snapshot, "count2", "spacing2");
                     }
@@ -4083,6 +4147,60 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         ui.add_enabled(false, egui::RadioButton::new(true, "Rotational"));
                         ui.add_enabled(false, egui::RadioButton::new(false, "Fixed"))
                             .on_disabled_hover_text("Not yet: docs/spec/2.11-patterns.md");
+                    });
+                    ui.end_row();
+                });
+            }
+            PatternKind::Sketch { sketch, base } => {
+                let sketch_name = sketch.as_ref().map(|id| {
+                    self.part()
+                        .sketches
+                        .iter()
+                        .find(|s| &s.id == id)
+                        .map_or_else(|| format!("{id} (missing)"), |s| s.name.clone())
+                });
+                psection(ui, "pat_sketch", "Sketch", |ui| {
+                    plabel(ui, "Sketch");
+                    let text = sketch_name.unwrap_or_else(|| {
+                        "click a sketch (its centre points place the copies)".into()
+                    });
+                    if selector(ui, input == PatternInput::Sketch, text) {
+                        new_input = Some(PatternInput::Sketch);
+                    }
+                    ui.end_row();
+                    plabel(ui, "Base Point");
+                    ui.horizontal(|ui| {
+                        let text = base.as_ref().map_or_else(
+                            || "the centre point at the original (click a vertex)".into(),
+                            super::pattern_feature::describe_point,
+                        );
+                        if selector(ui, input == PatternInput::Base, text) {
+                            new_input = Some(PatternInput::Base);
+                        }
+                        if base.is_some()
+                            && ui
+                                .small_button("x")
+                                .on_hover_text("Back to the centre point at the original")
+                                .clicked()
+                        {
+                            *base = None;
+                        }
+                    });
+                    ui.end_row();
+                    plabel(ui, "Faces");
+                    ui.add_enabled(false, egui::Button::new("click a face"))
+                        .on_disabled_hover_text(
+                            "Comes later: the copies follow the face's normal (spec 2.11, Sketch Driven: Faces)",
+                        );
+                    ui.end_row();
+                    plabel(ui, "Orientation");
+                    ui.horizontal(|ui| {
+                        ui.radio(true, "Fixed")
+                            .on_hover_text("Every copy keeps the original's orientation");
+                        ui.add_enabled(false, egui::RadioButton::new(false, "Follow Face"))
+                            .on_disabled_hover_text(
+                                "Comes later (spec 2.11, Sketch Driven: Orientation)",
+                            );
                     });
                     ui.end_row();
                 });
@@ -4241,8 +4359,47 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     );
                     ui.end_row();
                 }
+                PatternKind::Sketch { .. } => {}
             }
         });
+        // Occurrences one by one (Inventor: Suppress of an occurrence in
+        // the browser): a cleared box suppresses that copy.
+        let n = match &p.kind {
+            PatternKind::Sketch {
+                sketch: Some(id), ..
+            } => self
+                .part()
+                .sketches
+                .iter()
+                .find(|s| &s.id == id)
+                .map_or(1, |s| crate::part::pattern::sketch_centres(&s.sketch).len()),
+            PatternKind::Mirror { .. } => 1,
+            _ => p.instances(),
+        };
+        if n > 1 {
+            psection(ui, &format!("pat_occ_{k}"), "Occurrences", |ui| {
+                plabel(ui, "Occurrence 1");
+                ui.add_enabled(false, egui::Checkbox::new(&mut true, "the original"));
+                ui.end_row();
+                for i in 2..=n.min(200) {
+                    plabel(ui, &format!("Occurrence {i}"));
+                    let mut on = !changed.suppressed.contains(&i);
+                    if ui
+                        .checkbox(&mut on, "")
+                        .on_hover_text("Clear to suppress this copy")
+                        .changed()
+                    {
+                        if on {
+                            changed.suppressed.retain(|x| *x != i);
+                        } else {
+                            changed.suppressed.push(i);
+                            changed.suppressed.sort_unstable();
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+        }
         if changed != p {
             self.edit_feature(k, Feature::Pattern(changed));
             return;
@@ -4266,7 +4423,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             ],
             PatternKind::Rectangular { .. } => &[("Count", "count1"), ("Spacing", "spacing1")],
             PatternKind::Circular { .. } => &[("Count", "count"), ("Angle", "angle")],
-            PatternKind::Mirror { .. } => &[],
+            PatternKind::Mirror { .. } | PatternKind::Sketch { .. } => &[],
         };
         if !fields.is_empty() {
             psection(ui, &format!("pat_val_{k}"), "Values", |ui| {
@@ -5249,11 +5406,19 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
+                (Mode::Normal, None) if self.sketch3d.is_some() => {
+                    let text = self
+                        .sketch3d
+                        .as_ref()
+                        .and_then(|e| e.tool)
+                        .map_or("3D Sketch: pick a tool on the 3D Sketch tab, select points or lines (3D Move: M), or Finish 3D Sketch (Esc)", |t| t.prompt());
+                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                }
                 (Mode::Normal, None) if self.thread_draft.is_some() => {
                     let text = if self.thread_draft.as_ref().is_some_and(|d| d.face.is_none()) {
                         "Thread: click a cylindrical face near the end the thread starts at"
                     } else {
-                        "Thread: set the size and the length, then OK (another click picks another face)"
+                        "Thread: set the size and the length, then OK (another face of the same diameter adds it)"
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
@@ -5295,8 +5460,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     let text = match self.pattern_draft.as_ref().map(|d| d.input) {
                         Some(PatternInput::Geometry) if solid => "Pattern: click the solids to copy (none: all), then the next selector",
                         Some(PatternInput::Geometry) => "Pattern: click a face of each feature to copy (or its browser row); a second click drops it",
-                        Some(PatternInput::Dir1) => "Rectangular Pattern: click a straight edge or a plane for Direction 1, set count and spacing, then OK",
-                        Some(PatternInput::Dir2) => "Rectangular Pattern: click a straight edge or a plane for Direction 2 (optional), then OK",
+                        Some(PatternInput::Dir1) => "Rectangular Pattern: click a straight edge or a plane for Direction 1 (a curve or curved edge: along it), set count and spacing, then OK",
+                        Some(PatternInput::Dir2) => "Rectangular Pattern: click a straight edge or a plane for Direction 2 (optional; a curve: along it), then OK",
+                        Some(PatternInput::Sketch) => "Sketch Driven Pattern: click the sketch whose centre points place the copies (or its browser row)",
+                        Some(PatternInput::Base) => "Sketch Driven Pattern: click a vertex or work point as the Base Point (optional), then OK",
                         Some(PatternInput::Axis) => "Circular Pattern: click a straight edge or choose an axis, set count and angle, then OK",
                         _ => "Mirror: click the mirror plane (an origin or work plane, or a planar face), then OK",
                     };
@@ -5840,6 +6007,7 @@ fn axis_label(axis: &crate::part::AxisRef, sketch: Option<&crate::sketch::Sketch
             }
         }
         crate::part::AxisRef::Work(id) => format!("Work axis {id}"),
+        crate::part::AxisRef::Edge(_) => "Model edge".to_owned(),
     }
 }
 
@@ -6074,6 +6242,19 @@ fn pattern_direction_rows(
     plabel(ui, "Midplane");
     ui.checkbox(&mut dir.midplane, "")
         .on_hover_text("Instances on both sides of the original");
+    ui.end_row();
+    // Along a path (Inventor's Orientation under the direction).
+    let path = dir.path.is_some();
+    plabel(ui, "Orientation");
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(path, |ui| {
+            ui.selectable_value(&mut dir.follow, false, "Identical")
+                .on_hover_text("Every copy keeps the original's orientation");
+            ui.selectable_value(&mut dir.follow, true, "Direction")
+                .on_hover_text("The copies turn with the path's tangent")
+                .on_disabled_hover_text("Only along a path (pick a curve as the direction)");
+        });
+    });
     ui.end_row();
 }
 

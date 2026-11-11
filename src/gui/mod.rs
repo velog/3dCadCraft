@@ -135,6 +135,8 @@ mod select;
 mod sheet_metal;
 mod shell;
 mod show_dims;
+mod sketch3d;
+mod sketch3d_view;
 mod sketch_marking;
 mod sketch_text;
 mod sketch_tools;
@@ -978,6 +980,8 @@ struct CadCraftApp {
     relink: Option<(usize, usize)>,
     /// The open Thread command.
     thread_draft: Option<hole::ThreadDraft>,
+    /// The open 3D sketch (`gui/sketch3d.rs`).
+    sketch3d: Option<sketch3d::Sk3dEdit>,
     /// The open Work Plane / Axis / Point command.
     work_draft: Option<work::WorkDraft>,
     /// A feature deletion waiting for confirmation, with what it breaks.
@@ -1252,6 +1256,7 @@ impl CadCraftApp {
             project_geometry: false,
             relink: None,
             thread_draft: None,
+            sketch3d: None,
             last_pick: None,
             box_select: None,
             offset_edit: None,
@@ -1658,6 +1663,8 @@ impl CadCraftApp {
                     Some(crate::part::Feature::Combine(_) | crate::part::Feature::Split(_))))
         {
             "2.13-combine-split.md"
+        } else if self.sketch3d.is_some() {
+            "1.10-3d-sketch.md"
         } else if let Some(d) = &self.pattern_draft {
             match d.def.kind {
                 crate::part::PatternKind::Mirror { .. } => "2.12-mirror.md",
@@ -1870,6 +1877,7 @@ impl CadCraftApp {
         self.pattern_draft = None;
         self.hole_draft = None;
         self.thread_draft = None;
+        self.finish_sketch3d();
         if let Some(d) = self.extrude.take()
             && d.temp_sketch
         {
@@ -2118,18 +2126,71 @@ impl CadCraftApp {
             })
             .filter(|(dist, _)| *dist <= overlay::CURVE_SNAP_PX)
             .min_by(|a, b| a.0.total_cmp(&b.0));
-        let Some((_, line)) = best else {
-            self.file_status = Some(Err("Revolve: pick a line of the sketch as the axis".into()));
-            return;
+        let axis = match best {
+            Some((_, line)) => crate::part::AxisRef::SketchLine(line),
+            None => match self.model_axis_under(pos, rect) {
+                Ok(Some(a)) => a,
+                Ok(None) => {
+                    self.file_status = Some(Err(
+                        "Revolve: pick a sketch line, a work axis or a straight edge as the axis"
+                            .into(),
+                    ));
+                    return;
+                }
+                Err(e) => {
+                    self.file_status = Some(Err(format!("Revolve: {e}")));
+                    return;
+                }
+            },
         };
         if let Some(d) = self.extrude.as_mut()
             && let DraftDef::Revolve(r) = &mut d.def
         {
-            r.axis = crate::part::AxisRef::SketchLine(line);
+            r.axis = axis;
             d.axis_set = true;
             d.axis_pick = false;
             self.file_status = None;
         }
+    }
+
+    /// Revolve: a work axis or a straight model edge under the cursor as the
+    /// axis, checked against the profile sketch's plane. An edge's line is
+    /// put into the part's runtime work geometry for the draft (the
+    /// regeneration records it again from the body before the feature).
+    fn model_axis_under(
+        &mut self,
+        pos: egui::Pos2,
+        rect: egui::Rect,
+    ) -> Result<Option<crate::part::AxisRef>, String> {
+        use crate::part::work::LineRef;
+        let Some(sketch) = self.extrude.as_ref().map(|d| d.sketch) else {
+            return Ok(None);
+        };
+        let axis = if let Some(work::WpInput::Line(LineRef::Work(id))) =
+            self.work_axis_or_point_under(pos, rect)
+        {
+            crate::part::AxisRef::Work(id)
+        } else if let Some(e) = self.edge_under(pos, rect) {
+            let body = &self.part().body;
+            if body.edge_direction(e).is_none() {
+                return Err("a curved edge cannot be the axis".into());
+            }
+            let Some(name) = body.edge(e).and_then(|x| x.name.clone()) else {
+                return Err("the edge has no name".into());
+            };
+            let line = LineRef::Edge(name.clone()).resolve(body, &self.part().work)?;
+            self.part_mut().work.edge_lines.insert(name.clone(), line);
+            crate::part::AxisRef::Edge(name)
+        } else {
+            return Ok(None);
+        };
+        let part = self.part();
+        let ps = part
+            .sketches
+            .get(sketch)
+            .ok_or("the profile sketch is gone")?;
+        crate::part::revolve::resolve_axis_in(&axis, &ps.sketch, &part.work)?;
+        Ok(Some(axis))
     }
 
     /// Extrude: a click in the graphics window toggles the region under it
@@ -4513,6 +4574,10 @@ impl CadCraftApp {
             Action::Combine => self.start_combine(),
             Action::Split => self.start_split(),
             Action::RectPattern => self.start_pattern(crate::part::PatternFeature::rectangular()),
+            Action::Sketch3d => self.start_sketch3d(),
+            Action::Sk3Tool(i) => self.sketch3d_set_tool(i),
+            Action::Sk3Move => self.sk3_start_move(),
+            Action::Sk3Finish => self.finish_sketch3d(),
             Action::CircPattern => self.start_pattern(crate::part::PatternFeature::circular()),
             Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
             Action::Hole => self.start_hole(),
@@ -5396,7 +5461,8 @@ impl CadCraftApp {
         if in_asm {
             self.assembly_keys(ctx, letter);
         }
-        let letter = letter && !in_asm && !self.is_drawing();
+        // A 3D sketch has its own letters (`alias_input`, Env::Sketch3d).
+        let letter = letter && !in_asm && !self.is_drawing() && self.sketch3d.is_none();
         if cmd && shift && pressed(Key::S) {
             self.open_dialog(files::DialogPurpose::SaveAs);
         } else if cmd && pressed(Key::S) {
@@ -5479,6 +5545,12 @@ impl CadCraftApp {
             self.return_to_assembly();
             return;
         }
+        // In a 3D sketch Esc steps back one level (the box / triad, the
+        // tool, then the sketch) and touches nothing else.
+        if pressed(Key::Escape) && self.sketch3d.is_some() {
+            self.sketch3d_escape();
+            return;
+        }
         // Esc first closes the selection menu (Shift + right-click).
         if pressed(Key::Escape)
             && self.sel_menu.take().is_none()
@@ -5510,6 +5582,7 @@ impl CadCraftApp {
             self.pattern_draft = None;
             self.cancel_hole();
             self.thread_draft = None;
+            self.sketch3d_escape();
             self.sm.draft = None;
             self.end_feature_edit();
             self.face_sel = None;
@@ -6115,8 +6188,10 @@ impl CadCraftApp {
         let (pat_edge, pat_plane) = match (&self.pattern_draft, pointer, on_cube) {
             (Some(d), Some(p), None) if !d.picks_geometry() => {
                 let e = if d.picks_lines() {
-                    self.edge_under(p, rect)
-                        .filter(|&e| self.part().body.edge_direction(e).is_some())
+                    // A curved edge is a path of a rectangular direction.
+                    self.edge_under(p, rect).filter(|&e| {
+                        d.picks_paths() || self.part().body.edge_direction(e).is_some()
+                    })
                 } else {
                     None
                 };
@@ -6129,11 +6204,20 @@ impl CadCraftApp {
             }
             _ => (None, None),
         };
+        if self.sketch3d.is_some()
+            && response.clicked_by(PointerButton::Primary)
+            && let (Some(p), None) = (pointer, on_cube)
+        {
+            let ctrl = ui.input(|i| i.modifiers.ctrl);
+            self.sketch3d_click(p, rect, ctrl);
+        }
         if self.pattern_draft.is_some() && response.clicked_by(PointerButton::Primary) {
             if let Some(f) = pat_face {
                 self.pattern_pick_face(f);
             } else if pat_edge.is_some() || pat_plane.is_some() {
                 self.pattern_pick_ref(pat_edge, pat_plane.clone());
+            } else if let (Some(p), None) = (pointer, on_cube) {
+                self.pattern_pick_other(p, rect);
             }
         }
         // --- Work Plane command: picks planes, edges and points ---
@@ -6925,6 +7009,10 @@ impl CadCraftApp {
             self.pattern_drag = None;
         }
 
+        // --- the 3D sketch's Move triad ---
+        if on_cube.is_none() {
+            self.sk3_gizmo_input(&response, ui, rect);
+        }
         // --- manipulators (before sketch dragging and orbiting) ---
         let handles = self.handles();
         let hot_handle = match (&handles, pointer) {
@@ -7464,6 +7552,7 @@ impl CadCraftApp {
                 Some(
                     d.face
                         .iter()
+                        .chain(&d.more)
                         .filter_map(|r| {
                             crate::part::shell::face_near(body, &r.face, Point3::from(r.hint))
                         })
@@ -7564,6 +7653,9 @@ impl CadCraftApp {
             self.draw_cursor_value(ui.ctx(), &painter, rect, pointer);
             self.draw_split_arrow(&painter, rect);
             self.draw_pattern_refs(&painter, rect);
+            self.draw_sketches3d(&painter, rect, pointer);
+            self.sk3_draw_view(&painter, rect, pointer);
+            self.sk3_view_boxes(ui.ctx(), rect);
             let want_hover = want_hover.filter(|_| self.select.prehighlight);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);

@@ -1243,12 +1243,24 @@ impl CadCraftApp {
             .is_some_and(|c| c.internal);
         psection(ui, "thread_input", "Input Geometry", |ui| {
             plabel(ui, "Face");
-            ui.label(
-                d.face
-                    .as_ref()
-                    .map_or("click a cylindrical face".into(), |f| f.face.clone()),
-            )
-            .on_hover_text("Click near the end the thread starts at");
+            ui.horizontal_wrapped(|ui| {
+                let text = match (&d.face, d.more.len()) {
+                    (None, _) => "click a cylindrical face".to_owned(),
+                    (Some(f), 0) => f.face.clone(),
+                    (Some(_), n) => format!("{} faces", n + 1),
+                };
+                ui.label(text).on_hover_text(
+                    "Click near the end the thread starts at; another face of the same diameter adds it",
+                );
+                if !d.more.is_empty()
+                    && ui
+                        .small_button("x")
+                        .on_hover_text("Keep only the first face")
+                        .clicked()
+                {
+                    d.more.clear();
+                }
+            });
             ui.end_row();
         });
         psection(ui, "thread_spec", "Specification", |ui| {
@@ -1466,7 +1478,21 @@ impl CadCraftApp {
         }
         psection(ui, &format!("thread_in_{k}"), "Thread", |ui| {
             plabel(ui, "Face");
-            ui.label(&t.face.face);
+            if t.faces.is_empty() {
+                ui.label(&t.face.face);
+            } else {
+                ui.label(format!("{} faces", 1 + t.faces.len()))
+                    .on_hover_text(
+                        std::iter::once(&t.face)
+                            .chain(&t.faces)
+                            .map(|f| f.face.as_str())
+                            .collect::<Vec<_>>()
+                            .join(
+                                "
+",
+                            ),
+                    );
+            }
             ui.end_row();
             plabel(ui, "Thread");
             ui.label(t.spec.note());

@@ -67,6 +67,8 @@ impl CadCraftApp {
             commands::Env::Assembly
         } else if self.editing.is_some() {
             commands::Env::Sketch
+        } else if self.sketch3d.is_some() {
+            commands::Env::Sketch3d
         } else {
             commands::Env::Part
         }
@@ -119,7 +121,11 @@ impl CadCraftApp {
                 // A single letter the user gave a command (Customize) starts
                 // it; one they took away from its default command does
                 // nothing; the others are the built-in single-letter keys.
-                let user = m.exact.filter(|c| self.keymap.aliases.contains_key(c.id));
+                // In a 3D sketch its own aliases are the single letters (L, B,
+                // D, M…): the part's built-in letters do not apply there.
+                let user = m.exact.filter(|c| {
+                    self.keymap.aliases.contains_key(c.id) || env == commands::Env::Sketch3d
+                });
                 let removed = m.exact.is_none()
                     && commands::alias_match(&cand, env)
                         .exact

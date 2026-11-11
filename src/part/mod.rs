@@ -67,6 +67,7 @@ pub mod rib;
 pub mod select;
 pub mod sheet_metal;
 pub mod shell;
+pub mod sketch3d;
 pub mod split;
 pub mod standards;
 pub mod surface_op;
@@ -485,11 +486,8 @@ impl Feature {
     /// `id` of the sketch it consumes, if any.
     pub fn sketch(&self) -> Option<&str> {
         match self {
-            Feature::Box(_)
-            | Feature::Work(_)
-            | Feature::Blend(_)
-            | Feature::Shell(_)
-            | Feature::Pattern(_) => None,
+            Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => None,
+            Feature::Pattern(p) => p.sketch_ids().first().copied(),
             Feature::Draft(d) => d.parting_sketch(),
             Feature::Thread(_) | Feature::Combine(_) => None,
             Feature::Split(sp) => sp.sketch(),
@@ -507,12 +505,32 @@ impl Feature {
         }
     }
 
+    /// `id` of every 3D sketch it uses (a sweep's path).
+    pub fn sketch3d_ids(&self) -> Vec<&str> {
+        match self {
+            Feature::Sweep(s) => s
+                .path
+                .sketch3d_id()
+                .into_iter()
+                .chain(s.rail.iter().filter_map(PathRef::sketch3d_id))
+                .collect(),
+            Feature::Loft(l) => l
+                .rails
+                .iter()
+                .chain(l.center_line.iter())
+                .filter_map(PathRef::sketch3d_id)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// `id` of every sketch it uses (a sweep's profile and path sketches, a
     /// loft's sections); the first is [`Feature::sketch`].
     pub fn sketch_ids(&self) -> Vec<&str> {
         match self {
             Feature::Sweep(s) => s.sketch_ids(),
             Feature::Loft(l) => l.sketch_ids(),
+            Feature::Pattern(p) => p.sketch_ids(),
             Feature::SheetOp(o) => match &o.op {
                 sheet_metal::SheetOp::LoftedFlange {
                     sketch1, sketch2, ..
@@ -958,6 +976,10 @@ pub struct PartDocument {
     pub features: Vec<Feature>,
     /// Sketches in creation order.
     pub sketches: Vec<PartSketch>,
+    /// 3D sketches in creation order (`docs/spec/1.10-3d-sketch.md`;
+    /// format revision 71).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sketches3d: Vec<sketch3d::Sketch3d>,
     /// The B-Rep body (a cache of `features` when there are any).
     pub body: BRep,
     /// Features that failed at the last regeneration (id → problem); they
@@ -1293,6 +1315,14 @@ impl PartDocument {
             if self.suppressed.contains(f.id()) || self.cond_suppressed.contains(f.id()) {
                 continue;
             }
+            // A Revolve about a model edge reads the edge on the body built so
+            // far (the edge may be gone after the revolve itself).
+            if let Feature::Revolve(r) = f
+                && let revolve::AxisRef::Edge(name) = &r.axis
+                && let Ok(line) = work::LineRef::Edge(name.clone()).resolve(&body, &works)
+            {
+                works.edge_lines.insert(name.clone(), line);
+            }
             let used: Vec<&crate::sketch::Sketch> = f
                 .sketch_ids()
                 .into_iter()
@@ -1300,6 +1330,19 @@ impl PartDocument {
                 .map(|ps| &ps.sketch)
                 .collect();
             let mut key = step_key(prev_key, f, &used);
+            // A 3D sketch the feature reads is part of its key too.
+            let spaces = f.sketch3d_ids();
+            if !spaces.is_empty() {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                key.hash(&mut h);
+                for id in spaces {
+                    if let Some(s) = self.sketches3d.iter().find(|s| s.id == id) {
+                        serde_json::to_vec(s).unwrap_or_default().hash(&mut h);
+                    }
+                }
+                key = h.finish();
+            }
             // Sheet metal steps also follow the rule (a new thickness
             // rebuilds them).
             if matches!(
@@ -1357,7 +1400,7 @@ impl PartDocument {
                         features.iter().find_map(|f| match f {
                             Feature::Revolve(r) if r.id == id => {
                                 let ps = sketches.iter().find(|s| s.id == r.sketch)?;
-                                r.world_axis(&ps.sketch).ok()
+                                r.world_axis_in(&ps.sketch, &works).ok()
                             }
                             _ => None,
                         })
@@ -1420,14 +1463,12 @@ impl PartDocument {
                     };
                     match sources {
                         Ok(sources) => {
-                            exact::pattern(p, &body, &works, &solids, &sources).map(|(next, t)| {
+                            exact::pattern(p, &body, &works, &self.sketches, &solids, &sources).map(|(next, t, places)| {
                                 made = t;
                                 // Copies of holes are holes too (Hole Table,
                                 // `4x` notes): each source hole moved by
                                 // each copy's placement.
-                                if !p.solid_mode
-                                    && let Ok(places) = p.placements(&body, &works)
-                                {
+                                if !p.solid_mode {
                                     let src: Vec<HoleInstance> = hole_out
                                         .holes
                                         .iter()
@@ -1480,12 +1521,13 @@ impl PartDocument {
                 )),
                 BuildStep::Thread(th) if use_exact || !th.spec.modeled => {
                     match exact::thread(th, &body) {
-                        Ok((out, ring)) => {
+                        Ok((out, rings)) => {
                             extra = out;
-                            match ring {
-                                Some(r) => exact::combine(solids.clone(), vec![r], Operation::Cut, &[], false)
-                                    .map(Some),
-                                None => Ok(None),
+                            if rings.is_empty() {
+                                Ok(None)
+                            } else {
+                                exact::combine(solids.clone(), rings, Operation::Cut, &[], false)
+                                    .map(Some)
                             }
                         }
                         Err(e) => Err(e),
@@ -1494,7 +1536,7 @@ impl PartDocument {
                 BuildStep::Thread(_) => Err(exact::Fail::User(
                     "a modeled thread needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
-                BuildStep::Swept(sw) if use_exact => match sw.build(&self.sketches, &body) {
+                BuildStep::Swept(sw) if use_exact => match sw.build(&self.sketches, &self.sketches3d, &body) {
                     // Output Surface: new surface bodies, no operation.
                     Ok(added) if sw.output == Output::Surface => {
                         let mut next = solids.clone();
@@ -1513,7 +1555,7 @@ impl PartDocument {
                     }
                     Err(e) => Err(e),
                 },
-                BuildStep::Loft(lo) if use_exact => match lo.build_in(&self.sketches, &body, &{
+                BuildStep::Loft(lo) if use_exact => match lo.build_in(&self.sketches, &self.sketches3d, &body, &{
                     let mut all = solids.clone();
                     all.extend(sheets.iter().cloned());
                     all

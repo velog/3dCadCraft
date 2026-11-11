@@ -285,10 +285,7 @@ pub fn installed_file() -> Option<PathBuf> {
 
 /// A home in `env` for a command (its alias must be free there).
 fn envs_of(c: &commands::Command) -> Vec<Env> {
-    [Env::Part, Env::Sketch, Env::Assembly, Env::Drawing]
-        .into_iter()
-        .filter(|e| c.valid_in(*e))
-        .collect()
+    Env::ALL.into_iter().filter(|e| c.valid_in(*e)).collect()
 }
 
 /// Puts what `found` holds into `map`: each known command gets its key and its

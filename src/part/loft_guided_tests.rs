@@ -827,3 +827,35 @@ fn rails_loft_then_shell() {
         }
     }
 }
+
+/// The rails of a loft from a 3D sketch (one sketch per rail: each must be
+/// one chain): the same volumes as with 2D sketch rails.
+#[test]
+fn rails_from_3d_sketches() {
+    use crate::part::sketch3d::Sketch3d;
+    for (w, d, h, g) in [(40.0, 20.0, 50.0, 1.5), (30.0, 10.0, 20.0, 0.5)] {
+        let mut p = PartDocument::default();
+        let a = rect_at(&mut p, 0.0, w, d);
+        let b = rect_at(&mut p, h, w * g, d * g);
+        let mut rails = Vec::new();
+        for (k, sx) in [-1.0, 1.0].into_iter().enumerate() {
+            let id = format!("Sketch3D{}", k + 1);
+            let mut s = Sketch3d::new(id.clone(), format!("3D Sketch{}", k + 1));
+            let p0 = s.add_point(Point3::new(sx * w / 2.0, 0.0, 0.0), false);
+            let p1 = s.add_point(Point3::new(sx * w * g / 2.0, 0.0, h), false);
+            s.add_line(p0, p1).unwrap();
+            p.sketches3d.push(s);
+            rails.push(PathRef::Sketch3d { sketch: id });
+        }
+        rails_loft(&mut p, &[a, b], rails, |_| {}).unwrap();
+        healthy(&p);
+        let want = w * d * h * (1.0 + (g - 1.0) + (g - 1.0) * (g - 1.0) / 3.0);
+        rel(volume(&p), want, 2e-3);
+        let loft = p
+            .features
+            .iter()
+            .find(|f| matches!(f, Feature::Loft(_)))
+            .unwrap();
+        assert_eq!(loft.sketch3d_ids(), vec!["Sketch3D1", "Sketch3D2"]);
+    }
+}

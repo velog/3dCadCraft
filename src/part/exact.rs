@@ -937,15 +937,42 @@ pub(super) fn as_user(f: Fail) -> Fail {
 /// new solids, or (Remove Original) replace it. Returns the solids and the
 /// tools the pattern applied (originals and copies, so a later pattern or
 /// mirror of this one copies every instance).
+#[allow(clippy::type_complexity)]
 pub(super) fn pattern(
     p: &super::PatternFeature,
     body: &BRep,
     works: &super::placement::WorkGeom,
+    sketches: &[super::PartSketch],
     cur: &[ExactSolid],
     sources: &[&super::pattern::ToolSet],
-) -> Result<(Vec<ExactSolid>, Vec<super::pattern::ToolSet>), Fail> {
+) -> Result<
+    (
+        Vec<ExactSolid>,
+        Vec<super::pattern::ToolSet>,
+        Vec<super::pattern::Placement>,
+    ),
+    Fail,
+> {
     use super::pattern::ToolSet;
-    let places = p.placements(body, works).map_err(User)?;
+    // Where the original is: the middle of its tools (features) or of the
+    // solids copied (paths start at their end nearer it; Sketch Driven's
+    // default base point is the centre point nearest it).
+    let originals: Vec<&ExactSolid> = if p.solid_mode {
+        cur.iter()
+            .filter(|s| {
+                p.solids.is_empty() || s.name.as_ref().is_some_and(|n| p.solids.contains(n))
+            })
+            .collect()
+    } else {
+        sources.iter().flat_map(|t| t.tools.iter()).collect()
+    };
+    let near = originals
+        .iter()
+        .filter_map(|s| exact::bounds(s))
+        .reduce(|(a, b), (c, d)| (a.inf(&c), b.sup(&d)))
+        .map(|(a, b)| nalgebra::center(&a, &b));
+    let ctx = super::pattern::PlaceCtx { sketches, near };
+    let places = p.placements_in(body, works, &ctx).map_err(User)?;
     let tag = |k: usize| format!("{}#{k}", p.id);
     let copy = |s: &ExactSolid, k: usize, m: &nalgebra::Matrix4<Real>, name: &str| {
         exact::transformed(s, m, &tag(k), Some(name))
@@ -1007,7 +1034,7 @@ pub(super) fn pattern(
             }
         }
         out.extend(extra);
-        return Ok((out, Vec::new()));
+        return Ok((out, Vec::new(), places));
     }
     if sources.is_empty() {
         return Err(User("select the features to copy".into()));
@@ -1051,7 +1078,7 @@ pub(super) fn pattern(
             solids: set.solids.clone(),
         });
     }
-    Ok((out, made))
+    Ok((out, made, places))
 }
 
 /// Whether every copy of `tools` at `places` stays clear of every other:
@@ -2572,6 +2599,30 @@ fn chamfer_rims(
 pub(super) fn thread(
     th: &super::hole::ThreadFeature,
     body: &BRep,
+) -> Result<(HoleOutput, Vec<ExactSolid>), Fail> {
+    let mut out = HoleOutput::default();
+    let mut rings = Vec::new();
+    let several = !th.faces.is_empty();
+    for (k, face) in std::iter::once(&th.face).chain(&th.faces).enumerate() {
+        let mut one = th.clone();
+        one.face = face.clone();
+        one.faces.clear();
+        let (o, ring) = thread_one(&one, k, body).map_err(|e| match e {
+            User(m) if several => User(format!("face {}: {m}", k + 1)),
+            e => e,
+        })?;
+        out.append(o);
+        rings.extend(ring);
+    }
+    Ok((out, rings))
+}
+
+/// One face of a Thread (`k` from 0: the groove of face k > 0 is named
+/// `Thread<k + 1>`, the first keeps `Thread`).
+fn thread_one(
+    th: &super::hole::ThreadFeature,
+    k: usize,
+    body: &BRep,
 ) -> Result<(HoleOutput, Option<ExactSolid>), Fail> {
     use super::hole::CosmeticThread;
     let (cf, a, b) = th.stretch(body).map_err(User)?;
@@ -2640,7 +2691,11 @@ pub(super) fn thread(
         left_hand: !t.right_hand,
         zone: [zone_r[0], zone_r[1], base - w - 0.25 * p, z1 + w + 0.25 * p],
         prefix: th.id.clone(),
-        name: "Thread".into(),
+        name: if k == 0 {
+            "Thread".into()
+        } else {
+            format!("Thread{}", k + 1)
+        },
         // The face's ends and the thread's.
         avoid: vec![0.0, len, -a, cf.length - a],
     });

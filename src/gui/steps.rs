@@ -219,6 +219,26 @@ impl CadCraftApp {
                         colors::PLANE,
                     ));
                 }
+                PatternKind::Sketch { .. } => {
+                    v.push(input(
+                        "sketch",
+                        "Sketch",
+                        &[K::Sketch],
+                        true,
+                        false,
+                        0,
+                        colors::DIRECTION,
+                    ));
+                    v.push(input(
+                        "base",
+                        "Base Point",
+                        &[K::Point],
+                        true,
+                        false,
+                        0,
+                        colors::GUIDES,
+                    ));
+                }
             }
             let active = match d.input {
                 P::Geometry => "geometry",
@@ -226,6 +246,8 @@ impl CadCraftApp {
                 P::Dir2 => "dir2",
                 P::Axis => "axis",
                 P::Plane => "plane",
+                P::Sketch => "sketch",
+                P::Base => "base",
             };
             return Some(Flow::new(v, Some(active)));
         }
@@ -391,6 +413,8 @@ impl CadCraftApp {
                 "dir2" => P::Dir2,
                 "axis" => P::Axis,
                 "plane" => P::Plane,
+                "sketch" => P::Sketch,
+                "base" => P::Base,
                 _ => P::Geometry,
             };
         }

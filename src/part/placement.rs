@@ -182,6 +182,10 @@ pub struct WorkGeom {
     pub context_curves: std::collections::HashMap<String, super::link::Shape3>,
     /// The points of the cross-part references (vertices of other components).
     pub context_points: std::collections::HashMap<String, Point3>,
+    /// Straight model edges used as lines by later features (a Revolve
+    /// about an edge), by edge name: (point, unit direction) on the body
+    /// as it was when the feature was built.
+    pub edge_lines: std::collections::HashMap<String, (Point3, Vector3)>,
 }
 
 impl WorkGeom {

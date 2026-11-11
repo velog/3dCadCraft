@@ -117,12 +117,88 @@ const TABLE: &[(&str, &str)] = &[
         "Pattern: щракнете стена на всяка операция за копиране (или реда ѝ в дървото); втори клик я маха",
     ),
     (
-        "Rectangular Pattern: click a straight edge or a plane for Direction 1, set count and spacing, then OK",
-        "Rectangular Pattern: щракнете прав ръб или равнина за Direction 1, задайте брой и стъпка, после OK",
+        "Rectangular Pattern: click a straight edge or a plane for Direction 1 (a curve or curved edge: along it), set count and spacing, then OK",
+        "Rectangular Pattern: щракнете прав ръб или равнина за Direction 1 (крива или крив ръб: по нея), задайте брой и стъпка, после OK",
     ),
     (
-        "Rectangular Pattern: click a straight edge or a plane for Direction 2 (optional), then OK",
-        "Rectangular Pattern: щракнете прав ръб или равнина за Direction 2 (по избор), после OK",
+        "Rectangular Pattern: click a straight edge or a plane for Direction 2 (optional; a curve: along it), then OK",
+        "Rectangular Pattern: щракнете прав ръб или равнина за Direction 2 (по избор; крива: по нея), после OK",
+    ),
+    (
+        "3D Line: click a model vertex, a work point, a face or a point of the sketch, or type X / Y / Z and Add Point",
+        "3D Line: щракнете връх, работна точка, стена или точка от скицата, или въведете X / Y / Z и Add Point",
+    ),
+    (
+        "3D Point: click a model vertex, a work point or a face, or type X / Y / Z",
+        "3D Point: щракнете връх, работна точка или стена, или въведете X / Y / Z",
+    ),
+    (
+        "Bend: click the corner point of two lines (the radius is in the panel)",
+        "Bend: щракнете ъгловата точка на две линии (радиусът е в панела)",
+    ),
+    (
+        "Coincident: click two points of the 3D sketch",
+        "Coincident: щракнете две точки от 3D скицата",
+    ),
+    (
+        "Parallel: click two lines of the 3D sketch",
+        "Parallel: щракнете две линии от 3D скицата",
+    ),
+    (
+        "Perpendicular: click two lines of the 3D sketch",
+        "Perpendicular: щракнете две линии от 3D скицата",
+    ),
+    (
+        "3D Arc: click the start, the end, then a point on the arc (vertices, work points, faces or points of the sketch)",
+        "3D Arc: щракнете началото, края, после точка от дъгата (върхове, работни точки, стени или точки от скицата)",
+    ),
+    (
+        "3D Spline: click its points (vertices, work points, faces or points of the sketch), then Create Spline",
+        "3D Spline: щракнете точките ѝ (върхове, работни точки, стени или точки от скицата), после Create Spline",
+    ),
+    (
+        "Dimension: click a line (its length) or two points (their distance), then type the value in the box",
+        "Dimension: щракнете линия (дължината ѝ) или две точки (разстоянието), после въведете стойността в полето",
+    ),
+    (
+        "Angle: click two lines, then type the value in the box",
+        "Angle: щракнете две линии, после въведете стойността в полето",
+    ),
+    (
+        "Helical Curve: click a point on the axis, then the start point (pitch, turns and axis are in the panel)",
+        "Helical Curve: щракнете точка от оста, после началната точка (стъпка, навивки и ос са в панела)",
+    ),
+    (
+        "Include Geometry: click a model edge to copy it into the 3D sketch",
+        "Include Geometry: щракнете ръб на модела, за да го копирате в 3D скицата",
+    ),
+    (
+        "Fix: click a point of the 3D sketch to fix or free it",
+        "Fix: щракнете точка от 3D скицата, за да я фиксирате или освободите",
+    ),
+    (
+        "Equal: click two lines of the 3D sketch",
+        "Equal: щракнете две линии от 3D скицата",
+    ),
+    (
+        "Parallel to Axis: click a line (the axis is in the panel)",
+        "Parallel to Axis: щракнете линия (оста е в панела)",
+    ),
+    (
+        "3D Sketch: pick a tool on the 3D Sketch tab, select points or lines (3D Move: M), or Finish 3D Sketch (Esc)",
+        "3D Sketch: изберете инструмент от раздела 3D Sketch, изберете точки или линии (3D Move: M) или Finish 3D Sketch (Esc)",
+    ),
+    (
+        "Sketch Driven Pattern: click the sketch whose centre points place the copies (or its browser row)",
+        "Sketch Driven Pattern: щракнете скицата, чиито централни точки задават копията (или реда ѝ в дървото)",
+    ),
+    (
+        "Sketch Driven Pattern: click a vertex or work point as the Base Point (optional), then OK",
+        "Sketch Driven Pattern: щракнете връх или работна точка за Base Point (по избор), после OK",
+    ),
+    (
+        "Revolve: click a sketch line, a work axis or a straight edge (or an origin axis in the panel) for the axis",
+        "Revolve: щракнете линия от скицата, работна ос или прав ръб (или основна ос в панела) за ос",
     ),
     (
         "Circular Pattern: click a straight edge or choose an axis, set count and angle, then OK",
@@ -161,8 +237,8 @@ const TABLE: &[(&str, &str)] = &[
         "Thread: щракнете цилиндрична стена близо до края, от който започва резбата",
     ),
     (
-        "Thread: set the size and the length, then OK (another click picks another face)",
-        "Thread: задайте размера и дължината, после OK (друг клик избира друга стена)",
+        "Thread: set the size and the length, then OK (another face of the same diameter adds it)",
+        "Thread: задайте размера и дължината, после OK (друга стена със същия диаметър се добавя)",
     ),
     (
         "Select the pull direction (a planar face, a plane, a straight edge or an axis)",

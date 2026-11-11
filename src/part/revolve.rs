@@ -26,6 +26,11 @@ pub enum AxisRef {
     /// A work axis (feature id); must lie in the sketch plane (format
     /// revision 15).
     Work(String),
+    /// A straight model edge, by persistent name; must lie in the sketch
+    /// plane. Resolved against the body built before the revolve (the
+    /// regeneration records it in `WorkGeom::edge_lines`; format revision
+    /// 71).
+    Edge(String),
 }
 
 /// How far a revolve goes.
@@ -408,6 +413,13 @@ pub fn resolve_axis_in(
                 .get(id)
                 .ok_or_else(|| format!("work axis '{id}' no longer exists"))?;
             line_in_sketch(sketch, *p, *d, "the work axis")
+        }
+        AxisRef::Edge(name) => {
+            let (p, d) = works
+                .edge_lines
+                .get(name)
+                .ok_or_else(|| format!("edge '{name}' no longer exists"))?;
+            line_in_sketch(sketch, *p, *d, "the edge")
         }
         AxisRef::SketchLine(id) => {
             let Some(Entity::Line { start, end }) = sketch.entity(*id) else {

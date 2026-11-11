@@ -496,7 +496,7 @@ impl CadCraftApp {
         let cmd = d.def.command();
         Some(match &d.def {
             DraftDef::Revolve(_) if d.axis_pick => format!(
-                "{cmd}: click a line of the sketch (or an origin axis in the panel) for the axis"
+                "{cmd}: click a sketch line, a work axis or a straight edge (or an origin axis in the panel) for the axis"
             ),
             _ if d.def.profiles().is_empty()
                 && !matches!(&d.def, DraftDef::Extrude(e) if e.open.is_some())

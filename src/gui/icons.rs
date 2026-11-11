@@ -459,6 +459,50 @@ pub enum Icon {
     Customize,
     /// Start 3D Sketch.
     Sketch3d,
+    /// 3D Line (the 2D icon with a 3D triad).
+    S3Line,
+    /// 3D Spline (the 2D icon with a 3D triad).
+    S3Spline,
+    /// 3D Arc (the 2D icon with a 3D triad).
+    S3Arc,
+    /// Helical Curve (the 2D icon with a 3D triad).
+    S3Helix,
+    /// Bend (the 2D icon with a 3D triad).
+    S3Bend,
+    /// 3D Point (the 2D icon with a 3D triad).
+    S3Point,
+    /// Equation Curve (the 2D icon with a 3D triad).
+    S3Equation,
+    /// Include Geometry (the 2D icon with a 3D triad).
+    S3Include,
+    /// Project to Surface (the 2D icon with a 3D triad).
+    S3ProjectSurface,
+    /// Intersection Curve (the 2D icon with a 3D triad).
+    S3Intersection,
+    /// Silhouette Curve (the 2D icon with a 3D triad).
+    S3Silhouette,
+    /// 3D Dimension (the 2D icon with a 3D triad).
+    S3Dimension,
+    /// 3D Angle dimension (the 2D icon with a 3D triad).
+    S3Angle,
+    /// 3D Coincident (the 2D icon with a 3D triad).
+    S3Coincident,
+    /// 3D Parallel (the 2D icon with a 3D triad).
+    S3Parallel,
+    /// 3D Perpendicular (the 2D icon with a 3D triad).
+    S3Perpendicular,
+    /// Parallel to Axis (the 2D icon with a 3D triad).
+    S3AlongAxis,
+    /// 3D Equal (the 2D icon with a 3D triad).
+    S3Equal,
+    /// 3D Fix (the 2D icon with a 3D triad).
+    S3Fix,
+    /// 3D Move (triad) (the 2D icon with a 3D triad).
+    S3Move,
+    /// 3D Mirror (the 2D icon with a 3D triad).
+    S3Mirror,
+    /// Finish 3D Sketch (the 2D icon with a 3D triad).
+    S3Finish,
     /// Shadows (a block and its shadow).
     Shadows,
     /// Reflections (a block mirrored below).
@@ -1242,6 +1286,14 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
             p.block([3.0, 6.0, 7.0, 7.0, 3.5], ink, Color32::TRANSPARENT);
         }
     }
+}
+
+/// A small X / Y / Z triad in the top-left corner: the 3D sketch versions
+/// of the 2D icons.
+fn badge3d(p: &Pen, c: Color32) {
+    p.line(&[(1.5, 5.5), (1.5, 1.0)], c);
+    p.line(&[(1.5, 5.5), (6.0, 5.5)], c);
+    p.line(&[(1.5, 5.5), (4.5, 3.0)], c);
 }
 
 /// Draws `icon` into `rect` (square) with palette `k`.
@@ -3004,6 +3056,94 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.rect(1.5, 3.0, 14.5, 7.0, ink);
             p.line(&[(6.0, 14.5), (13.0, 7.5)], acc);
             p.line(&[(6.0, 14.5), (5.0, 15.0), (5.5, 13.5)], acc);
+        }
+        S3Line => {
+            paint(painter, rect, Line, k);
+            badge3d(p, hot);
+        }
+        S3Spline => {
+            paint(painter, rect, SplineInterp, k);
+            badge3d(p, hot);
+        }
+        S3Arc => {
+            paint(painter, rect, ArcThree, k);
+            badge3d(p, hot);
+        }
+        S3Helix => {
+            paint(painter, rect, Coil, k);
+            badge3d(p, hot);
+        }
+        S3Bend => {
+            paint(painter, rect, Fillet2d, k);
+            badge3d(p, hot);
+        }
+        S3Point => {
+            paint(painter, rect, Point, k);
+            badge3d(p, hot);
+        }
+        S3Equation => {
+            paint(painter, rect, Spline, k);
+            badge3d(p, hot);
+        }
+        S3Include => {
+            paint(painter, rect, ProjectGeometry, k);
+            badge3d(p, hot);
+        }
+        S3ProjectSurface => {
+            paint(painter, rect, ProjectCutEdges, k);
+            badge3d(p, hot);
+        }
+        S3Intersection => {
+            paint(painter, rect, Split, k);
+            badge3d(p, hot);
+        }
+        S3Silhouette => {
+            paint(painter, rect, ProjectFlatPattern, k);
+            badge3d(p, hot);
+        }
+        S3Dimension => {
+            paint(painter, rect, Dimension, k);
+            badge3d(p, hot);
+        }
+        S3Angle => {
+            paint(painter, rect, ArcCenter, k);
+            badge3d(p, hot);
+        }
+        S3Coincident => {
+            paint(painter, rect, Coincident, k);
+            badge3d(p, hot);
+        }
+        S3Parallel => {
+            paint(painter, rect, Parallel, k);
+            badge3d(p, hot);
+        }
+        S3Perpendicular => {
+            paint(painter, rect, Perpendicular, k);
+            badge3d(p, hot);
+        }
+        S3AlongAxis => {
+            paint(painter, rect, Horizontal, k);
+            badge3d(p, hot);
+        }
+        S3Equal => {
+            paint(painter, rect, Equal, k);
+            badge3d(p, hot);
+        }
+        S3Fix => {
+            paint(painter, rect, Fix, k);
+            badge3d(p, hot);
+        }
+        S3Move => {
+            paint(painter, rect, Move, k);
+            badge3d(p, hot);
+        }
+        S3Mirror => {
+            paint(painter, rect, Mirror, k);
+            badge3d(p, hot);
+        }
+        S3Finish => {
+            paint(painter, rect, Finish, k);
+            badge3d(p, hot);
         }
         Sketch3d => {
             p.line(&[(3.0, 12.0), (3.0, 3.0)], ink);

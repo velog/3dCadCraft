@@ -1404,7 +1404,7 @@ impl CadCraftApp {
             part.features.iter().find_map(|f| match f {
                 Feature::Revolve(r) if r.id == id => {
                     let ps = part.sketches.iter().find(|s| s.id == r.sketch)?;
-                    r.world_axis(&ps.sketch).ok()
+                    r.world_axis_in(&ps.sketch, works).ok()
                 }
                 _ => None,
             })

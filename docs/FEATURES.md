@@ -537,9 +537,11 @@ Triangulation with holes (`kernel::triangulate_with_holes`) connects every hole 
 
 **Inventor equivalent.** The Profile selection in Extrude/Revolve.
 
-## 1.10 3D sketch — ⬜ · L
+## 1.10 3D sketch — 🟡 · L
 
 Lines, splines and helices directly in space, plus intersection of surfaces and projection onto faces. Used for paths (sweep, tubes, frames).
+
+**Specification:** [spec/1.10-3d-sketch.md](spec/1.10-3d-sketch.md). 🟡 first slice (2026-11-10): Start 3D Sketch (`S3`), lines and points by Precise Input (absolute / relative coordinates with expressions) or by clicks on model vertices, work points, faces and the sketch's own points; Bend (a tangent arc of a radius at a corner); Coincident, Parallel, Perpendicular (a 3D solver); the browser node (edit, visibility, delete); a Sweep path (the whole chain). Second slice (2026-11-10): the **3D Sketch ribbon tab** (Draw, Constrain, Modify, Insert, Exit; own icons and aliases), three-point arcs, splines (interpolation, control vertex), helical curves, Include Geometry of model edges, Fix / Equal / Parallel to Axis, dimensions (length, distance, angle) drawn on the sketch and edited in place, constraint glyphs (select, delete), the **3D Move triad** (drag along an axis or in a plane, click an arrow to type; the constraints follow), Sweep rails and Loft rails / centre lines from 3D sketches. To do: project / intersection / silhouette curves, equation curves, mirror, rotation rings, Auto-Bend, frames.
 
 **Inventor equivalent.** 3D Sketch.
 
@@ -581,7 +583,7 @@ Lines, splines and helices directly in space, plus intersection of surfaces and 
 
 ## 2.2 Revolve — 🟡 · L
 
-**Status (specification: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Done: profiles, axis (a line from the sketch, with automatic choice of the only centerline, X/Y/Z of the origin), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, angles as parameters, diameter dimension to a centerline. 🟡 (2026-10-19, Inventor 2027, waiting for a visual check): To (a face or plane through the axis, a point) with Minimum Solution, Predict Boolean Operation, Continue with right-click, breadcrumb, "+", Sphere and Torus primitives; fixed direction of Symmetric/Asymmetric in the exact kernel. To do: work axis and edge as the axis, To Next, Match Shape.
+**Status (specification: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Done: profiles, axis (a line from the sketch, with automatic choice of the only centerline, X/Y/Z of the origin), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, angles as parameters, diameter dimension to a centerline. 🟡 (2026-10-19, Inventor 2027, waiting for a visual check): To (a face or plane through the axis, a point) with Minimum Solution, Predict Boolean Operation, Continue with right-click, breadcrumb, "+", Sphere and Torus primitives; fixed direction of Symmetric/Asymmetric in the exact kernel. 🟡 (2026-11-10): a work axis (clicked in the view or from the panel) and a straight model edge (clicked; stored by its persistent name, read on the body before the revolve) as the axis. To do: To Next, Match Shape.
 
 **What it does.** Revolves a profile about an axis: shafts, bushings, flanges.
 
@@ -681,7 +683,7 @@ Tilts faces at an angle to a pull direction, for castings and die casting. Metho
 
 ## 2.9 Thread — 🟡 · M
 
-**Specification:** [spec/2.9-thread.md](spec/2.9-thread.md). Implemented (waiting for a visual check): a thread on a cylindrical face (shaft or hole), the size is proposed from the diameter, a check that the size fits the face, Full Length or Offset + Length, Right/Left Hand, cosmetic (data + a texture with helical stripes one pitch apart on the face, only along the thread's length, and in pattern copies; Application Options → Display → Thread texture) or modeled (groove per ISO 68-1; only the zone around the thread is faceted), clearance for 3D printing. To do: several faces at once, tapered thread.
+**Specification:** [spec/2.9-thread.md](spec/2.9-thread.md). Implemented (waiting for a visual check): a thread on a cylindrical face (shaft or hole), the size is proposed from the diameter, a check that the size fits the face, Full Length or Offset + Length, Right/Left Hand, cosmetic (data + a texture with helical stripes one pitch apart on the face, only along the thread's length, and in pattern copies; Application Options → Display → Thread texture) or modeled (groove per ISO 68-1; only the zone around the thread is faceted), clearance for 3D printing. 🟡 (2026-11-10): several faces of one diameter in one Thread; ISO 228-1 G parallel pipe threads (also for Tapped holes). To do: tapered thread on a conical face, the 55° form for modeled G threads.
 
 A cosmetic thread on a cylindrical face (attribute + texture in the view + correct representation in the drawing). A modeled (physical) thread is optional, for 3D printing.
 
@@ -712,7 +714,7 @@ A cosmetic thread on a cylindrical face (attribute + texture in the view + corre
 
 ## 2.11 Feature patterns — 🟡 · M
 
-**Specification:** [spec/2.11-patterns.md](spec/2.11-patterns.md). Implemented (waiting for a visual check): Rectangular Pattern (Direction 1 and 2, Flip, Midplane, Incremental / Fitted, count and spacing as parameters with expressions) and Circular Pattern (axis from an edge, origin or work axis, count and angle, Fitted 360°, Midplane, Flip) of features (Extrude, Revolve, other patterns: a copy of the tool with its operation, all copies with one Boolean operation) or of whole bodies (Join / New Solid); copies outside the body are skipped for Cut; up to 1000 copies; Edit Feature, preview. To do: Suppress of copies, Orientation Fixed, Optimized / Adjust, along a curve, Sketch Driven, irregular copies, manipulators.
+**Specification:** [spec/2.11-patterns.md](spec/2.11-patterns.md). Implemented (waiting for a visual check): Rectangular Pattern (Direction 1 and 2, Flip, Midplane, Incremental / Fitted, count and spacing as parameters with expressions) and Circular Pattern (axis from an edge, origin or work axis, count and angle, Fitted 360°, Midplane, Flip) of features (Extrude, Revolve, other patterns: a copy of the tool with its operation, all copies with one Boolean operation) or of whole bodies (Join / New Solid); copies outside the body are skipped for Cut; up to 1000 copies; Edit Feature, preview. 🟡 (2026-11-10): **Sketch Driven Pattern** (copies at the centre points of a sketch, Base Point; Orientation Fixed), Rectangular Pattern **along a curve** (sketch curves or model edges as a direction, spacing along the curve, Orientation Identical / Direction), **Suppress** of single copies (the pattern's Properties, Occurrences). To do: Orientation Fixed of circular patterns, Optimized / Adjust, the occurrences as browser rows, irregular copies, manipulators, Follow Face.
 
 **Types:**
 - **Rectangular:** two directions, count and spacing;

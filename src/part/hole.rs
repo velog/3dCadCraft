@@ -1190,6 +1190,11 @@ pub struct ThreadFeature {
     pub name: String,
     /// The cylindrical face; the hint picks the end the thread starts at.
     pub face: FaceRef,
+    /// Further faces threaded the same way (Inventor: several faces in one
+    /// Thread; each face's hint picks its start end). Every face must fit
+    /// the thread size.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub faces: Vec<FaceRef>,
     /// The thread (full depth = along the whole face).
     pub spec: ThreadSpec,
     /// Offset from the start end (when not full depth); `offset`.
@@ -1339,6 +1344,7 @@ impl ThreadFeature {
             id: String::new(),
             name: String::new(),
             face,
+            faces: Vec::new(),
             spec,
             offset: 0.0,
             display: true,

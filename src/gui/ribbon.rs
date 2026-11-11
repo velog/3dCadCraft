@@ -168,6 +168,14 @@ pub enum Action {
     Split,
     /// Rectangular Pattern of features or solids.
     RectPattern,
+    /// Start 3D Sketch: a new 3D sketch and its panel.
+    Sketch3d,
+    /// A tool of the open 3D sketch (index into `sketch3d::Tool3::ALL`).
+    Sk3Tool(u8),
+    /// 3D Move: the triad on the 3D sketch's selection.
+    Sk3Move,
+    /// Finish 3D Sketch.
+    Sk3Finish,
     /// Circular Pattern of features or solids.
     CircPattern,
     /// Mirror of features or solids across a plane.
@@ -229,6 +237,9 @@ impl Tab {
     /// Shown in this environment: [`Tab::shown`], and the Sketch tab while
     /// a drawing's view sketch is open (Inventor's drawing sketches).
     pub fn shown_in(self, st: &State) -> bool {
+        if self == Tab::Sketch3d {
+            return st.sketch3d && !st.assembly && !st.drawing;
+        }
         self.shown(st.assembly, st.drawing) || (self == Tab::Sketch && st.drawing_sketch)
     }
 
@@ -311,6 +322,12 @@ pub struct State {
     pub in_place: bool,
     /// A drawing's view sketch is open: the Sketch tab is shown.
     pub drawing_sketch: bool,
+    /// A 3D sketch is open: the 3D Sketch tab is shown.
+    pub sketch3d: bool,
+    /// The 3D sketch's running tool (`Action::Sk3Tool` index).
+    pub sk3_tool: Option<u8>,
+    /// The 3D Move triad is on.
+    pub sk3_move: bool,
     /// The view shows the flat pattern.
     pub flat: bool,
     /// The assembly command that is open (shown pressed).
@@ -340,6 +357,8 @@ pub enum Tab {
     Model,
     /// 2D sketch tools and constraints.
     Sketch,
+    /// 3D sketch tools, constraints and Finish (only while one is open).
+    Sketch3d,
     /// Measuring and analysis.
     Inspect,
     /// Options, parameters, materials and appearances.
@@ -354,7 +373,7 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 12] = [
+    const ALL: [Tab; 13] = [
         Tab::PlaceViews,
         Tab::Annotate,
         Tab::Assemble,
@@ -362,6 +381,7 @@ impl Tab {
         Tab::Model,
         Tab::SheetMetal,
         Tab::Sketch,
+        Tab::Sketch3d,
         Tab::Inspect,
         Tab::Tools,
         Tab::Manage,
@@ -379,6 +399,8 @@ impl Tab {
             Tab::Assemble | Tab::Design => assembly && !drawing,
             Tab::SheetMetal => !assembly && !drawing,
             Tab::Model | Tab::Sketch => !assembly && !drawing,
+            // Shown only while a 3D sketch is open (`shown_in`).
+            Tab::Sketch3d => false,
             Tab::Environments => !drawing,
             _ => true,
         }
@@ -398,6 +420,7 @@ impl Tab {
             Tab::SheetMetal => "Sheet Metal",
             Tab::Model => "3D Model",
             Tab::Sketch => "Sketch",
+            Tab::Sketch3d => "3D Sketch",
             Tab::Inspect => "Inspect",
             Tab::Tools => "Tools",
             Tab::Manage => "Manage",
@@ -1145,6 +1168,44 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             }
             panels
         }
+        Tab::Sketch3d => vec![
+            panel(
+                "Draw",
+                vec![
+                    c("s3d.line").large(),
+                    c("s3d.spline"),
+                    c("s3d.arc"),
+                    c("s3d.helix"),
+                    c("s3d.bend"),
+                    c("s3d.point"),
+                    c("s3d.equation").mini(),
+                ],
+            ),
+            panel(
+                "Constrain",
+                vec![
+                    c("s3d.dimension").large(),
+                    c("s3d.angle"),
+                    c("s3d.coincident").mini(),
+                    c("s3d.parallel").mini(),
+                    c("s3d.perpendicular").mini(),
+                    c("s3d.along_axis").mini(),
+                    c("s3d.equal").mini(),
+                    c("s3d.fix").mini(),
+                ],
+            ),
+            panel("Modify", vec![c("s3d.move").large(), c("s3d.mirror")]),
+            panel(
+                "Insert",
+                vec![
+                    c("s3d.include").large(),
+                    c("s3d.project_surface"),
+                    c("s3d.intersection"),
+                    c("s3d.silhouette"),
+                ],
+            ),
+            panel("Exit", vec![c("s3d.finish").large()]),
+        ],
         Tab::Inspect if st.assembly => vec![
             panel(
                 "Measure",
@@ -1439,6 +1500,9 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 project: false,
                 center_point: false,
                 drawing_sketch: false,
+                sketch3d: false,
+                sk3_tool: None,
+                sk3_move: false,
                 assembly,
                 drawing,
                 in_place: !assembly && !drawing,
@@ -1865,6 +1929,8 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
             // Tools show as pressed while active, toggles while on.
             let selected = match action {
                 Action::Tool(t) => *t == active && *t != Tool::Select,
+                Action::Sk3Tool(i) => st.sk3_tool == Some(*i),
+                Action::Sk3Move => st.sk3_move,
                 Action::Format(Style::Construction) => st.construction,
                 Action::ToggleRelax => st.relax,
                 Action::ProjectGeometry => st.project,
