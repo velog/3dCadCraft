@@ -24,6 +24,8 @@ use crate::sketch::Style;
 /// Something the user asked for from the ribbon.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
+    /// A command of the Frame Analysis environment.
+    Fa(super::frame_analysis::FaCmd),
     /// Start 2D Sketch: pick an origin plane or a planar face.
     StartSketch,
     /// Leave sketch edit mode.
@@ -240,7 +242,9 @@ impl Tab {
         if self == Tab::Sketch3d {
             return st.sketch3d && !st.assembly && !st.drawing;
         }
-        self.shown(st.assembly, st.drawing) || (self == Tab::Sketch && st.drawing_sketch)
+        self.shown(st.assembly, st.drawing)
+            || (self == Tab::Sketch && st.drawing_sketch)
+            || (self == Tab::FrameAnalysis && st.frame_analysis)
     }
 
     /// The first visible tab (the active one when the active tab is hidden).
@@ -328,6 +332,8 @@ pub struct State {
     pub sk3_tool: Option<u8>,
     /// The 3D Move triad is on.
     pub sk3_move: bool,
+    /// The Frame Analysis environment is open: its tab is shown.
+    pub frame_analysis: bool,
     /// The view shows the flat pattern.
     pub flat: bool,
     /// The assembly command that is open (shown pressed).
@@ -367,6 +373,8 @@ pub enum Tab {
     Manage,
     /// Visibility and navigation.
     View,
+    /// Assembly: the Frame Analysis environment, while it is open.
+    FrameAnalysis,
     /// Part: other environments (Studio, Stress Analysis, Shape Generator,
     /// 3D Print, BIM Content).
     Environments,
@@ -374,6 +382,7 @@ pub enum Tab {
 
 impl Tab {
     const ALL: [Tab; 13] = [
+        Tab::FrameAnalysis,
         Tab::PlaceViews,
         Tab::Annotate,
         Tab::Assemble,
@@ -402,6 +411,7 @@ impl Tab {
             // Shown only while a 3D sketch is open (`shown_in`).
             Tab::Sketch3d => false,
             Tab::Environments => !drawing,
+            Tab::FrameAnalysis => false,
             _ => true,
         }
     }
@@ -426,6 +436,7 @@ impl Tab {
             Tab::Manage => "Manage",
             Tab::View => "View",
             Tab::Environments => "Environments",
+            Tab::FrameAnalysis => "Frame Analysis",
         }
     }
 }
@@ -1357,12 +1368,41 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 ]
             }
         }
+        Tab::FrameAnalysis => vec![
+            panel("Manage", vec![c("fa.create").large()]),
+            panel("Solve", vec![c("fa.simulate").large()]),
+            panel("Beams", vec![c("fa.beam"), c("fa.node")]),
+            panel(
+                "Constraints",
+                vec![
+                    c("fa.fixed"),
+                    c("fa.pinned"),
+                    c("fa.floating"),
+                    c("fa.custom"),
+                ],
+            ),
+            panel(
+                "Loads",
+                vec![
+                    c("fa.force"),
+                    c("fa.continuous"),
+                    c("fa.moment"),
+                    c("fa.axial"),
+                    c("fa.bending"),
+                    c("fa.gravity"),
+                ],
+            ),
+            panel("Connections", vec![c("fa.release"), c("fa.link")]),
+            panel("Result", vec![c("fa.detail"), c("fa.animate")]),
+            panel("Exit", vec![c("fa.finish").large()]),
+        ],
         Tab::Environments if st.assembly => vec![panel(
             "Assembly",
             vec![
                 c("env.tube_pipe").large(),
                 c("env.cable_harness").large(),
                 c("env.dynamic_sim").large(),
+                c("env.frame_analysis").large(),
                 c("env.asm_stress").large(),
                 c("env.asm_studio").large(),
                 c("env.presentation").large(),
@@ -1503,6 +1543,7 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 sketch3d: false,
                 sk3_tool: None,
                 sk3_move: false,
+                frame_analysis: false,
                 assembly,
                 drawing,
                 in_place: !assembly && !drawing,

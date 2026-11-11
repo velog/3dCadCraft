@@ -435,6 +435,9 @@ pub struct AssemblyDocument {
     /// (the frame assembly is an ordinary subassembly, as it was saved).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frame_links: Vec<crate::assembly::frame_sub::SkeletonLink>,
+    /// Frame Analysis (spec 7.1a). Older builds ignore them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub simulations: Vec<crate::assembly::frame_analysis::Simulation>,
     /// An assembly made from a STEP file (spec 7.7a 3a): the occurrences that came from it and,
     /// on the top one, the file it follows. Older builds ignore it (a plain assembly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -799,6 +802,7 @@ mod tests {
             appearances: Vec::new(),
             frames: Vec::new(),
             frame_links: Vec::new(),
+            simulations: Vec::new(),
             import: None,
             features: None,
             bolts: Vec::new(),

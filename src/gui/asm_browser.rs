@@ -121,6 +121,10 @@ enum TreeCmd {
 impl CadCraftApp {
     /// The active assembly's tree in the browser.
     pub(super) fn assembly_tree(&mut self, ui: &mut egui::Ui, name: &str) {
+        if self.fa.active {
+            self.fa_tree(ui);
+            return;
+        }
         let linked = self.linked();
         let frame_occ = self.frame_occ();
         let Some(a) = self.assembly() else {

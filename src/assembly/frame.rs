@@ -16,11 +16,13 @@ use super::tree::Linked;
 use crate::assembly::relation::GeomRef;
 use crate::document::iprops::{CustomProperty, PropValue};
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
+use crate::kernel::exact::PathPiece;
 use crate::kernel::{Point3, Real, Transform3, Vector3};
 use crate::part::frame::stored_length;
 use crate::part::frame::{
-    CUT_PROPERTIES, CapCorners, EndCut, LENGTH_PROPERTY, Library, NotchTool, Section,
+    CUT_PROPERTIES, CapCorners, EndCut, LENGTH_PROPERTY, Library, MemberPiece, NotchTool, Section,
 };
+use crate::part::sweep::{PathGeom, edge_piece, ends, reversed, sketch_piece};
 use crate::part::{Feature, PartDocument};
 
 /// Which point of the section's box lies on the skeleton line.
@@ -148,6 +150,9 @@ pub enum Skeleton {
         /// Which end of it.
         to_end: u8,
     },
+    /// Merge Frame Members (format revision 68): curves joined end to end
+    /// and tangent there, one member along all of them.
+    Chain(Vec<Skeleton>),
 }
 
 impl Skeleton {
@@ -157,6 +162,7 @@ impl Skeleton {
             Skeleton::Edge(g) => g.occurrence(),
             Skeleton::SketchLine { occurrence, .. } => *occurrence,
             Skeleton::Between { from, .. } => from.occurrence(),
+            Skeleton::Chain(l) => l.first().map_or(0, Skeleton::occurrence),
         }
     }
 
@@ -166,6 +172,7 @@ impl Skeleton {
             Skeleton::Edge(g) => g.sub(),
             Skeleton::SketchLine { sub, .. } => sub,
             Skeleton::Between { from, .. } => from.sub(),
+            Skeleton::Chain(l) => l.first().map_or(&[], Skeleton::sub),
         }
     }
 }
@@ -214,6 +221,9 @@ pub struct Shape {
     /// Notches (Notch).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notches: Vec<NotchTool>,
+    /// A curved member's path in the part (arcs, splines, Merge).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<MemberPiece>>,
 }
 
 impl Shape {
@@ -230,6 +240,17 @@ impl Shape {
                 .all(|(a, b)| (0..2).all(|i| (0..3).all(|k| near(a[i][k], b[i][k]))))
             && self.notches.len() == o.notches.len()
             && self.notches.iter().zip(&o.notches).all(|(a, b)| a.same(b))
+            && match (&self.path, &o.path) {
+                (None, None) => true,
+                (Some(a), Some(b)) => {
+                    a.len() == b.len()
+                        && a.iter().zip(b).all(|(x, y)| {
+                            let (x, y) = (x.numbers(), y.numbers());
+                            x.len() == y.len() && x.iter().zip(&y).all(|(p, q)| near(*p, *q))
+                        })
+                }
+                _ => false,
+            }
     }
 
     /// The member part's Z range, as its square ends leave it.
@@ -709,6 +730,9 @@ pub fn skeleton_line(
         }
         return Ok((a, b));
     }
+    if matches!(r, Skeleton::Chain(_)) {
+        return Err(CURVED.into());
+    }
     let n = super::tree::nested(project, linked, asm, r.occurrence(), r.sub())?;
     let part = super::tree::part_of(project, linked, n.component)
         .ok_or_else(|| format!("{} shows no part", n.name))?;
@@ -719,7 +743,7 @@ pub fn skeleton_line(
                 .ok_or_else(|| format!("{}: its skeleton edge no longer exists", n.name))?;
             let e = body.edge(id).ok_or("the skeleton edge no longer exists")?;
             if !matches!(body.curve(e.curve), Some(crate::kernel::Curve::Line(_))) {
-                return Err("only straight edges take frame members yet".into());
+                return Err(CURVED.into());
             }
             let pts = body
                 .sample_edge(id, &crate::kernel::TessellationOptions::default())
@@ -729,6 +753,7 @@ pub fn skeleton_line(
                 _ => return Err("the skeleton edge has no ends".into()),
             }
         }
+        Skeleton::Chain(_) => return Err(CURVED.into()),
         Skeleton::Edge(_) | Skeleton::Between { .. } => {
             return Err("a frame member follows an edge or a sketch line".into());
         }
@@ -739,6 +764,12 @@ pub fn skeleton_line(
                 .find(|s| &s.id == sketch)
                 .ok_or_else(|| format!("{}: its skeleton sketch no longer exists", n.name))?;
             let sk = &ps.sketch;
+            if sk
+                .entity(*line)
+                .is_some_and(|e| !matches!(e, crate::sketch::Entity::Line { .. }))
+            {
+                return Err(CURVED.into());
+            }
             let (p, q) = sk
                 .line_points(*line)
                 .map_err(|_| format!("{}: its skeleton line no longer exists", n.name))?;
@@ -754,6 +785,194 @@ pub fn skeleton_line(
         .ok_or("the component no longer exists")?;
     let m = top.transform * n.at;
     Ok((m.transform_point(&a), m.transform_point(&b)))
+}
+
+/// What a member needs of a straight-only command, in its error.
+const CURVED: &str = "this needs a straight member";
+
+/// What a skeleton line is, in assembly coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Run {
+    /// Straight, from one point to another.
+    Line(Point3, Point3),
+    /// Along an arc, a spline or a merged chain (an open one).
+    Curve(PathGeom),
+}
+
+impl Run {
+    /// Its two ends.
+    pub fn chord(&self) -> (Point3, Point3) {
+        match self {
+            Run::Line(a, b) => (*a, *b),
+            Run::Curve(c) => (c.eval(0.0).0, c.eval(c.length()).0),
+        }
+    }
+
+    /// Its length along the curve.
+    pub fn length(&self) -> Real {
+        match self {
+            Run::Line(a, b) => (b - a).norm(),
+            Run::Curve(c) => c.length(),
+        }
+    }
+}
+
+/// A piece of a path moved by the rigid motion `m`; a spline keeps its
+/// points only.
+fn moved_piece(p: &PathPiece, m: &Transform3) -> PathPiece {
+    let at = |q: &Point3| m.transform_point(q);
+    match p {
+        PathPiece::Line { a, b } => PathPiece::Line { a: at(a), b: at(b) },
+        PathPiece::Arc {
+            a,
+            center,
+            axis,
+            angle,
+        } => PathPiece::Arc {
+            a: at(a),
+            center: at(center),
+            axis: m.transform_vector(axis),
+            angle: *angle,
+        },
+        PathPiece::Points(v) | PathPiece::Spline { points: v, .. } => {
+            PathPiece::Points(v.iter().map(at).collect())
+        }
+    }
+}
+
+/// One skeleton curve as a path piece, in assembly coordinates.
+fn skeleton_piece(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+    r: &Skeleton,
+) -> Result<PathPiece, String> {
+    match skeleton_line(project, linked, asm, r) {
+        Ok((a, b)) => return Ok(PathPiece::Line { a, b }),
+        Err(e) if e != CURVED => return Err(e),
+        Err(_) => {}
+    }
+    let n = super::tree::nested(project, linked, asm, r.occurrence(), r.sub())?;
+    let part = super::tree::part_of(project, linked, n.component)
+        .ok_or_else(|| format!("{} shows no part", n.name))?;
+    let piece = match r {
+        Skeleton::Edge(GeomRef::Edge { edge, .. }) => edge_piece(&part.body, edge)?,
+        Skeleton::SketchLine { sketch, line, .. } => {
+            let ps = part
+                .sketches
+                .iter()
+                .find(|s| &s.id == sketch)
+                .ok_or_else(|| format!("{}: its skeleton sketch no longer exists", n.name))?;
+            let curve = ps
+                .sketch
+                .curve_of(*line)
+                .ok_or_else(|| format!("{}: its skeleton curve no longer exists", n.name))?;
+            sketch_piece(&ps.sketch.plane, &curve)
+        }
+        _ => return Err("a frame member follows an edge or a sketch curve".into()),
+    };
+    let top = asm
+        .find(r.occurrence())
+        .ok_or("the component no longer exists")?;
+    Ok(moved_piece(&piece, &(top.transform * n.at)))
+}
+
+/// The run of a skeleton line: straight, or a curve for an arc, a spline or
+/// a merged chain (which must be open and tangent where its curves meet).
+pub fn skeleton_run(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+    r: &Skeleton,
+) -> Result<Run, String> {
+    let open = |c: PathGeom| {
+        if c.closed {
+            Err("a closed curve cannot be a member".to_string())
+        } else {
+            Ok(Run::Curve(c))
+        }
+    };
+    if let Skeleton::Chain(list) = r {
+        let pieces = list
+            .iter()
+            .map(|s| skeleton_piece(project, linked, asm, s))
+            .collect::<Result<Vec<_>, _>>()?;
+        let near = pieces.first().map_or_else(Point3::origin, |p| ends(p).0);
+        let c = PathGeom::chained(pieces, near)?;
+        if c.sharpest_joint() > MERGE_ANGLE {
+            return Err("merged curves must be tangent where they meet".into());
+        }
+        return open(c);
+    }
+    match skeleton_piece(project, linked, asm, r)? {
+        PathPiece::Line { a, b } => Ok(Run::Line(a, b)),
+        p => {
+            let (a, b) = ends(&p);
+            open(PathGeom {
+                pieces: vec![p],
+                closed: (b - a).norm() < 1e-6,
+            })
+        }
+    }
+}
+
+/// How far merged curves may turn where they meet (radians).
+const MERGE_ANGLE: Real = 1e-3;
+
+/// The occurrence placement of a curved member and its run: Flip and Mirror
+/// both run the path from its far end (the section's horizontal axis turns
+/// round, so doing both cancels out).
+pub fn curved_place(
+    s: &Section,
+    path: &PathGeom,
+    o: &Orientation,
+) -> Option<(Transform3, PathGeom)> {
+    let run = if o.flip != o.mirror {
+        PathGeom {
+            pieces: path.pieces.iter().rev().map(reversed).collect(),
+            closed: path.closed,
+        }
+    } else {
+        path.clone()
+    };
+    let (a, t) = run.eval(0.0);
+    let plain = Orientation {
+        flip: false,
+        mirror: false,
+        ..*o
+    };
+    placement(s, a, a + t * run.length().max(1.0), &plain).map(|p| (p, run))
+}
+
+/// `path` as a member part's path pieces, moved by `m`.
+pub fn member_pieces(path: &PathGeom, m: &Transform3) -> Vec<MemberPiece> {
+    let at = |q: &Point3| {
+        let q = m.transform_point(q);
+        [q.x, q.y, q.z]
+    };
+    path.pieces
+        .iter()
+        .map(|p| match p {
+            PathPiece::Line { a, b } => MemberPiece::Line { a: at(a), b: at(b) },
+            PathPiece::Arc {
+                a,
+                center,
+                axis,
+                angle,
+            } => {
+                let k = m.transform_vector(axis);
+                MemberPiece::Arc {
+                    a: at(a),
+                    center: at(center),
+                    axis: [k.x, k.y, k.z],
+                    angle: *angle,
+                }
+            }
+            PathPiece::Points(v) | PathPiece::Spline { points: v, .. } => {
+                MemberPiece::Points(v.iter().map(at).collect())
+            }
+        })
+        .collect()
 }
 
 /// A member's run direction and its section's axes (horizontal, vertical;
@@ -843,22 +1062,37 @@ pub fn insert(
     let before = project.clone();
     let result = (|| {
         let mut made = Vec::new();
-        let lines = {
+        let runs = {
             let a = asm_of(project, asm)?;
             edges
                 .iter()
-                .map(|e| skeleton_line(project, linked, a, e))
+                .map(|e| skeleton_run(project, linked, a, e))
                 .collect::<Result<Vec<_>, String>>()?
         };
+        let lines: Vec<(Point3, Point3)> = runs.iter().map(Run::chord).collect();
         let centre = centre_of(&lines);
-        for (e, &(p, q)) in edges.iter().zip(&lines) {
-            let length = (q - p).norm();
-            let orientation = o.layout.orient(&o.orientation, p, q, centre);
-            let place =
-                placement(&section, p, q, &orientation).ok_or("the skeleton edge has no length")?;
-            let part = section
-                .member_part(length, o.material.as_deref())
-                .map_err(|e| e.to_string())?;
+        for (e, run) in edges.iter().zip(&runs) {
+            let length = run.length();
+            let (orientation, place, part, path) = match run {
+                Run::Line(p, q) => {
+                    let orientation = o.layout.orient(&o.orientation, *p, *q, centre);
+                    let place = placement(&section, *p, *q, &orientation)
+                        .ok_or("the skeleton edge has no length")?;
+                    let part = section
+                        .member_part(length, o.material.as_deref())
+                        .map_err(|e| e.to_string())?;
+                    (orientation, place, part, None)
+                }
+                Run::Curve(c) => {
+                    let (place, run) = curved_place(&section, c, &o.orientation)
+                        .ok_or("the skeleton curve has no length")?;
+                    let pieces = member_pieces(&run, &place.inverse());
+                    let part = section
+                        .member_part_path(&pieces, o.material.as_deref())
+                        .map_err(|e| e.to_string())?;
+                    (o.orientation, place, part, Some(pieces))
+                }
+            };
             let name = project.free_name(&format!("{}-", section.stock_number()));
             let doc = project.add_document(name.clone(), DocumentData::Part(part));
             if let Some(d) = project.document_mut(doc) {
@@ -875,6 +1109,7 @@ pub fn insert(
                 orientation,
                 built: Some(Shape {
                     length,
+                    path,
                     ..Default::default()
                 }),
                 reuse_of: None,
@@ -954,6 +1189,8 @@ struct Live {
     cuts: [Option<(Point3, Vector3)>; 2],
     /// Shows another member's part (Reuse): no shape of its own.
     reuse_of: Option<u32>,
+    /// The run of a curved member (no end treatments).
+    path: Option<PathGeom>,
     /// Which cut ends a Miter made (the word in its cut detail).
     mitred: [bool; 2],
     /// Notch prisms in assembly coordinates.
@@ -1265,8 +1502,15 @@ fn miter_cuts(
 
 /// The shape a live member's cuts give it (part coordinates), or why not.
 fn shape_of(m: &Live) -> Result<Shape, String> {
-    let length = (m.end - m.start).norm();
     let inv = m.place.inverse();
+    if let Some(path) = &m.path {
+        return Ok(Shape {
+            length: path.length(),
+            path: Some(member_pieces(path, &inv)),
+            ..Default::default()
+        });
+    }
+    let length = (m.end - m.start).norm();
     let (w, h) = m.section.extent();
     let mut ext = [0.0, 0.0];
     let mut cuts = Vec::new();
@@ -1310,6 +1554,7 @@ fn shape_of(m: &Live) -> Result<Shape, String> {
         ext,
         cuts,
         notches,
+        path: None,
     })
 }
 
@@ -1337,33 +1582,46 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                 .and_then(|s| f.members.iter().find(|x| x.occurrence == s))
                 .unwrap_or(m);
             let sec = source.section();
-            match (skeleton_line(project, linked, a, &m.skeleton), sec) {
-                (Ok((p, q)), Some(s)) => match placement(&s, p, q, &m.orientation) {
-                    Some(t) => {
-                        let (start, end) = if m.orientation.flip { (q, p) } else { (p, q) };
-                        let material = match project.document(doc).map(|d| &d.data) {
-                            Some(DocumentData::Part(x)) => x.material.clone(),
-                            _ => None,
-                        };
-                        live.push(Live {
-                            occ: m.occurrence,
-                            doc,
-                            section: s,
-                            start,
-                            end,
-                            place: t,
-                            cuts: [None, None],
-                            mitred: [false, false],
-                            reuse_of: m.reuse_of,
-                            notches: Vec::new(),
-                            built: m.built.clone(),
-                            material,
-                        });
+            match (skeleton_run(project, linked, a, &m.skeleton), sec) {
+                (Ok(run), Some(s)) => {
+                    let placed = match run {
+                        Run::Line(p, q) => placement(&s, p, q, &m.orientation).map(|t| {
+                            let (start, end) = if m.orientation.flip { (q, p) } else { (p, q) };
+                            (t, start, end, None)
+                        }),
+                        Run::Curve(c) => curved_place(&s, &c, &m.orientation).map(|(t, run)| {
+                            let start = run.eval(0.0).0;
+                            let end = run.eval(run.length()).0;
+                            (t, start, end, Some(run))
+                        }),
+                    };
+                    match placed {
+                        Some((t, start, end, path)) => {
+                            let material = match project.document(doc).map(|d| &d.data) {
+                                Some(DocumentData::Part(x)) => x.material.clone(),
+                                _ => None,
+                            };
+                            live.push(Live {
+                                occ: m.occurrence,
+                                doc,
+                                section: s,
+                                start,
+                                end,
+                                place: t,
+                                cuts: [None, None],
+                                mitred: [false, false],
+                                reuse_of: m.reuse_of,
+                                path,
+                                notches: Vec::new(),
+                                built: m.built.clone(),
+                                material,
+                            });
+                        }
+                        None => out
+                            .sick
+                            .push((m.occurrence, "its skeleton edge has no length".into())),
                     }
-                    None => out
-                        .sick
-                        .push((m.occurrence, "its skeleton edge has no length".into())),
-                },
+                }
                 (Err(e), _) => out.sick.push((m.occurrence, e)),
                 (_, None) => out
                     .sick
@@ -1388,6 +1646,22 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
         }
     };
     for (mut live, treatments) in frames {
+        // A curved member takes no end treatments (spec 6.1 Merge).
+        let treatments: Vec<Treatment> = treatments
+            .into_iter()
+            .filter(|t| {
+                let curved = t
+                    .members()
+                    .iter()
+                    .any(|o| live.iter().any(|m| m.occ == *o && m.path.is_some()));
+                if curved {
+                    for m in t.members() {
+                        out.sick.push((m, format!("{}: {CURVED}", t.label())));
+                    }
+                }
+                !curved
+            })
+            .collect();
         for t in &treatments {
             match treatment_cuts(t, &live, &face) {
                 Ok(cuts) => {
@@ -1485,27 +1759,29 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                 .into_iter()
                 .map(|(occ, doc, sec, sh, mat)| {
                     sc.spawn(move || {
-                        let r = sec
-                            .member_part_cut(
+                        let r = match &sh.path {
+                            Some(path) => sec.member_part_path(path, mat.as_deref()),
+                            None => sec.member_part_cut(
                                 sh.length,
                                 sh.ext,
                                 &sh.end_cuts(),
                                 &sh.notches,
                                 mat.as_deref(),
-                            )
-                            .map_err(|e| e.to_string())
-                            .and_then(|p| {
-                                if p.feature_health.is_empty() {
-                                    Ok(p)
-                                } else {
-                                    Err(p
-                                        .feature_health
-                                        .values()
-                                        .next()
-                                        .cloned()
-                                        .unwrap_or_default())
-                                }
-                            });
+                            ),
+                        }
+                        .map_err(|e| e.to_string())
+                        .and_then(|p| {
+                            if p.feature_health.is_empty() {
+                                Ok(p)
+                            } else {
+                                Err(p
+                                    .feature_health
+                                    .values()
+                                    .next()
+                                    .cloned()
+                                    .unwrap_or_default())
+                            }
+                        });
                         (occ, doc, sh, r)
                     })
                 })
@@ -1517,7 +1793,11 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
     for (occ, doc, sh, r) in built {
         match r {
             Ok(part) => {
-                let outer = outer_length(&part).unwrap_or(sh.length);
+                let outer = if sh.path.is_some() {
+                    sh.length
+                } else {
+                    outer_length(&part).unwrap_or(sh.length)
+                };
                 if let Some(d) = project.document_mut(doc) {
                     d.data = DocumentData::Part(part);
                     for c in &mut d.properties.custom {
@@ -1950,27 +2230,44 @@ pub fn edit_members(
                 .ok_or("the member's part is not in this file")?
                 .document;
             let skeleton = e.skeleton.clone().unwrap_or_else(|| m.skeleton.clone());
-            let (p, q) = skeleton_line(project, linked, a, &skeleton)?;
-            let orientation = if o.layout == Layout::default() {
+            let run = skeleton_run(project, linked, a, &skeleton)?;
+            let (p, q) = run.chord();
+            let orientation = if o.layout == Layout::default() || matches!(run, Run::Curve(_)) {
                 e.orientation
             } else {
                 let lines: Vec<(Point3, Point3)> = f
                     .members
                     .iter()
-                    .map(|x| {
+                    .filter_map(|x| {
                         if x.occurrence == occ {
-                            Ok((p, q))
+                            Some((p, q))
                         } else {
-                            skeleton_line(project, linked, a, &x.skeleton)
+                            skeleton_line(project, linked, a, &x.skeleton).ok()
                         }
                     })
-                    .collect::<Result<_, _>>()?;
+                    .collect();
                 o.layout.orient(&e.orientation, p, q, centre_of(&lines))
             };
-            let length = (q - p).norm();
-            let part = section
-                .member_part(length, o.material.as_deref())
-                .map_err(|e| e.to_string())?;
+            let length = run.length();
+            let (part, path) = match &run {
+                Run::Line(..) => (
+                    section
+                        .member_part(length, o.material.as_deref())
+                        .map_err(|e| e.to_string())?,
+                    None,
+                ),
+                Run::Curve(c) => {
+                    let (place, r) = curved_place(&section, c, &orientation)
+                        .ok_or("the skeleton curve has no length")?;
+                    let pieces = member_pieces(&r, &place.inverse());
+                    (
+                        section
+                            .member_part_path(&pieces, o.material.as_deref())
+                            .map_err(|e| e.to_string())?,
+                        Some(pieces),
+                    )
+                }
+            };
             if let Some(d) = project.document_mut(doc) {
                 d.data = DocumentData::Part(part);
                 d.properties = section.member_properties(length);
@@ -2005,6 +2302,7 @@ pub fn edit_members(
                 // The part is uncut now: solve cuts it again.
                 m.built = Some(Shape {
                     length,
+                    path,
                     ..Default::default()
                 });
             }
@@ -2724,13 +3022,15 @@ pub fn edit_frame(
         let occs: Vec<u32> = f.members.iter().map(|m| m.occurrence).collect();
         let mut orient = Vec::new();
         if let Some(l) = layout {
-            let lines: Vec<(Point3, Point3)> = f
+            // Curved members keep their orientation.
+            let members: Vec<(&FrameMember, (Point3, Point3))> = f
                 .members
                 .iter()
-                .map(|m| skeleton_line(project, linked, a, &m.skeleton))
-                .collect::<Result<_, _>>()?;
+                .filter_map(|m| Some((m, skeleton_line(project, linked, a, &m.skeleton).ok()?)))
+                .collect();
+            let lines: Vec<(Point3, Point3)> = members.iter().map(|x| x.1).collect();
             let centre = centre_of(&lines);
-            for (m, &(p, q)) in f.members.iter().zip(&lines) {
+            for &(m, (p, q)) in &members {
                 let base = Orientation {
                     anchor: Anchor::Center,
                     ..m.orientation
@@ -3195,6 +3495,242 @@ mod tests {
         }
         assert_eq!(solve(&mut p, &Linked::new(), aid).unwrap().moved, 1);
         assert!((length_of(&part(&p, asm(&p, aid), occs[0])).unwrap() - 900.0).abs() < 1e-9);
+    }
+
+    /// A skeleton part whose XY sketch `draw` fills (it returns the curves),
+    /// and an assembly showing it: (project, assembly, skeleton part, curves).
+    fn curve_skeleton(
+        draw: impl FnOnce(&mut crate::sketch::Sketch) -> Vec<crate::sketch::EntityId>,
+    ) -> (Project, DocumentId, DocumentId, Vec<Skeleton>) {
+        use crate::part::{OriginPlane, SketchOptions, SketchPlacement};
+        let mut sk = PartDocument::default();
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = sk
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        let curves = draw(&mut sk.sketches[i].sketch);
+        let sketch = sk.sketches[i].id.clone();
+        let mut p = Project::new("T");
+        let skd = p.add_document("Skeleton", DocumentData::Part(sk));
+        let mut a = AssemblyDocument::default();
+        a.place(
+            DocRef::local(skd),
+            "Skeleton:1",
+            Transform3::identity(),
+            true,
+        );
+        let aid = p.add_document("Frame", DocumentData::Assembly(a));
+        let list = curves
+            .into_iter()
+            .map(|line| Skeleton::SketchLine {
+                occurrence: 1,
+                sub: Vec::new(),
+                sketch: sketch.clone(),
+                line,
+            })
+            .collect();
+        (p, aid, skd, list)
+    }
+
+    fn insert_one(p: &mut Project, aid: DocumentId, s: Skeleton) -> Result<u32, String> {
+        insert(
+            p,
+            &Linked::new(),
+            aid,
+            &[s],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .map(|r| r.1[0])
+    }
+
+    fn section_area() -> Real {
+        let o = opts();
+        Library::builtin()
+            .find(&o.family, &o.size)
+            .unwrap()
+            .properties()
+            .area
+    }
+
+    fn quarter_arc(sk: &mut crate::sketch::Sketch, r: Real) -> Vec<crate::sketch::EntityId> {
+        use crate::sketch::Point2;
+        let c = sk.add_point(Point2::new(r, 0.0));
+        let s = sk.add_point(Point2::new(0.0, 0.0));
+        let e = sk.add_point(Point2::new(r, -r));
+        vec![sk.add_arc(c, s, e).unwrap()]
+    }
+
+    /// An arc: the section swept round it (Pappus), `G_L` the arc's length;
+    /// solving again rebuilds nothing; the arc's end moved, the member follows.
+    #[test]
+    fn a_member_along_an_arc() {
+        let (mut p, aid, skd, s) = curve_skeleton(|sk| quarter_arc(sk, 300.0));
+        let occ = insert_one(&mut p, aid, s[0].clone()).unwrap();
+        let want = 300.0 * std::f64::consts::FRAC_PI_2;
+        close_to(
+            volume_of(&p, aid, occ),
+            section_area() * want,
+            1.0e-3 * section_area() * want,
+        );
+        let doc = component_of(&p, aid, occ).document;
+        let g = p
+            .document(doc)
+            .unwrap()
+            .properties
+            .custom
+            .iter()
+            .find(|c| c.name == LENGTH_PROPERTY)
+            .map(|c| c.value.clone());
+        assert_eq!(g, Some(PropValue::Number(stored_length(want))));
+        assert_eq!(solve(&mut p, &Linked::new(), aid).unwrap().moved, 0);
+        if let Some(DocumentData::Part(x)) = p.document_mut(skd).map(|d| &mut d.data) {
+            let sk = &mut x.sketches[0].sketch;
+            let ids: Vec<_> = sk.points().map(|(id, _)| id).collect();
+            sk.move_point(ids[0], crate::sketch::Point2::new(400.0, 0.0))
+                .unwrap();
+            sk.move_point(ids[2], crate::sketch::Point2::new(400.0, -400.0))
+                .unwrap();
+        }
+        let done = solve(&mut p, &Linked::new(), aid).unwrap();
+        assert!(done.sick.is_empty(), "{:?}", done.sick);
+        let want = 400.0 * std::f64::consts::FRAC_PI_2;
+        close_to(
+            volume_of(&p, aid, occ),
+            section_area() * want,
+            1.0e-3 * section_area() * want,
+        );
+    }
+
+    fn line_arc_line(sk: &mut crate::sketch::Sketch) -> Vec<crate::sketch::EntityId> {
+        use crate::sketch::Point2;
+        let a = sk.add_point(Point2::new(0.0, 200.0));
+        let b = sk.add_point(Point2::new(0.0, 0.0));
+        let c = sk.add_point(Point2::new(150.0, 0.0));
+        let d = sk.add_point(Point2::new(150.0, -150.0));
+        let e = sk.add_point(Point2::new(250.0, -150.0));
+        vec![
+            sk.add_line_between(a, b).unwrap(),
+            sk.add_arc(c, b, d).unwrap(),
+            sk.add_line_between(d, e).unwrap(),
+        ]
+    }
+
+    /// Merge: a line, an arc and a line picked in any order are one bent
+    /// member; A x L, whichever way it runs.
+    #[test]
+    fn merge_makes_one_member_of_tangent_curves() {
+        let (mut p, aid, _, s) = curve_skeleton(line_arc_line);
+        let chain = Skeleton::Chain(vec![s[2].clone(), s[0].clone(), s[1].clone()]);
+        let occ = insert_one(&mut p, aid, chain).unwrap();
+        let want = 300.0 + 150.0 * std::f64::consts::FRAC_PI_2;
+        let tol = 2.0e-3 * section_area() * want;
+        close_to(volume_of(&p, aid, occ), section_area() * want, tol);
+        assert_eq!(asm(&p, aid).frames[0].members.len(), 1);
+        // Flip runs it from the other end: the same solid.
+        let f = &mut asm_mut(&mut p, aid).unwrap().frames[0];
+        f.members[0].orientation.flip = true;
+        let done = solve(&mut p, &Linked::new(), aid).unwrap();
+        assert!(done.sick.is_empty(), "{:?}", done.sick);
+        close_to(volume_of(&p, aid, occ), section_area() * want, tol);
+    }
+
+    /// What Merge refuses leaves the project as it was (rule 5).
+    #[test]
+    fn merge_refuses_a_corner_and_a_gap() {
+        use crate::sketch::Point2;
+        let (mut p, aid, _, s) = curve_skeleton(|sk| {
+            let a = sk.add_point(Point2::new(0.0, 0.0));
+            let b = sk.add_point(Point2::new(200.0, 0.0));
+            let c = sk.add_point(Point2::new(200.0, 200.0));
+            let d = sk.add_point(Point2::new(500.0, 500.0));
+            let e = sk.add_point(Point2::new(600.0, 500.0));
+            vec![
+                sk.add_line_between(a, b).unwrap(),
+                sk.add_line_between(b, c).unwrap(),
+                sk.add_line_between(d, e).unwrap(),
+            ]
+        });
+        let docs = p.documents().len();
+        let e = insert_one(
+            &mut p,
+            aid,
+            Skeleton::Chain(vec![s[0].clone(), s[1].clone()]),
+        );
+        assert!(e.unwrap_err().contains("tangent"));
+        let e = insert_one(
+            &mut p,
+            aid,
+            Skeleton::Chain(vec![s[0].clone(), s[2].clone()]),
+        );
+        assert!(e.unwrap_err().contains("not connected"));
+        assert_eq!(p.documents().len(), docs);
+    }
+
+    /// A bend tighter than the section, and a whole circle, are refused
+    /// before the kernel sees them.
+    #[test]
+    fn a_bend_the_section_does_not_fit_is_refused() {
+        let (mut p, aid, _, s) = curve_skeleton(|sk| quarter_arc(sk, 15.0));
+        let e = insert_one(&mut p, aid, s[0].clone()).unwrap_err();
+        assert!(e.contains("does not fit"), "{e}");
+        use crate::sketch::Point2;
+        let (mut p, aid, _, s) = curve_skeleton(|sk| {
+            let c = sk.add_point(Point2::new(0.0, 0.0));
+            vec![sk.add_circle_at(c, 300.0).unwrap()]
+        });
+        let e = insert_one(&mut p, aid, s[0].clone()).unwrap_err();
+        assert!(e.contains("closed"), "{e}");
+    }
+
+    /// A planar spline: the section goes along it (A x L within the spline's
+    /// sampled length).
+    #[test]
+    fn a_member_along_a_spline() {
+        use crate::sketch::Point2;
+        let (mut p, aid, _, s) = curve_skeleton(|sk| {
+            let v: Vec<_> = [(0.0, 0.0), (300.0, 120.0), (600.0, 0.0), (900.0, 120.0)]
+                .iter()
+                .map(|&(x, y)| sk.add_point(Point2::new(x, y)))
+                .collect();
+            vec![sk.add_interp_spline(v).unwrap()]
+        });
+        let occ = insert_one(&mut p, aid, s[0].clone()).unwrap();
+        let l = asm(&p, aid).frames[0].members[0]
+            .built
+            .as_ref()
+            .unwrap()
+            .length;
+        assert!(l > 960.0 && l < 1100.0, "{l}");
+        let v = volume_of(&p, aid, occ);
+        close_to(v, section_area() * l, 0.015 * section_area() * l);
+    }
+
+    /// End treatments need straight members: a curved one reports it and
+    /// keeps its shape (health).
+    #[test]
+    fn a_curved_member_takes_no_end_treatment() {
+        let (mut p, aid, _, s) = curve_skeleton(|sk| quarter_arc(sk, 300.0));
+        let occ = insert_one(&mut p, aid, s[0].clone()).unwrap();
+        let before = volume_of(&p, aid, occ);
+        asm_mut(&mut p, aid).unwrap().frames[0]
+            .treatments
+            .push(Treatment::Lengthen {
+                member: occ,
+                offsets: [20.0, 0.0],
+            });
+        let done = solve(&mut p, &Linked::new(), aid).unwrap();
+        assert!(
+            done.sick
+                .iter()
+                .any(|(m, w)| *m == occ && w.contains("straight"))
+        );
+        assert!((volume_of(&p, aid, occ) - before).abs() < 1e-6);
     }
 
     /// Two members on the top edges of the box that meet at a corner:

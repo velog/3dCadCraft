@@ -102,12 +102,21 @@ fn exact_segs(path: &[PathPiece]) -> Result<Option<Vec<sk::PathSeg>>, String> {
                 center,
                 axis,
                 angle,
-            } => segs.push(sk::PathSeg::Arc {
-                a: v3(a),
-                center: v3(center),
-                axis: d3(axis),
-                angle: *angle,
-            }),
+            } => {
+                // The kernel's tangents ignore the angle's sign: a chain's
+                // reversed arc is the same arc about the opposite axis.
+                let (axis, angle) = if *angle < 0.0 {
+                    (-*axis, -*angle)
+                } else {
+                    (*axis, *angle)
+                };
+                segs.push(sk::PathSeg::Arc {
+                    a: v3(a),
+                    center: v3(center),
+                    axis: d3(&axis),
+                    angle,
+                })
+            }
             PathPiece::Points(_) => return Ok(None),
             PathPiece::Spline { spans, .. } => {
                 for s in spans {

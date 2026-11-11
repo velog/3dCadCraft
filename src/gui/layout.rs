@@ -1340,6 +1340,7 @@ impl CadCraftApp {
                     .and_then(|e| e.tool)
                     .map(|t| t.index()),
                 sk3_move: self.sketch3d.as_ref().is_some_and(|e| e.gizmo.is_some()),
+                frame_analysis: self.fa.active,
                 asm_tool: self.asm_tool_action(),
                 rel_sick: self.cons.glyphs.sick,
                 asm_dof: self.cons.glyphs.dof,

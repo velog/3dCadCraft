@@ -320,6 +320,7 @@ impl CadCraftApp {
     /// every switch to an assembly tab load and rebuild each linked part
     /// again inside one frame (the pause on changing tabs).
     pub(super) fn reset_asm_ui(&mut self) {
+        self.fa = Default::default();
         let libs = std::mem::take(&mut self.asm.libs);
         // Edit in place of a linked part lives across its tab switch.
         let in_place = self.asm.in_place.take().filter(|ip| ip.linked.is_some());
@@ -480,7 +481,7 @@ impl CadCraftApp {
     /// Whether occurrence `o` is drawn (visible, not suppressed, not
     /// isolated away).
     pub(super) fn asm_shown(&self, o: &crate::document::Occurrence) -> bool {
-        o.shown() && self.asm_isolated(o.id)
+        o.shown() && self.asm_isolated(o.id) && !(self.fa.active && self.is_frame_member(o.id))
     }
 
     /// The box of occurrence `id` in assembly coordinates.
@@ -1584,10 +1585,13 @@ impl CadCraftApp {
         let a = self.assembly()?;
         // The components' visible sketch lines too (a frame's skeleton
         // sketch has no body).
-        let lines = self
-            .sketch_lines()
-            .into_iter()
-            .map(|(_, _, p, q)| (p.inf(&q), p.sup(&q)));
+        let lines = self.sketch_lines().into_iter().filter_map(|(_, _, v)| {
+            let first = *v.first()?;
+            Some(
+                v.iter()
+                    .fold((first, first), |(a, b), q| (a.inf(q), b.sup(q))),
+            )
+        });
         a.occurrences
             .iter()
             .filter(|o| self.asm_shown(o))
@@ -2139,6 +2143,10 @@ impl CadCraftApp {
         on_cube: bool,
         cube_drag: bool,
     ) {
+        if self.fa.active {
+            self.fa_viewport(ui, frame, rect, response, pointer, on_cube);
+            return;
+        }
         let ctx = ui.ctx().clone();
         let modal = self.asm.place.is_some()
             || self.asm.library.is_some()
@@ -2820,6 +2828,9 @@ impl CadCraftApp {
 
     /// The status-bar prompt of the assembly environment.
     pub(super) fn asm_prompt(&self) -> String {
+        if self.fa.active {
+            return self.fa_prompt();
+        }
         match self.asm.tool {
             Some(AsmTool::SmartDrop) => self.drop_prompt(),
             Some(AsmTool::Place(_)) => "Place: click in the view to place an occurrence (on a component or the XY plane); right-click for OK, Place Grounded at Origin or a 90° turn; Esc ends".into(),
@@ -3238,6 +3249,10 @@ impl CadCraftApp {
 
     /// Properties of the selected occurrence (or of the assembly).
     pub(super) fn assembly_properties(&mut self, ui: &mut egui::Ui) {
+        if self.fa.active {
+            self.fa_properties(ui);
+            return;
+        }
         if self.part_planned.is_some() {
             self.part_planned_panel(ui);
             return;

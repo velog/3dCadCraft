@@ -16,6 +16,9 @@ use crate::kernel::Point3;
 use crate::part::frame::{CapCorners, Library};
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 
+/// Chord error of a sketch curve drawn or picked in the assembly view (mm).
+const CURVE_SAMPLE_MM: f64 = 0.1;
+
 /// Colour of component sketches in the assembly view.
 const SKETCH: Color32 = Color32::from_rgb(70, 110, 170);
 /// Colour of picked skeleton lines.
@@ -91,6 +94,16 @@ fn orientation(d: &PartDialog) -> Orientation {
     }
 }
 
+/// The picked curves as the panel takes them: with Merge Frame Members one
+/// member along all of them, else one member each.
+fn merged(d: &PartDialog, lines: Vec<Skeleton>) -> Vec<Skeleton> {
+    if d.check(0, "Merge Frame Members") && d.index(0, "Placement") == 0 && lines.len() > 1 {
+        vec![Skeleton::Chain(lines)]
+    } else {
+        lines
+    }
+}
+
 /// The *+ Add Set* button: the picked lines with the panel's section and
 /// orientation become a set; the selection is cleared for the next one.
 /// The panel's note says what was kept.
@@ -107,10 +120,10 @@ pub(super) fn add_set(d: &mut PartDialog) -> String {
         d.frame_sets.len() + 1,
         options.size
     );
-    d.frame_sets.push(super::part_planned::FrameSet {
-        skeletons: std::mem::take(&mut d.skeletons),
-        options,
-    });
+    let lines = std::mem::take(&mut d.skeletons);
+    let skeletons = merged(d, lines);
+    d.frame_sets
+        .push(super::part_planned::FrameSet { skeletons, options });
     d.picks.insert("edges", Vec::new());
     text
 }
@@ -250,7 +263,7 @@ impl CadCraftApp {
             .map(|s| (s.skeletons.clone(), s.options.clone()))
             .collect();
         if !d.skeletons.is_empty() {
-            sets.push((d.skeletons.clone(), o.clone()));
+            sets.push((merged(d, d.skeletons.clone()), o.clone()));
         }
         if sets.is_empty() {
             return Err("select the skeleton edges or sketch lines".into());
@@ -362,16 +375,22 @@ impl CadCraftApp {
         }
     }
 
-    /// The straight lines of the visible sketches of the components on show
+    /// The curves (lines, arcs, splines) of the visible sketches of the components on show
     /// (first-level occurrences), in assembly coordinates, with what picks
     /// each one.
-    pub(super) fn sketch_lines(&self) -> Vec<(Skeleton, String, Point3, Point3)> {
+    pub(super) fn sketch_lines(&self) -> Vec<(Skeleton, String, Vec<Point3>)> {
         let Some(a) = self.assembly() else {
             return Vec::new();
         };
         // Each component's lines once (part coordinates: sketch id, name,
         // line, ends), then per occurrence.
-        type Local = Vec<(String, String, crate::sketch::EntityId, Point3, Point3)>;
+        type Local = Vec<(
+            String,
+            String,
+            crate::sketch::EntityId,
+            &'static str,
+            Vec<Point3>,
+        )>;
         let mut parts: std::collections::HashMap<crate::document::DocRef, Local> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
@@ -382,17 +401,21 @@ impl CadCraftApp {
                     for ps in p.sketches.iter().filter(|s| s.visible) {
                         let sk = &ps.sketch;
                         for (id, e) in sk.entities() {
-                            if let crate::sketch::Entity::Line { start, end } = *e
-                                && let (Some(a), Some(b)) = (sk.point(start), sk.point(end))
-                            {
-                                v.push((
-                                    ps.id.clone(),
-                                    ps.name.clone(),
-                                    id,
-                                    sk.to_world(&a.position),
-                                    sk.to_world(&b.position),
-                                ));
-                            }
+                            let kind = match e {
+                                crate::sketch::Entity::Line { .. } => "line",
+                                crate::sketch::Entity::Arc { .. } => "arc",
+                                crate::sketch::Entity::Spline { .. } => "spline",
+                                _ => continue,
+                            };
+                            let Some(c) = sk.curve_of(id) else {
+                                continue;
+                            };
+                            let pts: Vec<Point3> = c
+                                .sample(CURVE_SAMPLE_MM)
+                                .iter()
+                                .map(|q| sk.to_world(q))
+                                .collect();
+                            v.push((ps.id.clone(), ps.name.clone(), id, kind, pts));
                         }
                     }
                     v
@@ -400,7 +423,7 @@ impl CadCraftApp {
                 .unwrap_or_default()
             });
             let t = o.transform;
-            for (sketch, name, line, pa, pb) in local.iter() {
+            for (sketch, name, line, kind, pts) in local.iter() {
                 out.push((
                     Skeleton::SketchLine {
                         occurrence: o.id,
@@ -408,9 +431,8 @@ impl CadCraftApp {
                         sketch: sketch.clone(),
                         line: *line,
                     },
-                    format!("{} · {name} line", o.name),
-                    t.transform_point(pa),
-                    t.transform_point(pb),
+                    format!("{} · {name} {kind}", o.name),
+                    pts.iter().map(|q| t.transform_point(q)).collect(),
                 ));
             }
         }
@@ -427,15 +449,20 @@ impl CadCraftApp {
         })
     }
 
-    /// The sketch line nearest `p` on screen, within the snap radius.
-    fn sketch_line_under(&self, p: Pos2, rect: Rect) -> Option<(Skeleton, String, Point3, Point3)> {
+    /// The sketch curve nearest `p` on screen, within the snap radius.
+    fn sketch_line_under(&self, p: Pos2, rect: Rect) -> Option<(Skeleton, String, Vec<Point3>)> {
         let near = super::overlay::CURVE_SNAP_PX;
         self.sketch_lines()
             .into_iter()
             .filter_map(|l| {
-                let a = self.camera.project(&l.2, rect)?;
-                let b = self.camera.project(&l.3, rect)?;
-                let d = segment_distance(p, a, b);
+                let screen: Vec<Pos2> =
+                    l.2.iter()
+                        .filter_map(|q| self.camera.project(q, rect))
+                        .collect();
+                let d = screen
+                    .windows(2)
+                    .map(|w| segment_distance(p, w[0], w[1]))
+                    .fold(f32::MAX, f32::min);
                 (d <= near).then_some((d, l))
             })
             .min_by(|x, y| x.0.total_cmp(&y.0))
@@ -462,7 +489,8 @@ impl CadCraftApp {
         // The line under the cursor: a sketch line, else a model edge.
         let line = self
             .sketch_line_under(p, rect)
-            .map(|l| (l.0, l.2, l.3))
+            .filter(|l| l.2.len() == 2)
+            .map(|l| (l.0, l.2[0], l.2[1]))
             .or_else(|| {
                 let g @ crate::assembly::relation::GeomRef::Edge { .. } =
                     self.geom_under_pub(p, rect)?
@@ -587,9 +615,14 @@ impl CadCraftApp {
             return;
         };
         let linked = self.linked();
-        let lines: Vec<(Point3, Point3)> = skeletons
+        let runs: Vec<frame::Run> = skeletons
             .iter()
-            .filter_map(|s| frame::skeleton_line(&self.project, &linked, a, s).ok())
+            .filter_map(|s| frame::skeleton_run(&self.project, &linked, a, s).ok())
+            .collect();
+        let lines: Vec<(Point3, Point3)> = runs
+            .iter()
+            .filter(|r| matches!(r, frame::Run::Line(..)))
+            .map(frame::Run::chord)
             .collect();
         let n = lines.len().max(1) as f64;
         let centre = Point3::from(
@@ -607,6 +640,11 @@ impl CadCraftApp {
         let stroke = Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 140, 30, 200));
         // Lines along the member at a few points of the outline.
         let step = (outline.len() / 8).max(1);
+        for r in &runs {
+            if let frame::Run::Curve(c) = r {
+                self.preview_curve(sec, c, o, (&outline, step), stroke, painter, rect);
+            }
+        }
         for &(p, q) in &lines {
             let ori = o.layout.orient(&o.orientation, p, q, centre);
             let Some(t) = frame::placement(sec, p, q, &ori) else {
@@ -632,15 +670,66 @@ impl CadCraftApp {
         }
     }
 
+    /// A curved member's wire preview: the section at both ends, lines
+    /// along the path from some of its points.
+    #[allow(clippy::too_many_arguments)]
+    fn preview_curve(
+        &self,
+        sec: &crate::part::frame::Section,
+        c: &crate::part::sweep::PathGeom,
+        o: &InsertOptions,
+        (outline, step): (&[crate::sketch::Point2], usize),
+        stroke: Stroke,
+        painter: &egui::Painter,
+        rect: Rect,
+    ) {
+        let Some((t, run)) = frame::curved_place(sec, c, &o.orientation) else {
+            return;
+        };
+        let pieces = frame::member_pieces(&run, &crate::kernel::Transform3::identity());
+        let Some((_, n)) = crate::part::frame::path_plane(&pieces) else {
+            return;
+        };
+        const STATIONS: usize = 48;
+        let len = run.length();
+        let (p0, t0) = run.eval(0.0);
+        let axis = nalgebra::Unit::new_normalize(n);
+        let at = |v: &crate::sketch::Point2, k: usize| {
+            let (q, tq) = run.eval(len * k as f64 / STATIONS as f64);
+            let turn = n.dot(&t0.cross(&tq)).atan2(t0.dot(&tq));
+            let w = t.transform_point(&Point3::new(v.x, v.y, 0.0));
+            let r = nalgebra::Rotation3::from_axis_angle(&axis, turn);
+            self.camera.project(&(q + r * (w - p0)), rect)
+        };
+        for k in [0, STATIONS] {
+            let mut ring: Vec<Pos2> = outline.iter().filter_map(|v| at(v, k)).collect();
+            if ring.len() == outline.len() {
+                ring.push(ring[0]);
+                painter.add(egui::Shape::line(ring, stroke));
+            }
+        }
+        for v in outline.iter().step_by(step) {
+            let rail: Vec<Pos2> = (0..=STATIONS).filter_map(|k| at(v, k)).collect();
+            painter.add(egui::Shape::line(rail, stroke));
+        }
+    }
+
     pub(super) fn frame_overlay(&self, painter: &egui::Painter, rect: Rect, pointer: Option<Pos2>) {
         let seg = |a: &Point3, b: &Point3| -> Option<[Pos2; 2]> {
             Some([self.camera.project(a, rect)?, self.camera.project(b, rect)?])
         };
-        let lines = self.sketch_lines();
-        for (_, _, a, b) in &lines {
-            if let Some(s) = seg(a, b) {
-                painter.line_segment(s, Stroke::new(1.5, SKETCH));
+        let curve = |v: &[Point3], stroke: Stroke| {
+            let pts: Vec<Pos2> = v
+                .iter()
+                .filter_map(|q| self.camera.project(q, rect))
+                .collect();
+            if pts.len() == v.len() {
+                painter.add(egui::Shape::line(pts, stroke));
             }
+        };
+        let lines = self.sketch_lines();
+        for (_, _, v) in &lines {
+            curve(v, Stroke::new(1.5, SKETCH));
         }
         let Some(d) = self.part_planned.as_ref() else {
             return;
@@ -668,20 +757,18 @@ impl CadCraftApp {
                     }
                 }
                 Skeleton::SketchLine { .. } => {
-                    if let Some((_, _, a, b)) = lines.iter().find(|l| &l.0 == s)
-                        && let Some(s) = seg(a, b)
-                    {
-                        painter.line_segment(s, Stroke::new(3.0, picked_color()));
+                    if let Some((_, _, v)) = lines.iter().find(|l| &l.0 == s) {
+                        curve(v, Stroke::new(3.0, picked_color()));
                     }
                 }
+                Skeleton::Chain(_) => {}
             }
         }
         if self.frame_takes_lines()
             && let Some(p) = pointer
-            && let Some((_, _, a, b)) = self.sketch_line_under(p, rect)
-            && let Some(s) = seg(&a, &b)
+            && let Some((_, _, v)) = self.sketch_line_under(p, rect)
         {
-            painter.line_segment(s, Stroke::new(3.0, HOVER));
+            curve(&v, Stroke::new(3.0, HOVER));
             return;
         }
         // The model edge (Select: Edge) or face (Face / Body Edges) a click
