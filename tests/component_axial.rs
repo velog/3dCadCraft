@@ -511,11 +511,12 @@ fn a_full_hexagon_has_exact_chamfers() {
 }
 
 /// The shank's chamfer leaves a cylinder shorter than the bolt: a thread longer
-/// than that cylinder runs its whole length (ISO 4014 M36 x 80: b = 78).
+/// than that cylinder runs its whole length (DIN 931 M36 x 80: b = 78; ISO 4014's
+/// M36 series starts at 140 mm, where b is shorter than the shank).
 #[test]
 fn a_thread_longer_than_the_cylinder_takes_all_of_it() {
     let every = all();
-    for name in ["ISO 4014 M36 x 80", "DIN 931 M36 x 80"] {
+    for name in ["DIN 931 M36 x 80"] {
         let s = every.iter().find(|s| s.designation() == name).unwrap();
         for d in [Detail::Standard, Detail::Full] {
             let p = s.part_at(d).unwrap();
