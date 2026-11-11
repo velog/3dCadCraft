@@ -46,6 +46,7 @@ Fasteners/Pins,Spring,spring_pin,ready,size d s lengths,slotted tubular
 Fasteners/Pins,Grooved,grooved_pin,ready,size d lengths,with rolled grooves
 Fasteners/Pins,Cotter,cotter_pin,ready,size d a c lengths,"split, bent on assembly"
 Fasteners/Pins,Clevis,clevis_pin,ready,size d dk k lengths,with a head and a cross hole
+Fasteners/Pins,Internal Thread,threaded_pin,ready,size d d2 t lengths,dowel with a tapped hole
 Fasteners/Rivets,Round Head,rivet,ready,size d dk k lengths,solid
 Fasteners/Rivets,Countersunk,countersunk_rivet,ready,size d dk k lengths,solid
 Fasteners/Rivets,Blind,blind_rivet,ready,size d dk k lengths,closed from one side
@@ -81,6 +82,7 @@ Structural Shapes,Round Tubes,section,ready,see profiles,"circular hollow, pipe"
 Structural Shapes,Square and Rectangular Tubes,section,ready,see profiles,hollow sections
 Structural Shapes,Round Bars,section,ready,see profiles,solid
 Structural Shapes,"Square, Flat and Hexagon Bars",section,ready,see profiles,solid
+Aluminium Framing,T-Slot Profiles,section,ready,see profiles,aluminium framing on a grid
 Sheet Metal Hardware,Clinch Nuts,clinch_nut,ready,size d D m,pressed into a sheet
 Sheet Metal Hardware,Clinch Studs,clinch_stud,ready,size d D k lengths,pressed into a sheet
 Sheet Metal Hardware,Standoffs,standoff,ready,size d D lengths,spacers
@@ -102,6 +104,9 @@ Machine Elements/Springs,Extension,extension_spring,ready,size De d L0 n,coil wi
 Machine Elements/Linear Motion,Rail,linear_rail,ready,size a b lengths,envelope
 Machine Elements/Linear Motion,Carriage,linear_carriage,ready,size a b c,envelope
 Machine Elements/Linear Motion,Ball Bushing,bush,ready,size d D lengths,for round shafts
+Machine Elements/Linear Motion,Ball Nut,ball_nut,ready,size d0 P D D1 D2 L L1 D3,flanged
+Machine Elements/Linear Motion,Ball Screw,ball_screw,ready,size d0 lengths,shaft
+Machine Elements/Pneumatics,Cylinder,pneumatic_cylinder,ready,size bore E L0 B VA MM WH KK lengths,ISO 15552 envelope
 Other Parts,Grease Fittings,grease_fitting,ready,size d L1 L SW,lubrication
 Other Parts,Plugs,plug,ready,size d c dk i l s,threaded closures
 Other Parts,Drill Bushings,bush,ready,size d D lengths,jig

@@ -113,7 +113,14 @@ impl Fit {
                 },
             },
             Kind::TNut(_, _, e, ..) => Fit::Slot { foot: e },
-            Kind::Key(..) | Kind::Woodruff(..) | Kind::ORing(..) | Kind::Shape(..) => Fit::Manual,
+            Kind::BallNut(d0, ..) => Fit::Over { bore: d0 },
+            Kind::BallScrew(d, l) => into(d, l),
+            Kind::ThreadedPin(d, l, ..) => into(d, l),
+            Kind::Key(..)
+            | Kind::Woodruff(..)
+            | Kind::ORing(..)
+            | Kind::Shape(..)
+            | Kind::Cylinder(..) => Fit::Manual,
         }
     }
 

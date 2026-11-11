@@ -1,0 +1,6 @@
+# Ball screw shaft, plain: the nominal diameters of DIN 69051-5; the thread and machined ends are left out. Lengths typed.
+size,d0,lengths
+16,16,300;500;800;1000;1500
+20,20,300;500;800;1000;1500
+25,25,500;800;1000;1500;2000
+32,32,500;800;1000;1500;2000

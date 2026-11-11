@@ -1,0 +1,11 @@
+# ISO 15552: pneumatic cylinder, the envelope of a profile cylinder (no tie rods, no ports, no cushioning screws). Values in mm from
+# the Metalwork ISO 15552 type A catalogue page: E body across flats, L0 body length (stroke 0), B front boss, VA its height, MM rod,
+# WH the rod's reach from the body; the rod threads (KK) of the Tameson ISO 15552 sheet agree. Lengths are common strokes.
+size,bore,E,L0,B,VA,MM,WH,KK,lengths
+32,32,46,94,30,4,12,26,M10x1.25,25;50;80;100;125;160;200;250;320;400;500
+40,40,54,105,35,4,16,30,M12x1.25,25;50;80;100;125;160;200;250;320;400;500
+50,50,64.5,106,40,4,20,37,M16x1.5,25;50;80;100;125;160;200;250;320;400;500
+63,63,75.5,121,45,4,20,37,M16x1.5,25;50;80;100;125;160;200;250;320;400;500
+80,80,94,128,45,4,25,46,M20x1.5,25;50;80;100;125;160;200;250;320;400;500
+100,100,111,138,55,4,25,51,M20x1.5,25;50;80;100;125;160;200;250;320;400;500
+125,125,135,160,60,6,32,65,M27x2,25;50;80;100;125;160;200;250;320;400;500

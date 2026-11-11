@@ -5,7 +5,7 @@
 # Dimensions in mm, typed from the dimension tables of the standards named in
 # the family column (nominal values; hollow sections use the standard's
 # calculation radii: outer 2t / inner t up to t = 6 mm, 2.5t / 1.5t above).
-# shape: shs | rhs | chs | angle | ibeam | ipn | channel | upn | tee | flat | bar | sqbar | hexbar | zcf | ccf
+# shape: shs | rhs | chs | angle | ibeam | ipn | channel | upn | tee | flat | bar | sqbar | hexbar | zcf | ccf | tslot
 #   shs / rhs: h b t r1 (outer radius) r2 (inner radius)
 #   chs: h (outside diameter) t
 #   angle: h b t r1 (root radius) r2 (toe radius)
@@ -18,8 +18,13 @@
 #   bar: h (diameter)
 #   sqbar: h (side); hexbar: h (across the flats)
 #   zcf / ccf (cold-formed, constant wall): h b t, r1 (inner bend radius); ccf: tf (lip)
+#   tslot (aluminium framing, spec 6.1 3.11a): h b, t (lip), tw (slot opening), tf (groove depth from the face),
+#     r1 (core bore diameter), r2 (outer corner radius), m (grid), A (published area, mm2); the chamber and the
+#     cavities between cells are sized to A. Sources per family in data/components/SOURCES.md.
+#     c, u (thin-walled sections): the published chamber width and the depth where its walls start to slope;
+#     then the chamber is the catalogue's and one wall thickness of the outer walls and webs is sized to A.
 # ANSI rows are typed in inches from the AISC / ASME tables and converted to mm.
-family,standard,shape,size,h,b,t,tw,tf,r1,r2
+family,standard,shape,size,h,b,t,tw,tf,r1,r2,m,A,c,u
 Square hollow section (EN 10219),EN,shs,20x20x2,20,20,2,,,4,2
 Square hollow section (EN 10219),EN,shs,30x30x3,30,30,3,,,6,3
 Square hollow section (EN 10219),EN,shs,40x40x3,40,40,3,,,6,3
@@ -182,3 +187,23 @@ Square HSS (ASTM A500),ANSI,shs,HSS3x3x3/16,76.2,76.2,4.42,,,8.839,4.42
 Square HSS (ASTM A500),ANSI,shs,HSS4x4x1/4,101.6,101.6,5.918,,,11.836,5.918
 Square HSS (ASTM A500),ANSI,shs,HSS6x6x1/4,152.4,152.4,5.918,,,11.836,5.918
 Square HSS (ASTM A500),ANSI,shs,HSS6x6x3/8,152.4,152.4,8.865,,,17.729,8.865
+Strut profile slot 8 R30 (Bosch Rexroth),Other,tslot,30x30,30,30,2.2,8,9,7.3,1,30,310,16.5,4.75
+Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,40x40L,40,40,3,10,12.5,10,1,40,560,20.1,6
+Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,40x80L,40,80,3,10,12.5,10,1,40,990,20.1,6
+Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,80x80L,80,80,3,10,12.5,10,1,40,1820,20.1,6
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x45L,45,45,3,10,12.5,10,1,45,600,20.1,6
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x90L,45,90,3,10,12.5,10,1,45,1130,20.1,6
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x90L,90,90,3,10,12.5,10,1,45,2410,20.1,6
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x45,45,45,3,10,12.5,10,1,45,750,20.1,6
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x90,45,90,3,10,12.5,10,1,45,1540,20.1,6
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x90,90,90,3,10,12.5,10,1,45,3840,20.1,6
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x180,90,180,3,10,12.5,10,1,45,6360,20.1,6
+Strut profile slot 10 R50 (Bosch Rexroth),Other,tslot,50x50L,50,50,3,10,12.5,10,1,50,930,20.1,6
+Strut profile slot 10 R60 (Bosch Rexroth),Other,tslot,60x60,60,60,3,10,12.5,10,1,60,1440,20.1,6
+T-slot profile slot 5 (20 grid),Other,tslot,20x20,20,20,2.0,5,6.35,4.2,1.0,20,180
+T-slot profile slot 6 (30 grid),Other,tslot,30x30,30,30,2.0,6,9.0,5.0,1.5,30,467
+T-slot profile slot 6 (30 grid),Other,tslot,60x30,30,60,2.0,6,9.0,5.0,1.5,30,848
+T-slot profile slot 8 (40 grid),Other,tslot,40x40,40,40,4.5,8,12.25,6.8,1.5,40,916
+T-slot profile slot 8 (40 grid),Other,tslot,80x40,40,80,4.5,8,12.25,6.8,1.5,40,1676
+T-slot profile slot 8 (40 grid),Other,tslot,80x80,80,80,4.5,8,12.25,6.8,1.5,40,2666
+T-slot profile slot 10 (50 grid),Other,tslot,50x50,50,50,4.0,10,15.0,10.2,2.0,50,1331
