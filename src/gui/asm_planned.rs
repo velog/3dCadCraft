@@ -1510,37 +1510,26 @@ impl AsmPlanned {
                     ],
                 ),
             ],
-            Shaft => &[
-                Page(
-                    "Design",
-                    &[
-                        Sel(
-                            "axis",
-                            "Axis",
-                            "select an axis or cylindrical face for the shaft",
-                            LINE,
-                        ),
-                        Sel(
-                            "start",
-                            "Start Plane",
-                            "select the start plane (optional)",
-                            PLANE,
-                        ),
-                        Head("Sections"),
-                        Note("Cylinder 100 × 50 mm"),
-                        Button("Insert Cylinder"),
-                        Button("Insert Cone"),
-                        Button("Insert Polygon"),
-                        Button("Bore at the left"),
-                        Button("Bore at the right"),
-                    ],
-                ),
-                Page(
-                    "Calculation",
-                    &[Note("Loads, supports, material (comes after the geometry)")],
-                ),
-                Page("Graphs", &[Note("Shear force, bending moment, deflection")]),
-            ],
+            Shaft => &[Page(
+                "Design",
+                &[
+                    Sel(
+                        "axis",
+                        "Axis",
+                        "select an axis or cylindrical face for the shaft",
+                        LINE,
+                    ),
+                    Sel(
+                        "start",
+                        "Start Plane",
+                        "select the start plane (optional)",
+                        PLANE,
+                    ),
+                    Check("Flip", false),
+                    Head("Sections"),
+                    Button("Insert Cylinder"),
+                ],
+            )],
             SpurGear | WormGear | BevelGear => &[
                 Page(
                     "Design",
@@ -1557,12 +1546,14 @@ impl AsmPlanned {
                             0,
                         ),
                         Num("Pressure Angle", 20.0, "°"),
+                        Num("Helix Angle", 0.0, "°"),
                         Num("Module", 2.0, " mm"),
                         Num("Desired Gear Ratio", 2.0, ""),
                         Num("Center Distance", 60.0, " mm"),
                         Head("Gear 1"),
                         Combo("Gear 1", MODEL, 0),
                         Num("Number of Teeth 1", 20.0, ""),
+                        Num("Unit Correction 1", 0.0, ""),
                         Num("Facewidth 1", 20.0, " mm"),
                         Sel(
                             "cyl1",
@@ -1579,6 +1570,7 @@ impl AsmPlanned {
                         Head("Gear 2"),
                         Combo("Gear 2", MODEL, 0),
                         Num("Number of Teeth 2", 40.0, ""),
+                        Num("Unit Correction 2", 0.0, ""),
                         Num("Facewidth 2", 20.0, " mm"),
                         Sel(
                             "cyl2",
@@ -1596,9 +1588,20 @@ impl AsmPlanned {
                 ),
                 Page(
                     "Calculation",
-                    &[Note(
-                        "Strength of the teeth and life (comes after the geometry)",
-                    )],
+                    &[
+                        Num("Power (kW)", 10.0, " kW"),
+                        Num("Speed (rpm)", 1500.0, " rpm"),
+                        Head("Bending (AGMA 218.01 per NASA RP-1152)"),
+                        Num("Geometry Factor J", 0.35, ""),
+                        Num("Application Factor Ka", 1.0, ""),
+                        Num("Load Distribution Factor Km", 1.3, ""),
+                        Num("Dynamic Factor Kv", 0.8, ""),
+                        Num("Allowable Bending Stress (MPa)", 250.0, " MPa"),
+                        Head("Surface Life (NASA RP-1152)"),
+                        Num("Life Factor (material)", 1.0, ""),
+                        Num("Reliability (%)", 90.0, " %"),
+                        Button("Calculate"),
+                    ],
                 ),
             ],
             Bearing => &[
@@ -1628,34 +1631,47 @@ impl AsmPlanned {
                     &[Note("Loads and life (comes after the geometry)")],
                 ),
             ],
-            Key => &[Page(
-                "Design",
-                &[
-                    Combo("Key", &["ISO 2491 A", "DIN 6885 A"], 0),
-                    Head("Shaft Groove"),
-                    Sel(
-                        "shaft",
-                        "Cylindrical Face",
-                        "select the shaft's cylindrical face",
-                        CYLINDER,
-                    ),
-                    Sel(
-                        "start",
-                        "Start Plane",
-                        "select the start plane of the groove",
-                        PLANE,
-                    ),
-                    Combo("Groove", &["Rounded ends", "Square ends"], 0),
-                    Head("Hub Groove"),
-                    Sel(
-                        "hub",
-                        "Hub Face",
-                        "select the hub's cylindrical face",
-                        CYLINDER,
-                    ),
-                    Num("Number of Keys", 1.0, ""),
-                ],
-            )],
+            Key => &[
+                Page(
+                    "Design",
+                    &[
+                        Combo("Key", &["ISO 2491 A", "DIN 6885 A"], 0),
+                        Head("Shaft Groove"),
+                        Sel(
+                            "shaft",
+                            "Cylindrical Face",
+                            "select the shaft's cylindrical face",
+                            CYLINDER,
+                        ),
+                        Sel(
+                            "start",
+                            "Start Plane",
+                            "select the start plane of the groove",
+                            PLANE,
+                        ),
+                        Combo("Groove", &["Rounded ends", "Square ends"], 0),
+                        Head("Hub Groove"),
+                        Sel(
+                            "hub",
+                            "Hub Face",
+                            "select the hub's cylindrical face",
+                            CYLINDER,
+                        ),
+                        Num("Number of Keys", 1.0, ""),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[
+                        Num("Torque (N·m)", 100.0, " N·m"),
+                        Num("Shaft Diameter", 40.0, " mm"),
+                        Num("Key Length", 50.0, " mm"),
+                        Num("Allowed Shear (MPa)", 80.0, " MPa"),
+                        Num("Allowed Pressure (MPa)", 150.0, " MPa"),
+                        Button("Calculate"),
+                    ],
+                ),
+            ],
             VBelts | SyncBelts | RollerChains => &[Page(
                 "Design",
                 &[

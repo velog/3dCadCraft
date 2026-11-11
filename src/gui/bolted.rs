@@ -1039,7 +1039,7 @@ fn library_list(
 
 /// Keeps a grid cell inside the Properties panel (it cannot widen: CLAUDE.md
 /// "Properties cannot widen"), so its rows wrap.
-fn fit_cell(ui: &mut egui::Ui) {
+pub(super) fn fit_cell(ui: &mut egui::Ui) {
     let w = (ui.clip_rect().right() - ui.cursor().left() - 6.0).max(80.0);
     ui.set_max_width(w);
 }

@@ -30,8 +30,8 @@
 )]
 
 pub use cadcraft3d_core::{
-    api, assembly, command, components, diagnostics, document, drawing, kernel, materials, part,
-    presets, sheet_rules, sketch,
+    api, assembly, command, components, design, diagnostics, document, drawing, kernel, materials,
+    part, presets, sheet_rules, sketch,
 };
 
 #[cfg(feature = "gui")]

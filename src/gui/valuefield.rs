@@ -7,6 +7,7 @@ use eframe::egui::{self, Color32, RichText};
 use crate::kernel::Real;
 use crate::part::expr::Unit;
 use crate::part::params::{ParamRow, eval_field_in, format_value};
+use crate::part::units::UnitDef;
 
 /// What a field shows and checks against.
 pub struct FieldSpec<'a> {
@@ -22,6 +23,57 @@ pub struct FieldSpec<'a> {
     pub expr: Option<&'a str>,
     /// All parameters of the part (to evaluate and to list).
     pub table: &'a [ParamRow],
+    /// A quantity other than a length or an angle (N, N·m, MPa): the value
+    /// is in its unit's internal size and shown with its label.
+    pub quantity: Option<Quantity>,
+}
+
+/// A field's unit by its label (`N`, `N·m`, `MPa`, `kW`): what the parser
+/// checks the expression against, and what the field shows after the number.
+#[derive(Clone, Copy, Debug)]
+pub struct Quantity {
+    /// The unit.
+    pub def: UnitDef,
+    /// Its label.
+    pub label: &'static str,
+}
+
+impl Quantity {
+    /// The unit named `label` (`parse_spec`); unknown labels are unitless
+    /// with the label shown (`rpm`).
+    pub fn of(label: &'static str) -> Quantity {
+        Quantity {
+            def: crate::part::units::parse_spec(label).unwrap_or_else(|_| UnitDef::from(Unit::Ul)),
+            label,
+        }
+    }
+
+    fn format(&self, v: Real) -> String {
+        let d = self.def.to_display(v);
+        let s = format!("{d:.6}");
+        let s = s.trim_end_matches('0').trim_end_matches('.').to_owned();
+        if self.label.is_empty() {
+            s
+        } else {
+            format!("{s} {}", self.label)
+        }
+    }
+}
+
+impl FieldSpec<'_> {
+    fn shown(&self, v: Real) -> String {
+        match &self.quantity {
+            Some(q) => q.format(v),
+            None => format_value(v, self.unit),
+        }
+    }
+
+    fn eval(&self, text: &str) -> Result<(Option<String>, Real, Option<String>), String> {
+        match &self.quantity {
+            Some(q) => eval_field_in(self.table, text, q.def, self.name),
+            None => eval_field_in(self.table, text, self.unit, self.name),
+        }
+    }
 }
 
 /// The drag payload of a parameter's pick whip (Parameters table `@`).
@@ -101,7 +153,7 @@ pub fn remember(ctx: &egui::Context, text: &str) {
 pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
     let shown = match spec.expr {
         Some(e) => e.to_owned(),
-        None => format_value(spec.value, spec.unit),
+        None => spec.shown(spec.value),
     };
     let buf_id = spec.id.with("buf");
     let te_id = spec.id.with("te");
@@ -112,7 +164,7 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
         ui.spacing_mut().item_spacing.x = 2.0;
         let editing: Option<String> = ui.data(|d| d.get_temp(buf_id));
         let mut text = editing.clone().unwrap_or_else(|| shown.clone());
-        let check = eval_field_in(spec.table, &text, spec.unit, spec.name);
+        let check = spec.eval(&text);
         let bad = editing.is_some() && check.is_err();
         let mut te = egui::TextEdit::singleline(&mut text)
             .id(te_id)
@@ -161,7 +213,7 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
         let hover = match (&check, editing.is_some()) {
             (Err(e), true) => format!("Invalid: {e}"),
             _ => {
-                let v = format_value(spec.value, spec.unit);
+                let v = spec.shown(spec.value);
                 match spec.name {
                     Some(n) if !n.is_empty() => format!("{n} = {v}"),
                     _ => v,
@@ -244,10 +296,7 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
     });
     // The If window of this field (`>` → If...).
     let title = spec.name.filter(|n| !n.is_empty()).unwrap_or("value");
-    let eval = |t: &str| {
-        eval_field_in(spec.table, t, spec.unit, spec.name)
-            .map(|(_, v, _)| format_value(v, spec.unit))
-    };
+    let eval = |t: &str| spec.eval(t).map(|(_, v, _)| spec.shown(v));
     if let Some(t) =
         super::if_builder::window(ui.ctx(), spec.id, title, spec.table, spec.name, &eval)
     {
@@ -307,6 +356,7 @@ pub struct ExprValue<'a, T: ExprNumber> {
     suffix: String,
     equation: Option<&'a mut Option<String>>,
     cursor: Option<&'a str>,
+    quantity: Option<Quantity>,
 }
 
 impl<'a, T: ExprNumber> ExprValue<'a, T> {
@@ -319,6 +369,7 @@ impl<'a, T: ExprNumber> ExprValue<'a, T> {
             suffix: String::new(),
             equation: None,
             cursor: None,
+            quantity: None,
         }
     }
 
@@ -353,6 +404,14 @@ impl<'a, T: ExprNumber> ExprValue<'a, T> {
         self.suffix = s.into();
         self
     }
+
+    /// A quantity by its unit's label (`N`, `N·m`, `MPa`, `kW`, `kg/m³`):
+    /// the value is kept in that unit, shown with it, and typed values in
+    /// other units of the same kind (`2 kN`, `150 N/mm^2`) are converted.
+    pub fn unit(mut self, label: &'static str) -> Self {
+        self.quantity = Some(Quantity::of(label));
+        self
+    }
 }
 
 impl<T: ExprNumber> egui::Widget for ExprValue<'_, T> {
@@ -366,9 +425,14 @@ impl<T: ExprNumber> egui::Widget for ExprValue<'_, T> {
             Unit::Ul
         };
         let shown = self.value.to_real();
+        let quantity = self.quantity;
         // Angles of these fields are kept in degrees; the parser works in
-        // radians.
-        let internal = if deg { shown.to_radians() } else { shown };
+        // radians. A quantity is kept in its own unit.
+        let internal = match &quantity {
+            Some(q) => q.def.from_display(shown),
+            None if deg => shown.to_radians(),
+            None => shown,
+        };
         let table = frame_table(ui.ctx());
         let id = ui.next_auto_id();
         let spec = FieldSpec {
@@ -378,6 +442,7 @@ impl<T: ExprNumber> egui::Widget for ExprValue<'_, T> {
             name: None,
             expr: None,
             table: &table,
+            quantity,
         };
         if let Some(label) = self.cursor {
             super::cursor_value::register(
@@ -396,7 +461,11 @@ impl<T: ExprNumber> egui::Widget for ExprValue<'_, T> {
         if let Some(text) = inner.inner
             && let Ok((_, v, _)) = eval_field_in(&table, &text, unit, None)
         {
-            let v = if deg { v.to_degrees() } else { v };
+            let v = match &quantity {
+                Some(q) => q.def.to_display(v),
+                None if deg => v.to_degrees(),
+                None => v,
+            };
             *self.value = T::from_real(v.clamp(self.min, self.max));
             if let Some(eq) = self.equation {
                 let named = !crate::part::expr::names_in(&text).is_empty();

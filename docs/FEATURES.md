@@ -1251,10 +1251,11 @@ Insert Frame on straight model edges (orientation, member parts, the members fol
 Generators that **calculate** and **model** standard machine elements:
 
 - **Bolted connections:** choosing the bolt, washers, nuts and holes in several parts at once, with a strength check. **Specification:** [spec/6.2-bolted-connection.md](spec/6.2-bolted-connection.md). Interface and logic of the Design tab 2026-11-06: holes as assembly features through the plates, bolt / washers / nut from the Component Library with relationships, the shortest bolt that fits, Blind into a tapped hole, a browser node with Edit / Delete, format revision 66 (waiting for a visual check). Open: Follow Pattern, several points, length grip, countersunk seat, Calculation.
-- **Shafts:** segments, chamfers, grooves, keyways, bearing seats; bending, torsion, deflection.
-- **Gears:** spur (straight/helical), bevel, worm; geometry per ISO/DIN, strength check.
+- **Calculation sources:** free documents only (owner 2026-11-10): NASA RP-1123 (shafts), RP-1152 (gears), RP-1105 (bearings), Kimball & Barr 1909 (keys, springs). **Specification:** [spec/6.2-design-calculators.md](spec/6.2-design-calculators.md).
+- **Shafts:** segments, chamfers, grooves, keyways, bearing seats; bending, torsion, deflection. 2026-11-10: the Shaft Generator window (profile to scale with dimensions edited in place, section list, features, live 3D preview; Calculation and Graphs tabs with units and the cited formulas); cylinders, cones, polygons, chamfers, fillets, retaining-ring and relief grooves, cosmetic threads as one stepped body; calculation (two supports, forces, continuous loads, torques, own weight; stresses, deflection, twist, critical speed, fatigue safety per RP-1123); keyway groove geometry, splines, bores and edit-again still open.
+- **Gears:** spur (straight/helical), bevel, worm; geometry per ISO/DIN, strength check. 2026-11-10: spur / helical geometry with profile shift, contact ratio, interference, bending stress (AGMA 218.01 per RP-1152), surface life (NASA model) in `design::gear`; panel and gear model open.
 - **Bearings:** selection by load and life (L10).
-- **Keys, splines, pins.**
+- **Keys, splines, pins.** 2026-11-10: DIN 6885 A sizes and the shear / pressure check in `design::key`; panel and grooves open.
 - **Springs:** compression, extension, torsion.
 - **Belt and chain drives.**
 

@@ -1256,6 +1256,27 @@ fn speed_budgets() {
         rest.add_body_op(BodyOpFeature::new(BodyOp::Rest(op)))
             .unwrap();
         rows.push(("Rest: on a plate, regenerate", 200.0, timed(&rest)));
+        // Shaft generator: 12 stepped sections with chamfers, fillets and grooves.
+        let shaft = {
+            use cadcraft3d::design::shaft::{EdgeFeature, RingGroove, Section, ShaftDesign};
+            let mut d = ShaftDesign::default();
+            for k in 0..12 {
+                let dia = 30.0 + 4.0 * Real::from(k.min(11 - k));
+                let mut s = Section::cylinder(dia, 25.0);
+                s.start = EdgeFeature::Fillet(0.8);
+                s.grooves.push(RingGroove {
+                    at: 10.0,
+                    width: 1.2,
+                    depth: 0.6,
+                    relief: false,
+                });
+                d.sections.push(s);
+            }
+            d.sections[0].start = EdgeFeature::Chamfer(1.0);
+            d.sections[11].end = EdgeFeature::Chamfer(1.0);
+            cadcraft3d::design::shaft::part(&d).unwrap()
+        };
+        rows.push(("Shaft: 12 sections, regenerate", 100.0, timed(&shaft)));
         let mut snap = PartDocument::with_box("Box1", [200.0, 100.0, 3.0]).unwrap();
         let i = sketch_at(&mut snap, 3.0);
         for (x, y) in [(30.0, 25.0), (170.0, 25.0), (30.0, 75.0), (170.0, 75.0)] {

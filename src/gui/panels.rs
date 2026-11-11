@@ -6280,6 +6280,7 @@ pub(super) fn field_row(
         name,
         expr: p.as_ref().and_then(|p| p.expr.as_deref()),
         table: fx.table,
+        quantity: None,
     };
     super::cursor_value::register(
         ui.ctx(),
