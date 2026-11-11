@@ -431,6 +431,7 @@ impl CadCraftApp {
                             name: None,
                             expr: None,
                             table: &table,
+                            quantity: None,
                         };
                         if let Some(t) = super::valuefield::value_field(ui, &spec) {
                             commit = Some(t);
@@ -482,6 +483,7 @@ impl CadCraftApp {
                             name: None,
                             expr: None,
                             table: &table,
+                            quantity: None,
                         };
                         if let Some(t) = super::valuefield::value_field(ui, &spec) {
                             commit = Some(t);
