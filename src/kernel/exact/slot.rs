@@ -133,6 +133,19 @@ pub fn slot_tool(
             .iter()
             .map(|p| format!("{prefix}:{role}{p}{rest}"))
             .collect();
+        // An angled end mill of round ends: the V along the slot and the half
+        // cones at its ends, reaching the line (Inventor's 4 faces).
+        if outline.round && b[0] < 1e-9 && a[0] > 1e-9 && a[1] > b[1] {
+            let top_cap = cap_at(a[1]);
+            let at = [a[0], a[1], b[1]];
+            match round_tip(origin, [k, u, w], outline.half, at, &walls, top_cap, prefix) {
+                Ok(t) => {
+                    pieces.push(t);
+                    continue;
+                }
+                Err(e) => log::debug!("slot tip as a V failed ({e}); a flat tip instead"),
+            }
+        }
         let ra = a[0].max(TIP * b[0]);
         let rb = b[0].max(TIP * a[0]);
         let (top, bottom) = (a[1], b[1]);
@@ -193,4 +206,105 @@ pub fn slot_tool(
             .ok_or_else(|| "the slot tool's bands did not join".to_owned())?;
     }
     Ok(tool)
+}
+
+/// An angled end mill's tip under round ends (half width `r` at `top`, the
+/// line at `bottom`): a V prism along the slot between the end centres and a
+/// half cone round each end, glued on their common planes. Walls are named
+/// like a band's (`walls` in [`SLOT_PARTS`] order), its top `top_cap`.
+fn round_tip(
+    origin: Point3,
+    [k, u, w]: [Vector3; 3],
+    h: Real,
+    [r, top, bottom]: [Real; 3],
+    walls: &[String],
+    top_cap: Option<String>,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let named = |body: sk::Body, f: &dyn Fn(usize) -> Option<String>| {
+        let face_names = names_from(&body, &[], &|o| match o {
+            FaceOrigin::Profile { segment } => f(*segment),
+            _ => None,
+        });
+        ExactSolid {
+            prism: None,
+            sheet: false,
+            name: Some(prefix.to_owned()),
+            body,
+            face_names,
+            profiles: Vec::new(),
+        }
+    };
+    // The V: a triangle in the plane square to the slot, pushed along it.
+    let pl =
+        sg::Plane::new(v3(&(origin - u * h)), d3(&w), d3(&k)).ok_or("degenerate slot plane")?;
+    let tri = sg::Region2 {
+        outer: sg::Loop2::polygon(&[
+            sg::Vec2::new(-r, top),
+            sg::Vec2::new(0.0, bottom),
+            sg::Vec2::new(r, top),
+        ]),
+        holes: Vec::new(),
+    };
+    let mut v = guarded("slot", || {
+        sk::extrude(&pl, std::slice::from_ref(&tri), 0.0, 2.0 * h)
+    })?;
+    if v.len() != 1 {
+        return Err("the V is not one solid".into());
+    }
+    let side = |i: usize| walls.get(i).cloned();
+    let mut tip = named(v.remove(0), &|s| match s {
+        0 => side(3),
+        1 => side(1),
+        2 => top_cap.clone(),
+        _ => None,
+    });
+    // The half cones: the half profile turned half round each end's axis,
+    // from one side through the end to the other.
+    for (sign, end) in [(1.0, 0usize), (-1.0, 2)] {
+        let c = origin + u * (sign * h);
+        let half = sg::Region2 {
+            outer: sg::Loop2::polygon(&[
+                sg::Vec2::new(0.0, top),
+                sg::Vec2::new(0.0, bottom),
+                sg::Vec2::new(r, top),
+            ]),
+            holes: Vec::new(),
+        };
+        let mut cone = None;
+        // The kernel's sense of a positive angle: take the start side whose
+        // half lies beyond the end.
+        for x in [w, -w] {
+            let pl = sg::Plane::new(v3(&c), d3(&x), d3(&k)).ok_or("degenerate slot plane")?;
+            let region = half.clone();
+            let mut v = guarded("slot", move || {
+                sk::revolve(
+                    &pl,
+                    std::slice::from_ref(&region),
+                    sg::Vec2::new(0.0, 0.0),
+                    sg::Vec2::new(0.0, 1.0),
+                    std::f64::consts::PI,
+                )
+            })?;
+            if v.len() != 1 {
+                return Err("the half cone is not one solid".into());
+            }
+            let s = named(v.remove(0), &|s| match s {
+                1 => walls.get(end).cloned(),
+                2 => top_cap.clone(),
+                _ => None,
+            });
+            let beyond = bounds(&s).is_some_and(|(lo, hi)| {
+                let mid = lo + (hi - lo) / 2.0;
+                (mid - c).dot(&u) * sign > 0.0
+            });
+            if beyond {
+                cone = Some(s);
+                break;
+            }
+        }
+        let cone = cone.ok_or("the half cone does not lie beyond the end")?;
+        tip = boolean(&tip, &cone, ExactOp::Union)?.ok_or("the tip's pieces did not join")?;
+    }
+    Ok(tip)
 }

@@ -152,9 +152,24 @@ fn blind_flat_and_angled() {
     s.drill_point = DrillPoint::Angle;
     s.point_angle = 118f64.to_radians();
     let part = slot(s.clone());
-    // Inventor: 2607.4 (a V along the slot, half cones at the ends); ours stops
-    // the V 1 % of the width short of its edge.
-    check(&part, 2607.4013, 2e-3);
+    // Inventor: 2607.4 (a V along the slot, half cones at the ends), 14 faces:
+    // the plate's 6, four walls of the bore and four of the V (its two planes
+    // meet in a line, no flat at the bottom).
+    check(&part, 2607.4013, 5e-4);
+    assert_eq!(part.body.faces().count(), 14);
+    let names: Vec<&str> = part
+        .body
+        .faces()
+        .filter_map(|(_, f)| f.name.as_deref())
+        .collect();
+    for n in ["End1", "Side1", "End2", "Side2"] {
+        assert!(
+            names
+                .iter()
+                .any(|x| x.starts_with(&format!("Slot1:Tip{n}"))),
+            "a V wall {n} in {names:?}"
+        );
+    }
     let (lo, _) = faces_box(&part, "Slot1:");
     assert!((lo.z - 8.996).abs() < 0.05, "{lo:?}");
     // Sharp corners: the angle is ignored (Inventor).
