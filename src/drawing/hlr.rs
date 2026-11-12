@@ -2837,7 +2837,7 @@ fn silhouette_chains(model: &ViewModel, frame: &ViewFrame) -> Vec<Sil> {
                     "R"
                 } else if ang > 45.0 && ang <= 135.0 {
                     "U"
-                } else if ang < -45.0 && ang >= -135.0 {
+                } else if (-135.0..-45.0).contains(&ang) {
                     "D"
                 } else {
                     "L"
