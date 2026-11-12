@@ -497,6 +497,117 @@ pub struct HoleSpec {
     /// Its included angle (radians, 90° when not set).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub far_csink_angle: Real,
+    /// A slot instead of a round hole (Inventor 2027's Slot, format
+    /// revision 73): `diameter` is its width, a seat its width at the top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<SlotSpec>,
+}
+
+/// The corners of a slot (Inventor: Fillet Type).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SlotCorners {
+    /// Round ends (an oblong): the only kind with seats and an angled end mill.
+    #[default]
+    Fillets,
+    /// A rectangle: flat bottom, no seat (Inventor ignores both there).
+    Sharp,
+}
+
+impl SlotCorners {
+    /// Both, in the panel's order.
+    pub const ALL: [SlotCorners; 2] = [SlotCorners::Fillets, SlotCorners::Sharp];
+
+    /// The name the panel shows.
+    pub fn label(self) -> &'static str {
+        match self {
+            SlotCorners::Fillets => "Fillets",
+            SlotCorners::Sharp => "Sharp Corners",
+        }
+    }
+}
+
+/// Which way a slot runs in its start plane before its rotation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SlotDirection {
+    /// The sketch's x axis.
+    #[default]
+    Horizontal,
+    /// The sketch's y axis.
+    Vertical,
+    /// Along a straight edge or axis (`HoleFeature::slot_axis`), projected
+    /// onto the start plane.
+    Custom,
+}
+
+impl SlotDirection {
+    /// Every direction, in the panel's order.
+    pub const ALL: [SlotDirection; 3] = [
+        SlotDirection::Horizontal,
+        SlotDirection::Vertical,
+        SlotDirection::Custom,
+    ];
+
+    /// The name the panel shows.
+    pub fn label(self) -> &'static str {
+        match self {
+            SlotDirection::Horizontal => "Horizontal",
+            SlotDirection::Vertical => "Vertical",
+            SlotDirection::Custom => "Custom",
+        }
+    }
+}
+
+/// A slot's shape and place about its centre (Inventor's SlotDefinition and
+/// its placement): the overall `length` along the direction, turned by
+/// `rotation` about the drilling axis.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SlotSpec {
+    /// Round ends or sharp corners.
+    #[serde(default)]
+    pub corners: SlotCorners,
+    /// Overall length, end to end (mm, > the width); parameter `slot_length`.
+    pub length: Real,
+    /// Horizontal / Vertical / Custom.
+    #[serde(default)]
+    pub direction: SlotDirection,
+    /// Rotation about the drilling axis from the direction (radians,
+    /// counter-clockwise seen from above the start plane); `slot_rotation`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation: Real,
+    /// The rotation turns the other way.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip_rotation: bool,
+}
+
+impl SlotSpec {
+    /// A round-ended horizontal slot `length` long.
+    pub fn new(length: Real) -> Self {
+        Self {
+            corners: SlotCorners::Fillets,
+            length,
+            direction: SlotDirection::Horizontal,
+            rotation: 0.0,
+            flip_rotation: false,
+        }
+    }
+
+    /// The signed rotation about the axis (the flip applied).
+    pub fn signed_rotation(&self) -> Real {
+        if self.flip_rotation {
+            -self.rotation
+        } else {
+            self.rotation
+        }
+    }
+
+    /// Half the distance between the end centres (round ends) or half the
+    /// length (sharp corners) for a slot `width` wide.
+    pub fn half(&self, width: Real) -> Real {
+        match self.corners {
+            SlotCorners::Fillets => (self.length - width) / 2.0,
+            SlotCorners::Sharp => self.length / 2.0,
+        }
+    }
 }
 
 fn is_true(v: &bool) -> bool {
@@ -541,6 +652,32 @@ impl HoleSpec {
             far_csink: false,
             far_csink_diameter: 0.0,
             far_csink_angle: 0.0,
+            slot: None,
+        }
+    }
+
+    /// A round-ended slot `width` × `length` (overall), through all, as the
+    /// Slot command starts it.
+    pub fn slot(width: Real, length: Real) -> Self {
+        Self {
+            termination: Termination::ThroughAll,
+            drill_point: DrillPoint::Flat,
+            slot: Some(SlotSpec::new(length)),
+            ..Self::simple(width, width)
+        }
+    }
+
+    /// The seat and the end mill a slot really has: sharp corners have no
+    /// seat and a flat bottom (Inventor ignores both there).
+    pub fn effective(&self) -> std::borrow::Cow<'_, HoleSpec> {
+        match &self.slot {
+            Some(s) if s.corners == SlotCorners::Sharp => {
+                let mut c = self.clone();
+                c.seat = SeatType::None;
+                c.drill_point = DrillPoint::Flat;
+                std::borrow::Cow::Owned(c)
+            }
+            _ => std::borrow::Cow::Borrowed(self),
         }
     }
 
@@ -697,7 +834,35 @@ impl HoleSpec {
         }
         let r = self.bore_radius();
         if !(r.is_finite() && r > 1e-6) {
-            return Err("the hole diameter must be greater than 0".into());
+            return Err(if self.slot.is_some() {
+                "the slot width must be greater than 0".into()
+            } else {
+                "the hole diameter must be greater than 0".into()
+            });
+        }
+        if let Some(s) = &self.slot {
+            if !matches!(self.hole_type, HoleType::Simple | HoleType::Clearance) {
+                return Err("a slot is Simple or Clearance (it has no thread)".into());
+            }
+            // Inventor refuses a slot no longer than it is wide.
+            if !(s.length.is_finite() && s.length > 2.0 * r + 1e-6) {
+                return Err("the slot length must be greater than its width".into());
+            }
+            if !s.rotation.is_finite() {
+                return Err("the slot rotation is not a number".into());
+            }
+            if self.symmetric {
+                return Err("a slot cannot be symmetric".into());
+            }
+            if self.far_csink {
+                return Err("a slot has no far side countersink".into());
+            }
+            if matches!(
+                self.drill_point,
+                DrillPoint::FlatW | DrillPoint::AngleV | DrillPoint::AngleY
+            ) {
+                return Err("a slot's end mill is Flat or Angle".into());
+            }
         }
         if self.termination == Termination::Distance
             && !(self.depth.is_finite() && self.depth > 0.0)
@@ -988,7 +1153,15 @@ impl HoleSpec {
                     lines.push(format!("Ø{}{}", n(t.tap_drill), depth_text(depth)));
                 }
             }
-            None => lines.push(format!("Ø{}{}", n(self.diameter), depth_text(depth))),
+            None => match &self.slot {
+                Some(s) => lines.push(format!(
+                    "SLOT {} X {}{}",
+                    n(self.diameter),
+                    n(s.length),
+                    depth_text(depth)
+                )),
+                None => lines.push(format!("Ø{}{}", n(self.diameter), depth_text(depth))),
+            },
         }
         match self.seat {
             SeatType::None => {}
@@ -1078,6 +1251,10 @@ pub struct HoleFeature {
     /// (Direction 1 / 2 flips it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<super::draft::PullRef>,
+    /// A slot's Custom direction: a straight edge or axis, projected onto
+    /// the start plane (format revision 73).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_axis: Option<super::LineRef>,
 }
 
 impl HoleFeature {
@@ -1088,6 +1265,10 @@ impl HoleFeature {
         if !matches!(s.hole_type, HoleType::Tapped | HoleType::TaperTapped) {
             v.push(("diameter", Unit::Mm));
         }
+        if s.slot.is_some() {
+            v.extend([("slot_length", Unit::Mm), ("slot_rotation", Unit::Deg)]);
+        }
+        let s = &*s.effective();
         if s.termination == Termination::Distance {
             v.push(("depth", Unit::Mm));
             if s.drill_point.angled() {
@@ -1133,6 +1314,8 @@ impl HoleFeature {
             "csink_angle" => s.csink_angle,
             "far_csink_diameter" => s.far_diameter(),
             "far_csink_angle" => s.far_angle(),
+            "slot_length" => s.slot.as_ref()?.length,
+            "slot_rotation" => s.slot.as_ref()?.rotation,
             "thread_depth" => s.thread.as_ref()?.depth,
             "thread_clearance" => s.thread.as_ref()?.clearance,
             _ => return None,
@@ -1152,6 +1335,16 @@ impl HoleFeature {
             "csink_angle" => s.csink_angle = v,
             "far_csink_diameter" => s.far_csink_diameter = v,
             "far_csink_angle" => s.far_csink_angle = v,
+            "slot_length" => {
+                if let Some(t) = s.slot.as_mut() {
+                    t.length = v;
+                }
+            }
+            "slot_rotation" => {
+                if let Some(t) = s.slot.as_mut() {
+                    t.rotation = v;
+                }
+            }
             "thread_depth" => {
                 if let Some(t) = s.thread.as_mut() {
                     t.depth = v;
@@ -1177,7 +1370,13 @@ impl HoleFeature {
             solids: Vec::new(),
             params: FeatureParams::default(),
             direction: None,
+            slot_axis: None,
         }
+    }
+
+    /// Whether it is a slot (Inventor 2027's Slot feature).
+    pub fn is_slot(&self) -> bool {
+        self.spec.slot.is_some()
     }
 }
 

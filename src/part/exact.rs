@@ -2188,9 +2188,14 @@ pub(super) fn hole(
 ) -> Result<(Vec<ExactSolid>, HoleOutput, Vec<super::pattern::ToolSet>), Fail> {
     use super::hole::{CosmeticThread, HoleInstance, SeatType, Termination};
     // A tapped hole is cut at the document's Tapped Hole Diameter.
-    let spec = &h.spec.with_tap_diameter(tap);
+    // Sharp-cornered slots have no seat and a flat bottom (`effective`).
+    let spec = &h.spec.with_tap_diameter(tap).effective().into_owned();
     spec.validate().map_err(User)?;
     let places = hole_placements(h, ps, body, works).map_err(User)?;
+    let outline = spec.slot.as_ref().map(|s| exact::SlotOutline {
+        half: s.half(2.0 * spec.bore_radius()),
+        round: s.corners == super::hole::SlotCorners::Fillets,
+    });
     let size = body
         .bounding_box()
         .map_or(1.0, |(lo, hi)| (hi - lo).norm().max(1.0));
@@ -2285,7 +2290,12 @@ pub(super) fn hole(
         };
         let mut parts = spec.tools(tool_depth, top, tool_point);
         let side = perpendicular(*dir);
+        let along = match &spec.slot {
+            Some(_) => Some(slot_along(h, ps, body, works, *dir).map_err(User)?),
+            None => None,
+        };
         let mut start_rim = (spec.seat == SeatType::Countersink
+            && outline.is_none()
             && right_angle(spec.csink_angle)
             && face.is_some()
             && !spec.flip
@@ -2348,6 +2358,7 @@ pub(super) fn hole(
                 seam,
                 prof: prof.clone(),
                 n,
+                slot: along.zip(outline),
                 class: if j == last {
                     ToolClass::Bore
                 } else if let Some(rim) = rim {
@@ -2491,7 +2502,51 @@ struct ToolJob {
     seam: Real,
     prof: Vec<([Real; 2], &'static str)>,
     n: usize,
+    /// A slot's direction and outline: the profile goes round the outline.
+    slot: Option<(crate::kernel::Vector3, exact::SlotOutline)>,
     class: ToolClass,
+}
+
+/// The direction a slot of `h` runs in at a centre drilled along `dir`: the
+/// sketch's x or y axis (a centre without a sketch: any line square to the
+/// axis) or the Custom edge / axis projected onto the start plane, turned by
+/// the slot's rotation about the axis.
+fn slot_along(
+    h: &super::hole::HoleFeature,
+    ps: Option<&super::PartSketch>,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    dir: crate::kernel::Vector3,
+) -> Result<crate::kernel::Vector3, String> {
+    use super::hole::SlotDirection;
+    let Some(s) = &h.spec.slot else {
+        return Err("not a slot".into());
+    };
+    let up = -dir.normalize();
+    let flat = |v: crate::kernel::Vector3| (v - up * v.dot(&up)).try_normalize(1e-9);
+    let v = match s.direction {
+        SlotDirection::Horizontal => ps
+            .and_then(|p| flat(p.sketch.plane.x_axis.into_inner()))
+            .unwrap_or_else(|| perpendicular(up)),
+        SlotDirection::Vertical => {
+            match ps.and_then(|p| flat(p.sketch.plane.y_axis().into_inner())) {
+                Some(v) => v,
+                None => up.cross(&perpendicular(up)),
+            }
+        }
+        SlotDirection::Custom => {
+            let l = h
+                .slot_axis
+                .as_ref()
+                .ok_or_else(|| "select the slot's direction (an edge or an axis)".to_owned())?;
+            let (_, d) = l
+                .resolve(body, works)
+                .map_err(|e| format!("the slot direction: {e}"))?;
+            flat(d).ok_or_else(|| "the slot direction runs along the hole's axis".to_owned())?
+        }
+    };
+    let a = s.signed_rotation();
+    Ok(v * a.cos() + up.cross(&v) * a.sin())
 }
 
 /// A countersink's profile (start or far side): a tapered disc on the axis.
@@ -2507,6 +2562,9 @@ fn hole_tool(job: &ToolJob, id: &str) -> Result<ExactSolid, String> {
     let pts: Vec<[Real; 2]> = prof.iter().map(|x| x.0).collect();
     let names: Vec<String> = prof.iter().map(|x| format!("{}:{}", x.1, job.n)).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    if let Some((along, outline)) = job.slot {
+        return exact::slot_tool(o, up, along, outline, &pts, &refs, id);
+    }
     // Countersinks as tapered discs: a cone of revolution sent the Boolean down a slow path
     // (~1 s a hole).
     if hole_cone(prof) {

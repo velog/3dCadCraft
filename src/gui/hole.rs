@@ -61,6 +61,8 @@ pub(super) enum HolePick {
     Face(String, Point3),
     /// The drilling direction (a planar face's normal, a straight edge).
     Direction(crate::part::PullRef),
+    /// A slot's Custom direction (a straight edge).
+    SlotAxis(crate::part::LineRef),
 }
 
 /// A linear dimension from a clicked centre to a model edge (Inventor:
@@ -119,6 +121,8 @@ pub(super) struct HoleDraft {
     /// The next click on a planar face or a straight edge sets the drilling
     /// direction.
     pub dir_pick: bool,
+    /// The next click on a straight edge sets a slot's Custom direction.
+    pub slot_pick: bool,
     /// A sketch shared for this hole by Keep sketch visible on (+): Cancel
     /// unshares it (sketch id).
     pub kept: Option<String>,
@@ -145,6 +149,7 @@ impl HoleDraft {
             edit: None,
             to_pick: false,
             dir_pick: false,
+            slot_pick: false,
             kept: None,
             remove: false,
             sk: None,
@@ -442,6 +447,35 @@ impl CadCraftApp {
         self.hole_draft = Some(d);
     }
 
+    /// Starts Slot: the Hole panel with a round-ended slot 10 × 30 through
+    /// all (Inventor 2027's Slot command takes its centres like Hole).
+    pub(super) fn start_slot(&mut self) {
+        self.start_hole();
+        if let Some(d) = self.hole_draft.as_mut() {
+            d.def.spec = hole::HoleSpec::slot(10.0, 30.0);
+        }
+    }
+
+    /// Convert to Slot of the Hole feature at `k` (Inventor 2027, one way): a
+    /// round-ended slot three diameters long, then its panel for the rest.
+    pub(super) fn convert_to_slot(&mut self, k: usize) {
+        let Some(Feature::Hole(h)) = self.part().features.get(k) else {
+            return;
+        };
+        let length = 3.0 * h.spec.diameter;
+        self.checkpoint("Convert to Slot");
+        match self.part_mut().convert_to_slot(k, length) {
+            Ok(()) => {
+                self.scene_dirty = true;
+                self.edit_feature_dialog(k);
+            }
+            Err(e) => {
+                self.history.cancel();
+                self.file_status = Some(Err(e.to_string()));
+            }
+        }
+    }
+
     /// Starts Thread.
     pub(super) fn start_thread(&mut self) {
         self.finish_sketch();
@@ -466,6 +500,14 @@ impl CadCraftApp {
         face: Option<(FaceId, Point3)>,
     ) -> Option<HolePick> {
         let part = self.part();
+        // A slot's direction: a straight edge only.
+        if self.hole_draft.as_ref().is_some_and(|d| d.slot_pick) {
+            let body = &part.body;
+            let e = edge?;
+            body.edge_direction(e)?;
+            let name = body.edge(e).and_then(|x| x.name.clone())?;
+            return Some(HolePick::SlotAxis(crate::part::LineRef::Edge(name)));
+        }
         // The direction: a straight edge, else a planar face's normal.
         if self.hole_draft.as_ref().is_some_and(|d| d.dir_pick) {
             use crate::part::{LineRef, PlaneRef, PullRef};
@@ -621,6 +663,16 @@ impl CadCraftApp {
         let Some(d) = self.hole_draft.as_mut() else {
             return;
         };
+        if d.slot_pick {
+            if let HolePick::SlotAxis(l) = pick {
+                d.def.slot_axis = Some(l);
+                if let Some(s) = d.def.spec.slot.as_mut() {
+                    s.direction = hole::SlotDirection::Custom;
+                }
+                d.slot_pick = false;
+            }
+            return;
+        }
         if d.dir_pick {
             if let HolePick::Direction(p) = pick {
                 d.def.direction = Some(p);
@@ -640,7 +692,7 @@ impl CadCraftApp {
         }
         match pick {
             // Only while the direction is picked (handled above).
-            HolePick::Direction(_) => {}
+            HolePick::Direction(_) | HolePick::SlotAxis(_) => {}
             HolePick::SketchPoint(i, pid) => {
                 let Some(id) = ids.get(i) else { return };
                 if d.face.is_some() || (!d.def.sketch.is_empty() && d.def.sketch != *id) {
@@ -898,6 +950,8 @@ impl CadCraftApp {
         };
         let cmd = if d.edit.is_some() {
             "Edit Feature"
+        } else if d.def.is_slot() {
+            "Slot"
         } else {
             "Hole"
         };

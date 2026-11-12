@@ -472,6 +472,82 @@ impl Sketch3d {
         Ok(())
     }
 
+    /// **Mirror** (Inventor's 3D sketch Mirror): copies of the curves whose
+    /// points are all in `points` (and of the bends at their corners),
+    /// reflected in the plane through `origin` with normal `normal`. A point
+    /// on the plane is shared with its copy; a copy keeps its point's Fix.
+    /// Helical curves are left (a mirror turns their hand). Returns the new
+    /// points.
+    pub fn mirror(
+        &mut self,
+        points: &[u32],
+        origin: Point3,
+        normal: Vector3,
+    ) -> Result<Vec<u32>, String> {
+        let n = normal
+            .try_normalize(1e-12)
+            .ok_or("Mirror: the plane has no normal")?;
+        let reflect = |p: Point3| p - n * (2.0 * (p - origin).dot(&n));
+        let has = |id: &u32| points.contains(id);
+        let lines: Vec<(u32, u32)> = self
+            .lines
+            .iter()
+            .filter(|l| has(&l.a) && has(&l.b))
+            .map(|l| (l.a, l.b))
+            .collect();
+        let arcs: Vec<(u32, u32, u32)> = self
+            .arcs
+            .iter()
+            .filter(|a| has(&a.a) && has(&a.b) && has(&a.via))
+            .map(|a| (a.a, a.via, a.b))
+            .collect();
+        let splines: Vec<(Vec<u32>, SplineKind)> = self
+            .splines
+            .iter()
+            .filter(|s| s.points.iter().all(has))
+            .map(|s| (s.points.clone(), s.kind))
+            .collect();
+        if lines.is_empty() && arcs.is_empty() && splines.is_empty() && points.is_empty() {
+            return Err("Mirror: select the curves to mirror".into());
+        }
+        let mut map: Vec<(u32, u32)> = Vec::new();
+        for &id in points {
+            let p = self
+                .point(id)
+                .ok_or("Mirror: a point is not in the sketch")?;
+            let (at, fixed) = (Point3::from(p.at), p.fixed);
+            let q = reflect(at);
+            let copy = if (q - at).norm() < 1e-9 {
+                id
+            } else {
+                self.add_point(q, fixed)
+            };
+            map.push((id, copy));
+        }
+        let to = |id: u32| map.iter().find(|(a, _)| *a == id).map_or(id, |(_, b)| *b);
+        for (a, b) in lines {
+            if to(a) != a || to(b) != b {
+                self.add_line(to(a), to(b))?;
+            }
+        }
+        for (a, via, b) in arcs {
+            self.add_arc(to(a), to(via), to(b))?;
+        }
+        for (pts, kind) in splines {
+            self.add_spline(pts.into_iter().map(to).collect(), kind)?;
+        }
+        let bends: Vec<Bend3d> = self
+            .bends
+            .iter()
+            .filter(|b| has(&b.corner) && to(b.corner) != b.corner)
+            .cloned()
+            .collect();
+        for b in bends {
+            self.add_bend(to(b.corner), b.radius)?;
+        }
+        Ok(map.into_iter().map(|(_, b)| b).collect())
+    }
+
     /// Removes constraint `k`.
     pub fn remove_constraint(&mut self, k: usize) {
         if k < self.constraints.len() {
@@ -669,7 +745,11 @@ impl Sketch3d {
         let mut next = self.clone();
         next.bends.retain(|b| b.corner != corner);
         next.bends.push(Bend3d { corner, radius });
-        next.pieces()?;
+        // Every chain must still fit its bends (a sketch may hold several
+        // chains: a mirror, included edges).
+        for chain in next.chains()? {
+            next.chain_pieces(&chain)?;
+        }
         *self = next;
         Ok(())
     }
@@ -789,6 +869,12 @@ impl Sketch3d {
         if chains.len() > 1 {
             return Err("the 3D sketch has more than one chain of curves".into());
         }
+        self.chain_pieces(chain)
+    }
+
+    /// One chain's curves as path pieces: lines shortened by the bends, the
+    /// bends' arcs between them.
+    pub fn chain_pieces(&self, chain: &Chain3) -> Result<Vec<PathPiece>, String> {
         let n = chain.len();
         let closed = n > 1 && chain[0].1 == chain[n - 1].2;
         // bends[k]: the bend at the start of curve k (between k - 1 and k).
@@ -835,8 +921,13 @@ impl Sketch3d {
 
     /// Points along every line and bend (for drawing).
     pub fn polylines(&self) -> Vec<Vec<Point3>> {
-        match self.pieces() {
-            Ok(p) => vec![points_of(&p)],
+        let per_chain = self.chains().and_then(|cs| {
+            cs.iter()
+                .map(|c| self.chain_pieces(c).map(|p| points_of(&p)))
+                .collect::<Result<Vec<_>, String>>()
+        });
+        match per_chain {
+            Ok(p) => p,
             Err(_) => self
                 .segs()
                 .into_iter()
@@ -1786,5 +1877,47 @@ mod tests {
         let text = serde_json::to_string(&s).unwrap();
         let back: Sketch3d = serde_json::from_str(&text).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn mirror_copies_lines_and_bends() {
+        let mut s = Sketch3d::new("S", "S");
+        let a = s.add_point(Point3::new(0.0, 0.0, 0.0), false);
+        let b = s.add_point(Point3::new(20.0, 0.0, 0.0), false);
+        let c = s.add_point(Point3::new(20.0, 20.0, 5.0), false);
+        s.add_line(a, b).unwrap();
+        s.add_line(b, c).unwrap();
+        s.add_bend(b, 4.0).unwrap();
+        let len = s.length();
+        // About the plane x = 0: a lies on it and is shared.
+        let new = s
+            .mirror(&[a, b, c], Point3::origin(), Vector3::x())
+            .unwrap();
+        assert_eq!(new[0], a);
+        assert_eq!(s.lines.len(), 4);
+        assert_eq!(s.bends.len(), 2);
+        assert_eq!(s.at(new[2]).unwrap(), Point3::new(-20.0, 20.0, 5.0));
+        // One chain through a, twice as long.
+        let chains = s.chains().unwrap();
+        assert_eq!(chains.len(), 1);
+        assert!(
+            (s.length() - 2.0 * len).abs() < 1e-6,
+            "{} vs {len}",
+            s.length()
+        );
+        assert!(s.mirror(&[], Point3::origin(), Vector3::zeros()).is_err());
+        // Off the plane: a second chain with its own bend, drawn with it.
+        let mut t = Sketch3d::new("T", "T");
+        let a = t.add_point(Point3::new(5.0, 0.0, 0.0), false);
+        let b = t.add_point(Point3::new(20.0, 0.0, 0.0), false);
+        let c = t.add_point(Point3::new(20.0, 20.0, 0.0), false);
+        t.add_line(a, b).unwrap();
+        t.add_line(b, c).unwrap();
+        t.add_bend(b, 4.0).unwrap();
+        t.mirror(&[a, b, c], Point3::new(0.0, 0.0, 10.0), Vector3::z())
+            .unwrap();
+        assert_eq!(t.chains().unwrap().len(), 2);
+        assert_eq!(t.bends.len(), 2);
+        assert_eq!(t.polylines().len(), 2);
     }
 }

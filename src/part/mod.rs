@@ -68,6 +68,7 @@ pub mod select;
 pub mod sheet_metal;
 pub mod shell;
 pub mod sketch3d;
+pub mod sketch3d_curves;
 pub mod split;
 pub mod standards;
 pub mod surface_op;
@@ -2680,11 +2681,12 @@ impl PartDocument {
         Ok(id)
     }
 
-    /// **Hole**: adds the feature (id `Hole<N>`). Its sketch (if any) is
+    /// **Hole** / **Slot**: adds the feature (id `Hole<N>`, a slot `Slot<N>`). Its sketch (if any) is
     /// consumed like an extrusion's: hidden, or shared when another feature
     /// uses it already. On failure nothing changes.
     pub fn add_hole(&mut self, mut def: HoleFeature) -> Result<String, PartError> {
-        let id = self.next_feature_id("Hole");
+        // A slot is a hole of its own name (Inventor 2027: `Slot1`).
+        let id = self.next_feature_id(if def.is_slot() { "Slot" } else { "Hole" });
         (def.id, def.name) = (id.clone(), id.clone());
         let sketch = def.sketch.clone();
         let reused = !sketch.is_empty() && !self.consumers(&sketch).is_empty();
@@ -2697,6 +2699,39 @@ impl PartDocument {
             }
         }
         Ok(id)
+    }
+
+    /// **Convert to Slot** (Inventor 2027, one way): the Hole feature at `k`
+    /// becomes a round-ended slot `length` long along its sketch's x axis,
+    /// keeping its id (so its faces keep their prefix), centres, seat and
+    /// termination; a thread goes (a slot is Simple or Clearance). On failure
+    /// nothing changes.
+    pub fn convert_to_slot(&mut self, k: usize, length: Real) -> Result<(), PartError> {
+        let Some(Feature::Hole(h)) = self.features.get(k) else {
+            return Err(PartError::Feature("Convert to Slot: not a hole".into()));
+        };
+        if h.is_slot() {
+            return Err(PartError::Feature(
+                "Convert to Slot: it is a slot already".into(),
+            ));
+        }
+        let mut h = h.clone();
+        let s = &mut h.spec;
+        if matches!(s.hole_type, HoleType::Tapped | HoleType::TaperTapped) {
+            s.hole_type = HoleType::Simple;
+            s.thread = None;
+        }
+        if !matches!(s.drill_point, DrillPoint::Flat | DrillPoint::Angle) {
+            s.drill_point = if s.drill_point.angled() {
+                DrillPoint::Angle
+            } else {
+                DrillPoint::Flat
+            };
+        }
+        s.symmetric = false;
+        s.far_csink = false;
+        s.slot = Some(hole::SlotSpec::new(length));
+        self.replace_feature(k, Feature::Hole(h)).map(|_| ())
     }
 
     /// The sketch Hole makes on a planar face (Inventor's Allow Center

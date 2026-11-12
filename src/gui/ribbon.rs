@@ -184,6 +184,8 @@ pub enum Action {
     MirrorFeature,
     /// Hole: drilled, clearance and tapped holes with seats.
     Hole,
+    /// Slot (a hole with an oblong or rectangular outline, spec 2.3 §3a).
+    Slot,
     /// Project Geometry: a click on a model edge projects it into the sketch.
     ProjectGeometry,
     /// Project Cut Edges: the section of the part by the sketch plane.
@@ -1190,6 +1192,7 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("s3d.bend"),
                     c("s3d.point"),
                     c("s3d.equation").mini(),
+                    c("s3d.auto_bend").mini(),
                 ],
             ),
             panel(

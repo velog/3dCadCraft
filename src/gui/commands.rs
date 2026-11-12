@@ -740,21 +740,30 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["FS"])
         .at(&[S3_EXIT])
         .tip("Close the 3D sketch (Esc with no tool running)"),
-    s3_todo("s3d.equation", "Equation Curve", "Крива по уравнение (3D)", Icon::S3Equation)
+    s3("s3d.equation", 16, "Equation Curve", "Крива по уравнение (3D)", Icon::S3Equation)
         .alias(&["EC"])
-        .at(&[S3_DRAW]),
-    s3_todo("s3d.mirror", "Mirror", "Огледално (3D)", Icon::S3Mirror)
+        .at(&[S3_DRAW])
+        .tip("A curve from x(t), y(t), z(t) (or cylindrical / spherical) between t min and t max"),
+    s3("s3d.mirror", 15, "Mirror", "Огледално (3D)", Icon::S3Mirror)
         .alias(&["MI"])
-        .at(&[S3_MODIFY]),
-    s3_todo("s3d.project_surface", "Project to Surface", "Проектиране върху повърхнина", Icon::S3ProjectSurface)
+        .at(&[S3_MODIFY])
+        .tip("Copies of the selected curves reflected in a planar face, a work or an origin plane"),
+    s3("s3d.project_surface", 17, "Project to Surface", "Проектиране върху повърхнина", Icon::S3ProjectSurface)
         .alias(&["PS"])
-        .at(&[S3_INSERT]),
-    s3_todo("s3d.intersection", "Intersection Curve", "Крива на пресичане", Icon::S3Intersection)
+        .at(&[S3_INSERT])
+        .tip("A 2D sketch's curves projected onto faces, along a direction or to the closest point"),
+    s3("s3d.intersection", 18, "Intersection Curve", "Крива на пресичане", Icon::S3Intersection)
         .alias(&["IC"])
-        .at(&[S3_INSERT]),
-    s3_todo("s3d.silhouette", "Silhouette Curve", "Силуетна крива", Icon::S3Silhouette)
+        .at(&[S3_INSERT])
+        .tip("The curve where two faces or planes meet"),
+    s3("s3d.silhouette", 19, "Silhouette Curve", "Силуетна крива", Icon::S3Silhouette)
         .alias(&["SC"])
-        .at(&[S3_INSERT]),
+        .at(&[S3_INSERT])
+        .tip("The outline of the body seen along a direction"),
+    s3("s3d.auto_bend", 20, "Auto-Bend", "Автоматично огъване (3D)", Icon::S3AutoBend)
+        .alias(&["AB"])
+        .at(&[S3_DRAW])
+        .tip("On / off: Line puts a bend of the panel's radius at each corner it makes"),
     c("part.extrude", "Extrude", "Изтегляне (екструдиране)", Icon::Extrude)
         .run(Action::Extrude)
         .alias(&["E"])
@@ -995,9 +1004,12 @@ pub static COMMANDS: &[Command] = &[
         .tip("Thread: click a cylindrical face near the end the thread starts at (cosmetic or modeled)")
         .spec("2.9-thread.md"),
     c("part.slot", "Slot", "Прорез (операция)", Icon::SlotFeature)
+        .run(Action::Slot)
+        .alias(&["SLT"])
         .at(&[M_MODIFY])
         .env(PART)
-        .todo("2.3"),
+        .tip("Slot: an elongated hole on sketch points or a face, round ends or sharp corners, with Hole's seats and terminations")
+        .spec("2.3-hole.md"),
     c("part.combine", "Combine", "Комбиниране на тела", Icon::Combine)
         .alias(&["CMB"])
         .run(Action::Combine)
@@ -3270,6 +3282,7 @@ pub fn repeats(action: Action) -> bool {
         | Action::Sk3Tool(_)
         | Action::Sk3Move
         | Action::Hole
+        | Action::Slot
         | Action::Thread
         | Action::Thicken
         | Action::DeleteFace
