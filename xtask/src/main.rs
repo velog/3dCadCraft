@@ -102,6 +102,8 @@ const MEDIUM: &[&str] = &[
     "surface_bridges",
     // Lip and Groove on rounded and spline rims (spline Booleans, ~30 s).
     "lip_curved",
+    // Teeth through a revolved rim's chamfer or round, 96 cases twice (~170 s in debug).
+    "rim_teeth",
 ];
 
 /// Integration tests with time budgets or long runs, each run alone (last).

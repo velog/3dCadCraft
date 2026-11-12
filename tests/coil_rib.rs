@@ -117,7 +117,11 @@ fn coil_by_each_method() {
         near(zmax, 16.0, 0.01, "top");
         assert!(part.body.find_face("Coil1:Start").is_some());
         assert!(part.body.find_face("Coil1:End").is_some());
-        assert!(dt.as_secs_f64() < 10.0, "{method:?} took {dt:?}");
+        // Shared CI runners: results only (`CADCRAFT3D_NO_BUDGETS`).
+        assert!(
+            dt.as_secs_f64() < 10.0 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
+            "{method:?} took {dt:?}"
+        );
     }
 }
 
@@ -261,7 +265,10 @@ fn coil_cuts_a_thread_into_a_cylinder() {
     for (sid, _) in part.body.solids() {
         part.body.validate_solid(sid).unwrap();
     }
-    assert!(dt.as_secs_f64() < 20.0, "thread cut took {dt:?}");
+    assert!(
+        dt.as_secs_f64() < 20.0 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
+        "thread cut took {dt:?}"
+    );
 }
 
 #[test]

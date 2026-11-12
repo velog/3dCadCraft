@@ -55,5 +55,8 @@ SolidCraft 0.24 over MCP"). A geometry test should therefore check numbers, not 
 surfaces), each compared with what Inventor / SolidWorks do. A case that cannot pass yet is marked
 `#[ignore = "known: <why>"]` — it documents the gap and is run with
 `cargo test --no-default-features --test <file> -- --ignored`; when it starts passing, drop the
-`ignore`. Cases still to write, from other programs' trackers and forums, are listed by module in
+`ignore`. A case of `tests/matrix.rs` that misses its time budget for a known reason goes into its `KNOWN_SLOW` list
+(built once, its time reported, not counted; one that comes within its budget fails the run until it is taken out),
+as `tests/oracle/known_failures.txt` does for the reference cases. Every timed assert honours
+`CADCRAFT3D_NO_BUDGETS=1` (CI). Cases still to write, from other programs' trackers and forums, are listed by module in
 [CAD_HARD_CASES.md](CAD_HARD_CASES.md).

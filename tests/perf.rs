@@ -14,6 +14,8 @@
 //! machine: CPU, cores, RAM total / free, OS). A budget missed while other
 //! programs kept the machine busy says so (`docs/PERF.md`, "Resource log").
 
+mod common;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -294,6 +296,12 @@ fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
         *last = Some(usage);
     }
     ms
+}
+
+/// `ms` within `budget`, or budgets are off (`CADCRAFT3D_NO_BUDGETS=1`: shared CI runners have
+/// no stable timing; the results are still checked).
+fn within(ms: f64, budget: f64) -> bool {
+    ms < budget || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some()
 }
 
 /// Box with 8 fillets r5.
@@ -915,6 +923,9 @@ fn links_part(n: usize, sweep: bool) -> PartDocument {
 /// Hidden line removal of three views of a 100-hole plate (ms).
 const BUDGET_HLR: f64 = 400.0;
 
+/// The rim teeth case (ms).
+const RIM_TEETH_BUDGET: f64 = 1500.0;
+
 #[test]
 fn speed_budgets() {
     // Shared CI runners have no stable timing (`CADCRAFT3D_NO_BUDGETS=1`).
@@ -1216,6 +1227,26 @@ fn speed_budgets() {
             cadcraft3d::design::gear_model::gear_part(&pair, &g, 1, 20.0).unwrap()
         };
         rows.push(("Spur gear: 40 teeth, regenerate", 1500.0, timed(&gear)));
+        // Teeth as deep as a revolved rim's chamfer, the first on the revolve's seam, and a
+        // circular pattern of 24: the kernel made the tooth's Cut invalid and the part was
+        // rebuilt faceted at every regeneration (owner, 2026-11-12).
+        let teeth = {
+            use common::rim::{Blend, Case, Teeth, build};
+            build(Case {
+                blend: Blend::Chamfer,
+                size: 2.0,
+                depth: 2.0,
+                from_top: true,
+                through: true,
+                teeth: Teeth::Pattern(24),
+            })
+            .unwrap()
+        };
+        rows.push((
+            "Rim teeth: 24 as deep as the chamfer, one on the seam, regenerate",
+            RIM_TEETH_BUDGET,
+            timed(&teeth),
+        ));
         let mut snap = PartDocument::with_box("Box1", [200.0, 100.0, 3.0]).unwrap();
         let i = sketch_at(&mut snap, 3.0);
         for (x, y) in [(30.0, 25.0), (170.0, 25.0), (30.0, 75.0), (170.0, 75.0)] {
@@ -5915,7 +5946,7 @@ fn smart_drop_chooses_within_a_frame() {
     let each = start.elapsed().as_secs_f64();
     println!("Smart Drop choice among {}: {:.3} ms", largest.len(), each);
     assert!(
-        each < 16.0,
+        within(each, 16.0),
         "1000 choices took {each:.1} s: over a frame each"
     );
 }
@@ -5933,7 +5964,11 @@ fn library_samples_build_within_budget() {
             sample.part().unwrap();
         });
         println!("library sample {}: {ms:.0} ms", sample.designation());
-        assert!(ms < 500.0, "{}: {ms:.0} ms > 500 ms", sample.designation());
+        assert!(
+            within(ms, 500.0),
+            "{}: {ms:.0} ms > 500 ms",
+            sample.designation()
+        );
     }
 }
 
@@ -5973,7 +6008,7 @@ fn library_fasteners_build_directly() {
             });
             println!("{} {}: {ms:.1} ms", s.designation(), detail.label());
             assert!(
-                ms < 50.0,
+                within(ms, 50.0),
                 "{} {}: {ms:.1} ms > 50 ms",
                 s.designation(),
                 detail.label()
@@ -6006,7 +6041,7 @@ fn representations_sync_within_a_frame() {
         reps.sync(&a);
     });
     println!("representations sync, 2000 occurrences: {ms:.2} ms");
-    assert!(ms < 4.0, "{ms:.2} ms > 4 ms");
+    assert!(within(ms, 4.0), "{ms:.2} ms > 4 ms");
 }
 
 /// Bringing a part's active variant up to date runs four times a second (rule 20).
@@ -6022,7 +6057,7 @@ fn part_variants_sync_stays_small() {
         p.variants_sync();
     });
     println!("part variants sync, 200 parameters: {ms:.2} ms");
-    assert!(ms < 20.0, "{ms:.2} ms > 20 ms");
+    assert!(within(ms, 20.0), "{ms:.2} ms > 20 ms");
 }
 
 /// Spec 6.3 §6.5b: the fittings with most in them stay direct builds: DN 600 with 20 bolt holes,
@@ -6039,7 +6074,11 @@ fn library_flange_and_tee_build_directly() {
             s.part().unwrap();
         });
         println!("library {}: {ms:.0} ms", s.designation());
-        assert!(ms < 150.0, "{}: {ms:.0} ms > 150 ms", s.designation());
+        assert!(
+            within(ms, 150.0),
+            "{}: {ms:.0} ms > 150 ms",
+            s.designation()
+        );
     }
 }
 
@@ -6059,7 +6098,11 @@ fn library_t_slot_profiles_build_within_budget() {
             s.part().unwrap();
         });
         println!("library {}: {ms:.0} ms", s.designation());
-        assert!(ms < 200.0, "{}: {ms:.0} ms > 200 ms", s.designation());
+        assert!(
+            within(ms, 200.0),
+            "{}: {ms:.0} ms > 200 ms",
+            s.designation()
+        );
     }
 }
 
@@ -6105,7 +6148,7 @@ fn free_motions_stay_small_in_a_solve() {
         assert_eq!(s.free.len(), 200);
     });
     println!("solve with free motions, 200 components: {ms:.2} ms");
-    assert!(ms < 200.0, "{ms:.2} ms > 200 ms");
+    assert!(within(ms, 200.0), "{ms:.2} ms > 200 ms");
 }
 
 /// The Full level's details and shaped rollers, each row a new member: within a new member's budget (spec 6.3 §6.6).
@@ -6133,7 +6176,12 @@ fn library_full_details_within_budget() {
         }
     }
     eprintln!("slowest Full member: {:.0} ms, {}", worst.0, worst.1);
-    assert!(worst.0 < 500.0, "{}: {:.0} ms > 500 ms", worst.1, worst.0);
+    assert!(
+        within(worst.0, 500.0),
+        "{}: {:.0} ms > 500 ms",
+        worst.1,
+        worst.0
+    );
 }
 
 /// Bolted Connection (spec 6.2): finding the plates along the axis runs when
@@ -6239,7 +6287,10 @@ fn bolted_connection_within_budget() {
     println!(
         "Bolted Connection: plates along the axis {along:.2} ms, OK {ok:.1} ms, cut {cut:.1} ms"
     );
-    assert!(along < 16.0, "plates along the axis {along:.2} ms > 16 ms");
-    assert!(ok < 200.0, "OK {ok:.1} ms > 200 ms");
-    assert!(cut < 200.0, "cut of a plate {cut:.1} ms > 200 ms");
+    assert!(
+        within(along, 16.0),
+        "plates along the axis {along:.2} ms > 16 ms"
+    );
+    assert!(within(ok, 200.0), "OK {ok:.1} ms > 200 ms");
+    assert!(within(cut, 200.0), "cut of a plate {cut:.1} ms > 200 ms");
 }

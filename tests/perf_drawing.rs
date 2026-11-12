@@ -180,7 +180,15 @@ fn drawing_views_of_large_models() {
     }
     // A complex part: a plate with 2 500 holes, three views.
     if wanted("complex part") {
-        let model = part_model(&holes_plate(50));
+        let t = Instant::now();
+        let plate = holes_plate(holes_side());
+        let built = ms(t);
+        let t = Instant::now();
+        let model = part_model(&plate);
+        println!(
+            "(the 2 500-hole plate: built in {built:.0} ms, its view model in {:.0} ms)",
+            ms(t)
+        );
         let t = Instant::now();
         for frame in [&front, &ViewOrientation::Top.frame(), &iso] {
             let l = view_lines_simplified(&model, frame, None, Simplify::default());
@@ -202,7 +210,7 @@ fn drawing_views_of_large_models() {
     // profile (48 sides) over a quarter of it, cut 2 mm deep.
     if wanted("break out") {
         use cadcraft3d::drawing::hlr::{Aligned, OutCut};
-        let model = part_model(&holes_plate(50));
+        let model = part_model(&holes_plate(holes_side()));
         let frame = ViewOrientation::Top.frame();
         let whole = view_lines_simplified(&model, &frame, None, Simplify::default());
         let c = [
@@ -750,6 +758,17 @@ fn drawing_views_of_large_models() {
 }
 
 /// A plate with an n × n grid of Ø3 holes (one cut patterned).
+/// Holes along each side of the holed plate: 50 (2 500 holes), 10 on shared CI runners
+/// (`CADCRAFT3D_NO_BUDGETS`: no budget to measure; building the 2 500-hole plate itself took
+/// 20+ minutes there, 2026-11-12, ROADMAP K11).
+fn holes_side() -> u32 {
+    if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some() {
+        10
+    } else {
+        50
+    }
+}
+
 fn holes_plate(n: u32) -> PartDocument {
     use cadcraft3d::part::{LineRef, PatternDirection, PatternFeature, PatternKind, PullRef};
     let s = 5.0;

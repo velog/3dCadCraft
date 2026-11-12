@@ -362,7 +362,10 @@ fn a_lip_flush_with_the_lids_outline_joins_exactly() {
     let took = t.elapsed();
     assert!(p.exact, "exact kernel");
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
-    assert!(took.as_secs_f64() < 5.0, "{took:?}");
+    assert!(
+        took.as_secs_f64() < 5.0 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
+        "{took:?}"
+    );
     let added = lid_volume(&p) - v0;
     assert!(
         (added - 3.0 * area).abs() < 2e-4 * 3.0 * area,
@@ -407,7 +410,10 @@ fn a_cut_of_a_whole_section_from_projected_cut_edges_stays_exact() {
     let took = t.elapsed();
     assert!(p.exact, "exact kernel");
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
-    assert!(took.as_secs_f64() < 10.0, "{took:?}");
+    assert!(
+        took.as_secs_f64() < 10.0 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
+        "{took:?}"
+    );
     let v1 = p
         .exact_bodies
         .0

@@ -3173,6 +3173,14 @@ fn cases() -> Vec<Case> {
     all
 }
 
+/// Cases known to miss their budget, with the reason (as `tests/oracle/known_failures.txt`):
+/// their time is reported, not counted, and they are built once. One that comes within its
+/// budget fails the run: take it out of this list.
+const KNOWN_SLOW: &[(&str, &str)] = &[(
+    "variable radius 2..5 on a box edge",
+    "solidcore's do_filleting of a variable radius: 160 s in a debug build, 661 s in release (ROADMAP K12)",
+)];
+
 #[test]
 fn feature_matrix() {
     let mut problems = Vec::new();
@@ -3180,13 +3188,22 @@ fn feature_matrix() {
         "{:<13} {:<44} {:>8} {:>9}  result",
         "level", "case", "budget", "time"
     );
-    for c in cases() {
+    // `CADCRAFT3D_MATRIX=<text>`: only the cases whose name contains it.
+    let only = std::env::var("CADCRAFT3D_MATRIX").unwrap_or_default();
+    for c in cases()
+        .into_iter()
+        .filter(|c| c.name.contains(only.as_str()))
+    {
+        let known = KNOWN_SLOW
+            .iter()
+            .find(|(n, _)| *n == c.name)
+            .map(|(_, why)| *why);
         let t0 = Instant::now();
         let built = (c.build)();
         let mut ms = t0.elapsed().as_secs_f64() * 1000.0;
         // Over budget: once more, the faster run counts (a busy machine
         // must not fail a case; slow code stays slow in both runs).
-        if ms > c.budget_ms {
+        if ms > c.budget_ms && known.is_none() {
             let t1 = Instant::now();
             let _ = (c.build)();
             ms = ms.min(t1.elapsed().as_secs_f64() * 1000.0);
@@ -3225,7 +3242,18 @@ fn feature_matrix() {
             (Err(e), _) => Err(format!("failed: {e}")),
         };
         // `CADCRAFT3D_NO_BUDGETS=1` (shared CI runners): results only.
-        let over = ms > c.budget_ms && std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_none();
+        let budgets = std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_none();
+        let over = ms > c.budget_ms && budgets && known.is_none();
+        if let Some(why) = known {
+            if ms <= c.budget_ms && budgets {
+                problems.push(format!(
+                    "{} / {}: within its budget now ({ms:.0} ms): take it out of KNOWN_SLOW",
+                    c.level, c.name
+                ));
+            } else {
+                println!("  known slow: {why}");
+            }
+        }
         let line = match &verdict {
             Ok(v) => v.clone(),
             Err(e) => format!("FAIL {e}"),

@@ -145,6 +145,12 @@ pub(super) fn extrude_from(
 /// How far [`extrude_corners_apart`] moves a corner into its profile, mm.
 const CORNERS_APART: Real = 1e-3;
 
+/// How far a Cut's profile is offset (smaller, then larger) when the kernel refused it as
+/// drawn, mm: a wall exactly tangent to an edge of the body where its face meets itself (rim
+/// teeth as deep as a revolved rim's chamfer, on the revolve's seam) gave an invalid result.
+/// Only after a refusal, so working parts keep their geometry.
+pub(super) const TANGENT_NUDGE: Real = 1e-3;
+
 /// A Cut's profiles that touch only at corners (the sectors of a radial grille) leave material
 /// meeting along a line, which no solid can hold: the kernel refuses. Here each straight corner
 /// that several profiles share moves [`CORNERS_APART`] into its own profile along the corner's
@@ -161,6 +167,38 @@ pub(super) fn extrude_corners_apart(
         return Ok(None);
     }
     extrude_pieces(pieces, body, sketch, 0.0, 0.0)
+}
+
+/// A Cut whose result the kernel built but that is no valid solid (a wall exactly tangent to an
+/// edge where a revolved face meets itself): again with the profile [`TANGENT_NUDGE`] smaller,
+/// then larger, kept only when that result is valid. `solids` are the bodies before the Cut
+/// (surface bodies stay as they are). The new bodies, their B-rep and the tools used (for
+/// patterns of it).
+pub(super) fn nudged_cut(
+    e: &ExtrudeFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    sketch: &Sketch,
+    solids: &[ExactSolid],
+) -> Option<(Vec<ExactSolid>, BRep, Vec<ExactSolid>)> {
+    let (sheets, closed): (Vec<ExactSolid>, Vec<ExactSolid>) =
+        solids.iter().cloned().partition(ExactSolid::is_open);
+    [-TANGENT_NUDGE, TANGENT_NUDGE].into_iter().find_map(|g| {
+        let tools = extrude_from(e, body, works, sketch, 0.0, g).ok()??;
+        let mut next = combine(
+            closed.clone(),
+            tools.clone(),
+            Operation::Cut,
+            &e.solids,
+            false,
+        )
+        .ok()?;
+        next.extend(sheets.iter().cloned());
+        let b = exact::to_brep(&next).ok()?;
+        super::invalid_solid(&b)
+            .is_none()
+            .then_some((next, b, tools))
+    })
 }
 
 /// Moves the corners between two straight segments that several pieces share (see
