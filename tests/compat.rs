@@ -3495,6 +3495,65 @@ fn slot_r73() -> PartDocument {
     part
 }
 
+/// Revision 74: a 40 × 30 × 20 box with a Ø10 bore through its top and a
+/// simplified model state (`BodyOp::Simplify`, every hole removed) active.
+fn simplify_r74() -> PartDocument {
+    use cadcraft3d::part::simplify::{Removal, SimplifySpec};
+    use cadcraft3d::part::{Extent, ExtentDirection, Operation};
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let j = part
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+        .unwrap();
+    let plane = part.sketches[j].sketch.plane.clone();
+    let c = plane.project(&Point3::new(20.0, 15.0, 20.0));
+    part.sketches[j].sketch.add_circle(c, 5.0).unwrap();
+    let rg = part.sketches[j].sketch.regions();
+    let hole: Vec<ProfileRef> = rg
+        .iter()
+        .filter(|r| r.area() < 100.0)
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    let mut cut = ExtrudeFeature::new(hole, 1.0);
+    cut.operation = Operation::Cut;
+    cut.extent = Extent::ThroughAll;
+    cut.direction = ExtentDirection::Flipped;
+    part.add_extrude(j, cut).unwrap();
+    let spec = SimplifySpec {
+        holes: Removal::all(),
+        ..Default::default()
+    };
+    part.add_simplified_variant(spec, None).unwrap();
+    part
+}
+
+#[test]
+fn simplify_r74_reads() {
+    use cadcraft3d::part::{BodyOp, Feature};
+    let f = root().join("r74/simplify_r74.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let part = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .expect("a part");
+    assert!(part.features.iter().any(|f| matches!(
+        f,
+        Feature::BodyOp(b) if matches!(b.op, BodyOp::Simplify(_))
+    )));
+    assert_eq!(part.variants.list.len(), 2);
+}
+
 #[test]
 fn slot_r73_reads() {
     use cadcraft3d::part::Feature;
@@ -4565,6 +4624,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             bolted_r66().save(&f).unwrap();
+        }
+        let f = root().join("r74/simplify_r74.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("SimplifyR74");
+            project.add_document("Part1", DocumentData::Part(simplify_r74()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r73/slot_r73.3dcadcraft");
         if !f.exists() {

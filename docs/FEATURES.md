@@ -822,6 +822,12 @@ surface lofts, a tube swept along a spline (Pappus). **Specification:** [spec/2.
 - **Emboss / Engrave:** raised or recessed text or outline on a face, including wrapped around a cylinder.
 - **Decal:** an image projected onto a face.
 
+## 2.18 Simplify — 🟡 (2026-11-12: features removed by kind and size from the history, bodies left out by name or size, internal bodies, filled voids, envelopes; as a new model state, in the active one, or as a new part that follows the source; tunnels and Highlight ⬜) · M
+
+**Specification:** [spec/2.18-simplify.md](spec/2.18-simplify.md)
+
+- **Simplify:** a lighter part for others: holes, fillets, chamfers, pockets and embosses removed up to a size, bodies left out or replaced by boxes or cylinders, kept as a model state of the same part (re-editable) or as a linked part.
+
 ---
 
 # Level 3 — Assemblies
@@ -953,7 +959,9 @@ Also done: **Renumber Items**, typed item numbers (overrides) and **Static** qua
   participants removed / added in the browser; shown in the view, picking / analyses / drawings ⬜).
 - **Linked parameters:** a master parameter part or a CSV sheet drives the parts' sizes (✅ 2026-10-31).
 
-## 3.11 Simplification — ⬜ · M
+## 3.11 Simplification — 🟡 (2026-11-12: Simplify into a part of the design file that follows the assembly: presets, envelopes, components left out by selection or size, per-part feature removal, internal parts, voids, styles, BOM Structure, Break link; Substitute model states ⬜) · M
+
+**Specification:** [spec/3.11-simplify.md](spec/3.11-simplify.md)
 
 **Shrinkwrap / Simplify.** The assembly becomes one lightweight part:
 - internal components are removed;

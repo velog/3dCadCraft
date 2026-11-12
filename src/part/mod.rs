@@ -67,6 +67,7 @@ pub mod rib;
 pub mod select;
 pub mod sheet_metal;
 pub mod shell;
+pub mod simplify;
 pub mod sketch3d;
 pub mod sketch3d_curves;
 pub mod split;

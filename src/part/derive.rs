@@ -28,6 +28,9 @@ pub struct DeriveSource<'a> {
     pub parts: Vec<(&'a PartDocument, Transform3)>,
     /// What changes when any of them changes or moves.
     pub signature: u64,
+    /// Each part's occurrence id path in the source assembly (empty for a
+    /// part source); Simplify leaves components out by it.
+    pub paths: Vec<Vec<u32>>,
 }
 
 impl<'a> DeriveSource<'a> {
@@ -39,7 +42,19 @@ impl<'a> DeriveSource<'a> {
     /// Parts placed in an assembly as the source (Derive Assembly).
     pub fn of(parts: Vec<(&'a PartDocument, Transform3)>) -> Self {
         let signature = parts_signature(&parts);
-        Self { parts, signature }
+        Self {
+            parts,
+            signature,
+            paths: Vec::new(),
+        }
+    }
+
+    /// [`Self::of`] with each part's occurrence id path.
+    pub fn with_paths(parts: Vec<(&'a PartDocument, Transform3)>, paths: Vec<Vec<u32>>) -> Self {
+        Self {
+            paths,
+            ..Self::of(parts)
+        }
     }
 }
 
@@ -116,6 +131,11 @@ pub struct DeriveLink {
     /// parameters of this part (spec 3.10 §3.9).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub parameters: bool,
+    /// Simplify (spec 2.18 / 3.11): the source simplified first (format
+    /// revision 74: an older build keeps the text it holds, and would derive
+    /// the full model on its own Update).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simplify: Option<super::simplify::SimplifySpec>,
     /// The text was generated from a source whose bodies had this signature
     /// (Update needed when the source's differs).
     #[serde(default)]
@@ -143,6 +163,7 @@ impl DeriveLink {
             scale: 1.0,
             mirror: None,
             parameters: false,
+            simplify: None,
             signature: 0,
         }
     }
@@ -155,7 +176,31 @@ impl DeriveLink {
             return Err("the scale factor must be greater than 0".into());
         }
         let mut kept: Vec<ExactSolid> = Vec::new();
-        for (part, at) in &source.parts {
+        // Simplify: a part simplified by itself; an assembly's parts, then the assembly.
+        let one_part = source.parts.len() == 1 && source.paths.iter().all(Vec::is_empty);
+        let simplified: Option<PartDocument> = match &self.simplify {
+            Some(spec) if one_part => match source.parts.first() {
+                Some((p, _)) => Some(p.simplified(spec).map_err(|e| format!("Simplify: {e}"))?),
+                None => None,
+            },
+            _ => None,
+        };
+        if let (Some(spec), false) = (&self.simplify, one_part) {
+            let parts: Vec<_> = source
+                .parts
+                .iter()
+                .enumerate()
+                .map(|(i, (p, t))| (*p, *t, source.paths.get(i).cloned().unwrap_or_default()))
+                .collect();
+            kept = super::simplify::simplify_assembly(spec, &parts, self.solids, self.surfaces)
+                .map_err(|e| format!("Simplify: {e}"))?;
+        }
+        let parts: Vec<(&PartDocument, Transform3)> = match &simplified {
+            Some(p) => vec![(p, Transform3::identity())],
+            None if self.simplify.is_some() => Vec::new(),
+            None => source.parts.clone(),
+        };
+        for (part, at) in &parts {
             if !part.exact {
                 return Err(format!(
                     "{} is not built by the exact kernel (it cannot be derived)",

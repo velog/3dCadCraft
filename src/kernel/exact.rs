@@ -5981,6 +5981,7 @@ pub mod surface_ops;
 pub mod sheet_metal;
 
 mod delete_face;
+pub mod simplify;
 mod sweep;
 mod thicken;
 mod through_cut;

@@ -590,6 +590,8 @@ pub enum Icon {
     AsmFeatures,
     /// Simplify (an assembly into one box).
     Simplify,
+    /// Simplify of a part (a holed, rounded block into a plain block).
+    SimplifyPart,
     /// Create Derived Substitutes (an assembly to one part).
     Substitutes,
     /// Assemble (a face moving onto another).
@@ -3601,6 +3603,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             for (x, y) in [(2.0, 3.0), (6.0, 2.0), (3.0, 7.0)] {
                 p.rect(x, y, x + 3.0, y + 3.0, ink);
             }
+            p.head((10.0, 8.0), (1.0, 0.0), hot);
+            p.block([9.5, 9.0, 5.0, 4.5, 1.5], acc, soft);
+        }
+        SimplifyPart => {
+            p.rect(1.5, 3.0, 7.0, 8.5, ink);
+            p.circle(4.25, 5.75, 1.2, ink);
             p.head((10.0, 8.0), (1.0, 0.0), hot);
             p.block([9.5, 9.0, 5.0, 4.5, 1.5], acc, soft);
         }

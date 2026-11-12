@@ -157,6 +157,65 @@ pub fn make_components(
     Ok(out)
 }
 
+/// **Simplify → New Part** (spec 2.18, 3.11): a new part `name` of `project` deriving document
+/// `source` (a part, or an assembly's parts where they stand) simplified by `spec`, kept in
+/// `style`; it follows the source like any derived part. `break_link`: the part keeps the
+/// result and no longer follows (Inventor's Break link). Returns the new document; nothing
+/// changes on failure.
+pub fn make_simplified(
+    project: &mut Project,
+    source: DocumentId,
+    spec: crate::part::simplify::SimplifySpec,
+    style: crate::part::derive::DeriveStyle,
+    name: &str,
+    break_link: bool,
+) -> Result<DocumentId, String> {
+    let parts =
+        source_parts(project, source).ok_or("the source cannot be read (a linked file?)")?;
+    let source_name = project
+        .document(source)
+        .map(|d| d.name.clone())
+        .unwrap_or_default();
+    let src = DeriveSource::with_paths(
+        parts.iter().map(|(p, t, _)| (p, *t)).collect(),
+        parts.iter().map(|(_, _, k)| k.clone()).collect(),
+    );
+    let new = simplified_part(
+        &src,
+        DocRef::local(source),
+        &source_name,
+        spec,
+        style,
+        break_link,
+    )?;
+    Ok(project.add_document(name, DocumentData::Part(new)))
+}
+
+/// The part Simplify → New Part makes from `src` (document `source` named `source_name`).
+pub fn simplified_part(
+    src: &DeriveSource,
+    source: DocRef,
+    source_name: &str,
+    spec: crate::part::simplify::SimplifySpec,
+    style: crate::part::derive::DeriveStyle,
+    break_link: bool,
+) -> Result<PartDocument, String> {
+    spec.validate()?;
+    let mut link = DeriveLink::new(source, source_name);
+    link.surfaces = true;
+    link.style = style;
+    link.simplify = Some(spec);
+    let mut new = PartDocument::default();
+    new.add_derive_from(src, link).map_err(|e| e.to_string())?;
+    if let Some((id, h)) = new.feature_health.iter().next() {
+        return Err(format!("{id}: {h}"));
+    }
+    if break_link && let Some((k, _)) = new.derived().first().map(|(k, l)| (*k, l.source)) {
+        new.break_derive(k);
+    }
+    Ok(new)
+}
+
 /// The parts of this file whose derived features read other parts of this
 /// file brought up to date with them (a master changed: every part made
 /// from it follows), chains included. Returns the parts that changed;
@@ -184,7 +243,10 @@ pub fn update_derived(project: &mut Project) -> (Vec<DocumentId>, Vec<String>) {
                 let Some(parts) = source_parts(project, src.document) else {
                     continue;
                 };
-                let source = DeriveSource::of(parts.iter().map(|(p, t)| (p, *t)).collect());
+                let source = DeriveSource::with_paths(
+                    parts.iter().map(|(p, t, _)| (p, *t)).collect(),
+                    parts.iter().map(|(_, _, k)| k.clone()).collect(),
+                );
                 let name = project
                     .document(id)
                     .map(|d| d.name.clone())
@@ -212,9 +274,16 @@ pub fn update_derived(project: &mut Project) -> (Vec<DocumentId>, Vec<String>) {
 
 /// The parts document `id` of this file shows, built: a part, or every
 /// part of an assembly where it stands.
-fn source_parts(project: &Project, id: DocumentId) -> Option<Vec<(PartDocument, Transform3)>> {
+fn source_parts(
+    project: &Project,
+    id: DocumentId,
+) -> Option<Vec<(PartDocument, Transform3, Vec<u32>)>> {
     match project.document(id).map(|d| &d.data)? {
-        DocumentData::Part(_) => Some(vec![(built(project, id).ok()?.0, Transform3::identity())]),
+        DocumentData::Part(_) => Some(vec![(
+            built(project, id).ok()?.0,
+            Transform3::identity(),
+            Vec::new(),
+        )]),
         DocumentData::Assembly(a) => {
             let linked = super::tree::Linked::new();
             let mut out = Vec::new();
@@ -222,7 +291,11 @@ fn source_parts(project: &Project, id: DocumentId) -> Option<Vec<(PartDocument, 
                 if l.component.library.is_some() {
                     return None;
                 }
-                out.push((built(project, l.component.document).ok()?.0, l.world));
+                out.push((
+                    built(project, l.component.document).ok()?.0,
+                    l.world,
+                    l.path.clone(),
+                ));
             }
             Some(out)
         }

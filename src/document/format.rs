@@ -200,7 +200,10 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 73: Slot (`HoleSpec::slot`, `HoleFeature::slot_axis`: a hole with an
 ///   oblong or rectangular outline; older builds would drill a round hole)
 ///   (2026-11-11).
-pub const FORMAT_REVISION: u32 = 73;
+/// - 74: Simplify (`BodyOp::Simplify`: features removed by kind and size,
+///   bodies left out, enveloped or filled; `DeriveLink::simplify` for a
+///   simplified part of a part or an assembly) (2026-11-12).
+pub const FORMAT_REVISION: u32 = 74;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

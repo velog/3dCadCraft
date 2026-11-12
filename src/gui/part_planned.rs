@@ -87,6 +87,21 @@ const TOOL: &[PickKind] = &[
 ];
 
 const DIRECTIONS: &[&str] = &["Direction 1", "Direction 2", "Symmetric"];
+/// Simplify's presets (part and assembly).
+pub(super) const SIMPLIFY_PRESETS: &[&str] = &[
+    "No Simplification",
+    "Remove the least detail",
+    "Remove moderate detail",
+    "Remove the most detail",
+];
+/// Simplify's envelope shapes.
+pub(super) const ENVELOPE_TYPES: &[&str] = &[
+    "Orthogonal Bounding Box",
+    "Oriented Minimum Bounding Box",
+    "Oriented Minimum Bounding Cylinder",
+];
+/// Simplify's ways to remove a kind of feature.
+pub(super) const REMOVE_MODES: &[&str] = &["None", "All", "Range", "Preserve"];
 const SKETCH_CURVES: &[PickKind] = &[PickKind::SketchCurve];
 const RULES: &[&str] = &[
     "All Edges",
@@ -204,12 +219,14 @@ pub enum PartPlanned {
     MakePart,
     MakeComponents,
     AuthorFrameProfile,
+    // 3D Model › Simplification
+    Simplify,
 }
 
 impl PartPlanned {
     /// Every planned command, in ribbon order.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const ALL: [PartPlanned; 43] = [
+    pub const ALL: [PartPlanned; 44] = [
         PartPlanned::Emboss,
         PartPlanned::Decal,
         PartPlanned::Mark,
@@ -253,6 +270,7 @@ impl PartPlanned {
         PartPlanned::MakePart,
         PartPlanned::MakeComponents,
         PartPlanned::AuthorFrameProfile,
+        PartPlanned::Simplify,
     ];
 
     /// The panel's title (Inventor's command name).
@@ -302,6 +320,7 @@ impl PartPlanned {
             MakePart => "Make Part",
             MakeComponents => "Make Components",
             AuthorFrameProfile => "Author Frame Profile",
+            Simplify => "Simplify",
         }
     }
 
@@ -352,6 +371,7 @@ impl PartPlanned {
             MakePart => Icon::MakePart,
             MakeComponents => Icon::MakeComponents,
             AuthorFrameProfile => Icon::AuthorFrameProfile,
+            Simplify => Icon::SimplifyPart,
         }
     }
 
@@ -375,6 +395,7 @@ impl PartPlanned {
             Connection => "6.3",
             MakePart | MakeComponents => "3.10",
             AuthorFrameProfile => "6.1",
+            Simplify => "2.18",
         }
     }
 
@@ -437,6 +458,10 @@ impl PartPlanned {
             AuthorFrameProfile => {
                 "Saves a closed sketch region as your own frame member profile (Insert Frame lists it)."
             }
+            Simplify => concat!(
+                "A lighter model: holes, fillets, chamfers, pockets and embosses removed by size, ",
+                "bodies left out or replaced by envelopes; as a model state or a new part."
+            ),
         }
     }
 
@@ -1452,6 +1477,63 @@ impl PartPlanned {
                     Check("Place part in target assembly", false),
                 ],
             )],
+            Simplify => &[Page(
+                "Simplify",
+                &[
+                    Combo("Preset", SIMPLIFY_PRESETS, 0),
+                    Head("Replace with Envelopes"),
+                    Combo(
+                        "Envelopes",
+                        &["None", "Whole Part", "Each Body", "Selected Bodies"],
+                        0,
+                    ),
+                    Combo("Type", ENVELOPE_TYPES, 0),
+                    Sel(
+                        "envelope",
+                        "Bodies",
+                        "Select the bodies the envelopes replace",
+                        BODIES,
+                    ),
+                    Head("Exclude Bodies"),
+                    Radio("Exclude", &["by selection", "by size"], 0),
+                    Sel(
+                        "excluded",
+                        "Exclude",
+                        "Select the bodies to leave out",
+                        BODIES,
+                    ),
+                    Num("Max. Diagonal", 10.0, " mm"),
+                    Head("Remove Features"),
+                    Combo("Holes", REMOVE_MODES, 0),
+                    Num("Holes up to", 10.0, " mm"),
+                    Combo("Fillets", REMOVE_MODES, 0),
+                    Num("Fillets up to", 5.0, " mm"),
+                    Combo("Chamfers", REMOVE_MODES, 0),
+                    Num("Chamfers up to", 5.0, " mm"),
+                    Combo("Pockets", REMOVE_MODES, 0),
+                    Num("Pockets up to", 20.0, " mm"),
+                    Combo("Embosses", REMOVE_MODES, 0),
+                    Num("Embosses up to", 20.0, " mm"),
+                    Combo("Tunnels", REMOVE_MODES, 0),
+                    Sel(
+                        "preserve",
+                        "Preserve",
+                        "Select a face of each feature to keep (Preserve)",
+                        FACES,
+                    ),
+                    Check("Highlight", false),
+                    Head("Advanced"),
+                    Check("Remove internal bodies", true),
+                    Check("Fill internal voids", false),
+                    Head("Output"),
+                    Radio(
+                        "Output",
+                        &["New Model State", "Active Model State", "New Part"],
+                        0,
+                    ),
+                    Text("Name", ""),
+                ],
+            )],
             AuthorFrameProfile => &[Page(
                 "Author Frame Profile",
                 &[
@@ -1552,6 +1634,7 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::Shaft
                     | super::asm_planned::AsmPlanned::SpurGear
                     | super::asm_planned::AsmPlanned::Key
+                    | super::asm_planned::AsmPlanned::Simplify
             ) | Planned::Part(
                 PartPlanned::Emboss
                     | PartPlanned::Grill
@@ -1578,6 +1661,7 @@ impl Planned {
                     | PartPlanned::CreatePartFamily
                     | PartPlanned::Connection
                     | PartPlanned::SketchDrivenPattern
+                    | PartPlanned::Simplify
             )
         )
     }
@@ -1629,6 +1713,41 @@ impl Planned {
                     "in a part a copy always follows its source"
                 ))
             }
+            (
+                Planned::Part(PartPlanned::Simplify)
+                | Planned::Asm(super::asm_planned::AsmPlanned::Simplify),
+                "Tunnels" | "Highlight",
+                None,
+            ) => Some(concat!(
+                "Comes later: tunnels need the faces recognised on the body, not the history ",
+                "(spec 2.18 §3)"
+            )),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::Simplify),
+                "Model State"
+                | "View"
+                | "Associative"
+                | "Position"
+                | "Template"
+                | "Location"
+                | "Suppress link"
+                | "Rename"
+                | "Link face color from source component"
+                | "Make independent bodies on failed Boolean"
+                | "Auto-detect"
+                | "All Occurrences",
+                None,
+            ) => Some("Comes later (spec 3.11 §3): the active state, view and position are used"),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::Simplify),
+                "Type",
+                Some("Substitute"),
+            ) => Some("Needs Substitute model states (spec 3.9, 3.11 §3)"),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::Simplify),
+                "Priority",
+                Some("Part Priority"),
+            ) => Some("Comes later: first-level components are left out (spec 3.11 §3)"),
             (Planned::Asm(_), "Import Type", Some("Reference Model")) => {
                 Some("Comes with Update of a changed file (spec 7.7a 3.2, stage I3)")
             }
@@ -1806,6 +1925,8 @@ pub(super) struct PartDialog {
     pub bolt: super::bolted::BoltPanel,
     /// Shaft: the sections, loads and results (`gui/shaft.rs`).
     pub shaft: super::shaft::ShaftPanel,
+    /// Simplify: the preset the fields were last filled from (`gui/simplify.rs`).
+    pub simplify_preset: Option<usize>,
 }
 
 /// One set of Insert Frame (+ Add Set): its lines and options.
@@ -1952,6 +2073,7 @@ impl PartDialog {
             members: MemberEditState::default(),
             bolt: Default::default(),
             shaft: Default::default(),
+            simplify_preset: None,
         }
     }
 
@@ -2157,6 +2279,8 @@ impl PartDialog {
             }
             (PartPlanned::Rest, "to") => self.index(0, "Platform") != 2,
             (PartPlanned::Rest, "land") => self.index(1, "Landing") != 1,
+            (PartPlanned::Simplify, "envelope") => self.index(0, "Envelopes") != 3,
+            (PartPlanned::Simplify, "excluded") => self.index(0, "Exclude") != 0,
             (PartPlanned::RuleFillet, _) => RULE_KEYS.iter().enumerate().any(|(t, keys)| {
                 (key == keys.1 && self.index(t, "Rule") != 3)
                     || (key == keys.2 && self.index(t, "Rule") != 4)
@@ -3027,6 +3151,7 @@ impl CadCraftApp {
             });
         }
         let (cancel, ok) = d.ui(ui);
+        self.simplify_preset_follow(&mut d);
         // A plastic command says why its definition cannot be built, before OK.
         if super::plastic::is_plastic(&d) {
             match self.plastic_preview() {
@@ -3196,6 +3321,16 @@ impl CadCraftApp {
             }
             Planned::Part(PartPlanned::Derive) => {
                 if self.derive_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Part(PartPlanned::Simplify) => {
+                if self.simplify_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Simplify) => {
+                if self.asm_simplify_ok(&d) {
                     self.part_planned = None;
                 }
             }

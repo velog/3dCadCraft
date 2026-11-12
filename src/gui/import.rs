@@ -17,16 +17,64 @@ use super::part_planned::PartDialog;
 use crate::part::import::ImportOp;
 use crate::part::{BodyOp, BodyOpFeature};
 
-/// The STEP text of `path`.
+/// The STEP text of `path` (a mesh's coordinates in mm).
 fn read_step(path: &Path) -> Result<Arc<str>, String> {
+    read_scaled(path, 1.0)
+}
+
+/// The STEP text of `path`; a mesh's coordinates are multiplied by `scale` (its length unit in
+/// mm: meshes carry no unit).
+fn read_scaled(path: &Path, scale: f64) -> Result<Arc<str>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     // Meshes (STL, OBJ) become the OBJ text a mesh import embeds (spec 7.7a 3.14), in mm.
     if crate::gui::files::is_mesh_file(path) {
         let name = path.display().to_string();
-        return crate::part::import::mesh_text(&bytes, &name, 1.0).map(Into::into);
+        return crate::part::import::mesh_text(&bytes, &name, scale).map(Into::into);
     }
     // STEP is ASCII (ISO 10303-21); stray bytes in comments or names must not stop it.
     Ok(String::from_utf8_lossy(&bytes).into())
+}
+
+/// The length units a mesh file may be in, and their size in mm.
+pub(super) const MESH_UNITS: [(&str, f64); 5] = [
+    ("mm", 1.0),
+    ("cm", 10.0),
+    ("m", 1000.0),
+    ("in", 25.4),
+    ("ft", 304.8),
+];
+
+/// The choices of File → Open of a STEP or mesh file (Inventor's Import dialog, spec 7.7a §3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct OpenOptions {
+    /// Reference Model: the document follows the file (Update); off = Convert Model.
+    pub reference: bool,
+    /// A file with several products becomes an assembly; off = one multi-body part.
+    pub assembly: bool,
+    /// Object Filters: solids.
+    pub solids: bool,
+    /// Object Filters: surfaces.
+    pub surfaces: bool,
+    /// A mesh file's length unit (index into [`MESH_UNITS`]).
+    pub unit: usize,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self {
+            reference: true,
+            assembly: true,
+            solids: true,
+            surfaces: true,
+            unit: 0,
+        }
+    }
+}
+
+/// File → Open of an import file waiting for its options.
+pub(super) struct ImportAsk {
+    path: PathBuf,
+    options: OpenOptions,
 }
 
 /// What the worker found.
@@ -48,15 +96,23 @@ pub(super) struct ImportJob {
     text: Arc<str>,
     /// File → Open (a new part) or the Import panel's Browse.
     open: bool,
+    /// File → Open's choices.
+    options: OpenOptions,
     started: std::time::Instant,
     rx: Receiver<ReadResult>,
 }
 
 /// The worker's job: an assembly file opened becomes a design file of documents; anything else
 /// is read as the bodies of one part.
-fn read_in_worker(text: &Arc<str>, open: bool, file: &str, stem: &str) -> ReadResult {
+fn read_in_worker(
+    text: &Arc<str>,
+    open: bool,
+    options: OpenOptions,
+    file: &str,
+    stem: &str,
+) -> ReadResult {
     let mesh = ImportOp::new("", text.clone()).is_mesh();
-    if open && !mesh {
+    if open && !mesh && options.assembly {
         let r = crate::kernel::exact::step_bodies(text, "Import1")?;
         if crate::assembly::import::is_assembly(&r) {
             let mut p = crate::document::Project::new(stem);
@@ -64,14 +120,19 @@ fn read_in_worker(text: &Arc<str>, open: bool, file: &str, stem: &str) -> ReadRe
             return Ok(Read::Assembly(Box::new(p), out));
         }
     }
-    ImportOp::new("", text.clone())
-        .read("Import1")
-        .map(|(b, w)| Read::Part(b.len(), w))
+    ImportOp {
+        solids: options.solids,
+        surfaces: options.surfaces,
+        ..ImportOp::new("", text.clone())
+    }
+    .read("Import1")
+    .map(|(b, w)| Read::Part(b.len(), w))
 }
 
 impl ImportJob {
-    fn start(path: &Path, open: bool) -> Result<Self, String> {
-        let text = read_step(path)?;
+    fn start(path: &Path, open: bool, options: OpenOptions) -> Result<Self, String> {
+        let scale = MESH_UNITS.get(options.unit).map_or(1.0, |u| u.1);
+        let text = read_scaled(path, scale)?;
         let (tx, rx) = std::sync::mpsc::channel();
         let t = text.clone();
         let file = path
@@ -85,13 +146,14 @@ impl ImportJob {
         std::thread::Builder::new()
             .name("step-import".into())
             .spawn(move || {
-                let _ = tx.send(read_in_worker(&t, open, &file, &stem));
+                let _ = tx.send(read_in_worker(&t, open, options, &file, &stem));
             })
             .map_err(|e| format!("cannot start the reader ({e})"))?;
         Ok(Self {
             path: path.to_path_buf(),
             text,
             open,
+            options,
             started: std::time::Instant::now(),
             rx,
         })
@@ -115,8 +177,8 @@ fn summary(name: &str, bodies: usize, warnings: &[String]) -> String {
 }
 
 impl CadCraftApp {
-    fn start_import_job(&mut self, path: &Path, open: bool) {
-        match ImportJob::start(path, open) {
+    fn start_import_job(&mut self, path: &Path, open: bool, options: OpenOptions) {
+        match ImportJob::start(path, open, options) {
             Ok(job) => {
                 self.file_status = Some(Ok(format!("Import: reading {}...", job.file_name())));
                 self.import_job = Some(job);
@@ -130,13 +192,104 @@ impl CadCraftApp {
         if let Some(d) = self.part_planned.as_mut() {
             d.note = Some("Reading the file...".into());
         }
-        self.start_import_job(path, false);
+        self.start_import_job(path, false, OpenOptions::default());
     }
 
-    /// File → Open of a STEP file: read it, then a new part (its own tab) holding one Import
-    /// feature.
+    /// File → Open of a STEP or mesh file: the Import Options window first (Inventor's Import
+    /// dialog), then the file is read into a new part (its own tab) holding one Import feature,
+    /// or an assembly of documents.
     pub(super) fn open_step(&mut self, path: &Path) {
-        self.start_import_job(path, true);
+        self.import_ask = Some(ImportAsk {
+            path: path.to_path_buf(),
+            options: self.import_last,
+        });
+    }
+
+    /// The Import Options window of File → Open; OK starts the read. Called once per frame.
+    pub(super) fn import_ask_ui(&mut self, ctx: &egui::Context) {
+        let Some(ask) = self.import_ask.as_mut() else {
+            return;
+        };
+        let name = ask
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mesh = crate::gui::files::is_mesh_file(&ask.path);
+        let o = &mut ask.options;
+        let (mut ok, mut cancel) = (false, false);
+        egui::Window::new("Import Options")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new(&name).strong());
+                ui.add_space(4.0);
+                egui::Grid::new("import_options")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Import Type");
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut o.reference, true, "Reference Model")
+                                .on_hover_text(
+                                    "The document follows the file: Update brings its changes",
+                                );
+                            ui.radio_value(&mut o.reference, false, "Convert Model")
+                                .on_hover_text("A one-time copy: the file is not read again");
+                        });
+                        ui.end_row();
+                        if mesh {
+                            ui.label("Length Units");
+                            egui::ComboBox::from_id_salt("import_mesh_unit")
+                                .selected_text(MESH_UNITS.get(o.unit).map_or("mm", |u| u.0))
+                                .show_ui(ui, |ui| {
+                                    for (k, (u, _)) in MESH_UNITS.iter().enumerate() {
+                                        ui.selectable_value(&mut o.unit, k, *u);
+                                    }
+                                })
+                                .response
+                                .on_hover_text("A mesh file has no unit: the one its numbers are in");
+                            ui.end_row();
+                        } else {
+                            ui.label("Object Filters");
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut o.solids, "Solids");
+                                ui.checkbox(&mut o.surfaces, "Surfaces");
+                            });
+                            ui.end_row();
+                            ui.label("Import as");
+                            ui.vertical(|ui| {
+                                ui.radio_value(&mut o.assembly, true, "Assembly").on_hover_text(
+                                    "A file of several products: one document per product, placed as in the file",
+                                );
+                                ui.radio_value(&mut o.assembly, false, "Multi-body part")
+                                    .on_hover_text("Every body of the file in one part");
+                                ui.add_enabled(false, egui::RadioButton::new(false, "Composite Part"))
+                                    .on_disabled_hover_text(
+                                        "Composite features are not available yet (spec 7.7a 3.6)",
+                                    );
+                            });
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ok = ui.button("OK").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    cancel = ui.button("Cancel").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                });
+            });
+        if ok && !mesh && !o.solids && !o.surfaces {
+            self.file_status = Some(Err("Import: choose Solids, Surfaces or both".into()));
+            return;
+        }
+        if cancel {
+            self.import_ask = None;
+        } else if ok && let Some(ask) = self.import_ask.take() {
+            self.import_last = ask.options;
+            self.start_import_job(&ask.path, true, ask.options);
+        }
     }
 
     /// The running read: its window (Cancel) and, once done, its result. Called once per frame.
@@ -196,7 +349,8 @@ impl CadCraftApp {
             Ok(Read::Part(n, w)) => (n, w),
             Ok(Read::Assembly(p, out)) => {
                 let path = job.path.display().to_string();
-                self.open_imported_assembly(*p, out, &name, &path);
+                let follow = job.options.reference;
+                self.open_imported_assembly(*p, out, &name, &path, follow);
                 return;
             }
             Err(e) => {
@@ -228,13 +382,15 @@ impl CadCraftApp {
         out: crate::assembly::import::AssemblyImport,
         name: &str,
         path: &str,
+        follow: bool,
     ) {
         let Some(top) = out.top else {
             return;
         };
-        // File → Open follows the file (Reference Model, spec 7.7a 3a.1): Update brings its changes.
-        if let Some(crate::document::DocumentData::Assembly(a)) =
-            project.document_mut(top).map(|d| &mut d.data)
+        // Reference Model follows the file (spec 7.7a 3a.1): Update brings its changes.
+        if follow
+            && let Some(crate::document::DocumentData::Assembly(a)) =
+                project.document_mut(top).map(|d| &mut d.data)
         {
             a.import.get_or_insert_with(Default::default).link =
                 Some(crate::part::import::SourceLink::now(path));
@@ -271,10 +427,15 @@ impl CadCraftApp {
         if let Some(doc) = self.project.document_mut(self.part_id) {
             doc.name = stem;
         }
-        // File → Open follows the file (Reference Model): Update brings its changes.
+        // Reference Model follows the file: Update brings its changes.
         let path = job.path.display().to_string();
         let op = ImportOp {
-            link: Some(crate::part::import::SourceLink::now(&path)),
+            link: job
+                .options
+                .reference
+                .then(|| crate::part::import::SourceLink::now(&path)),
+            solids: job.options.solids,
+            surfaces: job.options.surfaces,
             ..ImportOp::new(path, job.text.clone())
         };
         match self

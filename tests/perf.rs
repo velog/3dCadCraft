@@ -3490,6 +3490,64 @@ fn speed_budgets() {
                 }),
             ));
         }
+        // Simplify (spec 2.18, 3.11): the 36-hole plate without its holes as a model state, an
+        // envelope of it, and a 10-part assembly (plates with holes) as one simplified part
+        // with the holes removed and the small parts left out.
+        {
+            use cadcraft3d::kernel::Transform3;
+            use cadcraft3d::part::derive::DeriveSource;
+            use cadcraft3d::part::simplify::{Envelope, Removal, SimplifySpec};
+            let no_holes = SimplifySpec {
+                holes: Removal::range(8.0),
+                ..Default::default()
+            };
+            rows.push((
+                "simplify: the 36-hole plate's holes removed as a new model state",
+                300.0,
+                median_ms(3, || {
+                    let mut p = src.clone();
+                    p.build_cache = Default::default();
+                    p.add_simplified_variant(no_holes.clone(), None).unwrap();
+                }),
+            ));
+            let env = SimplifySpec {
+                envelope: Envelope::All,
+                ..Default::default()
+            };
+            rows.push((
+                "simplify: an envelope round the 36-hole plate",
+                300.0,
+                median_ms(3, || {
+                    let mut p = src.clone();
+                    p.build_cache = Default::default();
+                    p.add_simplify(env.clone()).unwrap();
+                }),
+            ));
+            let tiny = PartDocument::with_box("Box1", [2.0, 2.0, 2.0]).unwrap();
+            let mut parts: Vec<(&PartDocument, Transform3)> = Vec::new();
+            for k in 0..5 {
+                parts.push((&src, Transform3::translation(0.0, 0.0, 20.0 * k as Real)));
+                parts.push((&tiny, Transform3::translation(120.0, 0.0, 20.0 * k as Real)));
+            }
+            let paths: Vec<Vec<u32>> = (1..=10).map(|k| vec![k]).collect();
+            let spec = SimplifySpec {
+                holes: Removal::all(),
+                exclude_size: Some(5.0),
+                ..Default::default()
+            };
+            rows.push((
+                "simplify: a 10-part assembly into one part (holes removed, small parts left out)",
+                1500.0,
+                median_ms(3, || {
+                    let s = DeriveSource::with_paths(parts.clone(), paths.clone());
+                    let mut l = link.clone();
+                    l.simplify = Some(spec.clone());
+                    let mut d = PartDocument::default();
+                    d.add_derive_from(&s, l).unwrap();
+                    assert_eq!(d.exact_bodies.0.len(), 5);
+                }),
+            ));
+        }
     }
 
     // Assembly features (spec 3.10 §3.8): a cabinet side (18 × 300 × 600)

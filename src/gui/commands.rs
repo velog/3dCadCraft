@@ -414,6 +414,7 @@ const SM_PATTERN: Place = Place::Ribbon("Sheet Metal", "Pattern");
 const M_SURFACE: Place = Place::Ribbon("3D Model", "Surface");
 const M_PLASTIC: Place = Place::Ribbon("3D Model", "Plastic Part");
 const M_FREEFORM: Place = Place::Ribbon("3D Model", "Freeform");
+const M_SIMPLIFY: Place = Place::Ribbon("3D Model", "Simplification");
 const G_AUTHOR: Place = Place::Ribbon("Manage", "Author");
 const G_VARIANTS: Place = Place::Ribbon("Manage", "Variants");
 const G_INSERT: Place = Place::Ribbon("Manage", "Insert");
@@ -815,6 +816,9 @@ pub static COMMANDS: &[Command] = &[
     pp("part.derive", "Derive", "Производен детайл", Icon::Derive, Pp::Derive)
         .alias(&["DER"])
         .at(&[M_CREATE]),
+    pp("part.simplify", "Simplify", "Опростяване на детайл", Icon::SimplifyPart, Pp::Simplify)
+        .alias(&["SIM"])
+        .at(&[M_SIMPLIFY]),
     pp("part.import", "Import", "Импорт на модел", Icon::Import, Pp::Import)
         .alias(&["IMP"])
         .spec("7.7a-import.md")
