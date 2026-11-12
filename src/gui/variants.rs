@@ -96,14 +96,16 @@ impl CadCraftApp {
     }
 
     /// The occurrence places variant `chosen` of its part (`None`: the active one).
-    fn set_occurrence_variant(&mut self, id: u32, chosen: Option<u32>) {
+    pub(super) fn set_occurrence_variant(&mut self, id: u32, chosen: Option<u32>) {
         let r = self.asm_try("Part Variant", move |a| {
             if let Some(o) = a.find_mut(id) {
                 o.component.variant = chosen;
             }
         });
-        if let Err(e) = r {
-            self.file_status = Some(Err(format!("Variant: {e}")));
+        match r {
+            Err(e) => self.file_status = Some(Err(format!("Variant: {e}"))),
+            // Frames on this component follow the variant's lines (spec 6.1 §3.6a).
+            Ok(_) => self.follow_frames(),
         }
         self.scene_dirty = true;
         self.asm_refresh_status();
@@ -186,6 +188,70 @@ impl CadCraftApp {
                     pick = Some(Some(*v));
                     ui.close();
                 }
+            }
+        });
+        if let Some(c) = pick {
+            self.set_occurrence_variant(id, c);
+        }
+    }
+
+    /// The component's variants under it in the browser (Inventor: the Model
+    /// States of a component in the assembly browser, spec 3.9 §3.3b): the one
+    /// the occurrence places has a check mark; a double-click, or Activate in
+    /// its menu, makes the occurrence place it (one Undo step, then a solve:
+    /// nothing changes when it does not solve, rule 5). Nothing for a part
+    /// with only its `[Primary]`.
+    pub(super) fn occurrence_variant_folder(&mut self, ui: &mut egui::Ui, id: u32, r: DocRef) {
+        let list = self.part_variant_names(r);
+        if list.is_empty() {
+            return;
+        }
+        // A pattern's copy places what its source places.
+        let copy = self.assembly().is_some_and(|a| a.is_element(id));
+        let active = crate::assembly::reps::PART_ACTIVE;
+        let shown = r
+            .variant
+            .and_then(|v| list.iter().find(|x| x.0 == v))
+            .map_or(active, |x| x.1.as_str())
+            .to_owned();
+        let mut rows: Vec<(Option<u32>, String)> = vec![(None, active.to_owned())];
+        rows.extend(list.into_iter().map(|(v, n)| (Some(v), n)));
+        let mut pick = None;
+        super::asm_browser::fold(ui, ("asm_occ_variants", id), false, |ui| {
+            super::panels::tree_icon(ui, super::icons::Icon::RepState);
+            ui.add(egui::Label::new(format!("Variants: {shown}")).truncate())
+                .on_hover_text(format!(
+                    "This component places: {shown}. Double-click a variant to change it"
+                ));
+        })
+        .body(|ui| {
+            for (v, name) in &rows {
+                ui.horizontal(|ui| {
+                    super::panels::tree_icon(ui, super::icons::Icon::RepState);
+                    let on = r.variant == *v;
+                    let text = if on {
+                        RichText::new(format!("{name}  ✔")).strong()
+                    } else {
+                        RichText::new(name.as_str())
+                    };
+                    let row = ui.add_enabled(!copy, egui::Button::selectable(on, text));
+                    let row = if copy {
+                        row.on_disabled_hover_text(
+                            "A pattern's copy takes the variant of its source",
+                        )
+                    } else {
+                        row.on_hover_text("Double-click: this component places this variant")
+                    };
+                    if row.double_clicked() && !on {
+                        pick = Some(*v);
+                    }
+                    row.context_menu(|ui| {
+                        if ui.add_enabled(!on, egui::Button::new("Activate")).clicked() {
+                            pick = Some(*v);
+                            ui.close();
+                        }
+                    });
+                });
             }
         });
         if let Some(c) = pick {

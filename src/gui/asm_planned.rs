@@ -1043,6 +1043,7 @@ impl AsmPlanned {
                         0,
                     ),
                     Check("Merge Frame Members", false),
+                    Check("Remove Overlapping Members", false),
                     Head("Corners"),
                     Combo(
                         "Corner Type",
@@ -2024,9 +2025,7 @@ impl CadCraftApp {
             let edges = self
                 .geom_part(&g)
                 .and_then(|(c, _)| {
-                    self.with_part(c, |p| {
-                        crate::assembly::frame::straight_edges(p, only.as_deref())
-                    })
+                    self.with_part(c, |p| super::frame::body_edges(p, &g, only.as_deref()))
                 })
                 .unwrap_or_default();
             let refs: Vec<GeomRef> = edges

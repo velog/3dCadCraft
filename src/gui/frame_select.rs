@@ -400,7 +400,7 @@ impl CadCraftApp {
         let Some(&anchor) = frame::Anchor::ALL.get(k) else {
             return;
         };
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut trial = self.project.clone();
         match frame::set_anchor(&mut trial, &linked, self.frame_doc(), occ, anchor) {
             Ok(_) => {
@@ -420,7 +420,7 @@ impl CadCraftApp {
         let Some(a) = self.frame_asm() else {
             return;
         };
-        let linked = self.linked();
+        let linked = self.frame_linked();
         for w in d.picks_of("members") {
             let Some(o) = a.occurrences.iter().find(|o| o.name == pick_name(w)) else {
                 continue;

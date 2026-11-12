@@ -378,6 +378,11 @@ impl CadCraftApp {
                     if !opts.hide_work && query.is_empty() {
                         this.origin_folder(ui, id, &mut cmds);
                     }
+                    // The part's variants, the one this component places checked
+                    // (Inventor: the component's Model States).
+                    if !sub && query.is_empty() {
+                        this.occurrence_variant_folder(ui, id, component);
+                    }
                     if sub {
                         let mut stack = vec![asm_doc];
                         this.nested_rows(ui, id, component, &[], &mut stack, &mut cmds);

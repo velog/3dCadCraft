@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::document::{
     AssemblyDocument, DocRef, DocumentData, DocumentId, LibraryId, Occurrence, Project,
@@ -29,6 +30,10 @@ pub const MAX_DEPTH: usize = 32;
 #[derive(Clone, Debug, Default)]
 pub struct Linked {
     files: HashMap<LibraryId, Rc<Project>>,
+    /// Parts standing in a chosen variant (`DocRef::variant`), by the part's
+    /// base reference and the variant: [`part_of`] gives them for a reference
+    /// that names that variant (spec 3.9 §3.3b).
+    variants: HashMap<(DocRef, u32), Arc<PartDocument>>,
 }
 
 impl Linked {
@@ -51,6 +56,60 @@ impl Linked {
     pub fn contains(&self, id: LibraryId) -> bool {
         self.files.contains_key(&id)
     }
+
+    /// Records part `base` (a reference without a variant) standing in its
+    /// variant `v`.
+    pub fn insert_variant(&mut self, base: DocRef, v: u32, part: Arc<PartDocument>) {
+        self.variants.insert((base.base(), v), part);
+    }
+
+    /// Part `base` standing in variant `v`, when it was recorded.
+    pub fn variant(&self, base: DocRef, v: u32) -> Option<&PartDocument> {
+        self.variants.get(&(base.base(), v)).map(|p| &**p)
+    }
+}
+
+/// Every part reference with a chosen variant that an assembly of `project`
+/// places (each once, in document order).
+pub fn variant_refs(project: &Project) -> Vec<(DocRef, u32)> {
+    let mut out: Vec<(DocRef, u32)> = Vec::new();
+    for d in project.documents() {
+        let DocumentData::Assembly(a) = &d.data else {
+            continue;
+        };
+        for o in &a.occurrences {
+            if let Some(v) = o.component.variant {
+                let k = (o.component.base(), v);
+                if !out.contains(&k) {
+                    out.push(k);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `linked` with every chosen variant of [`variant_refs`] built (a copy of
+/// the part with that variant activated); a variant that does not build is
+/// left out (the part as it is stands for it) and said in the log. The GUI
+/// fills the same map from its cache.
+pub fn with_variants(project: &Project, linked: &Linked) -> Linked {
+    let mut out = linked.clone();
+    for (base, v) in variant_refs(project) {
+        if out.variant(base, v).is_some() {
+            continue;
+        }
+        let Some(p) = part_of(project, linked, base) else {
+            continue;
+        };
+        let mut m = p.clone();
+        m.build_cache = Default::default();
+        match m.activate_variant(v) {
+            Ok(()) => out.insert_variant(base, v, Arc::new(m)),
+            Err(e) => log::warn!("variant {v} of a part: {e}"),
+        }
+    }
+    out
 }
 
 /// Component reference `r`, written in a document reached through library
@@ -102,12 +161,18 @@ pub fn assembly_of<'a>(
     }
 }
 
-/// The part `r` shows: one of this design file or of a linked file.
+/// The part `r` shows: one of this design file or of a linked file, standing
+/// in `r`'s variant when `linked` holds it.
 pub fn part_of<'a>(
     project: &'a Project,
     linked: &'a Linked,
     r: DocRef,
 ) -> Option<&'a PartDocument> {
+    if let Some(v) = r.variant
+        && let Some(p) = linked.variant(r, v)
+    {
+        return Some(p);
+    }
     match document_of(project, linked, r) {
         Some(DocumentData::Part(p)) => Some(p),
         _ => None,

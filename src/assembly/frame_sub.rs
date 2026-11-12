@@ -323,11 +323,11 @@ pub fn skeleton_up(top: &AssemblyDocument, frame: u32, s: &Skeleton) -> Skeleton
 }
 
 /// Places every reference occurrence where its source is now (frame
-/// coordinates). A source that is gone leaves its copy: the members stay
+/// coordinates), standing in the source's variant. A source that is gone leaves its copy: the members stay
 /// valid. Returns how many moved.
 fn sync_links(project: &mut Project, linked: &Linked, top: DocumentId) -> Result<usize, String> {
     let a = asm_of(project, top)?;
-    let mut moves: Vec<(DocumentId, u32, Transform3)> = Vec::new();
+    let mut moves: Vec<(DocumentId, u32, Transform3, Option<u32>)> = Vec::new();
     for l in &a.frame_links {
         let Some(frame) = a.find(l.frame) else {
             continue;
@@ -341,12 +341,13 @@ fn sync_links(project: &mut Project, linked: &Linked, top: DocumentId) -> Result
                 frame.component.document,
                 l.reference,
                 frame.transform.inverse() * source.transform * n.at,
+                n.component.variant,
             )),
             Err(e) => log::warn!("frame skeleton: {e}"),
         }
     }
     let mut moved = 0;
-    for (doc, reference, place) in moves {
+    for (doc, reference, place, variant) in moves {
         if let Some(o) = asm_mut(project, doc)?
             .occurrences
             .iter_mut()
@@ -356,6 +357,12 @@ fn sync_links(project: &mut Project, linked: &Linked, top: DocumentId) -> Result
                 + o.transform.rotation.angle_to(&place.rotation);
             if d > 1e-9 {
                 o.transform = place;
+                moved += 1;
+            }
+            // The skeleton stands in the variant its source places (spec 6.1
+            // §3.6a): the members follow that variant's lines.
+            if o.component.variant != variant {
+                o.component.variant = variant;
                 moved += 1;
             }
         }
@@ -637,5 +644,369 @@ mod tests {
         assert!(s.sick.is_empty(), "{:?}", s.sick);
         assert_eq!(s.moved, 0);
         assert_eq!(assembly(&q, t.doc).frames[0].members[0].occurrence, occs[0]);
+    }
+
+    // ---------------------------------------------------- owner's batch 2026-11-12 ---
+
+    /// The skeleton part's parameter holding its x size (400).
+    fn x_param(p: &PartDocument) -> String {
+        p.parameter_table()
+            .into_iter()
+            .find(|r| (r.value - 400.0).abs() < 1e-9)
+            .map(|r| r.name)
+            .unwrap()
+    }
+
+    fn part_mut(p: &mut Project, id: DocumentId) -> &mut PartDocument {
+        match p.document_mut(id).map(|d| &mut d.data) {
+            Some(DocumentData::Part(x)) => x,
+            _ => panic!("no part"),
+        }
+    }
+
+    /// The x extent of member `occ` in the frame assembly's coordinates.
+    fn member_length(p: &Project, t: Target, occ: u32) -> Real {
+        let f = assembly(p, t.doc);
+        let o = f.find(occ).unwrap();
+        match p.document(o.component.document).map(|d| &d.data) {
+            Some(DocumentData::Part(m)) => frame::length_of(m).unwrap(),
+            _ => panic!("no member part"),
+        }
+    }
+
+    /// The skeleton part (document) of the top assembly's first occurrence,
+    /// with a variant `Long` whose x size is 600 (`[Primary]` stays active).
+    fn with_long_variant(p: &mut Project, top: DocumentId) -> (DocumentId, u32) {
+        let sk = assembly(p, top).occurrences[0].component.document;
+        let part = part_mut(p, sk);
+        let name = x_param(part);
+        let v = part.new_variant();
+        part.set_parameter_expr(&name, "600 mm").unwrap();
+        part.variants_sync();
+        part.activate_variant(crate::part::variants::PRIMARY)
+            .unwrap();
+        (sk, v)
+    }
+
+    #[test]
+    fn members_follow_the_variant_the_skeleton_occurrence_places() {
+        let (mut p, top) = project(Vector3::zeros());
+        let (t, occs) = insert(&mut p, top, Corners::default());
+        assert!((member_length(&p, t, occs[0]) - 400.0).abs() < 1e-6);
+        let (_, v) = with_long_variant(&mut p, top);
+        // The source occurrence places the long variant.
+        asm_mut(&mut p, top).unwrap().occurrences[0]
+            .component
+            .variant = Some(v);
+        let linked = tree::with_variants(&p, &Linked::new());
+        let s = follow(&mut p, &linked, top).unwrap();
+        assert!(s.sick.is_empty(), "{:?}", s.sick);
+        // The reference copies the variant: the next build finds it as well.
+        let link = assembly(&p, top).frame_links[0].clone();
+        let r = assembly(&p, t.doc).find(link.reference).unwrap();
+        assert_eq!(r.component.variant, Some(v));
+        let linked = tree::with_variants(&p, &Linked::new());
+        follow(&mut p, &linked, top).unwrap();
+        assert!(
+            (member_length(&p, t, occs[0]) - 600.0).abs() < 1e-6,
+            "{}",
+            member_length(&p, t, occs[0])
+        );
+        // The y edge did not change.
+        assert!((member_length(&p, t, occs[1]) - 300.0).abs() < 1e-6);
+        // Back to the part's active variant: back to 400.
+        asm_mut(&mut p, top).unwrap().occurrences[0]
+            .component
+            .variant = None;
+        let linked = tree::with_variants(&p, &Linked::new());
+        follow(&mut p, &linked, top).unwrap();
+        assert!((member_length(&p, t, occs[0]) - 400.0).abs() < 1e-6);
+        // Nothing left to do.
+        assert_eq!(follow(&mut p, &linked, top).unwrap().moved, 0);
+    }
+
+    #[test]
+    fn members_follow_the_skeleton_parts_active_variant() {
+        let (mut p, top) = project(Vector3::zeros());
+        let (t, occs) = insert(&mut p, top, Corners::default());
+        let (sk, v) = with_long_variant(&mut p, top);
+        part_mut(&mut p, sk).activate_variant(v).unwrap();
+        follow(&mut p, &Linked::new(), top).unwrap();
+        assert!((member_length(&p, t, occs[0]) - 600.0).abs() < 1e-6);
+        part_mut(&mut p, sk)
+            .activate_variant(crate::part::variants::PRIMARY)
+            .unwrap();
+        follow(&mut p, &Linked::new(), top).unwrap();
+        assert!((member_length(&p, t, occs[0]) - 400.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_frame_on_a_variant_survives_save_and_load() {
+        let (mut p, top) = project(Vector3::zeros());
+        let (t, occs) = insert(&mut p, top, Corners::default());
+        let (_, v) = with_long_variant(&mut p, top);
+        asm_mut(&mut p, top).unwrap().occurrences[0]
+            .component
+            .variant = Some(v);
+        for _ in 0..2 {
+            let linked = tree::with_variants(&p, &Linked::new());
+            follow(&mut p, &linked, top).unwrap();
+        }
+        let dir = std::env::temp_dir().join(format!("cc3d_frame_var_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("f.3dcadcraft");
+        p.save(&file).unwrap();
+        let mut q = Project::load(&file).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let linked = tree::with_variants(&q, &Linked::new());
+        let s = follow(&mut q, &linked, top).unwrap();
+        assert!(s.sick.is_empty(), "{:?}", s.sick);
+        assert!((member_length(&q, t, occs[0]) - 600.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_same_edge_twice_is_an_overlap_and_a_longer_line_removes_a_shorter() {
+        let (mut p, top) = project(Vector3::zeros());
+        let (t, occs) = insert(&mut p, top, Corners::default());
+        let linked = Linked::new();
+        assert!(frame::overlapping_members(&p, &linked, assembly(&p, t.doc)).is_empty());
+        // The front top edge once more (picked from the front face's edges).
+        let again = skeleton_down(
+            &mut p,
+            &linked,
+            t,
+            &edge([200.0, 0.0, 200.0], "Front", "Top"),
+        )
+        .unwrap();
+        let (_, more) = frame::insert(
+            &mut p,
+            &linked,
+            t.doc,
+            &[again],
+            &opts(Corners::default()),
+            Library::builtin(),
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(
+            frame::overlapping_members(&p, &linked, assembly(&p, t.doc)),
+            vec![(occs[0], more[0])]
+        );
+    }
+
+    #[test]
+    fn set_orientations_moves_a_member_and_refuses_bad_values() {
+        let (mut p, top) = project(Vector3::zeros());
+        let (t, occs) = insert(&mut p, top, Corners::default());
+        let linked = Linked::new();
+        let before = world_of(&p, t, occs[0]);
+        let o = frame::Orientation {
+            anchor: frame::Anchor::BottomLeft,
+            angle: std::f64::consts::FRAC_PI_2,
+            ..Default::default()
+        };
+        frame::set_orientations(&mut p, &linked, t.doc, &[(occs[0], o)]).unwrap();
+        assert_eq!(frame::orientation_of(assembly(&p, t.doc), occs[0]), Some(o));
+        assert!((world_of(&p, t, occs[0]) - before).norm() > 1.0);
+        // A value that is no number, or no member: nothing changes.
+        let copy = p.clone();
+        let bad = frame::Orientation {
+            h_offset: Real::NAN,
+            ..o
+        };
+        assert!(frame::set_orientations(&mut p, &linked, t.doc, &[(occs[0], bad)]).is_err());
+        assert!(frame::set_orientations(&mut p, &linked, t.doc, &[(9999, o)]).is_err());
+        assert!(frame::set_orientations(&mut p, &linked, t.doc, &[]).is_err());
+        assert_eq!(
+            frame::orientation_of(assembly(&p, t.doc), occs[0]),
+            frame::orientation_of(assembly(&copy, t.doc), occs[0])
+        );
+    }
+
+    #[test]
+    fn insert_with_takes_a_members_own_orientation() {
+        let (mut p, top) = project(Vector3::zeros());
+        let linked = Linked::new();
+        let (frame, doc) = new_frame_assembly(&mut p, top, "Frame0001").unwrap();
+        let t = Target {
+            top,
+            frame,
+            doc,
+            skeleton: "Skeleton0001",
+        };
+        let lines: Vec<Skeleton> = [
+            edge([200.0, 0.0, 200.0], "Front", "Top"),
+            edge([400.0, 150.0, 200.0], "Right", "Top"),
+        ]
+        .iter()
+        .map(|s| skeleton_down(&mut p, &linked, t, s).unwrap())
+        .collect();
+        let mine = frame::Orientation {
+            anchor: frame::Anchor::TopRight,
+            v_offset: 5.0,
+            ..Default::default()
+        };
+        let (_, occs) = frame::insert_with(
+            &mut p,
+            &linked,
+            doc,
+            &lines,
+            &[None, Some(mine)],
+            &opts(Corners::default()),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let f = assembly(&p, doc);
+        assert_eq!(
+            frame::orientation_of(f, occs[0]),
+            Some(Orientation::default())
+        );
+        assert_eq!(frame::orientation_of(f, occs[1]), Some(mine));
+    }
+
+    /// The skeleton box split at x = 200 into two bodies.
+    fn split_box() -> PartDocument {
+        use crate::part::{
+            OriginPlane, PlaneRef, SplitFeature, SplitMethod, SplitToolRef, WorkDef, WorkFeature,
+            WorkPlaneDef,
+        };
+        let mut p = PartDocument::with_box("Box1", [400.0, 300.0, 200.0]).unwrap();
+        let wp = p
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::YZ),
+                distance: 200.0,
+            })))
+            .unwrap();
+        let mut s = SplitFeature::new(SplitMethod::SplitSolid);
+        s.tool = Some(SplitToolRef::Plane(PlaneRef::Work(wp)));
+        p.add_split(s).unwrap();
+        p
+    }
+
+    #[test]
+    fn body_edges_take_the_clicked_body_only() {
+        let p = split_box();
+        assert_eq!(p.body.solids().count(), 2);
+        let all = frame::straight_edges(&p, None);
+        let left = frame::body_at(&p, "Box1:Top", Point3::new(100.0, 150.0, 200.0)).unwrap();
+        let right = frame::body_at(&p, "Box1:Top", Point3::new(300.0, 150.0, 200.0)).unwrap();
+        assert_ne!(left, right);
+        let a = frame::straight_edges_in(&p, None, Some(left));
+        let b = frame::straight_edges_in(&p, None, Some(right));
+        assert_eq!((a.len(), b.len()), (12, 12), "a box each");
+        assert!(a.iter().all(|e| e.hint[0] <= 200.0 + 1e-6));
+        assert!(b.iter().all(|e| e.hint[0] >= 200.0 - 1e-6));
+        // Every body: the edges of both (those on the cut once each).
+        assert!(all.len() >= 20 && all.len() <= 24, "{}", all.len());
+    }
+
+    fn l(a: [Real; 3], b: [Real; 3]) -> (Point3, Point3) {
+        (Point3::from(a), Point3::from(b))
+    }
+
+    #[test]
+    fn overlap_of_lines_in_many_layouts() {
+        let a = l([0.0, 0.0, 0.0], [100.0, 0.0, 0.0]);
+        // On one another: the same, reversed, partly, inside, a hair off.
+        for b in [
+            a,
+            l([100.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
+            l([50.0, 0.0, 0.0], [150.0, 0.0, 0.0]),
+            l([20.0, 0.0, 0.0], [30.0, 0.0, 0.0]),
+            l([-10.0, 0.0, 0.0], [110.0, 0.0, 0.0]),
+            l([10.0, 0.0004, 0.0], [90.0, 0.0, 0.0004]),
+        ] {
+            assert!(frame::lines_overlap(a, b), "{b:?}");
+            assert!(frame::lines_overlap(b, a), "{b:?} the other way");
+        }
+        // Not: end to end, a gap, beside, crossing, skew, a little turned.
+        for b in [
+            l([100.0, 0.0, 0.0], [200.0, 0.0, 0.0]),
+            l([110.0, 0.0, 0.0], [200.0, 0.0, 0.0]),
+            l([0.0, 40.0, 0.0], [100.0, 40.0, 0.0]),
+            l([50.0, -50.0, 0.0], [50.0, 50.0, 0.0]),
+            l([0.0, 0.0, 1.0], [100.0, 1.0, 1.0]),
+            l([0.0, 0.0, 0.0], [100.0, 0.5, 0.0]),
+            l([5.0, 0.0, 0.0], [5.0, 0.0, 0.0]),
+        ] {
+            assert!(!frame::lines_overlap(a, b), "{b:?}");
+        }
+    }
+
+    #[test]
+    fn overlap_drops_keep_the_longer_and_the_first() {
+        let a = l([0.0, 0.0, 0.0], [100.0, 0.0, 0.0]);
+        let short = l([20.0, 0.0, 0.0], [60.0, 0.0, 0.0]);
+        let long = l([-50.0, 0.0, 0.0], [150.0, 0.0, 0.0]);
+        let other = l([0.0, 10.0, 0.0], [100.0, 10.0, 0.0]);
+        // The shorter goes, whichever comes first.
+        assert_eq!(frame::overlap_drops(&[Some(a), Some(short)], 0), vec![1]);
+        assert_eq!(frame::overlap_drops(&[Some(short), Some(a)], 0), vec![0]);
+        // As long: the later one goes.
+        assert_eq!(frame::overlap_drops(&[Some(a), Some(a)], 0), vec![1]);
+        let rev = l([100.0, 0.0, 0.0], [0.0, 0.0, 0.0]);
+        assert_eq!(frame::overlap_drops(&[Some(rev), Some(a)], 0), vec![1]);
+        // A chain: the longest covers both.
+        assert_eq!(
+            frame::overlap_drops(&[Some(a), Some(short), Some(long), Some(other)], 0),
+            vec![0, 1]
+        );
+        // Placed members overlapping each other stay; a longer new line
+        // removes a placed one it covers; curves (None) never overlap.
+        assert!(frame::overlap_drops(&[Some(a), Some(short)], 2).is_empty());
+        assert_eq!(frame::overlap_drops(&[Some(short), Some(long)], 1), vec![0]);
+        assert_eq!(frame::overlap_drops(&[Some(a), None, Some(a)], 1), vec![2]);
+        assert!(frame::overlap_drops(&[], 0).is_empty());
+    }
+
+    #[test]
+    fn overlapping_pairs_match_every_pair_compared() {
+        // A grid of 20 lines with every third one doubled (shifted along).
+        let mut lines = Vec::new();
+        for k in 0..20u32 {
+            let y = Real::from(k) * 50.0;
+            lines.push((k, l([0.0, y, 0.0], [300.0, y, 0.0])));
+            if k % 3 == 0 {
+                lines.push((100 + k, l([250.0, y, 0.0], [600.0, y, 0.0])));
+            }
+        }
+        let mut brute = Vec::new();
+        for i in 0..lines.len() {
+            for j in i + 1..lines.len() {
+                if frame::lines_overlap(lines[i].1, lines[j].1) {
+                    brute.push((lines[i].0, lines[j].0));
+                }
+            }
+        }
+        brute.sort_unstable();
+        assert_eq!(frame::overlapping_pairs(&lines), brute);
+        assert_eq!(brute.len(), 7);
+    }
+
+    #[test]
+    fn two_touching_bodies_overlap_on_their_shared_edges_only() {
+        let p = split_box();
+        let left = frame::body_at(&p, "Box1:Top", Point3::new(100.0, 150.0, 200.0)).unwrap();
+        let right = frame::body_at(&p, "Box1:Top", Point3::new(300.0, 150.0, 200.0)).unwrap();
+        let lines: Vec<(u32, (Point3, Point3))> = frame::straight_edge_lines(&p, None, Some(left))
+            .into_iter()
+            .chain(frame::straight_edge_lines(&p, None, Some(right)))
+            .enumerate()
+            .map(|(k, (_, a, b))| (k as u32, (a, b)))
+            .collect();
+        let pairs = frame::overlapping_pairs(&lines);
+        assert_eq!(pairs.len(), 4, "{pairs:?} {lines:?}");
+        let all: Vec<_> = lines.iter().map(|(_, l)| Some(*l)).collect();
+        assert_eq!(frame::overlap_drops(&all, 0).len(), 4);
+        // Each body's edge resolves to itself, not to the other body's piece
+        // of the same line with the same face names (the two tie at their
+        // shared end when only sample points are compared).
+        for (r, a, b) in frame::straight_edge_lines(&p, None, Some(right)) {
+            let e = crate::part::draft::edge_of(&p.body, &r).unwrap();
+            let pts = p.body.sample_edge(e, &Default::default()).unwrap();
+            let m = Point3::from((pts[0].coords + pts[pts.len() - 1].coords) / 2.0);
+            assert!((m - (a + (b - a) / 2.0)).norm() < 1e-6, "{r:?}");
+        }
     }
 }

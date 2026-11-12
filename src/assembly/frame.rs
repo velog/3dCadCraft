@@ -1052,6 +1052,23 @@ pub fn insert(
     lib: &Library,
     into: Option<u32>,
 ) -> Result<(u32, Vec<u32>), String> {
+    insert_with(project, linked, asm, edges, &[], o, lib, into)
+}
+
+/// [`insert`] where member `k` may have an orientation of its own (`own[k]`,
+/// the Insert Frame list's placement per member, spec 6.1 §3.1a): it is taken
+/// as it is (no Position / Level); `None` or a missing entry takes the panel's.
+#[allow(clippy::too_many_arguments)]
+pub fn insert_with(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    edges: &[Skeleton],
+    own: &[Option<Orientation>],
+    o: &InsertOptions,
+    lib: &Library,
+    into: Option<u32>,
+) -> Result<(u32, Vec<u32>), String> {
     if edges.is_empty() {
         return Err("select the skeleton edges".into());
     }
@@ -1071,11 +1088,13 @@ pub fn insert(
         };
         let lines: Vec<(Point3, Point3)> = runs.iter().map(Run::chord).collect();
         let centre = centre_of(&lines);
-        for (e, run) in edges.iter().zip(&runs) {
+        for (k, (e, run)) in edges.iter().zip(&runs).enumerate() {
             let length = run.length();
+            let mine = own.get(k).copied().flatten();
             let (orientation, place, part, path) = match run {
                 Run::Line(p, q) => {
-                    let orientation = o.layout.orient(&o.orientation, *p, *q, centre);
+                    let orientation =
+                        mine.unwrap_or_else(|| o.layout.orient(&o.orientation, *p, *q, centre));
                     let place = placement(&section, *p, *q, &orientation)
                         .ok_or("the skeleton edge has no length")?;
                     let part = section
@@ -1084,13 +1103,14 @@ pub fn insert(
                     (orientation, place, part, None)
                 }
                 Run::Curve(c) => {
-                    let (place, run) = curved_place(&section, c, &o.orientation)
+                    let orientation = mine.unwrap_or(o.orientation);
+                    let (place, run) = curved_place(&section, c, &orientation)
                         .ok_or("the skeleton curve has no length")?;
                     let pieces = member_pieces(&run, &place.inverse());
                     let part = section
                         .member_part_path(&pieces, o.material.as_deref())
                         .map_err(|e| e.to_string())?;
-                    (o.orientation, place, part, Some(pieces))
+                    (orientation, place, part, Some(pieces))
                 }
             };
             let name = project.free_name(&format!("{}-", section.stock_number()));
@@ -2162,18 +2182,53 @@ pub fn set_anchor(
     occ: u32,
     anchor: Anchor,
 ) -> Result<Solved, String> {
+    let now =
+        orientation_of(asm_of(project, asm)?, occ).ok_or("only frame members have an anchor")?;
+    set_orientations(
+        project,
+        linked,
+        asm,
+        &[(occ, Orientation { anchor, ..now })],
+    )
+}
+
+/// Members' new orientations at once (the browser's Position menu of a
+/// member, spec 6.1 §3.9): only their places change, then the frame is
+/// solved (corners follow). A reused member is refused (it stands as its
+/// source). On an error nothing changes (rule 5).
+pub fn set_orientations(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    changes: &[(u32, Orientation)],
+) -> Result<Solved, String> {
+    if changes.is_empty() {
+        return Err("select the frame members".into());
+    }
     let before = project.clone();
     let result = (|| {
         let a = asm_mut(project, asm)?;
-        let m = a
-            .frames
-            .iter_mut()
-            .flat_map(|f| &mut f.members)
-            .find(|m| m.occurrence == occ)
-            .ok_or("only frame members have an anchor")?;
-        m.orientation.anchor = anchor;
+        for (occ, o) in changes {
+            if !(o.h_offset.is_finite() && o.v_offset.is_finite() && o.angle.is_finite()) {
+                return Err("the offsets and the angle must be numbers".into());
+            }
+            let m = a
+                .frames
+                .iter_mut()
+                .flat_map(|f| &mut f.members)
+                .find(|m| m.occurrence == *occ)
+                .ok_or("only frame members have an orientation")?;
+            if m.reuse_of.is_some() {
+                return Err("a reused member is placed as its source".into());
+            }
+            m.orientation = *o;
+        }
         let s = solve(project, linked, asm)?;
-        if let Some((_, why)) = s.sick.iter().find(|(o, _)| *o == occ) {
+        if let Some((_, why)) = s
+            .sick
+            .iter()
+            .find(|(o, _)| changes.iter().any(|c| c.0 == *o))
+        {
             return Err(why.clone());
         }
         Ok(s)
@@ -2182,6 +2237,15 @@ pub fn set_anchor(
         *project = before;
     }
     result
+}
+
+/// A member's orientation now (`None`: no frame member).
+pub fn orientation_of(a: &AssemblyDocument, occ: u32) -> Option<Orientation> {
+    a.frames
+        .iter()
+        .flat_map(|f| &f.members)
+        .find(|m| m.occurrence == occ)
+        .map(|m| m.orientation)
 }
 
 /// Edit of frame members (Inventor's edit of a member with the Insert
@@ -3084,14 +3148,62 @@ pub fn edit_frame(
 /// its face `face` only (Face Edges), as edge references (part
 /// coordinates): two face names and the edge's middle.
 pub fn straight_edges(part: &PartDocument, face: Option<&str>) -> Vec<crate::part::EdgeRef> {
+    straight_edges_in(part, face, None)
+}
+
+/// The body of `part` (one of its solids) whose face named `face` lies
+/// nearest `at` (part coordinates): the body a click on that face hit, in a
+/// part of several bodies (Insert Frame's Body Edges takes one body only,
+/// rule 19).
+pub fn body_at(part: &PartDocument, face: &str, at: Point3) -> Option<crate::kernel::SolidId> {
+    let f = crate::part::appearance::nearest_face(&part.body, face, &[at.x, at.y, at.z])?;
+    part.body
+        .solids()
+        .find(|(_, s)| s.shells.iter().any(|sh| sh.faces.contains(&f)))
+        .map(|(id, _)| id)
+}
+
+/// [`straight_edges`] of one body only (`solid`; `None`: every body).
+pub fn straight_edges_in(
+    part: &PartDocument,
+    face: Option<&str>,
+    solid: Option<crate::kernel::SolidId>,
+) -> Vec<crate::part::EdgeRef> {
+    straight_edge_lines(part, face, solid)
+        .into_iter()
+        .map(|(r, ..)| r)
+        .collect()
+}
+
+/// [`straight_edges_in`] with each edge's ends (part coordinates), for
+/// drawing what a click would take.
+pub fn straight_edge_lines(
+    part: &PartDocument,
+    face: Option<&str>,
+    solid: Option<crate::kernel::SolidId>,
+) -> Vec<(crate::part::EdgeRef, Point3, Point3)> {
     let body = &part.body;
+    let own: Option<std::collections::HashSet<crate::kernel::FaceId>> = solid.and_then(|id| {
+        body.solids().find(|(s, _)| *s == id).map(|(_, s)| {
+            s.shells
+                .iter()
+                .flat_map(|sh| sh.faces.iter().copied())
+                .collect()
+        })
+    });
     let opts = crate::kernel::TessellationOptions::default();
-    let mut out: Vec<crate::part::EdgeRef> = Vec::new();
+    let mut out: Vec<(crate::part::EdgeRef, Point3, Point3)> = Vec::new();
     for (id, _) in body.edges() {
         let faces = body.edge_faces(id);
         let [f0, f1] = faces[..] else {
             continue;
         };
+        if own
+            .as_ref()
+            .is_some_and(|set| !set.contains(&f0) || !set.contains(&f1))
+        {
+            continue;
+        }
         let name = |f| body.face(f).and_then(|f| f.name.clone());
         let (Some(n0), Some(n1)) = (name(f0), name(f1)) else {
             continue;
@@ -3117,15 +3229,132 @@ pub fn straight_edges(part: &PartDocument, face: Option<&str>) -> Vec<crate::par
         // A split edge or a seam listed twice: keep one.
         if out
             .iter()
-            .any(|r| (Point3::new(r.hint[0], r.hint[1], r.hint[2]) - m).norm() < 1e-6)
+            .any(|(r, ..)| (Point3::new(r.hint[0], r.hint[1], r.hint[2]) - m).norm() < 1e-6)
         {
             continue;
         }
-        out.push(crate::part::EdgeRef {
-            faces: [n0, n1],
-            hint: [m.x, m.y, m.z],
-        });
+        out.push((
+            crate::part::EdgeRef {
+                faces: [n0, n1],
+                hint: [m.x, m.y, m.z],
+            },
+            *s,
+            *e,
+        ));
     }
+    out
+}
+
+/// How near two lines must be to lie on one another (Remove Overlapping
+/// Members, spec 6.1 §3.1a): 1 µm across, 1e-6 rad between their directions,
+/// and a shared length of more than 0.01 mm (members meeting end to end do
+/// not overlap).
+const OVERLAP: crate::kernel::Tolerance = crate::kernel::Tolerance {
+    linear: 1e-3,
+    angular: 1e-6,
+};
+
+/// Whether straight lines `a` and `b` (start, end) lie on one another:
+/// parallel, on one line, and sharing a piece of it.
+pub fn lines_overlap(a: (Point3, Point3), b: (Point3, Point3)) -> bool {
+    let da = a.1 - a.0;
+    let la = da.norm();
+    let lb = (b.1 - b.0).norm();
+    if la < OVERLAP.linear || lb < OVERLAP.linear {
+        return false;
+    }
+    let u = da / la;
+    // Both ends of b on a's line (which also makes them parallel).
+    let off = |p: Point3| (p - a.0 - u * (p - a.0).dot(&u)).norm();
+    let tol = OVERLAP.linear + OVERLAP.angular * la.max(lb);
+    if off(b.0) > tol || off(b.1) > tol {
+        return false;
+    }
+    let (t0, t1) = ((b.0 - a.0).dot(&u), (b.1 - a.0).dot(&u));
+    let (lo, hi) = (t0.min(t1), t0.max(t1));
+    hi.min(la) - lo.max(0.0) > 10.0 * OVERLAP.linear
+}
+
+/// Remove Overlapping Members: which of `lines` go so that no two left lie
+/// on one another. Of two overlapping lines the shorter goes, of two as long
+/// the later one. The first `fixed` lines are members already placed: two of
+/// them overlapping each other are left as they are (the browser warns), but
+/// one goes when a longer new line covers it. `None`: no straight line (it
+/// never overlaps). Returns the indices, ascending.
+pub fn overlap_drops(lines: &[Option<(Point3, Point3)>], fixed: usize) -> Vec<usize> {
+    // Longest first; lengths within the tolerance count as equal (then the
+    // earlier one first).
+    let q = |i: usize| {
+        lines[i]
+            .as_ref()
+            .map_or(0, |l| ((l.1 - l.0).norm() / OVERLAP.linear).round() as i64)
+    };
+    let mut order: Vec<usize> = (0..lines.len()).filter(|&i| lines[i].is_some()).collect();
+    order.sort_by_key(|&i| (std::cmp::Reverse(q(i)), i));
+    let mut kept: Vec<usize> = Vec::new();
+    let mut out = Vec::new();
+    for i in order {
+        let Some(l) = lines[i] else {
+            continue;
+        };
+        let covered = kept
+            .iter()
+            .any(|&k| !(k < fixed && i < fixed) && lines[k].is_some_and(|m| lines_overlap(m, l)));
+        if covered {
+            out.push(i);
+        } else {
+            kept.push(i);
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// The pairs of straight members of assembly `asm` that lie on one another
+/// (occurrence ids, the earlier member first): the browser's warning. Members
+/// whose line cannot be found are left out (they are sick already).
+pub fn overlapping_members(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+) -> Vec<(u32, u32)> {
+    let lines: Vec<(u32, (Point3, Point3))> = asm
+        .frames
+        .iter()
+        .flat_map(|f| &f.members)
+        .filter_map(|m| {
+            skeleton_line(project, linked, asm, &m.skeleton)
+                .ok()
+                .map(|l| (m.occurrence, l))
+        })
+        .collect();
+    overlapping_pairs(&lines)
+}
+
+/// [`overlapping_members`] of lines already found (in member order): sorted
+/// by their x extent first, so a frame of many members compares only
+/// neighbours in full.
+pub fn overlapping_pairs(lines: &[(u32, (Point3, Point3))]) -> Vec<(u32, u32)> {
+    let pad = 10.0 * OVERLAP.linear;
+    let mut boxes: Vec<(Real, Real, usize)> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, (_, (a, b)))| (a.x.min(b.x) - pad, a.x.max(b.x) + pad, i))
+        .collect();
+    boxes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out = Vec::new();
+    for (k, &(_, hi, i)) in boxes.iter().enumerate() {
+        for &(lo2, _, j) in &boxes[k + 1..] {
+            if lo2 > hi {
+                break;
+            }
+            let ((oi, li), (oj, lj)) = (lines[i], lines[j]);
+            if lines_overlap(li, lj) {
+                out.push(if i < j { (oi, oj) } else { (oj, oi) });
+            }
+        }
+    }
+    out.sort_unstable();
     out
 }
 

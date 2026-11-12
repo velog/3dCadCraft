@@ -643,6 +643,25 @@ impl CadCraftApp {
         self.with_part(r, |p| self.asm.libs.variant_part(r, v, p))
     }
 
+    /// [`Self::linked`] with every part an assembly of this file places in a
+    /// chosen variant, built standing in it (spec 3.9 §3.3b): the frame
+    /// commands read the skeleton through it, so members follow the variant
+    /// their skeleton occurrence shows (spec 6.1 §3.6a).
+    pub(super) fn frame_linked(&self) -> Rc<asm::tree::Linked> {
+        let base = self.linked();
+        let refs = asm::tree::variant_refs(&self.project);
+        if refs.is_empty() {
+            return base;
+        }
+        let mut l = (*base).clone();
+        for (r, v) in refs {
+            if let Some(m) = self.variant_member(r, v) {
+                l.insert_variant(r, v, m);
+            }
+        }
+        Rc::new(l)
+    }
+
     /// Assemble › Place: the file browser (the assembly must be saved
     /// first: the link is a path relative to it).
     pub(super) fn open_place_dialog(&mut self) {

@@ -1802,10 +1802,31 @@ pub(super) struct PartDialog {
     /// anchor points, each member's anchor (index into `Anchor::ALL`) and
     /// the edited members' skeleton lines when the panel opened.
     pub members: MemberEditState,
+    /// Insert Frame's list of the picked lines (`gui/frame_list.rs`): each
+    /// row's own placement, the row under the cursor and the one chosen.
+    pub skel: SkeletonList,
     /// Bolted Connection: the library and the fastener stack (`gui/bolted.rs`).
     pub bolt: super::bolted::BoltPanel,
     /// Shaft: the sections, loads and results (`gui/shaft.rs`).
     pub shaft: super::shaft::ShaftPanel,
+}
+
+/// Insert Frame's list of picked lines (`PartDialog::skel`, spec 6.1 §3.1a).
+#[derive(Clone, Debug, Default)]
+pub struct SkeletonList {
+    /// Each line's own placement (`None`: the panel's Orientation), in the
+    /// order of `PartDialog::skeletons`.
+    pub own: Vec<Option<crate::assembly::frame::Orientation>>,
+    /// The row under the cursor (its line is lit in the view).
+    pub hover: Option<usize>,
+    /// The row chosen: its placement is edited below the list, its line
+    /// drawn in the view in the chosen colour.
+    pub current: Option<usize>,
+    /// Re-pick: the next line picked replaces the chosen row's.
+    pub repick: bool,
+    /// What the overlap check says of each row (filled once a frame by the
+    /// app before the panel is drawn).
+    pub notes: super::frame_list::RowNotes,
 }
 
 /// One set of Insert Frame (+ Add Set): its lines and options.
@@ -1813,6 +1834,8 @@ pub(super) struct PartDialog {
 pub struct FrameSet {
     /// The skeleton lines.
     pub skeletons: Vec<crate::assembly::frame::Skeleton>,
+    /// Each line's own placement (aligned with `skeletons`; empty: none).
+    pub own: Vec<Option<crate::assembly::frame::Orientation>>,
     /// Section, material, orientation and Position of its members.
     pub options: crate::assembly::frame::InsertOptions,
 }
@@ -1950,6 +1973,7 @@ impl PartDialog {
             between_first: None,
             frame_sets: Vec::new(),
             members: MemberEditState::default(),
+            skel: SkeletonList::default(),
             bolt: Default::default(),
             shaft: Default::default(),
         }
@@ -2296,15 +2320,52 @@ impl PartDialog {
     /// again removes it).
     pub(super) fn pick_skeleton(&mut self, what: String, s: crate::assembly::frame::Skeleton) {
         let list = self.picks.entry("edges").or_default();
+        self.skel.own.resize(self.skeletons.len(), None);
+        // Re-pick: the chosen row takes the new line (and keeps its placement).
+        if self.skel.repick
+            && let Some(i) = self.skel.current.filter(|&i| i < self.skeletons.len())
+        {
+            self.skel.repick = false;
+            if !self.skeletons.contains(&s) {
+                self.skeletons[i] = s;
+                if let Some(w) = list.get_mut(i) {
+                    *w = what;
+                }
+            }
+            return;
+        }
         if let Some(i) = self.skeletons.iter().position(|x| *x == s) {
             self.skeletons.remove(i);
             if i < list.len() {
                 list.remove(i);
             }
+            self.skel.own.remove(i);
+            self.skel.current = match self.skel.current {
+                Some(c) if c == i => None,
+                Some(c) if c > i => Some(c - 1),
+                c => c,
+            };
         } else {
             self.skeletons.push(s);
+            self.skel.own.push(None);
             list.push(what);
         }
+    }
+
+    /// Insert Frame's list: drops row `i` (its line, label and placement).
+    pub(super) fn drop_skeleton(&mut self, i: usize) {
+        if i >= self.skeletons.len() {
+            return;
+        }
+        let s = self.skeletons[i].clone();
+        let w = self
+            .picks
+            .get("edges")
+            .and_then(|l| l.get(i))
+            .cloned()
+            .unwrap_or_default();
+        self.skel.repick = false;
+        self.pick_skeleton(w, s);
     }
 
     /// After a pick in selector `key`: on to the next empty selector.
@@ -2473,6 +2534,7 @@ impl PartDialog {
             self.refs.remove(k);
             if k == "edges" {
                 self.skeletons.clear();
+                self.skel = SkeletonList::default();
             }
             self.items.remove(k);
             self.active = Some(k);
@@ -2581,6 +2643,13 @@ impl PartDialog {
                 };
                 selector_row(ui, s, flow.active == Some(i), &text, ev);
                 ui.end_row();
+                // Insert Frame: the picked lines as a list (spec 6.1 §3.1a).
+                if key == "edges"
+                    && self.kind == Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame)
+                    && self.members.list.is_empty()
+                {
+                    super::frame_list::skeleton_list_ui(ui, self);
+                }
             }
             Check(label, _) | Num(label, ..) if super::bolted::row_hidden(self, at.0, label) => {}
             Check(label, on) => {
@@ -3025,6 +3094,9 @@ impl CadCraftApp {
             } else {
                 "edges"
             });
+        }
+        if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) {
+            d.skel.notes = self.frame_list_notes(&d);
         }
         let (cancel, ok) = d.ui(ui);
         // A plastic command says why its definition cannot be built, before OK.
