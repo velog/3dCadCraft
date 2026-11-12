@@ -141,6 +141,27 @@ pub mod sk {
         join_apart(&rest)?.ok_or_else(|| KernelError::Failed("Delete Face: nothing is left".into()))
     }
 
+    /// Every void of `b` filled with material (Simplify's Fill internal voids); how many were.
+    pub fn fill_voids(b: &Body) -> Result<(Body, usize)> {
+        let mut body = b.clone();
+        let mut filled = 0;
+        // Each fill renumbers the shells: look again after each one.
+        while filled < 10_000 {
+            let record = body.record();
+            let Some(shell) = record
+                .regions
+                .iter()
+                .find(|r| r.void)
+                .and_then(|r| r.shells.first().copied())
+            else {
+                break;
+            };
+            body = body.without_void(shell)?;
+            filled += 1;
+        }
+        Ok((body, filled))
+    }
+
     pub fn thicken_with_tolerance(b: &Body, t: f64, sym: bool, _tolerance: f64) -> Result<Body> {
         thicken(b, t, sym)
     }

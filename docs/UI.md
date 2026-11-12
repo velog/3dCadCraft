@@ -367,7 +367,7 @@ button each that drops the panel down, then the others from the right (Inventor'
 
 Sketch **Text** (**T**): click its place, then the panel (font, size, stretch, rotation); double-click a text or use Edit Text in the view's menu; its letters are profiles for Extrude, Emboss and the others.
 
-Aliases: Emboss **RLF**, Derive **DER**, Import **IMP**, Decal **DCL**, Mark **MK**, Unwrap **UNW**,
+Aliases: Emboss **RLF**, Derive **DER**, Import **IMP** (File → Open of a STEP / STL / OBJ asks Import Options first: Reference / Convert, Solids / Surfaces, Assembly / Multi-body part, a mesh's units; Enter = OK, Esc = Cancel), Simplify **SIM** (3D Model › Simplification), Decal **DCL**, Mark **MK**, Unwrap **UNW**,
 Thicken/Offset **TO**, Delete Face **DF**, Direct **DE**, Copy Object **CPO**, Move Bodies **MB**, Bend Part **BP**,
 Sketch Driven Pattern **SDP**, Stitch **STI**, Sculpt **SCU**, Patch **PAT**, Trim **TRS**, Extend **XS**, Ruled
 Surface **RUS**, Replace Face **RF**, Repair Bodies **RB**, Fit Mesh Face **FMF**, Grill **GRL**, Boss **BOS**, Rest

@@ -1447,6 +1447,9 @@ pub(super) fn body_op(
             .map_err(User)?;
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
         }
+        super::BodyOp::Simplify(o) => {
+            super::simplify::simplify_bodies(&o.spec, &f.id, cur, sheets).map_err(User)
+        }
         super::BodyOp::BoltHole(o) => {
             let made = o.build(&f.id).map_err(Kernel)?;
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())

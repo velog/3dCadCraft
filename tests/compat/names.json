@@ -1895,5 +1895,13 @@
     "Slot2:BoreSide1:1",
     "Slot2:BoreSide2:1",
     "Slot2:Bottom:1"
+  ],
+  "r74/simplify_r74.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top"
   ]
 }

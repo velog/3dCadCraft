@@ -884,6 +884,10 @@ impl CadCraftApp {
                 None => return,
             },
             BodyOp::Import(_) => PartPlanned::Import,
+            BodyOp::Simplify(_) => {
+                self.simplify_edit(k);
+                return;
+            }
             // A Freeform edits by its cage (Edit Form); its sizes from that panel's button.
             BodyOp::Freeform(_) => {
                 self.ff_start(k);

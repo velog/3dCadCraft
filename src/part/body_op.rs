@@ -218,6 +218,9 @@ pub enum BodyOp {
     /// A bolted connection's hole, a cylinder about any axis (format
     /// revision 66; spec 6.2).
     BoltHole(super::bolt_hole::BoltHoleOp),
+    /// Simplify (format revision 74): features removed by kind and size,
+    /// bodies left out, enveloped or filled (spec 2.18).
+    Simplify(super::simplify::SimplifyOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -468,6 +471,7 @@ impl BodyOpFeature {
             BodyOp::Freeform(_) => "Freeform",
             BodyOp::Axial(_) => "Axial",
             BodyOp::BoltHole(_) => "BoltHole",
+            BodyOp::Simplify(_) => "Simplify",
             BodyOp::Emboss(_) => "Emboss",
             BodyOp::Grill(_) => "Grill",
             BodyOp::Boss(_) => "Boss",
@@ -511,6 +515,7 @@ impl BodyOpFeature {
             BodyOp::Freeform(o) => o.validate(),
             BodyOp::Axial(o) => o.validate(),
             BodyOp::BoltHole(o) => o.validate(),
+            BodyOp::Simplify(o) => o.spec.validate(),
             BodyOp::Emboss(o) => o.validate(),
             BodyOp::Grill(o) => o.validate(),
             BodyOp::Boss(o) => o.validate(),
@@ -536,6 +541,7 @@ impl BodyOpFeature {
             | BodyOp::Axial(_)
             | BodyOp::BoltHole(_)
             | BodyOp::Freeform(_) => true,
+            BodyOp::Simplify(_) => false,
             BodyOp::Sculpt(s) => s.operation == super::surface_op::SculptOperation::NewSolid,
             BodyOp::DeleteFace(_)
             | BodyOp::MoveBodies(_)
@@ -583,6 +589,7 @@ impl BodyOpFeature {
             | BodyOp::Import(_)
             | BodyOp::Axial(_)
             | BodyOp::BoltHole(_)
+            | BodyOp::Simplify(_)
             | BodyOp::Prism(_) => Vec::new(),
             BodyOp::MoveBodies(m) => m
                 .steps
@@ -704,6 +711,7 @@ impl BodyOpFeature {
             BodyOp::Prism(_) => "Frame member".into(),
             BodyOp::Axial(_) => "Library component".into(),
             BodyOp::BoltHole(o) => o.describe(),
+            BodyOp::Simplify(o) => o.spec.describe(),
             BodyOp::Freeform(o) => o.describe(),
         }
     }

@@ -1135,6 +1135,9 @@ impl PartDocument {
             }
         }
         self.cond_suppressed = cond;
+        // Simplify: the features its rules take out (spec 2.18).
+        let away = self.simplified_away();
+        self.cond_suppressed.extend(away);
         self.param_errors = errors.into_iter().collect();
     }
 

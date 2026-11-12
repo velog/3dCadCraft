@@ -612,6 +612,7 @@ impl CadCraftApp {
             BodyOp::Prism(_) => Icon::InsertFrame,
             BodyOp::Axial(_) => Icon::Revolve,
             BodyOp::BoltHole(_) => Icon::Hole,
+            BodyOp::Simplify(_) => Icon::Simplify,
             BodyOp::Freeform(_) => Icon::FfPlane,
         };
         self.panel_header(ui, icon, f.name());

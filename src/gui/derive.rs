@@ -10,6 +10,17 @@ use crate::kernel::Transform3;
 use crate::part::PartDocument;
 use crate::part::derive::{DeriveLink, DeriveSource, DeriveStyle, MirrorPlane};
 
+/// A derive source's parts, built, placed, with their occurrence id paths (empty for a part).
+pub(super) type SourceParts = Vec<(PartDocument, Transform3, Vec<u32>)>;
+
+/// The [`DeriveSource`] of [`SourceParts`].
+pub(super) fn source_of(parts: &SourceParts) -> DeriveSource<'_> {
+    DeriveSource::with_paths(
+        parts.iter().map(|(p, t, _)| (p, *t)).collect(),
+        parts.iter().map(|(_, _, k)| k.clone()).collect(),
+    )
+}
+
 /// How deep chains of derived parts are followed (A from B from C …).
 const CHAIN: usize = 8;
 
@@ -18,17 +29,21 @@ impl CadCraftApp {
     /// identity, or every part of an assembly where it stands. A part that
     /// is derived itself follows its own sources first (chains, at most
     /// `CHAIN` deep).
-    fn derive_parts(&self, r: DocRef, depth: usize) -> Option<Vec<(PartDocument, Transform3)>> {
+    pub(super) fn derive_parts(&self, r: DocRef, depth: usize) -> Option<SourceParts> {
         let linked = self.linked();
         if let Some(a) = crate::assembly::tree::assembly_of(&self.project, &linked, r) {
             let mut out = Vec::new();
             for l in crate::assembly::tree::leaves(&self.project, &linked, r, a) {
                 let p = self.derive_part(l.component, depth)?;
-                out.push((p, l.world));
+                out.push((p, l.world, l.path.clone()));
             }
             return Some(out);
         }
-        Some(vec![(self.derive_part(r, depth)?, Transform3::identity())])
+        Some(vec![(
+            self.derive_part(r, depth)?,
+            Transform3::identity(),
+            Vec::new(),
+        )])
     }
 
     /// A copy of part `r`, built, its own derived features following their
@@ -46,7 +61,7 @@ impl CadCraftApp {
                 .collect();
             for (k, s) in derived {
                 if let Some(parts) = self.derive_parts(s, depth + 1) {
-                    let src = DeriveSource::of(parts.iter().map(|(q, t)| (q, *t)).collect());
+                    let src = source_of(&parts);
                     let _ = p.update_derive_from(k, &src);
                 }
             }
@@ -164,7 +179,7 @@ impl CadCraftApp {
             self.file_status = Some(Err(format!("Derive: {name} was not found")));
             return false;
         };
-        let source = DeriveSource::of(parts.iter().map(|(p, t)| (p, *t)).collect());
+        let source = source_of(&parts);
         let mut link = DeriveLink::new(r, name);
         link.style = match d.index(0, "Derive Style") {
             0 => DeriveStyle::SingleMerged,
@@ -234,7 +249,7 @@ impl CadCraftApp {
             let Some(parts) = self.derive_parts(r, 0) else {
                 continue;
             };
-            let sig = DeriveSource::of(parts.iter().map(|(p, t)| (p, *t)).collect()).signature;
+            let sig = source_of(&parts).signature;
             if self
                 .part()
                 .derived()
@@ -250,7 +265,7 @@ impl CadCraftApp {
         self.checkpoint("Update");
         let mut errors = Vec::new();
         for (k, parts) in stale {
-            let src = DeriveSource::of(parts.iter().map(|(p, t)| (p, *t)).collect());
+            let src = source_of(&parts);
             if let Err(e) = self.part_mut().update_derive_from(k, &src) {
                 errors.push(e.to_string());
             }

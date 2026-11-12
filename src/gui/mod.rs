@@ -138,6 +138,7 @@ mod shaft;
 mod sheet_metal;
 mod shell;
 mod show_dims;
+mod simplify;
 mod sketch3d;
 mod sketch3d_insert;
 mod sketch3d_other;
@@ -640,6 +641,10 @@ struct CadCraftApp {
     keymap_tips_dirty: bool,
     /// A STEP file being read on a worker thread (`gui/import.rs`).
     import_job: Option<import::ImportJob>,
+    /// File → Open of an import file waiting for the Import Options window.
+    import_ask: Option<import::ImportAsk>,
+    /// The Import Options chosen last.
+    import_last: import::OpenOptions,
     /// Reference Model imports whose file changed (`gui/import.rs`).
     import_stale: import::Stale,
     /// View → Object Visibility (persisted with the Application Options).
@@ -1093,6 +1098,8 @@ impl CadCraftApp {
             customize: Default::default(),
             keymap_tips_dirty: true,
             import_job: None,
+            import_ask: None,
+            import_last: Default::default(),
             import_stale: Default::default(),
             obj_vis: Default::default(),
             camera: OrbitCamera::default(),
@@ -8763,6 +8770,7 @@ impl eframe::App for CadCraftApp {
         self.home_follow_documents();
         self.shortcuts(&ctx);
         self.files_ui(&ctx);
+        self.import_ask_ui(&ctx);
         self.import_ui(&ctx);
         self.import_report_ui(&ctx);
         self.confirm_delete_window(&ctx);

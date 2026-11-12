@@ -126,6 +126,8 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [1.11-sketch-text.md](1.11-sketch-text.md) | Sketch text: fonts, size, stretch, stored outlines, letters as profiles |
 | [5.8-plastic-parts.md](5.8-plastic-parts.md) | Plastic part features: Grill, Boss, Rest, Snap Fit, Rule Fillet, Lip |
 | [2.17-emboss.md](2.17-emboss.md) | Emboss / Engrave: from a face, from the plane with taper, wrapped onto a cylinder |
+| [2.18-simplify.md](2.18-simplify.md) | Simplify a part: features by kind and size, bodies, envelopes, internal bodies, voids; as a model state or a linked part |
+| [3.11-simplify.md](3.11-simplify.md) | Simplify an assembly into one linked part: envelopes, components left out, per-part features, styles |
 | [7.1a-frame-analysis.md](7.1a-frame-analysis.md) | Frame Analysis: beams, constraints, loads, results, modal — stages FA1–FA5 |
 | [7.7-export.md](7.7-export.md) | Export: STL, STEP, GLB |
 | [7.7a-import.md](7.7a-import.md) | Import: STEP (AnyCAD Convert / Reference Model) |

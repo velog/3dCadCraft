@@ -509,5 +509,6 @@
     "sketches": 1,
     "exact": true
   },
-  "r73/slot_r73.3dcadcraft": {"volume": 21148.87437952713, "faces": 20, "features": 3, "sketches": 1, "exact": true}
+  "r73/slot_r73.3dcadcraft": {"volume": 21148.87437952713, "faces": 20, "features": 3, "sketches": 1, "exact": true},
+  "r74/simplify_r74.3dcadcraft": {"volume": 24000.00000000001, "faces": 6, "features": 3, "sketches": 1, "exact": true}
 }

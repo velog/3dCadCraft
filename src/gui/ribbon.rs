@@ -1047,6 +1047,7 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     .mini(),
                 ],
             ),
+            panel("Simplification", vec![c("part.simplify").mini()]),
             panel(
                 "Primitives",
                 vec![
@@ -1707,6 +1708,7 @@ const COLLAPSE_FIRST: &[&str] = &[
     "Demo",
     "Primitives",
     "Convert",
+    "Simplification",
     "Freeform",
     "Plastic Part",
     "Surface",

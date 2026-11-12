@@ -736,7 +736,7 @@ impl AsmPlanned {
                     "Components",
                     &[
                         Radio("Exclude parts", &["by selection", "by size"], 0),
-                        Radio("Priority", &["Part Priority", "Component Priority"], 0),
+                        Radio("Priority", &["Part Priority", "Component Priority"], 1),
                         Check("All Occurrences", false),
                         Sel(
                             "excluded",
@@ -754,10 +754,15 @@ impl AsmPlanned {
                     "Features",
                     &[
                         Combo("Holes", REMOVE, 0),
+                        Num("Hole size", 10.0, " mm"),
                         Combo("Fillets", REMOVE, 0),
+                        Num("Fillet size", 5.0, " mm"),
                         Combo("Chamfers", REMOVE, 0),
+                        Num("Chamfer size", 5.0, " mm"),
                         Combo("Pockets", REMOVE, 0),
+                        Num("Pocket size", 20.0, " mm"),
                         Combo("Embosses", REMOVE, 0),
+                        Num("Emboss size", 20.0, " mm"),
                         Combo("Tunnels", REMOVE, 0),
                         Check("Highlight", false),
                     ],
