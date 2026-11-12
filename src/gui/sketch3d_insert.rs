@@ -9,8 +9,9 @@ use eframe::egui::{self, Pos2, Rect};
 use super::CadCraftApp;
 use super::panels::{plabel, psection};
 use super::sketch3d::Tool3;
-use crate::kernel::{FaceId, Plane, Point3, Real, Vector3};
-use crate::part::sketch3d_curves::{self as curves, EquationKind, Projection, Tri};
+use crate::kernel::{FaceId, Point3, Real, Vector3};
+use crate::part::sketch3d_curves::{self as curves, EquationKind, Tri};
+use crate::part::sketch3d_derived::{self as derived, CurveDef, ProjectHow, SurfaceInput};
 
 /// The state of the insert commands while the 3D sketch is open.
 #[derive(Clone, Debug)]
@@ -25,8 +26,9 @@ pub(super) struct Sk3Insert {
     pub steps: usize,
     /// Project to Surface: the faces.
     pub faces: Vec<FaceId>,
-    /// Project to Surface: the curves (world polylines) and what they are.
-    pub curves: Vec<(String, Vec<Point3>)>,
+    /// Project to Surface: the 2D sketches whose curves are projected (id,
+    /// name, their curves as world polylines).
+    pub curves: Vec<(String, String, Vec<Vec<Point3>>)>,
     /// Project to Surface: picking faces (else curves).
     pub pick_faces: bool,
     /// Project to Surface: to the closest point (else along a direction).
@@ -34,8 +36,9 @@ pub(super) struct Sk3Insert {
     /// Project to Surface: the direction (0 X, 1 Y, 2 Z, 3 the curves'
     /// sketch normal).
     pub dir: usize,
-    /// Intersection Curve: the first input (a face's triangles, or a plane).
-    pub first: Option<(String, Vec<Tri>)>,
+    /// Intersection Curve: the first input (its name, its reference when it
+    /// has one, its triangles).
+    pub first: Option<(String, Option<SurfaceInput>, Vec<Tri>)>,
     /// Project to Surface: the normal of the sketch the curves came from.
     pub sketch_normal: Option<Vector3>,
     /// Silhouette Curve: the direction (0 X, 1 Y, 2 Z, 3 the view).
@@ -68,19 +71,6 @@ impl Default for Sk3Insert {
     }
 }
 
-/// A plane as two large triangles (square `size` about the point nearest
-/// `centre`), so it meets triangles like a face.
-fn plane_tris(pl: &Plane, centre: Point3, size: Real) -> Vec<Tri> {
-    let n = pl.normal.into_inner();
-    let c = centre - n * (centre - pl.origin).dot(&n);
-    let (x, y) = (pl.x_axis.into_inner(), pl.y_axis().into_inner());
-    let p = |a: Real, b: Real| c + x * (a * size) + y * (b * size);
-    vec![
-        [p(-1.0, -1.0), p(1.0, -1.0), p(1.0, 1.0)],
-        [p(-1.0, -1.0), p(1.0, 1.0), p(-1.0, 1.0)],
-    ]
-}
-
 fn axis(k: usize) -> Vector3 {
     let mut a = Vector3::zeros();
     a[k.min(2)] = 1.0;
@@ -98,11 +88,70 @@ impl CadCraftApp {
             })
     }
 
+    /// The faces the insert tools hold (Project to Surface's faces, the first
+    /// input of Intersection Curve), lit in the scene while the tool runs.
+    pub(super) fn sk3_picked_faces(&self) -> Vec<FaceId> {
+        let Some(e) = self.sketch3d.as_ref() else {
+            return Vec::new();
+        };
+        match e.tool {
+            Some(Tool3::ProjectSurface) => e.ins.faces.clone(),
+            Some(Tool3::Intersection) => match &e.ins.first {
+                Some((_, Some(SurfaceInput::Faces(n)), _)) => {
+                    derived::faces_named(&self.part().body, n).unwrap_or_default()
+                }
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        }
+    }
+
+    /// The curves Project to Surface holds (the 2D sketches' curves) and a
+    /// plane taken by Intersection Curve, drawn in the selection colour.
+    pub(super) fn sk3_insert_draw(&self, painter: &egui::Painter, rect: Rect) {
+        let Some(e) = self.sketch3d.as_ref() else {
+            return;
+        };
+        let col = super::theme::canvas().selected_edge;
+        let line = |pts: &[Point3]| {
+            let sp: Vec<Pos2> = pts
+                .iter()
+                .filter_map(|q| self.camera.project(q, rect))
+                .collect();
+            painter.add(egui::Shape::line(sp, egui::Stroke::new(3.0, col)));
+        };
+        match e.tool {
+            Some(Tool3::ProjectSurface) => {
+                for (_, _, cs) in &e.ins.curves {
+                    for c in cs {
+                        line(c);
+                    }
+                }
+            }
+            Some(Tool3::Intersection) => {
+                if let Some((_, Some(SurfaceInput::Plane(_)), tris)) = &e.ins.first {
+                    // The plane's square (its outline).
+                    if let Some(t) = tris.first().zip(tris.get(1)) {
+                        line(&[t.0[0], t.0[1], t.0[2], t.1[2], t.0[0]]);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// The face under `p` (its id and name).
     fn sk3_face_under(&self, p: Pos2, rect: Rect) -> Option<(FaceId, String)> {
-        let (o, d) = self.camera.ray(p, rect)?;
-        let d = d.try_normalize(1e-12)?;
-        let (f, _) = self.picker().pick(&o, &d)?;
+        use super::sketch3d_other::{Cand3, Want3};
+        // Select Other's choice (a face behind the first one).
+        let f = match self.sk3_other_choice(p, Want3::Faces) {
+            Some(Cand3::Face(f, _)) => f,
+            _ => {
+                let (o, d) = self.camera.ray(p, rect)?;
+                let d = d.try_normalize(1e-12)?;
+                self.picker().pick(&o, &d)?.0
+            }
+        };
         let name = self
             .part()
             .body
@@ -112,16 +161,65 @@ impl CadCraftApp {
         Some((f, name))
     }
 
-    /// A face or a plane under `p` as triangles (Intersection Curve).
-    fn sk3_surface_under(&self, p: Pos2, rect: Rect) -> Option<(String, Vec<Tri>)> {
+    /// A face or a plane under `p` (Intersection Curve): its name, its
+    /// reference (none for a face without a name: then the curve is a copy)
+    /// and its triangles.
+    fn sk3_surface_under(
+        &self,
+        p: Pos2,
+        rect: Rect,
+    ) -> Option<(String, Option<SurfaceInput>, Vec<Tri>)> {
         if let Some((f, name)) = self.sk3_face_under(p, rect) {
-            return Some((name, curves::face_triangles(&self.part().body, &[f])));
+            let body = &self.part().body;
+            let named = body.face(f).and_then(|x| x.name.clone());
+            // Every piece of the name, as the regeneration will see it.
+            let tris = match &named {
+                Some(n) => derived::faces_named(body, std::slice::from_ref(n))
+                    .map(|fs| curves::face_triangles(body, &fs))
+                    .unwrap_or_default(),
+                None => curves::face_triangles(body, &[f]),
+            };
+            return Some((name, named.map(|n| SurfaceInput::Faces(vec![n])), tris));
         }
         let r = self.plane_under_pub(p, rect)?;
         let part = self.part();
         let pl = crate::part::placement::plane_of(&r, &part.body, &part.work).ok()?;
         let (c, size) = self.sk3_body_frame();
-        Some((format!("{r:?}"), plane_tris(&pl, c, size)))
+        let name = match &r {
+            crate::part::placement::PlaneRef::Origin(o) => format!("{o:?} Plane"),
+            crate::part::placement::PlaneRef::Face(n) => n.clone(),
+            other => format!("{other:?}"),
+        };
+        Some((
+            name,
+            Some(SurfaceInput::Plane(r)),
+            derived::plane_tris(&pl, c, size),
+        ))
+    }
+
+    /// Adds the curve of `def` to the open sketch as geometry that follows
+    /// it (`lines` computed from it now; one Undo step). With no definition
+    /// (an input without a persistent name) the curves are fixed copies.
+    fn sk3_add_derived(
+        &mut self,
+        label: &str,
+        def: Option<CurveDef>,
+        lines: Vec<Vec<Point3>>,
+        steps: usize,
+    ) {
+        let Some(def) = def else {
+            self.sk3_add_polylines(label, lines, steps);
+            return;
+        };
+        let (_, size) = self.sk3_body_frame();
+        let pieces = derived::curve_points(lines, steps, size);
+        if pieces.is_empty() {
+            self.file_status = Some(Err(format!("{label}: no curve found")));
+            return;
+        }
+        self.edit3d(label, move |s, _| {
+            s.add_derived(def, steps, &pieces).map(|_| ())
+        });
     }
 
     /// The polylines added to the open sketch as fixed curves: a straight
@@ -173,12 +271,13 @@ impl CadCraftApp {
                             e.ins.first = Some(hit);
                         }
                     }
-                    Some((_, a)) => {
+                    Some((_, ra, a)) => {
                         let (_, size) = self.sk3_body_frame();
-                        let segs = curves::mesh_intersection(&a, &hit.1);
+                        let segs = curves::mesh_intersection(&a, &hit.2);
                         let lines = curves::chain_segments(&segs, 1e-5 * size);
                         let steps = self.sketch3d.as_ref().map_or(24, |e| e.ins.steps);
-                        self.sk3_add_polylines("Intersection Curve", lines, steps);
+                        let def = ra.zip(hit.1).map(|(a, b)| CurveDef::Intersection { a, b });
+                        self.sk3_add_derived("Intersection Curve", def, lines, steps);
                     }
                 }
                 true
@@ -197,26 +296,19 @@ impl CadCraftApp {
                     }
                 } else if let Some(k) = self.sketch_under(p, rect) {
                     let ps = &self.part().sketches[k];
-                    let mut got = Vec::new();
-                    for (id, _) in ps.sketch.entities() {
-                        if ps.sketch.style(id) == crate::sketch::Style::Construction {
-                            continue;
-                        }
-                        if let Some(c) = ps.sketch.curve_of(id) {
-                            let pts: Vec<Point3> = c
-                                .sample(0.05)
-                                .iter()
-                                .map(|q| ps.sketch.to_world(q))
-                                .collect();
-                            got.push((ps.name.clone(), pts));
-                        }
-                    }
+                    let got = derived::sketch_polylines(ps);
                     let normal = ps.sketch.plane.normal.into_inner();
-                    let name = ps.name.clone();
+                    let (id, name) = (ps.id.clone(), ps.name.clone());
                     if let Some(e) = self.sketch3d.as_mut() {
-                        e.ins.curves.retain(|(n, _)| *n != name);
-                        e.ins.curves.extend(got);
-                        e.ins.sketch_normal = Some(normal);
+                        // A second click on a sketch takes it out again.
+                        if let Some(i) = e.ins.curves.iter().position(|(x, _, _)| *x == id) {
+                            e.ins.curves.remove(i);
+                        } else if !got.is_empty() {
+                            if e.ins.curves.is_empty() {
+                                e.ins.sketch_normal = Some(normal);
+                            }
+                            e.ins.curves.push((id, name, got));
+                        }
                     }
                 }
                 true
@@ -231,28 +323,14 @@ impl CadCraftApp {
                 } else {
                     self.camera.frame().0
                 };
-                let body = &self.part().body;
-                let faces: Vec<Vec<(Tri, Vector3)>> = body
-                    .faces()
-                    .filter_map(|(_, f)| {
-                        let m = f.mesh.as_ref()?;
-                        Some(
-                            m.triangles
-                                .iter()
-                                .filter_map(|t| {
-                                    let t = t.map(|i| m.positions[i as usize]);
-                                    let n =
-                                        (t[1] - t[0]).cross(&(t[2] - t[0])).try_normalize(1e-14)?;
-                                    Some((t, n))
-                                })
-                                .collect(),
-                        )
-                    })
-                    .collect();
+                let faces = derived::faces_with_normals(&self.part().body);
                 let (_, size) = self.sk3_body_frame();
                 let lines = curves::chain_segments(&curves::silhouette(&faces, d), 1e-5 * size);
                 let steps = self.sketch3d.as_ref().map_or(24, |e| e.ins.steps);
-                self.sk3_add_polylines("Silhouette Curve", lines, steps);
+                let def = CurveDef::Silhouette {
+                    dir: [d.x, d.y, d.z],
+                };
+                self.sk3_add_derived("Silhouette Curve", Some(def), lines, steps);
                 true
             }
             _ => false,
@@ -354,7 +432,14 @@ impl CadCraftApp {
         };
         let exprs = [ins.eq[0].as_str(), ins.eq[1].as_str(), ins.eq[2].as_str()];
         match curves::equation_points(ins.eq_kind, exprs, ins.t, ins.steps, &vars) {
-            Ok(pts) => self.sk3_add_polylines("Equation Curve", vec![pts], ins.steps),
+            Ok(pts) => {
+                let def = CurveDef::Equation {
+                    coords: ins.eq_kind,
+                    exprs: ins.eq.clone(),
+                    t: ins.t,
+                };
+                self.sk3_add_derived("Equation Curve", Some(def), vec![pts], ins.steps);
+            }
             Err(err) => self.file_status = Some(Err(err)),
         }
     }
@@ -371,17 +456,45 @@ impl CadCraftApp {
             ));
             return;
         }
-        let tris = curves::face_triangles(&self.part().body, &ins.faces);
+        let body = &self.part().body;
+        let names: Option<Vec<String>> = ins
+            .faces
+            .iter()
+            .map(|f| body.face(*f).and_then(|x| x.name.clone()))
+            .collect();
         let how = if ins.closest {
-            Projection::Closest
+            ProjectHow::Closest
         } else if ins.dir < 3 {
-            Projection::Along(axis(ins.dir))
+            let a = axis(ins.dir);
+            ProjectHow::Along([a.x, a.y, a.z])
         } else {
-            Projection::Along(ins.sketch_normal.unwrap_or_else(Vector3::z))
+            ProjectHow::SketchNormal
         };
-        let lines: Vec<Vec<Point3>> = ins.curves.iter().map(|(_, c)| c.clone()).collect();
-        let out = curves::project_onto(&lines, &tris, how);
-        self.sk3_add_polylines("Project to Surface", out, ins.steps);
+        let lines: Vec<Vec<Point3>> = ins
+            .curves
+            .iter()
+            .flat_map(|(_, _, c)| c.iter().cloned())
+            .collect();
+        // Every piece of a named face, as the regeneration will see it.
+        let faces = match &names {
+            Some(n) => derived::faces_named(body, n).unwrap_or_else(|_| ins.faces.clone()),
+            None => ins.faces.clone(),
+        };
+        let tris = curves::face_triangles(body, &faces);
+        let along = match how {
+            ProjectHow::Along(d) => curves::Projection::Along(Vector3::new(d[0], d[1], d[2])),
+            ProjectHow::SketchNormal => {
+                curves::Projection::Along(ins.sketch_normal.unwrap_or_else(Vector3::z))
+            }
+            ProjectHow::Closest => curves::Projection::Closest,
+        };
+        let out = curves::project_onto(&lines, &tris, along);
+        let def = names.map(|faces| CurveDef::Project {
+            faces,
+            sketches: ins.curves.iter().map(|(id, _, _)| id.clone()).collect(),
+            how,
+        });
+        self.sk3_add_derived("Project to Surface", def, out, ins.steps);
         if let Some(e) = self.sketch3d.as_mut() {
             e.ins.curves.clear();
         }
@@ -494,7 +607,7 @@ impl CadCraftApp {
                         e.ins
                             .first
                             .as_ref()
-                            .map_or("click a face or a plane".into(), |(n, _)| n.clone()),
+                            .map_or("click a face or a plane".into(), |(n, _, _)| n.clone()),
                     );
                     ui.end_row();
                     plabel(ui, "Second");

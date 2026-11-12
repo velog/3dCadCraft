@@ -103,8 +103,18 @@ impl CadCraftApp {
         if self.thread_draft.is_some() {
             return Some(vec![K::Face]);
         }
-        if self.sketch3d.as_ref().is_some_and(|e| e.tool.is_some()) {
-            return Some(vec![K::Point, K::Face]);
+        if let Some(e) = self.sketch3d.as_ref()
+            && let Some(t) = e.tool
+        {
+            use super::sketch3d::Tool3;
+            return Some(match t {
+                // Project to Surface's Curves: a click takes a 2D sketch.
+                Tool3::ProjectSurface if !e.ins.pick_faces => vec![K::Sketch, K::SketchCurve],
+                Tool3::Include => vec![K::Edge],
+                Tool3::Mirror => vec![K::Point, K::PlanarFace, K::Plane],
+                Tool3::Intersection => vec![K::Face, K::Plane],
+                _ => vec![K::Point, K::Face],
+            });
         }
         if let Some(d) = &self.pattern_draft {
             if d.picks_geometry() {
@@ -399,7 +409,9 @@ impl CadCraftApp {
     /// Whether Select Other serves the open command: it picks model items
     /// through the shared pickers (Extrude picks regions, a sketch curves).
     pub(super) fn select_other_serves_command(&self) -> bool {
+        // The open 3D sketch has its own (`gui/sketch3d_other.rs`).
         self.editing.is_none()
+            && self.sketch3d.is_none()
             && self.extrude.is_none()
             && self.active_pick_kinds().is_some_and(|kinds| {
                 kinds.iter().any(|k| {

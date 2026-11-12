@@ -4,8 +4,8 @@
 //! **Silhouette Curve** (where a body's faces turn away from a direction)
 //! and **Equation Curve** (x(t), y(t), z(t)). Each works on the display
 //! triangles (within their 0.01 mm) and returns polylines, which the sketch
-//! keeps as fixed interpolation splines (`Sketch3d::include`) — copies, not
-//! associative yet. GUI-free.
+//! keeps as fixed interpolation splines (`Sketch3d::include`); the definitions
+//! that recompute them are `part::sketch3d_derived`. GUI-free.
 
 use std::collections::HashMap;
 
@@ -343,7 +343,7 @@ pub fn silhouette(faces: &[Vec<(Tri, Vector3)>], dir: Vector3) -> Vec<[Point3; 2
 }
 
 /// Which coordinates an equation curve's three expressions give.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EquationKind {
     /// x(t), y(t), z(t).
     #[default]

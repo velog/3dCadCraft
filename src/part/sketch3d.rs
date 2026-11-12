@@ -283,6 +283,10 @@ pub struct Sketch3d {
     /// Constraints.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub constraints: Vec<Constraint3>,
+    /// Curves that follow the model or an equation
+    /// (`part::sketch3d_derived`): their output is in `lines` / `splines`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived: Vec<super::sketch3d_derived::DerivedCurve>,
     /// Shown in the view.
     #[serde(default = "yes")]
     pub visible: bool,
@@ -320,6 +324,7 @@ impl Sketch3d {
             helices: Vec::new(),
             bends: Vec::new(),
             constraints: Vec::new(),
+            derived: Vec::new(),
             visible: true,
             next_id: 1,
         }

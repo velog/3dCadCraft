@@ -1275,17 +1275,39 @@ impl CadCraftApp {
                 cmds.push(BrowserCmd::Visible3d(k, visible));
             }
             tree_icon(ui, Icon::Sketch3d);
-            let text = if editing {
-                RichText::new(&s.name).strong()
-            } else {
-                RichText::new(&s.name)
+            // Sick: an input of an associative curve is gone (rule 8).
+            let sick = self.part().feature_health.get(&s.id);
+            let name = match sick {
+                Some(_) => format!("! {}", s.name),
+                None => s.name.clone(),
             };
-            let r = ui.selectable_label(editing, text).on_hover_text(format!(
+            let mut text = if editing {
+                RichText::new(name).strong()
+            } else {
+                RichText::new(name)
+            };
+            if sick.is_some() {
+                text = text.color(warning_color());
+            }
+            let mut tip = format!(
                 "{} point(s), {} line(s), {} bend(s)",
                 s.points.len(),
                 s.lines.len(),
                 s.bends.len()
-            ));
+            );
+            if !s.derived.is_empty() {
+                tip.push_str(&format!(
+                    ", {} curve(s) following the model",
+                    s.derived.len()
+                ));
+            }
+            if let Some(h) = sick {
+                tip = format!(
+                    "{h}
+{tip}"
+                );
+            }
+            let r = ui.selectable_label(editing, text).on_hover_text(tip);
             if r.double_clicked() {
                 cmds.push(BrowserCmd::Edit3d(k));
             }

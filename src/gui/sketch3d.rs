@@ -164,7 +164,7 @@ impl Tool3 {
     }
 
     /// The constraint tools pick lines.
-    fn picks_lines(self) -> bool {
+    pub(super) fn picks_lines(self) -> bool {
         matches!(
             self,
             Tool3::Parallel
@@ -213,6 +213,10 @@ pub(super) struct Sk3dEdit {
     pub auto_bend: bool,
     /// Mirror, Equation / Intersection / Silhouette Curve, Project to Surface.
     pub ins: super::sketch3d_insert::Sk3Insert,
+    /// Select Other's control, when open.
+    pub other: Option<super::sketch3d_other::Sk3Other>,
+    /// Where and since when the cursor rests (Select Other).
+    pub rest: Option<(Pos2, f64)>,
 }
 
 impl Sk3dEdit {
@@ -235,12 +239,15 @@ impl Sk3dEdit {
             gizmo: None,
             auto_bend: false,
             ins: Default::default(),
+            other: None,
+            rest: None,
         }
     }
 }
 
 /// What a click in the view hits for the 3D sketch.
-enum Hit3 {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Hit3 {
     /// A point of the open sketch.
     Own(u32),
     /// A line of the open sketch.
@@ -511,45 +518,30 @@ impl CadCraftApp {
         }
     }
 
-    /// What the cursor is over for the open 3D sketch.
+    /// What the cursor is over for the open 3D sketch: Select Other's
+    /// choice there, else the nearest candidate (points of the sketch, a model
+    /// vertex or work point, the first face; or the sketch's lines).
     fn sketch3d_hit(&self, p: Pos2, rect: Rect, lines: bool) -> Option<Hit3> {
-        let e = self.sketch3d.as_ref()?;
-        let s = self.part().sketches3d.get(e.index)?;
-        let screen = |id: u32| s.at(id).and_then(|q| self.camera.project(&q, rect));
-        if lines {
-            return s
-                .lines
-                .iter()
-                .filter_map(|l| Some((seg_dist(p, screen(l.a)?, screen(l.b)?), l.id)))
-                .filter(|(d, _)| *d <= super::overlay::CURVE_SNAP_PX)
-                .min_by(|a, b| a.0.total_cmp(&b.0))
-                .map(|(_, id)| Hit3::Line(id));
+        use super::sketch3d_other::{Cand3, Want3};
+        let want = if lines { Want3::Lines } else { Want3::Points };
+        if let Some(c) = self.sk3_other_choice(p, want) {
+            return Some(c.hit());
         }
-        if let Some((_, id)) = s
-            .points
-            .iter()
-            .filter_map(|q| Some((screen(q.id)?.distance(p), q.id)))
-            .filter(|(d, _)| *d <= super::overlay::POINT_SNAP_PX)
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-        {
-            return Some(Hit3::Own(id));
+        // Dimension's control lists points and lines: each call takes its kind.
+        if let Some(c) = self.sk3_other_choice(p, Want3::Select) {
+            return (matches!(c, Cand3::Line(_)) == lines).then(|| c.hit());
         }
-        if let Some(r) = match self.work_axis_or_point_under(p, rect) {
-            Some(super::work::WpInput::Point(r)) => Some(r),
-            _ => self.vertex_under(p, rect),
-        } && let Ok(q) =
-            crate::part::placement::point_of(&r, &self.part().body, &self.part().work)
-        {
-            return Some(Hit3::At(q, true));
-        }
-        let (o, dir) = self.camera.ray(p, rect)?;
-        let dir = dir.try_normalize(1e-12)?;
-        let (_, t) = self.picker().pick(&o, &dir)?;
-        Some(Hit3::At(o + dir * t, false))
+        self.sk3_candidates(p, rect, want).first().map(|c| c.hit())
     }
 
     /// A click in the view while the 3D sketch is open.
     pub(super) fn sketch3d_click(&mut self, p: Pos2, rect: Rect, ctrl: bool) {
+        self.sketch3d_click_at(p, rect, ctrl);
+        // The click took Select Other's choice (or another place).
+        self.sk3_other_close();
+    }
+
+    fn sketch3d_click_at(&mut self, p: Pos2, rect: Rect, ctrl: bool) {
         if self.sk3_gizmo_click(p, rect) {
             return;
         }

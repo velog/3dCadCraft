@@ -140,6 +140,7 @@ mod shell;
 mod show_dims;
 mod sketch3d;
 mod sketch3d_insert;
+mod sketch3d_other;
 mod sketch3d_view;
 mod sketch_marking;
 mod sketch_text;
@@ -7559,6 +7560,10 @@ impl CadCraftApp {
                 Some(self.body_cmd_faces())
             } else if self.pattern_draft.is_some() {
                 Some(self.pattern_faces())
+            } else if self.sketch3d.is_some() {
+                // The 3D sketch's face picks (Project to Surface, the first
+                // input of Intersection Curve) stay lit (rule 23).
+                Some(self.sk3_picked_faces())
             } else if let Some(d) = &self.thread_draft {
                 let body = &self.part().body;
                 Some(
@@ -7606,6 +7611,10 @@ impl CadCraftApp {
                             .or(pat_face)
                             .and_then(name)
                             .or(plane_face)
+                            .or_else(|| {
+                                self.sk3_hover_face(pointer.filter(|_| on_cube.is_none()), rect)
+                                    .and_then(name)
+                            })
                             .map(select::SelItem::Face)
                             .or_else(|| self.body_cmd_hover_item(body_hover.as_ref())),
                     )
@@ -7668,6 +7677,11 @@ impl CadCraftApp {
             self.draw_sketches3d(&painter, rect, pointer);
             self.sk3_draw_view(&painter, rect, pointer);
             self.sk3_view_boxes(ui.ctx(), rect);
+            if self.sketch3d.is_some() {
+                self.sk3_other_ui(ui, rect, pointer.filter(|_| on_cube.is_none()));
+                self.sk3_other_draw(&painter, rect);
+                self.sk3_insert_draw(&painter, rect);
+            }
             let want_hover = want_hover.filter(|_| self.select.prehighlight);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);

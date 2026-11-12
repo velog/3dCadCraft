@@ -5528,6 +5528,57 @@ fn slot_rows(rows: &mut Rows<'_>) {
             std::hint::black_box(curves::chain_segments(&segs, 1e-4));
         }),
     ));
+    // Angled end mills: the V reaches its line (a prism and two half cones
+    // glued per slot), 24 blind slots.
+    let mut angled = PartDocument::with_box("Box1", [200.0, 120.0, 10.0]).unwrap();
+    let (i, ids) = angled.create_hole_sketch("Box1:Top", &pts).unwrap();
+    let mut s = HoleSpec::slot(6.0, 20.0);
+    s.termination = Termination::Distance;
+    s.depth = 5.0;
+    s.drill_point = cadcraft3d::part::hole::DrillPoint::Angle;
+    s.point_angle = 118f64.to_radians();
+    let mut def = HoleFeature::new(s);
+    def.sketch = angled.sketches[i].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    angled.add_hole(def).unwrap();
+    rows.push((
+        "Slot: 24 blind slots with an angled end mill, regenerate",
+        2500.0,
+        median_ms(3, || {
+            let mut c = angled.clone();
+            c.build_cache = Default::default();
+            c.regenerate().unwrap();
+        }),
+    ));
+    // Associative 3D sketch curves: an Intersection Curve of the slotted
+    // plate's top with the plane x = 97, computed again at each regeneration.
+    use cadcraft3d::part::sketch3d::Sketch3d;
+    use cadcraft3d::part::sketch3d_derived::{self as derived, CurveDef, SurfaceInput};
+    let curve = CurveDef::Intersection {
+        a: SurfaceInput::Faces(vec!["Box1:Top".into()]),
+        b: SurfaceInput::Plane(cadcraft3d::part::PlaneRef::Origin(
+            cadcraft3d::part::OriginPlane::YZ,
+        )),
+    };
+    let vars = |_: &str| None;
+    let inp = derived::Inputs {
+        body: &part.body,
+        works: &part.work,
+        sketches: &part.sketches,
+        vars: &vars,
+    };
+    let lines = derived::compute(&curve, &inp, 24).unwrap();
+    let pieces = derived::curve_points(lines, 24, 200.0);
+    let mut s3 = Sketch3d::new("Sketch3D1", "3D Sketch1");
+    s3.add_derived(curve, 24, &pieces).unwrap();
+    rows.push((
+        "3D sketch: an associative Intersection Curve followed on a slotted plate",
+        50.0,
+        median_ms(5, || {
+            let mut t = s3.clone();
+            std::hint::black_box(t.update_derived(&inp));
+        }),
+    ));
 }
 
 /// The part completion cases alone (`cargo test --release --test perf part_completion`).

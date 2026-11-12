@@ -69,6 +69,7 @@ pub mod sheet_metal;
 pub mod shell;
 pub mod sketch3d;
 pub mod sketch3d_curves;
+pub mod sketch3d_derived;
 pub mod split;
 pub mod standards;
 pub mod surface_op;
@@ -1301,6 +1302,21 @@ impl PartDocument {
         // Sheet metal models by sheet body.
         let mut metal: HashMap<String, sheet_metal::SheetState> = HashMap::new();
         let rule = sheet_metal::rule_of(self);
+        // 3D sketches with associative curves follow the body before the
+        // first feature that uses them (else the final body); equation
+        // curves read the parameters.
+        let table = if self.sketches3d.iter().any(|s| !s.derived.is_empty()) {
+            self.parameter_table()
+        } else {
+            Vec::new()
+        };
+        let vars = |n: &str| {
+            table
+                .iter()
+                .find(|r| r.name == n)
+                .map(params::ParamRow::as_value)
+        };
+        let mut done3d: Vec<String> = Vec::new();
         for (j, f) in self.features.iter().enumerate().take(limit) {
             // Sketches made at this point of the history follow the body as
             // it was then (Inventor), not the final one.
@@ -1313,6 +1329,21 @@ impl PartDocument {
             for id in f.sketch_ids() {
                 if let Some(k) = self.sketches.iter().position(|s| s.id == id) {
                     update_sketch(&body, &works, &mut self.sketches, k);
+                }
+            }
+            for id in f.sketch3d_ids() {
+                if !done3d.iter().any(|d| d == id)
+                    && let Some(s3) = self.sketches3d.iter_mut().find(|s| s.id == id)
+                {
+                    done3d.push(id.to_owned());
+                    update_sketch3d(
+                        &body,
+                        &works,
+                        &self.sketches,
+                        s3,
+                        &vars,
+                        &mut self.feature_health,
+                    );
                 }
             }
             // Suppressed: as if it were not in the history (its key is not
@@ -2129,6 +2160,20 @@ impl PartDocument {
             } || edited_sketch.as_deref() == Some(ps.id.as_str());
             if follows {
                 update_sketch(&self.body, &works, &mut self.sketches, i);
+            }
+        }
+        if limit >= n {
+            for s3 in &mut self.sketches3d {
+                if !done3d.contains(&s3.id) {
+                    update_sketch3d(
+                        &self.body,
+                        &works,
+                        &self.sketches,
+                        s3,
+                        &vars,
+                        &mut self.feature_health,
+                    );
+                }
             }
         }
         self.work = works;
@@ -3251,6 +3296,32 @@ fn pattern_sources<'t>(
         });
     }
     Ok(out)
+}
+
+/// Computes 3D sketch `s3`'s associative curves again on `body`; problems go
+/// to the sketch's health (its id in `health`), the curves keep their last
+/// geometry.
+fn update_sketch3d(
+    body: &BRep,
+    works: &placement::WorkGeom,
+    sketches: &[PartSketch],
+    s3: &mut sketch3d::Sketch3d,
+    vars: &expr::Vars<'_>,
+    health: &mut HashMap<String, String>,
+) {
+    if s3.derived.is_empty() {
+        return;
+    }
+    let inp = sketch3d_derived::Inputs {
+        body,
+        works,
+        sketches,
+        vars,
+    };
+    let problems = s3.update_derived(&inp);
+    if !problems.is_empty() {
+        health.insert(s3.id.clone(), problems.join("; "));
+    }
 }
 
 /// Re-resolves one sketch against `body`: placement, projected points,

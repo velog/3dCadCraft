@@ -707,26 +707,12 @@ impl CadCraftApp {
         let Some((s, _)) = self.sk3() else {
             return false;
         };
-        let pr = |q: Point3| self.camera.project(&q, rect);
-        let point = s
-            .points
-            .iter()
-            .filter_map(|q| Some((pr(Point3::from(q.at))?.distance(p), q.id)))
-            .filter(|(d, _)| *d <= super::overlay::POINT_SNAP_PX)
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, id)| vec![id]);
-        let line = || {
-            s.lines
-                .iter()
-                .filter_map(|l| {
-                    let (a, b) = (pr(s.at(l.a)?)?, pr(s.at(l.b)?)?);
-                    Some((seg_dist(p, a, b), vec![l.a, l.b]))
-                })
-                .filter(|(d, _)| *d <= super::overlay::CURVE_SNAP_PX)
-                .min_by(|a, b| a.0.total_cmp(&b.0))
-                .map(|(_, v)| v)
+        use super::sketch3d_other::{Cand3, Want3};
+        let picked = match self.sk3_pick(p, rect, Want3::Select) {
+            Some(Cand3::Own(id)) => vec![id],
+            Some(Cand3::Line(id)) => s.line(id).map_or_else(Vec::new, |l| vec![l.a, l.b]),
+            _ => Vec::new(),
         };
-        let picked = point.or_else(line).unwrap_or_default();
         if let Some(e) = self.sketch3d.as_mut() {
             e.sel_cons = None;
             e.dim_edit = None;
