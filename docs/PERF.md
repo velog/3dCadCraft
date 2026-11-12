@@ -53,6 +53,7 @@ Target times for interactive work:
 | Rectangular Pattern 10×10 of a boss (Join, SolidCraft #2076) | 3000 ms | 1.3–1.4 s (2026-10-20; before 2.2 s) |
 | Rectangular Pattern 32×32 = 1024 holes + the preview edges | 3000 ms | 1.46–1.49 s (2026-10-20) |
 | Rectangular Pattern 71×71 = 5041 holes + the preview edges | 15000 ms | 7.7–7.9 s (2026-10-20; before 24 min and an error) |
+| Rim teeth: 24 as deep as a revolved rim's chamfer, one on the revolve's seam (Cut + Circular Pattern), regenerate | 1500 ms | 974 ms (2026-11-12, busy machine) |
 | Mirror of the body with the 36 holes, Join through the right face (the mirror only) | 1500 ms | 260 ms (2026-10-19) |
 | Physical Properties of the filleted hollow box (Low) | 100 ms | 0.5 ms (2026-10-19) |
 | the appearance of all faces of the same box (`Resolver::face_looks`) | 20 ms | < 0.1 ms (2026-10-19) |
@@ -114,6 +115,28 @@ The process's CPU time includes every test of the `perf` binary running at the s
 numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --nocapture`.
 
 ## Log
+
+- 2026-11-12 — **Rim teeth through a chamfer** (owner: OK froze the app). A revolved disc R30 × 10, Chamfer 2 on the
+  top rim, one tooth 4 mm wide and exactly 2 mm deep on the revolve's seam: the kernel's Cut came out invalid, so the
+  part was rebuilt faceted at every regeneration — debug 3.3 s for the tooth (chamfer) / 10 s (fillet), and its
+  Circular Pattern of 24 was then refused after 13.2 s / 40.8 s. Now the Cut is retried with the profile 1 µm smaller
+  (`exact::nudged_cut`) and stays exact: one tooth + pattern of 6 in 0.4–2.0 s for every one of the 96 variants of
+  `tests/rim_teeth.rs` (debug, busy machine). New budget *Rim teeth: 24 as deep as the chamfer, one on the seam,
+  regenerate* 1500 ms (`RIM_TEETH_BUDGET`; 974 ms on the busy machine, the 40-tooth gear beside it 1018 / 1500). A part with blends, holes, patterns… is no longer rebuilt faceted when the kernel
+  fails (the feature is sick instead).
+- 2026-11-12 — **Matrix: variable radius 2..5 on a box edge** (budget 300 ms) measured 160 s and 615 s in debug: the
+  kernel's `fillet_variable_points` alone takes 160 s (debug, deps at opt-level 3) and 661 s (release, busy machine),
+  `to_brep` 3–6 ms. Inside it, SMLib's operation 160 s and its check of the result 7 s; our resolve / chain / decode
+  under 1 ms; a cubic radius law in place of the linear one: the same 160 s. The case is in the matrix's `KNOWN_SLOW`
+  (built once, reported) until solidcore is faster (ROADMAP K12). The matrix's *36 holes chamfered / rounded* and the
+  grilles were within budget run alone (3.1 / 3.6 s of 5 s; 0.95 s of 1.5 s): their overruns were the machine's load.
+- 2026-11-12 — **Library members** (debug, busy machine; part / regenerate / of which the display B-rep): Compression
+  Spring De 9 d 1 679 / 677 / 251 ms (one `Coil1`), EN 1092-1 Type 11 DN600 254 / 256 / 31 ms (one `Axial1`), Series
+  222 22208 Full 527 / 509 / 324 ms (three `Axial`), ISO 4017 M3 x 6 Standard 47 / 46 / 4 ms. Over their budgets still;
+  the B-rep's share (the kernel's display mesh and our orientation checks) is the place to look next for the bearing.
+- 2026-11-12 — **Patterns of many holes regressed** (ROADMAP K13): *rectangular pattern 32×32 = 1024 holes + preview
+  edges* 9.6 s in release (budget 3 s in the test profile); the 2 500-hole plate of `perf_drawing` did not finish in
+  40 min (debug).
 
 - 2026-10-28 — **Flange › Further Bends.** *Flange with 3 further bends on 4 edges (16 bends) + flat pattern*:
   each bend level built and its solid made took 1.2–4.2 s (four `named_solid` calls); the levels now only change
