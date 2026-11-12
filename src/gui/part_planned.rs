@@ -1550,6 +1550,8 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::PlaceImported
                     | super::asm_planned::AsmPlanned::BoltedConnection
                     | super::asm_planned::AsmPlanned::Shaft
+                    | super::asm_planned::AsmPlanned::SpurGear
+                    | super::asm_planned::AsmPlanned::Key
             ) | Planned::Part(
                 PartPlanned::Emboss
                     | PartPlanned::Grill
@@ -2541,6 +2543,12 @@ impl PartDialog {
             Button("Calculate") if super::gear_key::is_key(self) => {
                 super::gear_key::key_ui(self, ui);
             }
+            Button("Calculate") if super::gear_key::is_bearing(self) => {
+                super::gear_key::bearing_ui(self, ui);
+            }
+            Button("Calculate") if super::gear_key::is_spring(self) => {
+                super::gear_key::spring_ui(self, ui);
+            }
             Button(t) => {
                 plabel(ui, "");
                 let live = self.kind.has_logic() && LIVE_BUTTONS.contains(&t);
@@ -3168,6 +3176,16 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::Shaft) => {
                 if self.shaft_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::SpurGear) => {
+                if self.gear_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Key) => {
+                if self.key_ok(&d) {
                     self.part_planned = None;
                 }
             }

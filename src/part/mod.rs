@@ -975,6 +975,11 @@ pub struct PartDocument {
     /// was stored directly (older files); then `body` is kept as is.
     #[serde(default)]
     pub features: Vec<Feature>,
+    /// The generator that made this part (a shaft of the Shaft Generator…),
+    /// kept to edit it again through the generator; the features alone build
+    /// the part (rule 8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generator: Option<crate::design::Generator>,
     /// Sketches in creation order.
     pub sketches: Vec<PartSketch>,
     /// 3D sketches in creation order (`docs/spec/1.10-3d-sketch.md`;

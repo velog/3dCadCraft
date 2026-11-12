@@ -1592,10 +1592,11 @@ impl AsmPlanned {
                         Num("Power (kW)", 10.0, " kW"),
                         Num("Speed (rpm)", 1500.0, " rpm"),
                         Head("Bending (AGMA 218.01 per NASA RP-1152)"),
-                        Num("Geometry Factor J", 0.35, ""),
+                        Num("Accuracy Level (AGMA)", 8.0, ""),
+                        Check("Load at the Tip", false),
+                        Num("Geometry Factor J (helical)", 0.35, ""),
                         Num("Application Factor Ka", 1.0, ""),
                         Num("Load Distribution Factor Km", 1.3, ""),
-                        Num("Dynamic Factor Kv", 0.8, ""),
                         Num("Allowable Bending Stress (MPa)", 250.0, " MPa"),
                         Head("Surface Life (NASA RP-1152)"),
                         Num("Life Factor (material)", 1.0, ""),
@@ -1628,7 +1629,19 @@ impl AsmPlanned {
                 ),
                 Page(
                     "Calculation",
-                    &[Note("Loads and life (comes after the geometry)")],
+                    &[
+                        Combo("Bearing Type", &["Ball", "Roller"], 0),
+                        Num("Radial Load (N)", 2000.0, " N"),
+                        Num("Axial Load (N)", 0.0, " N"),
+                        Num("Speed (rpm)", 1500.0, " rpm"),
+                        Num("Basic Dynamic Load Rating C (N)", 14000.0, " N"),
+                        Num("Radial Factor X", 1.0, ""),
+                        Num("Axial Factor Y", 0.0, ""),
+                        Num("Life Adjustment Factors (D·E·F·G·H)", 1.0, ""),
+                        Num("Required Reliability (%)", 90.0, " %"),
+                        Num("Required Life (h)", 10000.0, " h"),
+                        Button("Calculate"),
+                    ],
                 ),
             ],
             Key => &[
@@ -1777,9 +1790,12 @@ impl AsmPlanned {
                 ),
                 Page(
                     "Calculation",
-                    &[Note(
-                        "Forces, stresses and lengths (comes after the geometry)",
-                    )],
+                    &[
+                        Num("Working Load (N)", 100.0, " N"),
+                        Num("Shear Modulus G (MPa)", 82_737.0, " MPa"),
+                        Num("Allowed Stress (MPa)", 0.0, " MPa"),
+                        Button("Calculate"),
+                    ],
                 ),
             ],
         }

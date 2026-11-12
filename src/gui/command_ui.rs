@@ -370,6 +370,17 @@ impl CadCraftApp {
         let Some(mut flow) = self.command_flow() else {
             return false;
         };
+        // The Shaft Generator's window takes values: Enter commits a field
+        // there (or does nothing), never the whole command. Its OK button and
+        // Ctrl+Enter finish it.
+        if !ctrl
+            && self
+                .part_planned
+                .as_ref()
+                .is_some_and(|d| super::shaft::is_shaft(d) && d.shaft.open)
+        {
+            return true;
+        }
         if ctrl {
             if flow.ready() {
                 self.command_ok(false);

@@ -15,7 +15,12 @@ use crate::kernel::Point3;
 use crate::part::axial::{AxialOp, AxialRun, AxialSeg, AxialShape};
 use crate::part::hole::{ThreadFeature, ThreadSpec};
 use crate::part::standards::{ISO_METRIC, Standards};
-use crate::part::{BodyOp, BodyOpFeature, PartDocument, PartError};
+use crate::part::work::{WorkDef, WorkFeature, WorkPlaneDef};
+use crate::part::{
+    BodyOp, BodyOpFeature, ExtentDirection, ExtrudeFeature, Operation, OriginPlane, PartDocument,
+    PartError, PlaneRef, ProfileRef, SketchOptions, SketchPlacement,
+};
+use crate::sketch::Point2;
 
 /// The shape of one section.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -178,11 +183,26 @@ fn num(v: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
+/// A bore into one end of the shaft: a cylindrical hole on the axis.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Bore {
+    /// Its diameter.
+    pub d: f64,
+    /// How deep it goes from the end.
+    pub depth: f64,
+}
+
 /// A shaft: its sections from the start.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ShaftDesign {
     /// The sections in order along +Z.
     pub sections: Vec<Section>,
+    /// A bore into the start (left) end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bore_left: Option<Bore>,
+    /// A bore into the end (right) end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bore_right: Option<Bore>,
 }
 
 impl ShaftDesign {
@@ -198,7 +218,10 @@ impl ShaftDesign {
         if let Some(last) = s.last_mut() {
             last.end = EdgeFeature::Chamfer(1.0);
         }
-        ShaftDesign { sections: s }
+        ShaftDesign {
+            sections: s,
+            ..ShaftDesign::default()
+        }
     }
 
     /// Total length.
@@ -235,6 +258,75 @@ impl ShaftDesign {
     pub fn diameter_at(&self, z: f64) -> f64 {
         self.section_at(z)
             .map_or(0.0, |(k, s)| self.sections[k].diameter_at(s))
+    }
+
+    /// The bore's diameter at `z` (0: solid there).
+    pub fn inner_at(&self, z: f64) -> f64 {
+        let len = self.length();
+        let left = self.bore_left.filter(|b| z <= b.depth).map_or(0.0, |b| b.d);
+        let right = self
+            .bore_right
+            .filter(|b| z >= len - b.depth)
+            .map_or(0.0, |b| b.d);
+        left.max(right)
+    }
+
+    /// The bores with the end they start from (false: the start).
+    pub fn bores(&self) -> impl Iterator<Item = (bool, Bore)> + '_ {
+        [(false, self.bore_left), (true, self.bore_right)]
+            .into_iter()
+            .filter_map(|(end, b)| b.map(|b| (end, b)))
+    }
+
+    /// How far section `k`'s start (false) or end (true) feature reaches into
+    /// it along the axis, as the meridian builds it: a chamfer of the larger
+    /// side of a step or of a shaft end, the fillet at the foot of a step
+    /// (moved to the concave side, `corner`). 0 where nothing is built.
+    pub fn edge_extent(&self, k: usize, end: bool) -> f64 {
+        let Some(s) = self.sections.get(k) else {
+            return 0.0;
+        };
+        if matches!(s.shape, SectionShape::Polygon { .. }) {
+            return 0.0;
+        }
+        let turned = |q: &Section| !matches!(q.shape, SectionShape::Polygon { .. });
+        let size = |e: EdgeFeature| match e {
+            EdgeFeature::Chamfer(c) | EdgeFeature::Fillet(c) => c,
+            EdgeFeature::None => 0.0,
+        };
+        let chamfer = |e: EdgeFeature| match e {
+            EdgeFeature::Chamfer(c) => c,
+            _ => 0.0,
+        };
+        if end {
+            match self.sections.get(k + 1).filter(|q| turned(q)) {
+                None => chamfer(s.end),
+                Some(q) => {
+                    let (r2, rq) = (s.diameters().1 / 2.0, q.diameters().0 / 2.0);
+                    let (e, _, _) = corner(r2, rq, s.end, q.start);
+                    corner_back(r2, rq, e)
+                }
+            }
+        } else {
+            match k
+                .checked_sub(1)
+                .map(|i| &self.sections[i])
+                .filter(|p| turned(p))
+            {
+                None => chamfer(s.start),
+                Some(p) => {
+                    let (rp, rn) = (p.diameters().1 / 2.0, s.diameters().0 / 2.0);
+                    let (_, st, _) = corner(rp, rn, p.end, s.start);
+                    if rp > rn + 1e-9 {
+                        size(st)
+                    } else if rp < rn - 1e-9 {
+                        chamfer(st)
+                    } else {
+                        0.0
+                    }
+                }
+            }
+        }
     }
 
     /// Checks the sizes; the error names the section (1-based).
@@ -285,6 +377,15 @@ impl ShaftDesign {
                 if g.at < 0.0 || g.at + g.width > s.length {
                     return Err(format!("section {n}: a groove lies outside the section"));
                 }
+                // A groove and a chamfer or fillet on the same stretch would
+                // run the outline back on itself.
+                let (a0, a1) = (self.edge_extent(k, false), self.edge_extent(k, true));
+                if g.at < a0 - 1e-9 || g.at + g.width > s.length - a1 + 1e-9 {
+                    let side = if g.at < a0 - 1e-9 { "left" } else { "right" };
+                    return Err(format!(
+                        "section {n}: a groove overlaps the chamfer or fillet at its {side} end                          (a relief takes the edge's place: remove one of them)"
+                    ));
+                }
             }
             for e in [s.start, s.end] {
                 if let EdgeFeature::Chamfer(c) | EdgeFeature::Fillet(c) = e
@@ -295,6 +396,60 @@ impl ShaftDesign {
                     ));
                 }
             }
+            if let Some(l) = s.keyway {
+                if !matches!(s.shape, SectionShape::Cylinder { .. }) {
+                    return Err(format!("section {n}: keyways go into cylinders only"));
+                }
+                let k =
+                    crate::design::key::size_for(d1).map_err(|e| format!("section {n}: {e}"))?;
+                if !(l > k.b && l <= s.length) {
+                    return Err(format!(
+                        "section {n}: the keyway must be longer than its width ({} mm) and fit the section",
+                        k.b
+                    ));
+                }
+            }
+        }
+        let len = self.length();
+        for (end, b) in self.bores() {
+            let side = if end { "right" } else { "left" };
+            if !(b.d > 0.0 && b.depth > 0.0 && b.depth <= len + 1e-9) {
+                return Err(format!(
+                    "the {side} bore needs a diameter and a depth within the shaft"
+                ));
+            }
+            // The thinnest wall along the bore (grooves and keyways count).
+            let (a, z1) = if end {
+                (len - b.depth, len)
+            } else {
+                (0.0, b.depth)
+            };
+            let steps = 64;
+            for i in 0..=steps {
+                let z = a + (z1 - a) * f64::from(i) / f64::from(steps);
+                let mut outer = self.diameter_at(z);
+                if let Some((k, at)) = self.section_at(z) {
+                    let s = &self.sections[k];
+                    if let (Some(l), Ok(key)) = (s.keyway, crate::design::key::size_for(outer)) {
+                        let k0 = (s.length - l) / 2.0;
+                        if at >= k0 && at <= k0 + l {
+                            outer -= 2.0 * key.t1;
+                        }
+                    }
+                }
+                if b.d >= outer - 1e-6 {
+                    return Err(format!(
+                        "the {side} bore (Ø{}) breaks through the wall at z = {z:.1} mm",
+                        num(b.d)
+                    ));
+                }
+            }
+        }
+        if let (Some(l), Some(r)) = (self.bore_left, self.bore_right)
+            && l.depth + r.depth > len + 1e-9
+            && (l.d - r.d).abs() > 1e-9
+        {
+            return Err("the two bores overlap with different diameters".into());
         }
         Ok(())
     }
@@ -589,12 +744,32 @@ pub fn part(design: &ShaftDesign) -> Result<PartDocument, String> {
     let op = design.axial_op()?;
     let mut part = PartDocument {
         exact_only: true,
+        generator: Some(crate::design::Generator::Shaft {
+            design: design.clone(),
+            loads: None,
+        }),
         ..Default::default()
     };
     let id = part
         .add_body_op(BodyOpFeature::new(BodyOp::Axial(op)))
         .map_err(|e: PartError| e.to_string())?;
     let starts = design.starts();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    for (k, s) in design.sections.iter().enumerate() {
+        if let (Some(l), SectionShape::Cylinder { d }) = (s.keyway, s.shape) {
+            keyway_cut(&mut part, d, starts[k] + s.length / 2.0, l, &opts)
+                .map_err(|e| format!("section {}: the keyway: {e}", k + 1))?;
+        }
+    }
+    let len = design.length();
+    for (end, b) in design.bores() {
+        bore_cut(&mut part, &b, end, len, &opts)
+            .map_err(|e| format!("the {} bore: {e}", if end { "right" } else { "left" }))?;
+    }
     for (k, s) in design.sections.iter().enumerate() {
         if !s.thread {
             continue;
@@ -620,6 +795,117 @@ pub fn part(design: &ShaftDesign) -> Result<PartDocument, String> {
     Ok(part)
 }
 
+/// The parallel key's groove of a cylinder of diameter `d` (DIN 6885 form A:
+/// rounded ends, width b, depth t1 below the top line), `l` long, centred at
+/// `zc`, on the +X side: a slot sketched on a plane square to X at the
+/// groove's floor and cut outwards (Extrude Cut past the cylinder).
+fn keyway_cut(
+    part: &mut PartDocument,
+    d: f64,
+    zc: f64,
+    l: f64,
+    opts: &SketchOptions,
+) -> Result<(), String> {
+    let k = crate::design::key::size_for(d)?;
+    let floor = d / 2.0 - k.t1;
+    let w = part
+        .add_work(hidden_work(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::YZ),
+            distance: floor,
+        })))
+        .map_err(|e| e.to_string())?;
+    let i = part
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(w),
+                ..Default::default()
+            },
+            opts,
+        )
+        .map_err(|e| e.to_string())?;
+    let pl = part.sketches[i].sketch.plane.clone();
+    let e1 = pl.project(&Point3::new(floor, 0.0, zc - l / 2.0));
+    let e2 = pl.project(&Point3::new(floor, 0.0, zc + l / 2.0));
+    part.sketches[i]
+        .sketch
+        .add_slot_overall(Point2::new(e1.x, e1.y), Point2::new(e2.x, e2.y), k.b)
+        .map_err(|e| e.to_string())?;
+    let mid = pl.project(&Point3::new(floor, 0.0, zc));
+    cut_region(
+        part,
+        i,
+        Point2::new(mid.x, mid.y),
+        k.t1 + 1.0,
+        pl.normal.x < 0.0,
+    )
+}
+
+/// A bore: a circle on the end's plane cut `depth` into the shaft.
+fn bore_cut(
+    part: &mut PartDocument,
+    b: &Bore,
+    end: bool,
+    len: f64,
+    opts: &SketchOptions,
+) -> Result<(), String> {
+    let placement = if end {
+        let w = part
+            .add_work(hidden_work(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: len,
+            })))
+            .map_err(|e| e.to_string())?;
+        SketchPlacement {
+            plane: PlaneRef::Work(w),
+            ..Default::default()
+        }
+    } else {
+        SketchPlacement::on_origin_plane(OriginPlane::XY)
+    };
+    let i = part
+        .create_sketch(placement, opts)
+        .map_err(|e| e.to_string())?;
+    let pl = part.sketches[i].sketch.plane.clone();
+    let c = pl.project(&Point3::new(0.0, 0.0, if end { len } else { 0.0 }));
+    let c = Point2::new(c.x, c.y);
+    part.sketches[i]
+        .sketch
+        .add_circle(c, b.d / 2.0)
+        .map_err(|e| e.to_string())?;
+    // Into the shaft: -Z from the end, +Z from the start.
+    let into = if end { -1.0 } else { 1.0 };
+    cut_region(part, i, c, b.depth, pl.normal.z * into < 0.0)
+}
+
+/// Extrude Cut of the region of sketch `i` round `seed`, `dist` along the
+/// sketch's normal (`flip`: against it).
+fn cut_region(
+    part: &mut PartDocument,
+    i: usize,
+    seed: Point2,
+    dist: f64,
+    flip: bool,
+) -> Result<(), String> {
+    let regions = part.sketches[i].sketch.regions();
+    let r = regions
+        .iter()
+        .find(|r| r.contains(seed))
+        .ok_or("its outline is not closed")?;
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(r, seed)], dist);
+    e.operation = Operation::Cut;
+    if flip {
+        e.direction = ExtentDirection::Flipped;
+    }
+    part.add_extrude(i, e).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn hidden_work(def: WorkDef) -> WorkFeature {
+    let mut w = WorkFeature::new(def);
+    w.visible = false;
+    w
+}
+
 /// Volume of the design's solid of revolution (polygons as their own prism),
 /// chamfers and fillets left out: the calculation's mass model.
 pub fn volume(design: &ShaftDesign) -> f64 {
@@ -634,7 +920,11 @@ pub fn volume(design: &ShaftDesign) -> f64 {
                     .iter()
                     .map(|g| pi / 4.0 * (d * d - (d - 2.0 * g.depth).powi(2)) * g.width)
                     .sum();
-                pi / 4.0 * d * d * s.length - grooves
+                let key = s
+                    .keyway
+                    .and_then(|l| crate::design::key::size_for(d).ok().map(|k| (l, k)))
+                    .map_or(0.0, |(l, k)| keyway_volume(d, k.b, k.t1, l));
+                pi / 4.0 * d * d * s.length - grooves - key
             }
             SectionShape::Cone { d1, d2 } => pi / 12.0 * s.length * (d1 * d1 + d1 * d2 + d2 * d2),
             SectionShape::Polygon { sides, d } => {
@@ -643,7 +933,36 @@ pub fn volume(design: &ShaftDesign) -> f64 {
                 0.5 * n * r * r * (2.0 * pi / n).sin() * s.length
             }
         })
-        .sum()
+        .sum::<f64>()
+        - design
+            .bores()
+            .map(|(_, b)| pi / 4.0 * b.d * b.d * b.depth)
+            .sum::<f64>()
+}
+
+/// What a rounded-end keyway of width `b`, depth `t1` (below the top line)
+/// and length `l` takes from a cylinder of diameter `d`: the height of the
+/// cylinder above the flat floor, integrated over the slot (a rectangle of
+/// l - b and a disc of b), by Simpson's rule across the width.
+pub fn keyway_volume(d: f64, b: f64, t1: f64, l: f64) -> f64 {
+    let r = d / 2.0;
+    let h = |y: f64| ((r * r - y * y).max(0.0).sqrt() - (r - t1)).max(0.0);
+    let n = 200;
+    let step = b / f64::from(n);
+    let (mut strip, mut disc) = (0.0, 0.0);
+    for i in 0..=n {
+        let y = -b / 2.0 + step * f64::from(i);
+        let w = if i == 0 || i == n {
+            1.0
+        } else if i % 2 == 1 {
+            4.0
+        } else {
+            2.0
+        };
+        strip += w * h(y);
+        disc += w * h(y) * 2.0 * ((b / 2.0).powi(2) - y * y).max(0.0).sqrt();
+    }
+    (strip * (l - b) + disc) * step / 3.0
 }
 
 #[cfg(test)]
@@ -679,6 +998,7 @@ mod tests {
     fn a_cylinder_is_a_cylinder() {
         let d = ShaftDesign {
             sections: vec![Section::cylinder(20.0, 50.0)],
+            ..ShaftDesign::default()
         };
         let p = built(&d);
         let v = solid_volume(&p);
@@ -739,11 +1059,153 @@ mod tests {
                 Section::polygon(6, 24.0, 10.0),
                 Section::cylinder(20.0, 30.0),
             ],
+            ..ShaftDesign::default()
         };
         let p = built(&d);
         let v = solid_volume(&p);
         let want = volume(&d);
         assert!((v - want).abs() / want < 3e-3, "{v} vs {want}");
+    }
+
+    /// Every corner treatment next to a relief at the step, stepping up and
+    /// down: the meridian never runs back on itself and the body builds with
+    /// its sections' volume (the owner's relief after a chamfered step gave an
+    /// invalid solid).
+    #[test]
+    fn reliefs_beside_every_corner() {
+        let edges = [
+            EdgeFeature::None,
+            EdgeFeature::Chamfer(1.0),
+            EdgeFeature::Fillet(1.0),
+        ];
+        let relief = RingGroove {
+            at: 0.0,
+            width: 2.5,
+            depth: 0.4,
+            relief: true,
+        };
+        let mut cases = Vec::new();
+        for (da, db) in [(30.0, 40.0), (40.0, 30.0)] {
+            for end in edges {
+                for start in edges {
+                    for relief_in_b in [true, false] {
+                        let mut a = Section::cylinder(da, 40.0);
+                        let mut b = Section::cylinder(db, 40.0);
+                        a.end = end;
+                        b.start = start;
+                        if relief_in_b {
+                            b.grooves.push(relief);
+                        } else {
+                            a.grooves.push(RingGroove { at: 37.5, ..relief });
+                        }
+                        cases.push(vec![a, b]);
+                    }
+                }
+            }
+        }
+        // The shaft's own ends and a polygon's sides.
+        let mut first = Section::cylinder(30.0, 40.0);
+        first.start = EdgeFeature::Chamfer(1.0);
+        first.grooves.push(relief);
+        cases.push(vec![first.clone()]);
+        let mut last = Section::cylinder(30.0, 40.0);
+        last.end = EdgeFeature::Chamfer(1.0);
+        last.grooves.push(RingGroove { at: 37.5, ..relief });
+        cases.push(vec![Section::polygon(6, 40.0, 10.0), first, last]);
+        let mut failed = Vec::new();
+        let mut refused = 0;
+        for sections in cases {
+            let d = ShaftDesign {
+                sections,
+                ..ShaftDesign::default()
+            };
+            let case = format!("{:?}", d.sections);
+            let plain = d
+                .sections
+                .iter()
+                .all(|s| s.start == EdgeFeature::None && s.end == EdgeFeature::None);
+            if let Err(e) = d.validate() {
+                if plain || !e.contains("overlaps") {
+                    failed.push(format!("{case}: {e}"));
+                }
+                refused += 1;
+                continue;
+            }
+            // The meridian never runs back along the axis.
+            let op = d.axial_op().unwrap();
+            for run in &op.runs {
+                if let AxialShape::Turned { from, segs } = &run.shape {
+                    let mut z = from[1];
+                    for sg in segs {
+                        if sg.to[1] < z - 1e-9 {
+                            failed.push(format!("{case}: back to z {} from {z}", sg.to[1]));
+                        }
+                        z = sg.to[1];
+                    }
+                }
+            }
+            let mut p = match part(&d) {
+                Ok(p) => p,
+                Err(e) => {
+                    failed.push(format!("{case}: {e}"));
+                    continue;
+                }
+            };
+            if let Err(e) = p.regenerate() {
+                failed.push(format!("{case}: {e}"));
+                continue;
+            }
+            if !p.feature_health.is_empty() {
+                failed.push(format!("{case}: {:?}", p.feature_health));
+                continue;
+            }
+            let v = solid_volume(&p);
+            let want = volume(&d);
+            if (v - want).abs() / want > 0.01 {
+                failed.push(format!("{case}: volume {v} vs {want}"));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:#?}");
+        // Some combinations do overlap (a chamfer of the larger side, a fillet
+        // at the foot) and those are refused, not built inside out.
+        assert!(refused >= 6, "{refused}");
+    }
+
+    /// A DIN 6885 keyway (Ø40: 12 × 8, t1 5) and bores at both ends take
+    /// what they should: the slot's volume under the cylinder, π/4 d² depth.
+    #[test]
+    fn keyways_and_bores_are_cut() {
+        let mut d = ShaftDesign::starter();
+        d.sections[1].keyway = Some(45.0);
+        d.bore_left = Some(Bore {
+            d: 12.0,
+            depth: 30.0,
+        });
+        d.bore_right = Some(Bore {
+            d: 16.0,
+            depth: 25.0,
+        });
+        let p = built(&d);
+        let v = solid_volume(&p);
+        let want = volume(&d);
+        let key = keyway_volume(40.0, 12.0, 5.0, 45.0);
+        assert!(key > 2000.0 && key < 12.0 * 5.0 * 45.0, "{key}");
+        assert!((v - want).abs() / want < 3e-3, "{v} vs {want}");
+        // Without them the solid is that much larger.
+        let plain = solid_volume(&built(&ShaftDesign::starter()));
+        let bores = std::f64::consts::PI / 4.0 * (144.0 * 30.0 + 256.0 * 25.0);
+        assert!(
+            ((plain - v) - (key + bores)).abs() < 0.01 * (key + bores),
+            "{} vs {}",
+            plain - v,
+            key + bores
+        );
+        // A bore through the wall is refused.
+        d.bore_left = Some(Bore {
+            d: 30.5,
+            depth: 30.0,
+        });
+        assert!(d.validate().is_err());
     }
 
     #[test]
