@@ -187,7 +187,8 @@ pub enum DimKind {
     /// The angle arc `a` spans.
     ArcAngle,
     /// Twice the distance from axis `a` to outline `b`, with Ø and one
-    /// arrowhead.
+    /// arrowhead; between two silhouettes of one face
+    /// ([`super::hlr::silhouette_face`]) the distance across, with Ø.
     LinearDiameter,
 }
 
@@ -825,8 +826,14 @@ impl Draw<'_> {
         let (qa, pa, qb, pb, pl) = dim_refs(d, view)?;
         let t = add(pl.position, d.text);
         // Linear Diametric: the first point is on the axis, no arrowhead or
-        // extension line there.
-        let on_axis = d.dim == DimKind::LinearDiameter;
+        // extension line there. Between the two silhouettes of one face (a
+        // shaft seen from the side) it is the distance across with Ø.
+        let symmetric = d.dim == DimKind::LinearDiameter
+            && d.b.as_ref().is_some_and(|b| {
+                let face = super::hlr::silhouette_face;
+                face(&d.a.edge).is_some_and(|f| face(&b.edge) == Some(f)) && d.a.edge != b.edge
+            });
+        let on_axis = d.dim == DimKind::LinearDiameter && !symmetric;
         // Direction u along the dimension, n square to it towards the text.
         let (u, value) = match d.dim {
             DimKind::Horizontal => ([1.0, 0.0], (qb[0] - qa[0]).abs()),
@@ -839,7 +846,8 @@ impl Draw<'_> {
                 let dl = sub(e.b, e.a);
                 let l = norm(dl).max(1e-12);
                 let u = [-dl[1] / l, dl[0] / l];
-                (u, 2.0 * dot(sub(qb, qa), u).abs())
+                let k = if symmetric { 1.0 } else { 2.0 };
+                (u, k * dot(sub(qb, qa), u).abs())
             }
             _ => {
                 let dd = sub(pb, pa);
@@ -880,7 +888,7 @@ impl Draw<'_> {
         } else {
             u
         };
-        let symbol = if on_axis && ds.diameter_symbol {
+        let symbol = if d.dim == DimKind::LinearDiameter && ds.diameter_symbol {
             "Ø"
         } else {
             ""

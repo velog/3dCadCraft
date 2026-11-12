@@ -3488,3 +3488,133 @@ fn dimension_types_of_spec_4_14_measure() {
     let back: AnnotationKind = serde_json::from_str(&json).unwrap();
     assert_eq!(back, across);
 }
+
+/// A shaft r 10 with a flange r 15, revolved about Y.
+fn flanged_shaft() -> PartDocument {
+    use crate::part::{AxisRef, Operation, ProfileRef, RevolveFeature};
+    let opts = crate::part::SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let xy = SketchPlacement::on_origin_plane(OriginPlane::XY);
+    let mut part = PartDocument::default();
+    for (k, (a, b)) in [((0.0, 0.0), (10.0, 40.0)), ((10.0, 0.0), (15.0, 10.0))]
+        .into_iter()
+        .enumerate()
+    {
+        let i = part.create_sketch(xy.clone(), &opts).unwrap();
+        let sk = &mut part.sketches[i].sketch;
+        sk.add_rectangle_two_point(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
+            .unwrap();
+        let r = sk.regions();
+        let pr = ProfileRef::of(&r[0], r[0].interior_point());
+        let mut rv = RevolveFeature::new(vec![pr], AxisRef::Origin(1));
+        if k == 1 {
+            rv.operation = Operation::Join;
+        }
+        part.add_revolve(i, rv).unwrap();
+    }
+    part
+}
+
+/// A revolved part seen from the side: its outline is silhouettes, which are
+/// view edges named after their face and side, straight, on the exact
+/// cylinder; Linear and Linear Diametric dimensions between two of them read
+/// the diameter; the names stay after a rebuild; a missing one orphans.
+#[test]
+fn silhouettes_of_a_revolved_part_take_dimensions() {
+    use super::annot::{Placement, resolve};
+    use super::hlr::silhouette_face;
+    let mut part = flanged_shaft();
+    let sils = |l: &super::hlr::ViewLines| {
+        let mut v: Vec<(String, [f64; 2], [f64; 2], bool)> = l
+            .edges
+            .iter()
+            .filter_map(|e| {
+                let n = e.name.clone()?;
+                silhouette_face(&n)?;
+                Some((n, e.a, e.b, e.straight))
+            })
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    };
+    let lines = lines_of(&part, ViewOrientation::Top);
+    let found = sils(&lines);
+    // Two sides of the shaft (x = ±10) and two of the flange (x = ±15).
+    assert_eq!(found.len(), 4, "{found:?}");
+    for (n, a, b, straight) in &found {
+        assert!(*straight, "{n} straight");
+        let r = a[0].abs();
+        assert!(
+            (r - 10.0).abs() < 1e-9 || (r - 15.0).abs() < 1e-9,
+            "{n} at x = {}",
+            a[0]
+        );
+        close(a[0], b[0], 1e-9, "upright");
+        let side = if a[0] > 0.0 { ":SilR" } else { ":SilL" };
+        assert!(n.ends_with(side), "{n}");
+        // Every one is drawn (visible pieces carry its index).
+        let k = lines
+            .edges
+            .iter()
+            .position(|e| e.name.as_deref() == Some(n))
+            .unwrap() as u32;
+        assert!(lines.visible_src.contains(&Some(k)), "{n} drawn");
+    }
+    let shaft = found
+        .iter()
+        .find(|s| (s.1[0] - 10.0).abs() < 1e-9)
+        .map(|s| silhouette_face(&s.0).unwrap().to_owned())
+        .unwrap();
+    let pl = Placement {
+        position: [0.0, 0.0],
+        scale: 1.0,
+        center: lines.center(),
+        breaks: lines.breaks,
+    };
+    let view = |v: u32| (v == 1).then_some((pl, &lines));
+    let r = |edge: String| PointRef {
+        view: 1,
+        edge,
+        role: PointRole::Start,
+        other: None,
+    };
+    let dim = |kind: DimKind, a: &str, b: &str| {
+        AnnotationKind::Dimension(Dimension {
+            shift: 0.0,
+            c: None,
+            arrows: Default::default(),
+            dim: kind,
+            a: r(a.to_owned()),
+            b: Some(r(b.to_owned())),
+            text: [0.0, 60.0],
+            precision: 2,
+            format: Default::default(),
+        })
+    };
+    let (sr, sl) = (format!("{shaft}:SilR"), format!("{shaft}:SilL"));
+    let value = |k: &AnnotationKind| resolve(k, &view).unwrap().value.unwrap();
+    close(
+        value(&dim(DimKind::Horizontal, &sr, &sl)),
+        20.0,
+        1e-9,
+        "linear",
+    );
+    let dia = dim(DimKind::LinearDiameter, &sl, &sr);
+    close(
+        value(&dia),
+        20.0,
+        1e-9,
+        "linear diametric between silhouettes",
+    );
+    let text = format!("{:?}", resolve(&dia, &view).unwrap().prims);
+    assert!(text.contains('Ø'), "{text}");
+    // The same names after a rebuild.
+    part.regenerate().unwrap();
+    assert_eq!(sils(&lines_of(&part, ViewOrientation::Top)), found);
+    // A silhouette that is gone: an orphan, not a panic.
+    let gone = dim(DimKind::Horizontal, &format!("{shaft}:SilU"), &sl);
+    assert!(resolve(&gone, &view).is_err());
+}
