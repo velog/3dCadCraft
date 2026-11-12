@@ -32,6 +32,9 @@ struct LibEntry {
     project: Rc<Project>,
     modified: Option<SystemTime>,
     checked: Instant,
+    /// The signature of the open tab's project it was taken from
+    /// (`take_open`), `None` when read from the file.
+    sig: Option<u64>,
 }
 
 /// A part built standing in a variant, with the key of what it was built from.
@@ -224,12 +227,14 @@ impl LibCache {
             return;
         };
         let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+        let sig = Some(super::files::signature_of(&project));
         self.files.borrow_mut().insert(
             key,
             LibEntry {
                 project,
                 modified,
                 checked: Instant::now(),
+                sig,
             },
         );
         *self.linked.borrow_mut() = None;
@@ -263,6 +268,13 @@ impl LibCache {
 
     pub(super) fn forget_linked(&self) {
         *self.linked.borrow_mut() = None;
+    }
+
+    /// How the cached file `key` came: `Some(Some(sig))` taken from an open
+    /// tab's project with signature `sig`, `Some(None)` read from the file,
+    /// `None` not loaded.
+    fn cached_sig(&self, key: &Path) -> Option<Option<u64>> {
+        self.files.borrow().get(key).map(|e| e.sig)
     }
 
     /// Forgets file `path` (its tab closed: it is read from disk again).
@@ -411,7 +423,40 @@ impl CadCraftApp {
             .linked_edits
             .insert(lib, std::sync::Arc::new(project));
         *self.asm.libs.linked.borrow_mut() = None;
+        self.note_linked_bases();
         self.scene_dirty = true;
+    }
+
+    /// Notes when each linked file this file began to edit was last written
+    /// (`Project::linked_bases`), once per edit.
+    pub(super) fn note_linked_bases(&mut self) {
+        let libs: Vec<LibraryId> = self
+            .project
+            .linked_edits
+            .keys()
+            .filter(|l| !self.project.linked_bases.contains_key(l))
+            .copied()
+            .collect();
+        for lib in libs {
+            let Some(path) = self.library_path(lib) else {
+                continue;
+            };
+            let Ok(key) = path.canonicalize() else {
+                continue;
+            };
+            // The version the edit was made from: the one loaded (else the file).
+            let at = self
+                .asm
+                .libs
+                .files
+                .borrow()
+                .get(&key)
+                .and_then(|e| e.modified)
+                .or_else(|| std::fs::metadata(&key).and_then(|m| m.modified()).ok());
+            if let Some(at) = at {
+                self.project.linked_bases.insert(lib, at);
+            }
+        }
     }
 
     /// Writes this file's edits of linked files into those files (after this
@@ -451,10 +496,25 @@ impl CadCraftApp {
                 self.project.linked_edits.insert(lib, p);
                 continue;
             }
+            // Saved since the edit began (from its own tab): writing the edit
+            // would lose that save. The edit goes; Update makes it again on
+            // the file as it is now.
+            let now = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            if let (Some(base), Some(now)) = (self.project.linked_bases.get(&lib), now)
+                && now > *base
+            {
+                self.project.linked_bases.remove(&lib);
+                saved.push(format!(
+                    "{} not written: it was saved after this file changed it (Manage > Update changes it again)",
+                    path.display()
+                ));
+                continue;
+            }
             match p.save(&path) {
                 Ok(()) => {
+                    self.project.linked_bases.remove(&lib);
                     for t in self.tabs.iter_mut().flatten() {
-                        if same(&t.file_path) {
+                        if t.holds && same(&t.file_path) {
                             t.project = (*p).clone();
                             t.saved_sig = super::files::signature_of(&t.project);
                             t.history.clear();
@@ -468,6 +528,7 @@ impl CadCraftApp {
                                 project: Rc::new((*p).clone()),
                                 modified,
                                 checked: Instant::now(),
+                                sig: None,
                             },
                         );
                     }
@@ -502,7 +563,7 @@ impl CadCraftApp {
         };
         let mut done = None;
         for t in self.tabs.iter_mut().flatten() {
-            if same(&t.file_path) {
+            if t.holds && same(&t.file_path) {
                 let d = t
                     .project
                     .document_mut(doc)
@@ -537,6 +598,7 @@ impl CadCraftApp {
                 project: project.clone(),
                 modified,
                 checked: Instant::now(),
+                sig: None,
             },
         );
         Ok((msg, project))
@@ -577,9 +639,33 @@ impl CadCraftApp {
                 project: project.clone(),
                 modified,
                 checked: Instant::now(),
+                sig: None,
             },
         );
         Ok(project)
+    }
+
+    /// Files open in other tabs stand for themselves in this document's
+    /// components (Inventor keeps one copy of a document in a session): an
+    /// assembly shows a part file as edited in its tab, saved or not. Called
+    /// when an assembly or drawing comes forward.
+    pub(super) fn share_open_tabs(&self) {
+        for t in self.tabs.iter().flatten() {
+            if !t.holds || t.file_path.trim().is_empty() || t.group == self.tab_group {
+                continue;
+            }
+            let Ok(key) = Path::new(t.file_path.trim()).canonicalize() else {
+                continue;
+            };
+            let stale = match self.asm.libs.cached_sig(&key) {
+                // Read from the file: the tab shows the same unless changed.
+                None | Some(None) => t.dirty,
+                Some(Some(s)) => s != super::files::signature_of(&t.project),
+            };
+            if stale {
+                self.asm.libs.take_open(&key, Rc::new(t.project.clone()));
+            }
+        }
     }
 
     /// Reloads linked part files saved since they were loaded (checked at

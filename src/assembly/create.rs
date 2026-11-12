@@ -6,10 +6,11 @@
 
 use crate::assembly::relation::{Constraint, ConstraintKind, GeomRef, OriginItem};
 use crate::document::iprops::BomStructure;
-use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
+use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, DocumentKind, Project};
 use crate::kernel::{Point3, Transform3, Vector3};
 use crate::part::PartDocument;
 use nalgebra::UnitQuaternion;
+use std::path::{Path, PathBuf};
 
 /// What the new component is (the Template list).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,6 +120,98 @@ pub fn create_in_place(
     })
 }
 
+/// What [`create_as_file`] made.
+#[derive(Clone, Debug)]
+pub struct CreatedFile {
+    /// The new document (its id in the new file) and its occurrence.
+    pub created: Created,
+    /// The new file.
+    pub path: PathBuf,
+    /// The assembly's link to it.
+    pub library: crate::document::LibraryId,
+}
+
+/// The file Create stores a new component in: `<folder>/<name>.<kind ext>`
+/// (`folder` `None` = the assembly's folder). Refused when it exists
+/// (Inventor asks for another name).
+pub fn new_file_path(
+    owner_path: &Path,
+    folder: Option<&Path>,
+    name: &str,
+    template: Template,
+) -> Result<PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("enter a name for the new component".into());
+    }
+    let dir = match folder {
+        Some(f) => f.to_path_buf(),
+        None => owner_path
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .ok_or("the assembly has no folder")?,
+    };
+    if !dir.is_dir() {
+        return Err(format!("no folder {}", dir.display()));
+    }
+    let kind = match template {
+        Template::Assembly => DocumentKind::Assembly,
+        Template::Part | Template::SheetMetal => DocumentKind::Part,
+    };
+    let path = crate::document::storage::file_name_for(&dir, name, kind);
+    if path.exists() {
+        return Err(format!(
+            "{} already exists: enter another name",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+/// Create In-Place Component as Inventor makes it: the new part (or
+/// subassembly) is a file of its own at `path` (from [`new_file_path`]),
+/// linked by assembly `asm` of `project` saved at `owner_path`, and placed
+/// as [`create_in_place`] places it. The new file is written; on an error
+/// `project` is unchanged (rule 5).
+pub fn create_as_file(
+    project: &mut Project,
+    asm: DocumentId,
+    owner_path: &Path,
+    path: &Path,
+    o: &CreateOptions,
+) -> Result<CreatedFile, String> {
+    if !owner_path.is_file() {
+        return Err(
+            "save the assembly first: the new file is linked by a path relative to it".into(),
+        );
+    }
+    if path.exists() {
+        return Err(format!(
+            "{} already exists: enter another name",
+            path.display()
+        ));
+    }
+    let mut trial = project.clone();
+    let c = create_in_place(&mut trial, asm, o)?;
+    // The document is named after its file.
+    if let (Some(stem), Some(d)) = (
+        path.file_stem().and_then(|s| s.to_str()),
+        trial.document_mut(c.document),
+    ) {
+        d.name = stem.to_owned();
+    }
+    let library =
+        crate::document::storage::extract(&mut trial, owner_path, c.document, path, false)
+            .map_err(|e| e.to_string())?;
+    *project = trial;
+    Ok(CreatedFile {
+        created: c,
+        path: path.to_path_buf(),
+        library,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,6 +305,89 @@ mod tests {
         };
         assert!(create_in_place(&mut p, aid, &o).is_err());
         assert_eq!(serde_json::to_string(&p).unwrap(), before);
+    }
+
+    /// Create stores the new part as a file next to the saved assembly (the
+    /// assembly links it); the part edited and saved in its own file is what
+    /// the assembly finds after a reload, and Undo of the assembly (its old
+    /// project) leaves the written file alone.
+    #[test]
+    fn create_writes_a_part_file_next_to_the_assembly() {
+        let dir = std::env::temp_dir().join(format!("cc_create_file_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut p, aid) = project();
+        let owner = dir.join("Asm.3dcadcraft");
+        p.save(&owner).unwrap();
+        let before = p.clone();
+        let o = CreateOptions {
+            name: "Bracket".into(),
+            template: Template::Part,
+            bom: BomStructure::Normal,
+            on: None,
+        };
+        let path = new_file_path(&owner, None, &o.name, o.template).unwrap();
+        assert_eq!(path, dir.join("Bracket.ccpart"));
+        let made = create_as_file(&mut p, aid, &owner, &path, &o).unwrap();
+        assert!(path.is_file());
+        // The part left the design file; the occurrence links the new file.
+        assert!(p.document(made.created.document).is_none());
+        let occ = asm(&p, aid).find(made.created.occurrence).unwrap().clone();
+        assert_eq!(occ.component.library, Some(made.library));
+        assert_eq!(occ.component.document, made.created.document);
+        let link = p.library(made.library).unwrap().clone();
+        let found = crate::document::library::locate(&owner, &link, None).unwrap();
+        assert_eq!(found.canonicalize().unwrap(), path.canonicalize().unwrap());
+        // A second component of that name is refused before anything is made.
+        assert!(new_file_path(&owner, None, "Bracket", Template::Part).is_err());
+        let again = p.clone();
+        assert!(create_as_file(&mut p, aid, &owner, &path, &o).is_err());
+        assert_eq!(
+            serde_json::to_string(&p).unwrap(),
+            serde_json::to_string(&again).unwrap()
+        );
+        // Edited in its own file.
+        let mut part_file = Project::load(&path).unwrap();
+        assert_eq!(part_file.documents().len(), 1);
+        assert_eq!(part_file.documents()[0].name, "Bracket");
+        let edited = PartDocument::with_box("Box1", [5.0, 6.0, 7.0]).unwrap();
+        part_file.document_mut(occ.component.document).unwrap().data = DocumentData::Part(edited);
+        part_file.save(&path).unwrap();
+        p.save(&owner).unwrap();
+        // Reopened: the assembly links the edited part.
+        let reopened = Project::load(&owner).unwrap();
+        let link = reopened.library(made.library).unwrap().clone();
+        let at = crate::document::library::locate(&owner, &link, None).unwrap();
+        let file = Project::load(&at).unwrap();
+        match file.document(occ.component.document).map(|d| &d.data) {
+            Some(DocumentData::Part(x)) => assert_eq!(x.features.len(), 1),
+            _ => panic!("the linked part is missing"),
+        }
+        // Undo = the project before: the file stays on disk.
+        p = before;
+        assert!(asm(&p, aid).find(made.created.occurrence).is_none());
+        assert!(path.is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_as_a_file_needs_a_saved_assembly() {
+        let (mut p, aid) = project();
+        let before = serde_json::to_string(&p).unwrap();
+        let dir = std::env::temp_dir().join(format!("cc_create_unsaved_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let o = CreateOptions {
+            name: "Part9".into(),
+            template: Template::Part,
+            bom: BomStructure::Normal,
+            on: None,
+        };
+        let owner = dir.join("NotThere.3dcadcraft");
+        let path = dir.join("Part9.ccpart");
+        assert!(create_as_file(&mut p, aid, &owner, &path, &o).is_err());
+        assert_eq!(serde_json::to_string(&p).unwrap(), before);
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

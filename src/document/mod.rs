@@ -591,6 +591,11 @@ pub struct Project {
     /// snapshots carry them with the rest.
     #[serde(skip)]
     pub linked_edits: std::collections::BTreeMap<LibraryId, std::sync::Arc<Project>>,
+    /// When each linked file of `linked_edits` was last written when its
+    /// edit began: Save does not write an edit over a file saved since
+    /// (from its own tab), which would lose that save.
+    #[serde(skip)]
+    pub linked_bases: std::collections::BTreeMap<LibraryId, std::time::SystemTime>,
 }
 
 impl Project {
@@ -605,6 +610,7 @@ impl Project {
             thumbnail: None,
             preview: None,
             linked_edits: Default::default(),
+            linked_bases: Default::default(),
         }
     }
 

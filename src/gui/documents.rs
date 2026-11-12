@@ -239,6 +239,14 @@ impl CadCraftApp {
             return;
         };
         let target = target.to_path_buf();
+        if self.open_in_other_tab(&target) {
+            self.file_status = Some(Err(format!(
+                "{}: {} is open in another tab: close it there first",
+                c.name(),
+                target.display()
+            )));
+            return;
+        }
         // The dialog asked before an existing file got here: replace it
         // (storage refuses another kind and a file this one links).
         let replace = target.exists();
@@ -445,8 +453,7 @@ impl CadCraftApp {
             Ok(id)
         });
         if let Some(id) = added {
-            self.asm.came_from = None;
-            self.activate_document(id);
+            self.open_document_in_tab(id);
             let name = self.doc_name(id);
             self.file_status = Some(Ok(format!(
                 "{}: {name} in this file (Manage › Documents lists them)",
@@ -694,8 +701,7 @@ impl CadCraftApp {
             self.docs.window = false;
         }
         if let Some(id) = activate {
-            self.asm.came_from = None;
-            self.activate_document(id);
+            self.open_document_in_tab(id);
         }
         if let Some((c, id)) = ask {
             self.docs_apply_to(c, id);

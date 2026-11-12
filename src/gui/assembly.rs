@@ -537,8 +537,8 @@ impl CadCraftApp {
         self.fit_view();
     }
 
-    /// Opens the component of occurrence `id`: its part becomes the active
-    /// document; the browser's *Return* comes back.
+    /// Opens the component of occurrence `id` in a tab of its own (the
+    /// assembly stays open in its tab).
     pub(super) fn open_component(&mut self, id: u32) {
         let Some(r) = self
             .assembly()
@@ -550,8 +550,8 @@ impl CadCraftApp {
         self.open_doc(r);
     }
 
-    /// Opens component document `r` (a part or a subassembly; Return comes
-    /// back to the assembly open now).
+    /// Opens component document `r` (a part or a subassembly) in a tab of
+    /// its own; the assembly's tab stays.
     pub(super) fn open_doc(&mut self, r: DocRef) {
         // A linked part file opens in a tab of its own (Inventor: Open).
         if let Some(lib) = r.library {
@@ -561,8 +561,9 @@ impl CadCraftApp {
             }
             return;
         }
-        self.asm.came_from = Some(self.part_id);
-        self.activate_document(r.document);
+        // A document of this file: in a tab of its own too, the assembly
+        // stays open in its tab (edits there show here, the project is shared).
+        self.open_document_in_tab(r.document);
     }
 
     /// Opens the part of occurrence `id` with its feature `k` selected
@@ -1491,6 +1492,7 @@ impl CadCraftApp {
             self.scene_dirty = true;
             // A linked part's copies may have changed (`linked_edits`).
             self.asm.libs.forget_linked();
+            self.note_linked_bases();
             self.asm_solve_once(None);
         }
         let still = context::out_of_date(&self.project, &linked, self.part_id);

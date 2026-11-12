@@ -36,8 +36,13 @@ fn folder_of(path: &Path) -> ProjectResult<PathBuf> {
 /// `<folder>/<name>.<kind ext>`, characters Windows refuses in names
 /// replaced by `_`.
 pub fn separate_file_name(folder: &Path, doc: &Document) -> PathBuf {
-    let clean: String = doc
-        .name
+    file_name_for(folder, &doc.name, doc.data.kind())
+}
+
+/// `<folder>/<name>.<kind ext>` for a document called `name` of `kind`
+/// ([`separate_file_name`]).
+pub fn file_name_for(folder: &Path, name: &str, kind: super::DocumentKind) -> PathBuf {
+    let clean: String = name
         .trim()
         .chars()
         .map(|c| match c {
@@ -47,10 +52,7 @@ pub fn separate_file_name(folder: &Path, doc: &Document) -> PathBuf {
         })
         .collect();
     let stem = if clean.is_empty() { "Document" } else { &clean };
-    folder.join(format!(
-        "{stem}.{}",
-        FileType::for_kind(doc.data.kind()).ext()
-    ))
+    folder.join(format!("{stem}.{}", FileType::for_kind(kind).ext()))
 }
 
 /// The library link of `project` (saved in `from_dir`) to the file

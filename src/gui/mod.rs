@@ -602,6 +602,11 @@ struct CadCraftApp {
     tabs: Vec<Option<doc_tabs::DocTab>>,
     /// Index of the active document in `tabs`.
     active_tab: usize,
+    /// The open file the active tab shows (`DocTab::group`): tabs of one
+    /// file share its project, Undo and Save.
+    tab_group: u64,
+    /// The group the next opened file gets.
+    next_tab_group: u64,
     /// Tabs whose changes the quit was told to drop (Don't Save).
     quit_dropped: Vec<usize>,
     /// Ctrl+Tab steps taken from the raw input this frame.
@@ -1077,6 +1082,8 @@ impl CadCraftApp {
             history: History::default(),
             tabs: vec![None],
             active_tab: 0,
+            tab_group: 0,
+            next_tab_group: 1,
             quit_dropped: Vec::new(),
             tab_step: 0,
             editing: None,
@@ -1337,6 +1344,8 @@ impl CadCraftApp {
     fn after_restore(&mut self) {
         // Undo / Redo may bring other edits of linked files.
         self.asm.libs.forget_linked();
+        // Tabs of this file showing a document that is gone close.
+        self.prune_group_tabs();
         // Undo of New Assembly / Place from File: the active document may
         // be gone.
         if self.project.document(self.part_id).is_none()
@@ -4189,6 +4198,15 @@ impl CadCraftApp {
     /// everything.
     pub(super) fn save_as_to(&mut self, path: &std::path::Path) {
         use crate::document::FileType;
+        if self.open_in_other_tab(path) {
+            self.file_status = Some(Err(format!(
+                "Save As: {} is open in another tab: close it there first",
+                path.display()
+            )));
+            self.after_save = None;
+            self.close_ok = false;
+            return;
+        }
         let single = FileType::from_path(path).is_some_and(|t| t.kind().is_some());
         if !single || self.project.documents().len() <= 1 {
             if let Some(t) = FileType::from_path(path).filter(|_| single)
