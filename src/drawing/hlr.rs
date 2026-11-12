@@ -477,6 +477,7 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
     let body = &part.body;
     let mut out = ViewModel::default();
     let mut smooth: Vec<SmoothEdge> = Vec::new();
+    let mut face_of_name: HashMap<String, u32> = HashMap::new();
     let mut seen: std::collections::HashSet<EdgeId> = Default::default();
     // How many identical holes share each hole's plane (the notes' "4x").
     let counts: HashMap<String, usize> = part
@@ -512,11 +513,26 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
                 }),
                 _ => None,
             };
-            let k = out.faces.len() as u32;
-            out.faces.push(SilFace {
-                name: face.name.clone(),
-                cone,
-            });
+            // One entry per name: the pieces the kernel splits a cylinder
+            // into share it, and their silhouettes join.
+            let named = face
+                .name
+                .as_ref()
+                .and_then(|n| face_of_name.get(n).copied());
+            let k = match named {
+                Some(k) => k,
+                None => {
+                    let k = out.faces.len() as u32;
+                    out.faces.push(SilFace {
+                        name: face.name.clone(),
+                        cone,
+                    });
+                    if let Some(n) = &face.name {
+                        face_of_name.insert(n.clone(), k);
+                    }
+                    k
+                }
+            };
             for i in range.clone() {
                 if let Some(f) = tri_face.get_mut(i) {
                     *f = k;
@@ -2726,37 +2742,52 @@ fn silhouette_chains(model: &ViewModel, frame: &ViewFrame) -> Vec<Sil> {
         }
     };
     let mut out = Vec::new();
-    // Silhouette edges by face name (the pieces of one cylinder the kernel
-    // splits share it), in a fixed order.
-    let mut groups: Vec<(&str, Vec<&SmoothEdge>)> = Vec::new();
-    let mut group_of: HashMap<&str, usize> = HashMap::new();
     // A real turn away from the viewer: a plane seen edge-on (a cap of a
     // revolved part) has normals off square to the view by rounding only.
     let turns = |e: &&SmoothEdge| {
         let (d1, d2) = (e.n1.dot(toward), e.n2.dot(toward));
         d1 * d2 < 0.0 && d1.abs() > 1e-9 && d2.abs() > 1e-9
     };
-    for e in smooth.iter().filter(turns) {
-        let name = model
+    let name_of = |e: &SmoothEdge| {
+        model
             .faces
             .get(e.face as usize)
-            .and_then(|f| f.name.as_deref());
-        let Some(name) = name else {
+            .and_then(|f| f.name.as_deref())
+    };
+    let mut named: Vec<&SmoothEdge> = Vec::new();
+    for e in smooth.iter().filter(turns) {
+        if name_of(e).is_some() {
+            named.push(e);
+        } else {
             out.push(Sil {
                 pts: vec![e.a, e.b],
                 edge: None,
             });
-            continue;
-        };
-        let g = *group_of.entry(name).or_insert_with(|| {
-            groups.push((name, Vec::new()));
-            groups.len() - 1
-        });
-        groups[g].1.push(e);
+        }
     }
+    // By face (one entry per name in a part, `part_model`), in a fixed
+    // order; the faces on every core (a large assembly has thousands).
+    named.sort_by_key(|e| e.face);
+    let groups: Vec<&[&SmoothEdge]> = named.chunk_by(|a, b| a.face == b.face).collect();
+    for sils in par_map(&groups, |segs| face_silhouettes(model, frame, segs)) {
+        out.extend(sils);
+    }
+    out
+}
+
+/// The silhouette chains of one face (`segs`: its silhouette edges, at
+/// least one), named.
+fn face_silhouettes(model: &ViewModel, frame: &ViewFrame, segs: &[&SmoothEdge]) -> Vec<Sil> {
+    let mut out = Vec::new();
+    let Some(face) = segs.first().and_then(|e| model.faces.get(e.face as usize)) else {
+        return out;
+    };
+    let Some(name) = face.name.as_deref() else {
+        return out;
+    };
     let p2 = |p: &Point3| frame.project(p);
     let key = |p: &Point3| (p.x.to_bits(), p.y.to_bits(), p.z.to_bits());
-    for (name, segs) in groups {
+    {
         // Chains: walk from the ends (points used once or 3+ times), then
         // the closed loops.
         let mut at: HashMap<(u64, u64, u64), Vec<usize>> = HashMap::new();
@@ -2803,9 +2834,8 @@ fn silhouette_chains(model: &ViewModel, frame: &ViewFrame) -> Vec<Sil> {
             chains.push(chain.into());
         }
         // Each chain's points in order, its outside's direction and side.
-        let face = segs[0].face;
-        let cone = model.faces.get(face as usize).and_then(|f| f.cone);
-        let mut named: Vec<(String, f64, Vec<Point3>, [f64; 2])> = Vec::new();
+        let cone = face.cone;
+        let mut named: Vec<(&str, f64, Vec<Point3>, [f64; 2])> = Vec::new();
         for c in chains {
             let mut pts: Vec<Point3> = Vec::with_capacity(c.len() + 1);
             let first = segs[c[0]];
@@ -2851,15 +2881,23 @@ fn silhouette_chains(model: &ViewModel, frame: &ViewFrame) -> Vec<Sil> {
             } else {
                 q[0] * dir[0] + q[1] * dir[1]
             };
-            named.push((side.to_owned(), reach, pts, dir));
+            named.push((side, reach, pts, dir));
         }
         // Outermost first within a side.
-        named.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
-        let mut count: HashMap<String, usize> = HashMap::new();
+        named.sort_by(|a, b| a.0.cmp(b.0).then(b.1.total_cmp(&a.1)));
+        let mut count: Vec<(&str, usize)> = Vec::new();
         for (side, _, pts, _) in named {
-            let k = count.entry(side.clone()).or_default();
-            *k += 1;
-            let edge_name = if *k == 1 {
+            let k = match count.iter_mut().find(|c| c.0 == side) {
+                Some(c) => {
+                    c.1 += 1;
+                    c.1
+                }
+                None => {
+                    count.push((side, 1));
+                    1
+                }
+            };
+            let edge_name = if k == 1 {
                 format!("{name}:Sil{side}")
             } else {
                 format!("{name}:Sil{side}.{k}")
