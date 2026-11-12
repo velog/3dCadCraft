@@ -660,9 +660,7 @@ pub fn simplify_bodies(
             .into_iter()
             .map(|s| {
                 let name = s.name.clone().unwrap_or_default();
-                if spec.envelope == Envelope::Selected
-                    && !spec.envelope_bodies.iter().any(|b| *b == name)
-                {
+                if spec.envelope == Envelope::Selected && !spec.envelope_bodies.contains(&name) {
                     return Ok(s);
                 }
                 let mut e = envelope(&mesh_points(&s)?, shape, &format!("{id}:{name}"))?;

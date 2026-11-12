@@ -14,11 +14,11 @@ use crate::part::{BodyOp, Feature};
 
 /// The feature rows: the combo's label and the label of its size field.
 const RULES: [(&str, &str); 5] = [
-    ("Holes", "Holes up to"),
-    ("Fillets", "Fillets up to"),
-    ("Chamfers", "Chamfers up to"),
-    ("Pockets", "Pockets up to"),
-    ("Embosses", "Embosses up to"),
+    ("Holes", "Hole size"),
+    ("Fillets", "Fillet size"),
+    ("Chamfers", "Chamfer size"),
+    ("Pockets", "Pocket size"),
+    ("Embosses", "Emboss size"),
 ];
 
 fn mode_of(i: usize) -> RemoveMode {
@@ -164,8 +164,7 @@ impl CadCraftApp {
     fn simplify_spec(&self, d: &PartDialog) -> SimplifySpec {
         let (te, tx, tf, ta) = tabs(d);
         let asm = d.kind == Planned::Asm(AsmPlanned::Simplify);
-        let mut s = SimplifySpec::default();
-        s.envelope = if asm {
+        let envelope = if asm {
             match d.index(te, "Replace with Envelopes") {
                 1 => Envelope::All,
                 2 => Envelope::EachTop,
@@ -180,7 +179,11 @@ impl CadCraftApp {
                 _ => Envelope::None,
             }
         };
-        s.envelope_type = type_of(d.index(te, "Type"));
+        let mut s = SimplifySpec {
+            envelope,
+            envelope_type: type_of(d.index(te, "Type")),
+            ..SimplifySpec::default()
+        };
         let bodies = |key: &str| -> Vec<String> {
             let mut out: Vec<String> = Vec::new();
             for (item, at) in d.items_of(key) {
@@ -203,7 +206,7 @@ impl CadCraftApp {
         let by_size = if asm {
             d.index(tx, "Exclude parts") == 1
         } else {
-            d.index(tx, "Exclude") == 1
+            d.index(tx, "Exclude by") == 1
         };
         if by_size {
             s.exclude_size = d.num(tx, "Max. Diagonal");
@@ -427,7 +430,7 @@ fn write_spec(d: &mut PartDialog, spec: &SimplifySpec) {
         );
     }
     d.set_index(te, "Type", type_index(spec.envelope_type));
-    let size_label = if asm { "Exclude parts" } else { "Exclude" };
+    let size_label = if asm { "Exclude parts" } else { "Exclude by" };
     d.set_index(tx, size_label, usize::from(spec.exclude_size.is_some()));
     if let Some(x) = spec.exclude_size {
         d.set_num(tx, "Max. Diagonal", x);

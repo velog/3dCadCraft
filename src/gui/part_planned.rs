@@ -1481,7 +1481,7 @@ impl PartPlanned {
                 "Simplify",
                 &[
                     Combo("Preset", SIMPLIFY_PRESETS, 0),
-                    Head("Replace with Envelopes"),
+                    Head("Envelopes"),
                     Combo(
                         "Envelopes",
                         &["None", "Whole Part", "Each Body", "Selected Bodies"],
@@ -1494,8 +1494,8 @@ impl PartPlanned {
                         "Select the bodies the envelopes replace",
                         BODIES,
                     ),
-                    Head("Exclude Bodies"),
-                    Radio("Exclude", &["by selection", "by size"], 0),
+                    Head("Exclusion"),
+                    Radio("Exclude by", &["selection", "size"], 0),
                     Sel(
                         "excluded",
                         "Exclude",
@@ -1503,17 +1503,17 @@ impl PartPlanned {
                         BODIES,
                     ),
                     Num("Max. Diagonal", 10.0, " mm"),
-                    Head("Remove Features"),
+                    Head("Features"),
                     Combo("Holes", REMOVE_MODES, 0),
-                    Num("Holes up to", 10.0, " mm"),
+                    Num("Hole size", 10.0, " mm"),
                     Combo("Fillets", REMOVE_MODES, 0),
-                    Num("Fillets up to", 5.0, " mm"),
+                    Num("Fillet size", 5.0, " mm"),
                     Combo("Chamfers", REMOVE_MODES, 0),
-                    Num("Chamfers up to", 5.0, " mm"),
+                    Num("Chamfer size", 5.0, " mm"),
                     Combo("Pockets", REMOVE_MODES, 0),
-                    Num("Pockets up to", 20.0, " mm"),
+                    Num("Pocket size", 20.0, " mm"),
                     Combo("Embosses", REMOVE_MODES, 0),
-                    Num("Embosses up to", 20.0, " mm"),
+                    Num("Emboss size", 20.0, " mm"),
                     Combo("Tunnels", REMOVE_MODES, 0),
                     Sel(
                         "preserve",
@@ -2280,7 +2280,7 @@ impl PartDialog {
             (PartPlanned::Rest, "to") => self.index(0, "Platform") != 2,
             (PartPlanned::Rest, "land") => self.index(1, "Landing") != 1,
             (PartPlanned::Simplify, "envelope") => self.index(0, "Envelopes") != 3,
-            (PartPlanned::Simplify, "excluded") => self.index(0, "Exclude") != 0,
+            (PartPlanned::Simplify, "excluded") => self.index(0, "Exclude by") != 0,
             (PartPlanned::RuleFillet, _) => RULE_KEYS.iter().enumerate().any(|(t, keys)| {
                 (key == keys.1 && self.index(t, "Rule") != 3)
                     || (key == keys.2 && self.index(t, "Rule") != 4)
