@@ -1288,7 +1288,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   the frame draws "Computing view..." until then. A hidden piece lying on a visible line (tolerance
   0.025 mm + size·1e-5: two features sample one circle differently) is not drawn — the front view of a box
   showed every back edge dashed over the front ones. A first-angle and a third-angle top view are the same
-  picture; only the placement differs (`ViewFrame::projected`).
+  picture; only the placement differs (`ViewFrame::projected`). Silhouettes are view edges too, after the model's
+  (`hlr::silhouette_chains`: `<face>:Sil<side>[.<k>]`, named from the face and the view only, never from mesh points;
+  a cylinder's / cone's put on its exact surface — the mesh's silhouette lies up to r·(1 − cos(π/n)) inside, 0.03 mm on
+  a Ø50): a new `ViewModel` builder must fill `faces` and each `SmoothEdge::face`, or its silhouettes cannot be dimensioned.
 - **Parts lists and balloons** (`drawing::parts`, GUI `gui/drawing_bom.rs`, spec 4.4, format revision 25): nothing
   of the BOM is stored — `Tables::build` (once per frame per sheet) reads the rows through a callback and the
   item numbers through the drawing's parts lists (sort / renumber / Item overrides), so balloons follow them.

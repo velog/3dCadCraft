@@ -84,11 +84,7 @@ impl ModelJob {
         let models: Vec<Arc<ViewModel>> = self
             .parts
             .iter()
-            .map(|p| {
-                let mut m = hlr::part_model(p);
-                m.smooth = Some(m.meshes.iter().flat_map(hlr::smooth_edges).collect());
-                Arc::new(m)
-            })
+            .map(|p| Arc::new(hlr::part_model(p)))
             .collect();
         let instances: Vec<hlr::Instance> = self
             .occurrences

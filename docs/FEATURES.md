@@ -1027,6 +1027,8 @@ A section is a Boolean intersection with a half-space (2.13) plus hatching by ma
 
 🟡 2026-10-26: Dimension (length, diameter / radius, point to point; horizontal / vertical / aligned),
 Center Mark, Centerline, Text; attached to edges by name, orphans marked. Waiting for a visual check.
+🟡 2026-11-12: silhouettes of curved faces (a shaft or revolved part seen from the side) are named edges:
+Linear and Linear Diametric (Ø) dimensions between them ([spec/4.14](spec/4.14-drawing-dimensions.md)).
 🟡 2026-10-28: annotations are drawn on their layers (Object Defaults as in Inventor's ISO template, own layer
 per annotation; colour / On / Plot on the screen and in the PDF; spec [4.6](spec/4.6-drawing-styles.md)).
 

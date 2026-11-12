@@ -162,6 +162,57 @@ pub struct ViewModel {
     /// The meshes' smooth edges (silhouette candidates), computed once;
     /// `None`: computed by each view.
     pub smooth: Option<Vec<SmoothEdge>>,
+    /// The curved faces the smooth edges lie on ([`SmoothEdge::face`]).
+    pub faces: Vec<SilFace>,
+}
+
+/// A curved face silhouettes can lie on: its persistent name (silhouettes
+/// are named after it) and, for a cylinder or cone, its exact surface
+/// (silhouette lines are put on it, not on the display mesh).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SilFace {
+    /// Persistent name of the face.
+    pub name: Option<String>,
+    /// The cylinder or cone it lies on.
+    pub cone: Option<Revolved>,
+}
+
+/// A cylinder or a cone: radius `radius + h * tan` at height `h` along
+/// `axis` from `origin`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Revolved {
+    /// A point on the axis (`h = 0`).
+    pub origin: Point3,
+    /// Unit axis.
+    pub axis: Vector3,
+    /// Radius at `h = 0`.
+    pub radius: f64,
+    /// Tangent of the signed half-angle (0: a cylinder).
+    pub tan: f64,
+}
+
+impl Revolved {
+    /// Moved by `t` (a rigid motion).
+    fn moved(&self, t: &Transform3) -> Self {
+        Self {
+            origin: t * self.origin,
+            axis: t * self.axis,
+            ..*self
+        }
+    }
+}
+
+/// No face ([`SmoothEdge::face`]).
+pub const NO_FACE: u32 = u32::MAX;
+
+/// The face of a silhouette's name `<face>:Sil<side>[.<k>]` (`side` one of
+/// `R`, `U`, `L`, `D` or none); `None` for any other name.
+pub fn silhouette_face(name: &str) -> Option<&str> {
+    let i = name.rfind(":Sil")?;
+    let rest = &name[i + 4..];
+    let (side, k) = rest.split_once('.').unwrap_or((rest, "1"));
+    let side_ok = matches!(side, "" | "R" | "U" | "L" | "D");
+    (side_ok && !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit())).then(|| &name[..i])
 }
 
 /// One model edge.
@@ -260,6 +311,11 @@ pub fn assembly_model(instances: &[Instance], simplify: Simplify) -> ViewModel {
             moved.faces.triangles = mesh.faces.triangles.clone();
             out.meshes.push(moved);
         }
+        let base = out.faces.len() as u32;
+        out.faces.extend(m.faces.iter().map(|f| SilFace {
+            name: f.name.as_ref().map(|n| instance_edge(inst, n)),
+            cone: f.cone.map(|c| c.moved(t)),
+        }));
         let smooth = out.smooth.get_or_insert_with(Vec::new);
         let local;
         let own = match &m.smooth {
@@ -274,6 +330,11 @@ pub fn assembly_model(instances: &[Instance], simplify: Simplify) -> ViewModel {
             b: t * e.b,
             n1: t * e.n1,
             n2: t * e.n2,
+            face: if e.face == NO_FACE {
+                NO_FACE
+            } else {
+                e.face + base
+            },
         }));
         for e in &m.edges {
             out.edges.push(ModelEdge {
@@ -307,6 +368,14 @@ pub fn transformed(m: &ViewModel, t: &Transform3) -> ViewModel {
             .map(|mut e| {
                 e.name = e.name.map(|n| n.trim_start_matches("o0/").to_owned());
                 e
+            })
+            .collect(),
+        faces: moved
+            .faces
+            .into_iter()
+            .map(|mut f| {
+                f.name = f.name.map(|n| n.trim_start_matches("o0/").to_owned());
+                f
             })
             .collect(),
         ..moved
@@ -407,6 +476,7 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
     let opts = TessellationOptions::default();
     let body = &part.body;
     let mut out = ViewModel::default();
+    let mut smooth: Vec<SmoothEdge> = Vec::new();
     let mut seen: std::collections::HashSet<EdgeId> = Default::default();
     // How many identical holes share each hole's plane (the notes' "4x").
     let counts: HashMap<String, usize> = part
@@ -421,6 +491,39 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
         let Ok(mesh) = body.tessellate_solid(sid, &opts) else {
             continue;
         };
+        // Each triangle's face (curved faces only matter: silhouettes).
+        let mut tri_face = vec![NO_FACE; mesh.faces.triangles.len()];
+        for (fid, range) in &mesh.face_triangles {
+            let Some(face) = body.face(*fid) else {
+                continue;
+            };
+            let cone = match body.surface(face.facet_of.unwrap_or(face.surface)) {
+                Some(crate::kernel::Surface::Cylinder(c)) => Some(Revolved {
+                    origin: c.origin,
+                    axis: c.axis.into_inner(),
+                    radius: c.radius,
+                    tan: 0.0,
+                }),
+                Some(crate::kernel::Surface::Cone(c)) => Some(Revolved {
+                    origin: c.origin,
+                    axis: c.axis.into_inner(),
+                    radius: c.radius,
+                    tan: c.half_angle.tan(),
+                }),
+                _ => None,
+            };
+            let k = out.faces.len() as u32;
+            out.faces.push(SilFace {
+                name: face.name.clone(),
+                cone,
+            });
+            for i in range.clone() {
+                if let Some(f) = tri_face.get_mut(i) {
+                    *f = k;
+                }
+            }
+        }
+        smooth.extend(smooth_edges_in(&mesh, &tri_face));
         out.meshes.push(mesh);
         // The faces of each edge, to leave out seams (as the display does).
         let mut uses: HashMap<
@@ -486,7 +589,26 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
             });
         }
     }
-    out.smooth = Some(out.meshes.iter().flat_map(smooth_edges).collect());
+    // Only the faces some smooth edge lies on (an assembly copies them per
+    // occurrence).
+    let mut used = vec![NO_FACE; out.faces.len()];
+    for e in &smooth {
+        if let Some(u) = used.get_mut(e.face as usize) {
+            *u = 0;
+        }
+    }
+    let mut kept = Vec::new();
+    for (k, f) in std::mem::take(&mut out.faces).into_iter().enumerate() {
+        if used[k] != NO_FACE {
+            used[k] = kept.len() as u32;
+            kept.push(f);
+        }
+    }
+    for e in &mut smooth {
+        e.face = used.get(e.face as usize).copied().unwrap_or(NO_FACE);
+    }
+    out.faces = kept;
+    out.smooth = Some(smooth);
     out
 }
 
@@ -970,9 +1092,17 @@ pub fn view_lines_simplified(
     }
     lap("edges");
     let silhouettes_from = curves.len();
-    for s in silhouettes(model, &t) {
-        for part in clip_curve(&s) {
-            curves.push((part, None));
+    // Named silhouettes get view edges after the model's (dimensions pick
+    // them by name).
+    let sils = silhouette_chains(model, frame);
+    let mut sil_edges: Vec<ViewEdge> = Vec::new();
+    for s in &sils {
+        let src = s.edge.as_ref().map(|e| {
+            sil_edges.push(e.clone());
+            (model.edges.len() + sil_edges.len() - 1) as u32
+        });
+        for part in clip_curve(&s.pts) {
+            curves.push((part, src));
         }
     }
     let silhouette_curves = silhouettes_from..curves.len();
@@ -1164,6 +1294,12 @@ pub fn view_lines_simplified(
             }
         })
         .collect();
+    let base = out.edges.len();
+    out.edges
+        .extend(sil_edges.into_iter().enumerate().map(|(k, mut e)| {
+            e.visible = visible_edges.contains(&((base + k) as u32));
+            e
+        }));
     out.section = closed.into_iter().cloned().collect();
     // Break outs: the cut faces hatched, the profiles drawn.
     for (_, caps, _, _) in out_caps {
@@ -2071,6 +2207,7 @@ fn unfold_model(model: &ViewModel, parent: &ViewFrame, poly: &[[f64; 2]]) -> (Vi
                     b: turn.point3(f, b),
                     n1: turn.vector3(f, &s.n1),
                     n2: turn.vector3(f, &s.n2),
+                    face: s.face,
                 });
             }
         }
@@ -2081,6 +2218,15 @@ fn unfold_model(model: &ViewModel, parent: &ViewFrame, poly: &[[f64; 2]]) -> (Vi
             meshes,
             edges,
             smooth: Some(sm),
+            // Turned pieces: names only (the surfaces are not turned).
+            faces: model
+                .faces
+                .iter()
+                .map(|f| SilFace {
+                    name: f.name.clone(),
+                    cone: None,
+                })
+                .collect(),
         },
         Point3::from(f.right * start[0] + f.up * start[1]),
     )
@@ -2551,9 +2697,22 @@ fn seg_dist(q: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     (q[0] - a[0] - t * dx).hypot(q[1] - a[1] - t * dy)
 }
 
+/// A silhouette of one view: a chain of mesh edges and, when its face is
+/// named, its view edge (`<face>:Sil<side>[.<k>]`).
+struct Sil {
+    pts: Vec<Point3>,
+    edge: Option<ViewEdge>,
+}
+
 /// Mesh edges between two smoothly joined triangles where one faces the
-/// viewer and the other does not: the outline of curved faces.
-fn silhouettes(model: &ViewModel, toward: &Vector3) -> Vec<Vec<Point3>> {
+/// viewer and the other does not: the outline of curved faces. The edges of
+/// one named face are joined into chains, each named after the face and
+/// the side its outside faces in the view (right, up, left, down: `R`, `U`,
+/// `L`, `D`; none for a chain turning all round), numbered from the
+/// outermost when one side has several (`.2`, `.3`). A straight chain on a
+/// cylinder or cone is put on the surface's exact silhouette line.
+fn silhouette_chains(model: &ViewModel, frame: &ViewFrame) -> Vec<Sil> {
+    let toward = &frame.toward;
     let computed;
     let smooth = match &model.smooth {
         Some(v) => v,
@@ -2566,11 +2725,228 @@ fn silhouettes(model: &ViewModel, toward: &Vector3) -> Vec<Vec<Point3>> {
             &computed
         }
     };
-    smooth
-        .iter()
-        .filter(|e| e.n1.dot(toward) * e.n2.dot(toward) < 0.0)
-        .map(|e| vec![e.a, e.b])
-        .collect()
+    let mut out = Vec::new();
+    // Silhouette edges by face name (the pieces of one cylinder the kernel
+    // splits share it), in a fixed order.
+    let mut groups: Vec<(&str, Vec<&SmoothEdge>)> = Vec::new();
+    let mut group_of: HashMap<&str, usize> = HashMap::new();
+    // A real turn away from the viewer: a plane seen edge-on (a cap of a
+    // revolved part) has normals off square to the view by rounding only.
+    let turns = |e: &&SmoothEdge| {
+        let (d1, d2) = (e.n1.dot(toward), e.n2.dot(toward));
+        d1 * d2 < 0.0 && d1.abs() > 1e-9 && d2.abs() > 1e-9
+    };
+    for e in smooth.iter().filter(turns) {
+        let name = model
+            .faces
+            .get(e.face as usize)
+            .and_then(|f| f.name.as_deref());
+        let Some(name) = name else {
+            out.push(Sil {
+                pts: vec![e.a, e.b],
+                edge: None,
+            });
+            continue;
+        };
+        let g = *group_of.entry(name).or_insert_with(|| {
+            groups.push((name, Vec::new()));
+            groups.len() - 1
+        });
+        groups[g].1.push(e);
+    }
+    let p2 = |p: &Point3| frame.project(p);
+    let key = |p: &Point3| (p.x.to_bits(), p.y.to_bits(), p.z.to_bits());
+    for (name, segs) in groups {
+        // Chains: walk from the ends (points used once or 3+ times), then
+        // the closed loops.
+        let mut at: HashMap<(u64, u64, u64), Vec<usize>> = HashMap::new();
+        for (i, e) in segs.iter().enumerate() {
+            at.entry(key(&e.a)).or_default().push(i);
+            at.entry(key(&e.b)).or_default().push(i);
+        }
+        let mut used = vec![false; segs.len()];
+        let mut chains: Vec<Vec<usize>> = Vec::new();
+        let starts: Vec<usize> = (0..segs.len())
+            .filter(|&i| at[&key(&segs[i].a)].len() != 2 || at[&key(&segs[i].b)].len() != 2)
+            .chain(0..segs.len())
+            .collect();
+        for s0 in starts {
+            if used[s0] {
+                continue;
+            }
+            // Grow both ways from s0.
+            used[s0] = true;
+            let mut chain = std::collections::VecDeque::from([s0]);
+            for forward in [true, false] {
+                let mut end = if forward { segs[s0].b } else { segs[s0].a };
+                loop {
+                    let next = at
+                        .get(&key(&end))
+                        .filter(|l| l.len() == 2)
+                        .and_then(|l| l.iter().copied().find(|&j| !used[j]));
+                    let Some(j) = next else {
+                        break;
+                    };
+                    used[j] = true;
+                    end = if key(&segs[j].a) == key(&end) {
+                        segs[j].b
+                    } else {
+                        segs[j].a
+                    };
+                    if forward {
+                        chain.push_back(j);
+                    } else {
+                        chain.push_front(j);
+                    }
+                }
+            }
+            chains.push(chain.into());
+        }
+        // Each chain's points in order, its outside's direction and side.
+        let face = segs[0].face;
+        let cone = model.faces.get(face as usize).and_then(|f| f.cone);
+        let mut named: Vec<(String, f64, Vec<Point3>, [f64; 2])> = Vec::new();
+        for c in chains {
+            let mut pts: Vec<Point3> = Vec::with_capacity(c.len() + 1);
+            let first = segs[c[0]];
+            let second = c.get(1).map(|&j| segs[j]);
+            // Start at the end of the first segment the second does not share.
+            let start = match second {
+                Some(n) if key(&first.a) == key(&n.a) || key(&first.a) == key(&n.b) => first.b,
+                _ => first.a,
+            };
+            pts.push(start);
+            let mut out_dir = [0.0; 2];
+            for &j in &c {
+                let e = segs[j];
+                let last = pts[pts.len() - 1];
+                pts.push(if key(&e.a) == key(&last) { e.b } else { e.a });
+                let m = e.n1 + e.n2;
+                let w = (e.b - e.a).norm();
+                out_dir[0] += m.dot(&frame.right) * w;
+                out_dir[1] += m.dot(&frame.up) * w;
+            }
+            let total: f64 = c.iter().map(|&j| (segs[j].b - segs[j].a).norm()).sum();
+            let len = out_dir[0].hypot(out_dir[1]);
+            // An outside turning all round (a sphere's outline) has no side.
+            let (side, dir) = if len < 0.5 * total {
+                ("", [0.0, 0.0])
+            } else {
+                let ang = out_dir[1].atan2(out_dir[0]).to_degrees();
+                let side = if (-45.0..=45.0).contains(&ang) {
+                    "R"
+                } else if ang > 45.0 && ang <= 135.0 {
+                    "U"
+                } else if ang < -45.0 && ang >= -135.0 {
+                    "D"
+                } else {
+                    "L"
+                };
+                (side, [out_dir[0] / len, out_dir[1] / len])
+            };
+            let mid = pts[pts.len() / 2];
+            let q = p2(&mid);
+            let reach = if side.is_empty() {
+                q[0] + q[1] * 1e-3
+            } else {
+                q[0] * dir[0] + q[1] * dir[1]
+            };
+            named.push((side.to_owned(), reach, pts, dir));
+        }
+        // Outermost first within a side.
+        named.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
+        let mut count: HashMap<String, usize> = HashMap::new();
+        for (side, _, pts, _) in named {
+            let k = count.entry(side.clone()).or_default();
+            *k += 1;
+            let edge_name = if *k == 1 {
+                format!("{name}:Sil{side}")
+            } else {
+                format!("{name}:Sil{side}.{k}")
+            };
+            let ends = (pts.first().map(p2), pts.last().map(p2));
+            let (Some(a), Some(b)) = ends else {
+                continue;
+            };
+            let pl: Vec<[f64; 2]> = pts.iter().map(p2).collect();
+            let exact = cone.and_then(|c| exact_silhouette(&c, frame, &pl));
+            let straight = exact.is_some() || {
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let l = d[0].hypot(d[1]);
+                l > 1e-9
+                    && pl.iter().all(|q| {
+                        ((q[0] - a[0]) * d[1] - (q[1] - a[1]) * d[0]).abs() / l <= l * 1e-6 + 1e-9
+                    })
+            };
+            let (a, b) = exact.unwrap_or((a, b));
+            out.push(Sil {
+                pts,
+                edge: Some(ViewEdge {
+                    name: Some(edge_name),
+                    a,
+                    b,
+                    circle: None,
+                    full_circle: false,
+                    straight,
+                    visible: false,
+                    note: None,
+                    hole: None,
+                }),
+            });
+        }
+    }
+    out
+}
+
+/// The exact silhouette line of cylinder or cone `c` that the view-plane
+/// polyline `pl` (a silhouette of its mesh) follows: its ends put on that
+/// line. `None` when the axis points at the viewer or `pl` follows neither
+/// line.
+fn exact_silhouette(
+    c: &Revolved,
+    frame: &ViewFrame,
+    pl: &[[f64; 2]],
+) -> Option<([f64; 2], [f64; 2])> {
+    let (a, t) = (c.axis, frame.toward);
+    let tp = t - a * t.dot(&a);
+    let rho = tp.norm();
+    if rho < 1e-6 {
+        return None;
+    }
+    let e1 = tp / rho;
+    let e2 = a.cross(&e1);
+    // The generators whose normal (u - tan * a) is square to the view:
+    // u . t = tan * (a . t), u = cos(psi) e1 + sin(psi) e2.
+    let cos = c.tan * a.dot(&t) / rho;
+    if cos.abs() > 1.0 {
+        return None;
+    }
+    let psi = cos.acos();
+    let (first, last) = (*pl.first()?, *pl.last()?);
+    let chain_len = (last[0] - first[0]).hypot(last[1] - first[1]);
+    let tol = (c.radius.abs() * 0.05).max(chain_len * 0.02).max(1e-6);
+    let mut best: Option<(f64, [f64; 2], [f64; 2])> = None;
+    for s in [psi, -psi] {
+        let u = e1 * s.cos() + e2 * s.sin();
+        let p0 = frame.project(&(c.origin + u * c.radius));
+        let d3 = a + u * c.tan;
+        let d = [d3.dot(&frame.right), d3.dot(&frame.up)];
+        let l = d[0].hypot(d[1]);
+        if l < 1e-9 {
+            continue;
+        }
+        let d = [d[0] / l, d[1] / l];
+        let off = |q: [f64; 2]| ((q[0] - p0[0]) * d[1] - (q[1] - p0[1]) * d[0]).abs();
+        let worst = pl.iter().map(|q| off(*q)).fold(0.0, f64::max);
+        let foot = |q: [f64; 2]| {
+            let k = (q[0] - p0[0]) * d[0] + (q[1] - p0[1]) * d[1];
+            [p0[0] + d[0] * k, p0[1] + d[1] * k]
+        };
+        if worst <= tol && best.is_none_or(|b| worst < b.0) {
+            best = Some((worst, foot(first), foot(last)));
+        }
+    }
+    best.map(|(_, a, b)| (a, b))
 }
 
 /// A model edge whose view length is below this share of its true length is
@@ -2589,11 +2965,20 @@ pub struct SmoothEdge {
     pub n1: Vector3,
     /// The second triangle's unit normal.
     pub n2: Vector3,
+    /// The face it lies on (index into [`ViewModel::faces`], or
+    /// [`NO_FACE`]).
+    pub face: u32,
 }
 
 /// The smooth edges of a mesh (welded across its faces: a cylinder comes in
 /// several faces), in a fixed order. Computed once per component.
 pub fn smooth_edges(m: &SolidMesh) -> Vec<SmoothEdge> {
+    smooth_edges_in(m, &[])
+}
+
+/// [`smooth_edges`] with each triangle's face (`tri_face`, by triangle;
+/// missing: [`NO_FACE`]). An edge between two faces takes the lower index.
+pub fn smooth_edges_in(m: &SolidMesh, tri_face: &[u32]) -> Vec<SmoothEdge> {
     // A mesh of planes only has none (its edges are model edges).
     let n = &m.faces.normals;
     if n.first()
@@ -2617,9 +3002,10 @@ pub fn smooth_edges(m: &SolidMesh) -> Vec<SmoothEdge> {
     let mut ids: HashMap<(i64, i64, i64), u32> = HashMap::new();
     let mut pts: Vec<Point3> = Vec::new();
     let mut normals: Vec<Vector3> = Vec::new();
+    let mut faces: Vec<u32> = Vec::new();
     let mut edges: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
     let pos = &m.faces.positions;
-    for tri in &m.faces.triangles {
+    for (ti, tri) in m.faces.triangles.iter().enumerate() {
         let p = tri.map(|i| pos[i as usize]);
         let n = (p[1] - p[0]).cross(&(p[2] - p[0]));
         if n.norm() < 1e-18 {
@@ -2627,6 +3013,7 @@ pub fn smooth_edges(m: &SolidMesh) -> Vec<SmoothEdge> {
         }
         let t = normals.len() as u32;
         normals.push(n.normalize());
+        faces.push(tri_face.get(ti).copied().unwrap_or(NO_FACE));
         let w = p.map(|x| {
             let len = pts.len() as u32;
             *ids.entry(key(&x)).or_insert_with(|| {
@@ -2656,6 +3043,7 @@ pub fn smooth_edges(m: &SolidMesh) -> Vec<SmoothEdge> {
                 b: pts[b as usize],
                 n1: normals[ts[0] as usize],
                 n2: normals[ts[1] as usize],
+                face: faces[ts[0] as usize].min(faces[ts[1] as usize]),
             }
         })
         .collect()
