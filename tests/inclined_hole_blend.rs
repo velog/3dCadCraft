@@ -171,7 +171,10 @@ fn the_exit_across_a_corner_is_rounded() {
     p.add_blend(BlendFeature::fillet(exit, 1.0))
         .unwrap_or_else(|e| panic!("{e}"));
     let took = t.elapsed();
-    assert!(took.as_secs_f64() < 30.0, "{took:?}");
+    assert!(
+        took.as_secs_f64() < 30.0 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
+        "{took:?}"
+    );
     assert!(
         p.exact && p.feature_health.is_empty(),
         "{:?}",

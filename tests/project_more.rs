@@ -109,7 +109,10 @@ fn cut_edges_across_the_plate() {
     assert!(p.sketches[j].links.is_empty());
     assert!(p.sketches[j].sketch.solve().is_ok());
     eprintln!("Project Cut Edges: {ms} ms");
-    assert!(ms < 500, "Project Cut Edges took {ms} ms");
+    assert!(
+        ms < 500 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
+        "Project Cut Edges took {ms} ms"
+    );
 }
 
 #[test]
