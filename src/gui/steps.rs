@@ -656,6 +656,8 @@ mod tests {
         "Delete Features",
         "Rename",
         "Edit Form",
+        // A window of choices before a file is read: no picks.
+        "Import Options",
     ];
 
     /// Rule 21: a new command in `open_state` has to say which it is, and
