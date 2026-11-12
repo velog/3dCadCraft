@@ -16,6 +16,15 @@ use crate::kernel::Point3;
 use crate::part::frame::{CapCorners, Library};
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 
+/// One set of the Insert Frame preview: its lines, their own placements,
+/// the rows OK leaves out, the set's options.
+type PreviewGroup<'a> = (
+    &'a [Skeleton],
+    &'a [Option<Orientation>],
+    &'a [bool],
+    InsertOptions,
+);
+
 /// Chord error of a sketch curve drawn or picked in the assembly view (mm).
 const CURVE_SAMPLE_MM: f64 = 0.1;
 
@@ -78,7 +87,7 @@ pub(super) fn frame_choice(d: &PartDialog, ti: usize, label: &str) -> Option<Str
 }
 
 /// The Orientation group of the panel.
-fn orientation(d: &PartDialog) -> Orientation {
+pub(super) fn orientation(d: &PartDialog) -> Orientation {
     let deg = |l: &str| d.num(0, l).unwrap_or(0.0);
     Orientation {
         anchor: Anchor::ALL
@@ -121,9 +130,17 @@ pub(super) fn add_set(d: &mut PartDialog) -> String {
         options.size
     );
     let lines = std::mem::take(&mut d.skeletons);
+    let mut own = std::mem::take(&mut d.skel).own;
+    own.resize(lines.len(), None);
     let skeletons = merged(d, lines);
-    d.frame_sets
-        .push(super::part_planned::FrameSet { skeletons, options });
+    if skeletons.len() != own.len() {
+        own.clear();
+    }
+    d.frame_sets.push(super::part_planned::FrameSet {
+        skeletons,
+        own,
+        options,
+    });
     d.picks.insert("edges", Vec::new());
     text
 }
@@ -256,20 +273,79 @@ impl CadCraftApp {
             return Err("Align comes with stage F2 (spec 6.1)".into());
         }
         let o = insert_options(d).ok_or("the section table is empty")?;
-        // The kept sets, then the lines picked now (with the panel's section).
-        let mut sets: Vec<(Vec<Skeleton>, InsertOptions)> = d
+        // The kept sets, then the lines picked now (with the panel's section),
+        // each line with its own placement where the list gave it one.
+        let mut sets: Vec<(Vec<Skeleton>, Vec<Option<Orientation>>, InsertOptions)> = d
             .frame_sets
             .iter()
-            .map(|s| (s.skeletons.clone(), s.options.clone()))
+            .map(|s| (s.skeletons.clone(), s.own.clone(), s.options.clone()))
             .collect();
         if !d.skeletons.is_empty() {
-            sets.push((merged(d, d.skeletons.clone()), o.clone()));
+            let lines = merged(d, d.skeletons.clone());
+            let mut own = d.skel.own.clone();
+            own.resize(d.skeletons.len(), None);
+            if lines.len() != own.len() {
+                own.clear();
+            }
+            sets.push((lines, own, o.clone()));
+        }
+        let linked = self.frame_linked();
+        // Remove Overlapping Members: of two lines on one another the shorter
+        // goes (as long: the later one), a placed member too when a longer new
+        // line covers it (spec 6.1 §3.1a).
+        let mut removes: Vec<u32> = Vec::new();
+        let mut left_out = 0;
+        if d.check(0, super::frame_list::REMOVE_OVERLAPS)
+            && let Some(a) = self.assembly()
+        {
+            let placed = self.frame_member_lines();
+            let fixed = placed.len();
+            let mut all: Vec<Option<(Point3, Point3)>> =
+                placed.iter().map(|(_, l)| Some(*l)).collect();
+            for (lines, ..) in &sets {
+                all.extend(
+                    lines
+                        .iter()
+                        .map(|s| frame::skeleton_line(&self.project, &linked, a, s).ok()),
+                );
+            }
+            let drops = frame::overlap_drops(&all, fixed);
+            removes = drops
+                .iter()
+                .filter(|&&k| k < fixed)
+                .map(|&k| placed[k].0)
+                .collect();
+            let mut k = fixed;
+            for (lines, own, _) in &mut sets {
+                let mut keep_lines = Vec::new();
+                let mut keep_own = Vec::new();
+                for (j, s) in lines.drain(..).enumerate() {
+                    if drops.contains(&k) {
+                        left_out += 1;
+                    } else {
+                        keep_lines.push(s);
+                        if let Some(x) = own.get(j) {
+                            keep_own.push(*x);
+                        }
+                    }
+                    k += 1;
+                }
+                *lines = keep_lines;
+                if keep_own.len() != lines.len() {
+                    keep_own.clear();
+                }
+                *own = keep_own;
+            }
+            sets.retain(|(lines, ..)| !lines.is_empty());
         }
         if sets.is_empty() {
-            return Err("select the skeleton edges or sketch lines".into());
+            return Err(if left_out > 0 {
+                "every picked line lies on a longer member".into()
+            } else {
+                "select the skeleton edges or sketch lines".into()
+            });
         }
         let mut trial = self.project.clone();
-        let linked = self.linked();
         let lib = Library::current();
         let corners = o.corners;
         let mut new_target = None;
@@ -281,8 +357,11 @@ impl CadCraftApp {
             )?);
         }
         let doc = new_target.map_or_else(|| self.frame_doc(), |(_, d)| d);
+        if !removes.is_empty() {
+            frame::delete_members(&mut trial, &linked, doc, &removes)?;
+        }
         // Inside the frame's document the lines are in its terms.
-        for (lines, _) in &mut sets {
+        for (lines, ..) in &mut sets {
             for s in lines.iter_mut() {
                 *s = match (new_target, names) {
                     (Some((frame, doc)), Some((_, skeleton))) => frame_sub::skeleton_down(
@@ -319,13 +398,14 @@ impl CadCraftApp {
         // Several sets, or members joining a frame: the corners once all
         // are in (between the new members and the frame's).
         let many = sets.len() > 1 || existing.is_some();
-        for (lines, mut opts) in sets {
+        for (lines, own, mut opts) in sets {
             if many {
                 // The corners come once all sets are in.
                 opts.corners = Default::default();
             }
-            let (fid, made) =
-                frame::insert(&mut trial, &linked, doc, &lines, &opts, &lib, frame_id)?;
+            let (fid, made) = frame::insert_with(
+                &mut trial, &linked, doc, &lines, &own, &opts, &lib, frame_id,
+            )?;
             frame_id = Some(fid);
             occs.extend(made);
         }
@@ -340,8 +420,17 @@ impl CadCraftApp {
         self.history.break_coalescing();
         self.frame_set_selected(occs.clone());
         self.scene_dirty = true;
+        let overlaps = if left_out + removes.len() > 0 {
+            format!(
+                ", {} overlapping line(s) left out, {} placed member(s) removed",
+                left_out,
+                removes.len()
+            )
+        } else {
+            String::new()
+        };
         self.file_status = Some(Ok(format!(
-            "Insert Frame: {} member(s) of {} {}",
+            "Insert Frame: {} member(s) of {} {}{overlaps}",
             occs.len(),
             o.family,
             o.size
@@ -355,7 +444,7 @@ impl CadCraftApp {
         if self.frame_ctx().is_none() {
             return;
         }
-        let linked = self.linked();
+        let linked = self.frame_linked();
         match frame_sub::follow(&mut self.project, &linked, self.part_id) {
             Ok(s) => {
                 for (occ, why) in &s.sick {
@@ -485,7 +574,7 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return true;
         };
-        let linked = self.linked();
+        let linked = self.frame_linked();
         // The line under the cursor: a sketch line, else a model edge.
         let line = self
             .sketch_line_under(p, rect)
@@ -584,25 +673,41 @@ impl CadCraftApp {
     /// uncut.
     fn frame_preview(&self, d: &PartDialog, painter: &egui::Painter, rect: Rect) {
         // The kept sets with their own sections, then the lines picked now.
-        let mut groups: Vec<(&[Skeleton], InsertOptions)> = d
+        let none: &[bool] = &[];
+        let mut groups: Vec<PreviewGroup> = d
             .frame_sets
             .iter()
-            .map(|s| (s.skeletons.as_slice(), s.options.clone()))
+            .map(|s| {
+                (
+                    s.skeletons.as_slice(),
+                    s.own.as_slice(),
+                    none,
+                    s.options.clone(),
+                )
+            })
             .collect();
         if let Some(o) = insert_options(d) {
-            groups.push((d.skeletons.as_slice(), o));
+            groups.push((
+                d.skeletons.as_slice(),
+                d.skel.own.as_slice(),
+                d.skel.notes.dropped.as_slice(),
+                o,
+            ));
         }
-        for (skeletons, o) in groups {
+        for (skeletons, own, dropped, o) in groups {
             if !skeletons.is_empty() {
-                self.preview_set(skeletons, &o, painter, rect);
+                self.preview_set(skeletons, own, dropped, &o, painter, rect);
             }
         }
     }
 
     /// The wire preview of one set's members.
+    #[allow(clippy::too_many_arguments)]
     fn preview_set(
         &self,
         skeletons: &[Skeleton],
+        own: &[Option<Orientation>],
+        dropped: &[bool],
         o: &InsertOptions,
         painter: &egui::Painter,
         rect: Rect,
@@ -614,15 +719,27 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return;
         };
-        let linked = self.linked();
-        let runs: Vec<frame::Run> = skeletons
+        let linked = self.frame_linked();
+        // Merged into one chain, the rows' own placements do not apply.
+        let own = if own.len() == skeletons.len() {
+            own
+        } else {
+            &[]
+        };
+        let runs: Vec<(usize, frame::Run)> = skeletons
             .iter()
-            .filter_map(|s| frame::skeleton_run(&self.project, &linked, a, s).ok())
+            .enumerate()
+            .filter(|(k, _)| !dropped.get(*k).copied().unwrap_or(false))
+            .filter_map(|(k, s)| {
+                frame::skeleton_run(&self.project, &linked, a, s)
+                    .ok()
+                    .map(|r| (k, r))
+            })
             .collect();
         let lines: Vec<(Point3, Point3)> = runs
             .iter()
-            .filter(|r| matches!(r, frame::Run::Line(..)))
-            .map(frame::Run::chord)
+            .filter(|r| matches!(r.1, frame::Run::Line(..)))
+            .map(|r| r.1.chord())
             .collect();
         let n = lines.len().max(1) as f64;
         let centre = Point3::from(
@@ -640,13 +757,21 @@ impl CadCraftApp {
         let stroke = Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 140, 30, 200));
         // Lines along the member at a few points of the outline.
         let step = (outline.len() / 8).max(1);
-        for r in &runs {
+        for (k, r) in &runs {
             if let frame::Run::Curve(c) = r {
-                self.preview_curve(sec, c, o, (&outline, step), stroke, painter, rect);
+                let ori = own.get(*k).copied().flatten().unwrap_or(o.orientation);
+                self.preview_curve(sec, c, &ori, (&outline, step), stroke, painter, rect);
             }
         }
-        for &(p, q) in &lines {
-            let ori = o.layout.orient(&o.orientation, p, q, centre);
+        for (k, r) in &runs {
+            let frame::Run::Line(p, q) = *r else {
+                continue;
+            };
+            let ori = own
+                .get(*k)
+                .copied()
+                .flatten()
+                .unwrap_or_else(|| o.layout.orient(&o.orientation, p, q, centre));
             let Some(t) = frame::placement(sec, p, q, &ori) else {
                 continue;
             };
@@ -677,13 +802,13 @@ impl CadCraftApp {
         &self,
         sec: &crate::part::frame::Section,
         c: &crate::part::sweep::PathGeom,
-        o: &InsertOptions,
+        orientation: &Orientation,
         (outline, step): (&[crate::sketch::Point2], usize),
         stroke: Stroke,
         painter: &egui::Painter,
         rect: Rect,
     ) {
-        let Some((t, run)) = frame::curved_place(sec, c, &o.orientation) else {
+        let Some((t, run)) = frame::curved_place(sec, c, orientation) else {
             return;
         };
         let pieces = frame::member_pieces(&run, &crate::kernel::Transform3::identity());
@@ -750,7 +875,7 @@ impl CadCraftApp {
                 Skeleton::Between { .. } => {
                     if let Some(a) = self.assembly()
                         && let Ok((p, q)) =
-                            frame::skeleton_line(&self.project, &self.linked(), a, s)
+                            frame::skeleton_line(&self.project, &self.frame_linked(), a, s)
                         && let Some(s) = seg(&p, &q)
                     {
                         painter.line_segment(s, Stroke::new(3.0, picked_color()));
@@ -763,6 +888,9 @@ impl CadCraftApp {
                 }
                 Skeleton::Chain(_) => {}
             }
+        }
+        if d.members.list.is_empty() {
+            self.frame_list_overlay(d, painter, rect);
         }
         if self.frame_takes_lines()
             && let Some(p) = pointer
@@ -778,8 +906,11 @@ impl CadCraftApp {
             && let Some(g) = self.geom_under_pub(p, rect)
         {
             let face = matches!(g, crate::assembly::relation::GeomRef::Face { .. });
-            if !face || d.index(0, "Select") != 0 {
-                self.draw_geom(painter, rect, &g, HOVER);
+            match d.index(0, "Select") {
+                // Body Edges: the edges of the one body under the cursor.
+                2 => self.draw_body_edges(painter, rect, &g),
+                0 if face => {}
+                _ => self.draw_geom(painter, rect, &g, HOVER),
             }
         }
     }
@@ -816,7 +947,7 @@ impl CadCraftApp {
         if members.len() < 2 {
             return fail(self, "select two frame members that meet");
         }
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let pairs = match members.as_slice() {
             [a, b] => vec![(*a, *b)],
             _ => match self.frame_asm() {
@@ -900,7 +1031,7 @@ impl CadCraftApp {
             );
         }
         let mut trial = self.project.clone();
-        let linked = self.linked();
+        let linked = self.frame_linked();
         match frame::edit_frame(&mut trial, &linked, self.frame_doc(), fid, layout, corners) {
             Ok(_) => {
                 self.history.break_coalescing();
@@ -1009,7 +1140,7 @@ impl CadCraftApp {
                 }
                 let (o1, o2) = (num("Offset"), num("Offset 2"));
                 let kind = d.index(0, "Offset Type");
-                let linked = self.linked();
+                let linked = self.frame_linked();
                 let Some(a) = self.frame_asm() else {
                     return false;
                 };
@@ -1053,7 +1184,7 @@ impl CadCraftApp {
                     .collect()
             }
         };
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut trial = self.frame_trial(d);
         let ts = match self.frame_treatments_down(&mut trial, &linked, ts) {
             Ok(v) => v,
@@ -1085,7 +1216,7 @@ impl CadCraftApp {
         if d.skeletons.is_empty() {
             return fail(self, "select the lines to reuse it on");
         }
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut trial = self.project.clone();
         let doc = self.frame_doc();
         let flip = d.check(0, "Flip Direction");
@@ -1167,7 +1298,7 @@ impl CadCraftApp {
             offset: d.num(0, "Offset").unwrap_or(0.0),
         };
         let material = frame_choice(d, 0, "Material");
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut trial = self.project.clone();
         let doc = self.frame_doc();
         match frame::insert_caps(&mut trial, &linked, doc, &ends, &o, material.as_deref()) {
@@ -1191,7 +1322,7 @@ impl CadCraftApp {
             self.file_status = Some(Err("Remove End Treatments: select frame members".into()));
             return false;
         }
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut trial = self.project.clone();
         match frame::remove_treatments(&mut trial, &linked, self.frame_doc(), &members) {
             Ok(_) => {
@@ -1220,4 +1351,81 @@ fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
         0.0
     };
     (a + ab * t - p).length()
+}
+
+/// The straight edges a click on `g` takes (part coordinates): Face Edges =
+/// those of its face; Body Edges = those of the one body of the part the
+/// click hit (a part of several bodies gives that body only, rule 19).
+pub(super) fn body_edges(
+    p: &crate::part::PartDocument,
+    g: &GeomRef,
+    face: Option<&str>,
+) -> Vec<crate::part::EdgeRef> {
+    frame::straight_edges_in(p, face, body_of(p, g))
+}
+
+/// The body of `p` a click on `g` hit.
+fn body_of(p: &crate::part::PartDocument, g: &GeomRef) -> Option<crate::kernel::SolidId> {
+    match g {
+        GeomRef::Face { name, hint, .. } => frame::body_at(p, name, Point3::from(*hint)),
+        GeomRef::Edge { edge, .. } => frame::body_at(p, &edge.faces[0], Point3::from(edge.hint)),
+        _ => None,
+    }
+}
+
+/// The straight edges of the body under the cursor, kept per (component,
+/// face, body, the part's face and edge counts): drawn every frame while Body
+/// Edges hovers (rule 20).
+type BodyLines = (u64, std::rc::Rc<Vec<(Point3, Point3)>>);
+
+thread_local! {
+    static BODY_HOVER: std::cell::RefCell<Option<BodyLines>> = const { std::cell::RefCell::new(None) };
+}
+
+impl CadCraftApp {
+    /// Body Edges' hover: every straight edge of the body a click would take.
+    fn draw_body_edges(&self, painter: &egui::Painter, rect: Rect, g: &GeomRef) {
+        use std::hash::{Hash, Hasher};
+        let Some((component, t)) = self.geom_part(g) else {
+            return;
+        };
+        let lines = self
+            .with_part(component, |p| {
+                let solid = body_of(p, g);
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                component.hash(&mut h);
+                solid.hash(&mut h);
+                p.body.faces().count().hash(&mut h);
+                p.body.edges().count().hash(&mut h);
+                if let GeomRef::Face { name, .. } = g {
+                    name.hash(&mut h);
+                }
+                let key = h.finish();
+                if let Some(v) = BODY_HOVER.with(|c| {
+                    c.borrow()
+                        .as_ref()
+                        .filter(|(k, _)| *k == key)
+                        .map(|(_, v)| v.clone())
+                }) {
+                    return v;
+                }
+                let v: std::rc::Rc<Vec<(Point3, Point3)>> = std::rc::Rc::new(
+                    frame::straight_edge_lines(p, None, solid)
+                        .into_iter()
+                        .map(|(_, a, b)| (a, b))
+                        .collect(),
+                );
+                BODY_HOVER.with(|c| *c.borrow_mut() = Some((key, v.clone())));
+                v
+            })
+            .unwrap_or_default();
+        for (a, b) in lines.iter() {
+            if let (Some(sa), Some(sb)) = (
+                self.camera.project(&(t * a), rect),
+                self.camera.project(&(t * b), rect),
+            ) {
+                painter.line_segment([sa, sb], Stroke::new(3.0, HOVER));
+            }
+        }
+    }
 }

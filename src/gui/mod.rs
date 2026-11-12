@@ -88,6 +88,7 @@ mod frame;
 mod frame_analysis;
 mod frame_ctx;
 mod frame_edit;
+mod frame_list;
 mod frame_select;
 mod freeform;
 mod gear_key;

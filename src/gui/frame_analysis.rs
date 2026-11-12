@@ -480,7 +480,7 @@ impl CadCraftApp {
         let Some(sim) = now else {
             return;
         };
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let Some(a) = self.frame_asm() else {
             return;
         };

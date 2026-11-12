@@ -22,21 +22,39 @@ pub(super) enum FrameCmd {
     DeleteCap(u32),
     Retype(u32, usize, frame::CornerType),
     EditMembers(Vec<u32>),
+    Orient(Vec<u32>, OrientEdit),
 }
 
-/// The Anchor list's names, in `Anchor::ALL` order.
-const ANCHOR_NAMES: [&str; 10] = [
-    "Center",
-    "Centroid",
-    "Top Left",
-    "Top",
-    "Top Right",
-    "Left",
-    "Right",
-    "Bottom Left",
-    "Bottom",
-    "Bottom Right",
-];
+/// A change of members' placement from their Position menu (spec 6.1 §3.9).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum OrientEdit {
+    Anchor(frame::Anchor),
+    Rotate90,
+    Mirror,
+    Flip,
+    Reset,
+}
+
+impl OrientEdit {
+    /// `o` after the change.
+    fn apply(self, o: frame::Orientation) -> frame::Orientation {
+        match self {
+            OrientEdit::Anchor(anchor) => frame::Orientation { anchor, ..o },
+            OrientEdit::Rotate90 => frame::Orientation {
+                angle: (o.angle + std::f64::consts::FRAC_PI_2) % std::f64::consts::TAU,
+                ..o
+            },
+            OrientEdit::Mirror => frame::Orientation {
+                mirror: !o.mirror,
+                ..o
+            },
+            OrientEdit::Flip => frame::Orientation { flip: !o.flip, ..o },
+            OrientEdit::Reset => frame::Orientation::default(),
+        }
+    }
+}
+
+use super::frame_list::ANCHOR_NAMES;
 
 /// A frame's browser node: id, name, members (occurrence, name).
 type FrameNode = (u32, String, Vec<(u32, String)>);
@@ -90,6 +108,30 @@ impl CadCraftApp {
             })
             .map(|o| o.name.clone())
             .collect();
+        // Members lying on another one (spec 6.1 §3.1a): a warning on each,
+        // and each member's placement when it is not the default.
+        let overlaps = self.frame_overlaps();
+        let place_of: std::collections::HashMap<u32, String> = a
+            .frames
+            .iter()
+            .flat_map(|f| &f.members)
+            .filter(|m| m.orientation != frame::Orientation::default())
+            .map(|m| (m.occurrence, placement_text(&m.orientation)))
+            .collect();
+        let name_of = |id: u32| {
+            a.find(id)
+                .map_or_else(|| format!("{id}"), |o| o.name.clone())
+        };
+        let warn_of: std::collections::HashMap<u32, String> = {
+            let mut w: std::collections::HashMap<u32, Vec<String>> = Default::default();
+            for (x, y) in &overlaps {
+                w.entry(*x).or_default().push(name_of(*y));
+                w.entry(*y).or_default().push(name_of(*x));
+            }
+            w.into_iter()
+                .map(|(k, v)| (k, format!("Lies on {} (overlapping members)", v.join(", "))))
+                .collect()
+        };
         let rows: Vec<(u32, usize, String, Vec<u32>)> = frame::treatment_rows(a)
             .into_iter()
             .map(|(f, i, name, t)| (f, i, name, t.members()))
@@ -148,6 +190,14 @@ impl CadCraftApp {
                                 };
                                 member_menu(ui, &ids, cmds);
                             });
+                            if let Some(w) = warn_of.get(id) {
+                                ui.colored_label(super::theme::tokens().warning, "! overlaps")
+                                    .on_hover_text(w);
+                            }
+                            if let Some(t) = place_of.get(id) {
+                                ui.label(egui::RichText::new(t).weak().small())
+                                    .on_hover_text("Its placement on the line (Position menu)");
+                            }
                         });
                     }
                     if !skeleton.is_empty() {
@@ -282,7 +332,7 @@ impl CadCraftApp {
             }
             FrameCmd::EditTreatment(f, i) => self.edit_treatment(f, i),
             FrameCmd::DeleteTreatment(f, i) => {
-                let linked = self.linked();
+                let linked = self.frame_linked();
                 let mut trial = self.project.clone();
                 match frame::delete_treatment(&mut trial, &linked, self.frame_doc(), f, i) {
                     Ok(_) => self.frame_commit("Delete End Treatment", trial),
@@ -291,7 +341,7 @@ impl CadCraftApp {
             }
             FrameCmd::DeleteMembers(ids) => self.frame_delete_members(&ids),
             FrameCmd::DeleteCap(c) => {
-                let linked = self.linked();
+                let linked = self.frame_linked();
                 let mut trial = self.project.clone();
                 match frame::delete_caps(&mut trial, &linked, self.frame_doc(), &[c]) {
                     Ok(_) => self.frame_commit("Delete End Cap", trial),
@@ -299,8 +349,9 @@ impl CadCraftApp {
                 }
             }
             FrameCmd::EditMembers(ids) => self.edit_members_start(&ids),
+            FrameCmd::Orient(ids, e) => self.frame_orient(&ids, e),
             FrameCmd::Retype(f, i, k) => {
-                let linked = self.linked();
+                let linked = self.frame_linked();
                 let mut trial = self.project.clone();
                 match frame::retype_corner(&mut trial, &linked, self.frame_doc(), f, i, k) {
                     Ok(_) => self.frame_commit("Change Corner", trial),
@@ -324,6 +375,24 @@ impl CadCraftApp {
         true
     }
 
+    /// Members' placement changed from their Position menu: one Undo step,
+    /// the frame solved (its corners follow); nothing changes on an error.
+    pub(super) fn frame_orient(&mut self, ids: &[u32], e: OrientEdit) {
+        let Some(a) = self.frame_asm() else {
+            return;
+        };
+        let changes: Vec<(u32, frame::Orientation)> = ids
+            .iter()
+            .filter_map(|&id| frame::orientation_of(a, id).map(|o| (id, e.apply(o))))
+            .collect();
+        let linked = self.frame_linked();
+        let mut trial = self.project.clone();
+        match frame::set_orientations(&mut trial, &linked, self.frame_doc(), &changes) {
+            Ok(_) => self.frame_commit("Member Position", trial),
+            Err(e) => self.file_status = Some(Err(format!("Member Position: {e}"))),
+        }
+    }
+
     /// Takes a trial copy of the project into `self` as one Undo step.
     fn frame_commit(&mut self, label: &str, trial: Project) {
         self.history.break_coalescing();
@@ -336,7 +405,7 @@ impl CadCraftApp {
 
     /// Deletes frame members with their parts and end treatments.
     pub(super) fn frame_delete_members(&mut self, ids: &[u32]) {
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut trial = self.project.clone();
         let top_level = self.frame_occ().is_none();
         match frame::delete_members(&mut trial, &linked, self.frame_doc(), ids)
@@ -429,7 +498,7 @@ impl CadCraftApp {
             Treatment::Lengthen { member, offsets } => {
                 // Back to the panel's terms: the end set, the other one.
                 let w = label(self, *member);
-                let linked = self.linked();
+                let linked = self.frame_linked();
                 if let Some((s, e)) = self
                     .assembly()
                     .and_then(|a| frame::member_run(&self.project, &linked, a, *member))
@@ -692,7 +761,7 @@ impl CadCraftApp {
         if moved && !(d.members.edit.len() == 1 && d.skeletons.len() == 1) {
             return fail(self, "to move a member, edit only it and pick one edge");
         }
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut trial = self.project.clone();
         let target = if moved {
             match self.frame_skeleton_down(&mut trial, &linked, &d.skeletons[0]) {
@@ -838,7 +907,7 @@ impl CadCraftApp {
             self.file_status = Some(Err("Change: the section table is empty".into()));
             return false;
         };
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut trial = self.project.clone();
         match frame::change(
             &mut trial,
@@ -875,7 +944,7 @@ impl CadCraftApp {
         let Some(a) = self.frame_asm() else {
             return Vec::new();
         };
-        let linked = self.linked();
+        let linked = self.frame_linked();
         let mut out: Vec<(u32, usize, egui::Pos2, &'static str)> = Vec::new();
         for (f, i, c, ms) in frame::corner_points(&self.project, &linked, a) {
             if !ms.iter().any(|m| selected.contains(m)) {
@@ -1092,6 +1161,35 @@ fn member_menu(ui: &mut egui::Ui, ids: &[u32], cmds: &mut Vec<FrameCmd>) {
         cmds.push(FrameCmd::EditMembers(ids.to_vec()));
         ui.close();
     }
+    // Each member's own placement at once (spec 6.1 §3.9).
+    ui.menu_button("Position", |ui| {
+        ui.menu_button("Anchor", |ui| {
+            for (k, n) in ANCHOR_NAMES.iter().enumerate() {
+                if let Some(&a) = frame::Anchor::ALL.get(k)
+                    && ui.button(*n).clicked()
+                {
+                    cmds.push(FrameCmd::Orient(ids.to_vec(), OrientEdit::Anchor(a)));
+                    ui.close();
+                }
+            }
+        });
+        for (label, e) in [
+            ("Rotate 90°", OrientEdit::Rotate90),
+            ("Mirror", OrientEdit::Mirror),
+            ("Flip Direction", OrientEdit::Flip),
+            ("Reset Placement", OrientEdit::Reset),
+        ] {
+            if ui.button(label).clicked() {
+                cmds.push(FrameCmd::Orient(ids.to_vec(), e));
+                ui.close();
+            }
+        }
+        ui.separator();
+        if ui.button("Edit Position...").clicked() {
+            cmds.push(FrameCmd::EditMembers(ids.to_vec()));
+            ui.close();
+        }
+    });
     for &k in MEMBER_COMMANDS {
         if ui.button(k.title()).clicked() {
             cmds.push(FrameCmd::Start(k, ids.to_vec()));
@@ -1103,4 +1201,29 @@ fn member_menu(ui: &mut egui::Ui, ids: &[u32], cmds: &mut Vec<FrameCmd>) {
         cmds.push(FrameCmd::DeleteMembers(ids.to_vec()));
         ui.close();
     }
+}
+
+/// A member's placement in a few words (`Top Left · 90° · mirrored`).
+fn placement_text(o: &frame::Orientation) -> String {
+    let mut v: Vec<String> = Vec::new();
+    if o.anchor != frame::Anchor::default() {
+        let k = frame::Anchor::ALL
+            .iter()
+            .position(|a| *a == o.anchor)
+            .unwrap_or(0);
+        v.push(ANCHOR_NAMES[k].to_owned());
+    }
+    if o.h_offset != 0.0 || o.v_offset != 0.0 {
+        v.push(format!("{:+.1}/{:+.1} mm", o.h_offset, o.v_offset));
+    }
+    if o.angle != 0.0 {
+        v.push(format!("{:.0}°", o.angle.to_degrees()));
+    }
+    if o.mirror {
+        v.push("mirrored".into());
+    }
+    if o.flip {
+        v.push("flipped".into());
+    }
+    v.join(" · ")
 }

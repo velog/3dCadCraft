@@ -674,14 +674,35 @@ pub fn edge_of(body: &BRep, r: &EdgeRef) -> Option<EdgeId> {
         })
         .filter_map(|(e, _)| {
             let pts = body.sample_edge(e, &opts).ok()?;
-            let d = pts
-                .iter()
-                .map(|p| (p - hint).norm())
-                .fold(Real::INFINITY, Real::min);
-            Some((d, e))
+            Some((polyline_distance(&pts, &hint), e))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, e)| e)
+}
+
+/// Distance from `p` to polyline `pts` (to its segments, not only its
+/// points: a straight edge samples as its two ends, and two edges of one
+/// line split by a Boolean, as two bodies of a split part have, tie at
+/// their points).
+fn polyline_distance(pts: &[Point3], p: &Point3) -> Real {
+    let seg = |a: &Point3, b: &Point3| {
+        let d = b - a;
+        let l = d.norm_squared();
+        let t = if l > 0.0 {
+            ((p - a).dot(&d) / l).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        (a + d * t - p).norm()
+    };
+    match pts {
+        [] => Real::INFINITY,
+        [one] => (one - p).norm(),
+        _ => pts
+            .windows(2)
+            .map(|w| seg(&w[0], &w[1]))
+            .fold(Real::INFINITY, Real::min),
+    }
 }
 
 /// The fixed edge of `f` for a click at `hint` (Fixed Edge): of its edges

@@ -943,6 +943,7 @@ Also done: **Renumber Items**, typed item numbers (overrides) and **Static** qua
 - **View representations:** visibility, colours, transparency.
 - **Positional representations:** different positions of the mechanism, e.g. "open" and "closed".
 - **Variants** (Inventor: Model States): versions of the same document with different parameters or suppressed features and components, e.g. "short/long" or "simplified" configurations. In 3DCadCraft this is the common mechanism for **configurations** (see 5.7).
+- 2026-11-12: a component's variants under it in the assembly browser (*Variants: <name>*, double-click or Activate switches what it places; spec 3.9 §3.3b).
 
 ## 3.10 Top-down design — 🟡 · L
 
@@ -1249,6 +1250,7 @@ Insert Frame on straight model edges (orientation, member parts, the members fol
 - the frame as a subassembly (2026-11-09: Create New Frame, members and a hidden skeleton reference in their own assembly, followed from the parent);
 - Unit QTY = length, cut details from the final ends, Parts List › Cut List; Insert End Cap (Internal / External, Filleted / Chamfered / Sharp, Edge Offset, Rotate, Offset); Reuse of a member's part on lines of the same length (2026-11-09);
 - a frame from a solid (all its edges in one click), group Position Inside / Outside, corners by vertex kind, Edit Frame (2026-10-30);
+- owner's batch 2026-11-12 (spec 6.1 §3.1a): the picked lines as a list (icon + text, numbered in the view, hover / chosen row lit, remove, re-pick), an own placement per member (anchor, offsets, rotation, mirror, flip), Remove Overlapping Members and a browser warning on members lying on one another, a member's Position menu in the browser, Body Edges of one body of a multi-body part, members following the skeleton's variant (Model State);
 - **Trim/Extend** to a face;
 - **Lengthen/Shorten.**
 

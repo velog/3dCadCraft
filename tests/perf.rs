@@ -2010,6 +2010,84 @@ fn speed_budgets() {
                     assert_eq!(s.moved, 0);
                 }),
             ));
+            // The browser's overlap warning (spec 6.1 §3.1a): every member's line.
+            rows.push((
+                "frame: overlapping members of a 12-member frame",
+                5.0,
+                median_ms(5, || {
+                    let f = match p.document(doc).map(|d| &d.data) {
+                        Some(DocumentData::Assembly(a)) => a,
+                        _ => panic!("no frame assembly"),
+                    };
+                    let pairs = cadcraft3d::assembly::frame::overlapping_members(&p, &linked, f);
+                    assert!(pairs.is_empty());
+                }),
+            ));
+            // The skeleton placed in a variant: the reference follows it, the
+            // members are rebuilt to its lines (a box 400 long becomes 600).
+            let sk = match p.document(aid).map(|d| &d.data) {
+                Some(DocumentData::Assembly(a)) => a.occurrences[0].component.document,
+                _ => panic!("no assembly"),
+            };
+            let v = match p.document_mut(sk).map(|d| &mut d.data) {
+                Some(DocumentData::Part(part)) => {
+                    let name = part
+                        .parameter_table()
+                        .into_iter()
+                        .find(|r| (r.value - 400.0).abs() < 1e-9)
+                        .map(|r| r.name)
+                        .unwrap();
+                    let v = part.new_variant();
+                    part.set_parameter_expr(&name, "600 mm").unwrap();
+                    part.variants_sync();
+                    part.activate_variant(cadcraft3d::part::variants::PRIMARY)
+                        .unwrap();
+                    v
+                }
+                _ => panic!("no skeleton part"),
+            };
+            rows.push((
+                "frame: 12 members follow the skeleton's variant (and back)",
+                400.0,
+                median_ms(3, || {
+                    for chosen in [Some(v), None] {
+                        if let Some(DocumentData::Assembly(a)) =
+                            p.document_mut(aid).map(|d| &mut d.data)
+                        {
+                            a.occurrences[0].component.variant = chosen;
+                        }
+                        let with = cadcraft3d::assembly::tree::with_variants(&p, &linked);
+                        frame_sub::follow(&mut p, &with, aid).unwrap();
+                        let s = frame_sub::follow(&mut p, &with, aid).unwrap();
+                        assert!(s.sick.is_empty(), "{:?}", s.sick);
+                    }
+                }),
+            ));
+        }
+        // Remove Overlapping Members over a large frame: 1000 lines, a third
+        // of the first 750 doubled by a shorter one on them.
+        {
+            use cadcraft3d::assembly::frame::{overlap_drops, overlapping_pairs};
+            use cadcraft3d::kernel::Point3;
+            let mut lines = Vec::new();
+            for k in 0..750u32 {
+                let (x, y) = (Real::from(k % 25) * 100.0, Real::from(k / 25) * 100.0);
+                lines.push((k, (Point3::new(x, y, 0.0), Point3::new(x, y + 100.0, 0.0))));
+                if k % 3 == 0 {
+                    let short = (Point3::new(x, y + 50.0, 0.0), Point3::new(x, y + 90.0, 0.0));
+                    lines.push((10_000 + k, short));
+                }
+            }
+            assert_eq!(lines.len(), 1000);
+            let all: Vec<_> = lines.iter().map(|(_, l)| Some(*l)).collect();
+            rows.push((
+                "frame: overlap check and drops of 1000 member lines",
+                20.0,
+                median_ms(5, || {
+                    assert_eq!(overlapping_pairs(&lines).len(), 250);
+                    assert_eq!(overlap_drops(&all, 0).len(), 250);
+                }),
+            ));
         }
         rows.push((
             "frame: miter the 4 SHS 40x40x3 members of a rectangle (8 cuts)",
