@@ -14,6 +14,8 @@ pub use cadcraft3d::part::{
 };
 pub use cadcraft3d::sketch::{Point2, Region};
 
+pub mod rim;
+
 // ------------------------------------------------------------ helpers ---
 
 pub fn opts() -> SketchOptions {

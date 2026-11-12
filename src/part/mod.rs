@@ -1073,6 +1073,12 @@ pub struct PartDocument {
     /// with ~15 000 faces, which made every pick in the assembly slow.
     #[serde(skip)]
     pub exact_only: bool,
+    /// While set (runtime only, inside [`PartDocument::regenerate`]): a feature the exact kernel
+    /// fails is that feature's health and the build goes on exactly, instead of the whole part
+    /// being rebuilt faceted. Set for parts the faceted kernel cannot rebuild well (see
+    /// [`PartDocument::faceted_rebuilds_well`]).
+    #[serde(skip)]
+    pub kernel_failures_are_health: bool,
     /// Edit Feature rolls the part back: only the features before this
     /// index are built (Inventor shows the model as it was before the
     /// edited feature). Runtime only.
@@ -1219,6 +1225,23 @@ impl PartDocument {
         let mut read = self.reference_values();
         self.exact_failure = None;
         self.exact = exact::enabled() && self.build_features(true)?;
+        // The kernel failed on a feature: a part with features the faceted kernel builds badly
+        // or not at all (blends, holes, patterns, shells…) keeps the exact build with that
+        // feature sick. Rebuilt faceted, a chamfered disc with one tooth cut took seconds every
+        // regeneration and then refused the tooth's pattern (owner, 2026-11-12); blends rebuilt
+        // faceted froze the interface 15-20 s.
+        if !self.exact
+            && !self.exact_only
+            && self.exact_failure.is_some()
+            && !self.faceted_rebuilds_well()
+        {
+            self.kernel_failures_are_health = true;
+            let built = self.build_features(true);
+            self.kernel_failures_are_health = false;
+            if built? {
+                self.exact = true;
+            }
+        }
         if !self.exact && self.exact_only {
             let (id, msg) = self
                 .exact_failure
@@ -1238,6 +1261,23 @@ impl PartDocument {
                 && h.contains("needs the exact geometry kernel")
             {
                 *h = format!("the geometry kernel failed: {msg}");
+            }
+            // A later feature that only the exact kernel builds: the earlier feature that
+            // made it give up is named, not "an option it does not cover yet" (a pattern of a
+            // Cut the kernel refused said that).
+            if let Some((id, _)) = &self.exact_failure {
+                const VAGUE: &str = "(an earlier feature uses an option it does not cover yet)";
+                let name = self
+                    .features
+                    .iter()
+                    .find(|f| f.id() == id)
+                    .map_or(id.as_str(), |f| f.name());
+                let named = format!("(the geometry kernel failed on {name})");
+                for (k, h) in self.feature_health.iter_mut() {
+                    if k != id && h.contains(VAGUE) {
+                        *h = h.replace(VAGUE, &named);
+                    }
+                }
             }
         }
         // Equations reading driven dimensions: projected geometry may have
@@ -1281,6 +1321,28 @@ impl PartDocument {
     /// Builds the body with the exact kernel (`use_exact`) or the faceted
     /// one, then updates the sketches. Returns `false` (and leaves the part
     /// for a faceted rebuild) when the exact kernel had to give up.
+    /// Whether the faceted kernel rebuilds every active feature of this part, quickly enough
+    /// to be the fallback when the exact kernel fails: boxes, extrusions, revolutions, work
+    /// features and Combine. Anything else (blends: 15-20 s; holes, patterns, shells… it
+    /// refuses) keeps the exact build with the failing feature sick.
+    fn faceted_rebuilds_well(&self) -> bool {
+        self.features
+            .iter()
+            .enumerate()
+            .take(self.build_limit())
+            .all(|(k, f)| {
+                self.is_suppressed(k)
+                    || matches!(
+                        f,
+                        Feature::Box(_)
+                            | Feature::Extrude(_)
+                            | Feature::Revolve(_)
+                            | Feature::Work(_)
+                            | Feature::Combine(_)
+                    )
+            })
+    }
+
     fn build_features(&mut self, use_exact: bool) -> Result<bool, PartError> {
         use crate::kernel::exact::{ExactSolid, to_brep};
         self.feature_health.clear();
@@ -1865,11 +1927,23 @@ impl PartDocument {
                                             if op == Operation::Cut
                                                 && let Sweep::Extrude(e) = sweep =>
                                         {
-                                            match exact::extrude_corners_apart(e, &body, &works, &ps.sketch) {
-                                                Ok(Some(again)) => exact::combine(solids.clone(), again, op, chosen, false)
+                                            let again = |tools: Result<Option<Vec<crate::kernel::exact::ExactSolid>>, exact::Fail>| match tools {
+                                                Ok(Some(t)) => exact::combine(solids.clone(), t, op, chosen, false).ok(),
+                                                _ => None,
+                                            };
+                                            if let Some(done) = again(exact::extrude_corners_apart(e, &body, &works, &ps.sketch)) {
+                                                Ok(Some(done))
+                                            } else {
+                                                // A wall touching a curved face's edge exactly where the
+                                                // face meets itself (a tooth as deep as the chamfer of a
+                                                // revolved rim, on the revolve's seam): the kernel's
+                                                // result is invalid. The profile a hair smaller, then a
+                                                // hair larger (`exact::TANGENT_NUDGE`).
+                                                [-exact::TANGENT_NUDGE, exact::TANGENT_NUDGE]
+                                                    .into_iter()
+                                                    .find_map(|g| again(exact::extrude_from(e, &body, &works, &ps.sketch, 0.0, g)))
                                                     .map(Some)
-                                                    .map_err(|_| exact::Fail::Kernel(msg)),
-                                                _ => Err(exact::Fail::Kernel(msg)),
+                                                    .ok_or(exact::Fail::Kernel(msg))
                                             }
                                         }
                                         r => r.map(Some),
@@ -1946,6 +2020,7 @@ impl PartDocument {
                 Err(exact::Fail::User(msg)) => Some(msg.clone()),
                 _ => None,
             };
+            let mut sick_by_kernel = false;
             if step.is_err() {
                 made.clear();
             }
@@ -1969,6 +2044,23 @@ impl PartDocument {
                             solids = next;
                             body = b;
                         }
+                        // A Cut the kernel made invalid (a tooth as deep as a revolved rim's
+                        // chamfer, on the revolve's seam): the profile a hair smaller or larger.
+                        Some(_)
+                            if let Feature::Extrude(e) = f
+                                && e.operation == Operation::Cut
+                                && let Some(ps) =
+                                    self.sketches.iter().find(|s| s.id == e.sketch)
+                                && let Some((n2, b2, tools)) =
+                                    exact::nudged_cut(e, &body, &works, &ps.sketch, &solids) =>
+                        {
+                            log::info!("{}: cut again with the profile nudged", f.id());
+                            solids = n2;
+                            body = b2;
+                            for set in &mut made {
+                                set.tools = tools.clone();
+                            }
+                        }
                         Some(why)
                             if matches!(
                                 f,
@@ -1976,9 +2068,13 @@ impl PartDocument {
                             ) =>
                         {
                             log::warn!("exact kernel: {}: invalid result: {why}", f.id());
-                            self.exact_failure =
-                                Some((f.id().to_owned(), format!("invalid result ({why})")));
-                            return Ok(false);
+                            let msg = format!("invalid result ({why})");
+                            if !self.kernel_failures_are_health {
+                                self.exact_failure = Some((f.id().to_owned(), msg));
+                                return Ok(false);
+                            }
+                            failed = Some(kernel_health(&mut self.feature_health, f.id(), &msg));
+                            sick_by_kernel = true;
                         }
                         // Import: a damaged solid of the file comes in as a surface body (as
                         // Inventor imports it), so the part opens and the rest is usable.
@@ -2017,8 +2113,12 @@ impl PartDocument {
                     }
                     Err(msg) => {
                         log::warn!("exact kernel: {}: {msg}", f.id());
-                        self.exact_failure = Some((f.id().to_owned(), msg));
-                        return Ok(false);
+                        if !self.kernel_failures_are_health {
+                            self.exact_failure = Some((f.id().to_owned(), msg));
+                            return Ok(false);
+                        }
+                        failed = Some(kernel_health(&mut self.feature_health, f.id(), &msg));
+                        sick_by_kernel = true;
                     }
                 },
                 Ok(None) => {}
@@ -2027,14 +2127,23 @@ impl PartDocument {
                 }
                 Err(exact::Fail::Kernel(msg)) => {
                     log::warn!("exact kernel: {}: {msg}", f.id());
-                    self.exact_failure = Some((f.id().to_owned(), msg));
-                    return Ok(false);
+                    if !self.kernel_failures_are_health {
+                        self.exact_failure = Some((f.id().to_owned(), msg));
+                        return Ok(false);
+                    }
+                    failed = Some(kernel_health(&mut self.feature_health, f.id(), &msg));
+                    sick_by_kernel = true;
                 }
+            }
+            if sick_by_kernel {
+                made.clear();
             }
             if failed.is_some() {
                 extra = exact::HoleOutput::default();
             }
-            if cacheable {
+            // A kernel failure kept as health is not cached: the same step in a part that may
+            // be rebuilt faceted must try the kernel again.
+            if cacheable && !sick_by_kernel {
                 self.build_cache.put(CachedStep {
                     key,
                     solids: solids.clone(),
@@ -3442,6 +3551,13 @@ fn invalid_as_surfaces(
         .collect();
     let b2 = crate::kernel::exact::to_brep_with(&n2, true).ok()?;
     invalid_solid(&b2).is_none().then_some((n2, b2))
+}
+
+/// Records the exact kernel's failure on `id` as its health; the message.
+fn kernel_health(health: &mut HashMap<String, String>, id: &str, msg: &str) -> String {
+    let text = format!("the geometry kernel failed: {msg}");
+    health.insert(id.to_owned(), text.clone());
+    text
 }
 
 fn invalid_solid(body: &BRep) -> Option<String> {
