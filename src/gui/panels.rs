@@ -399,8 +399,7 @@ impl CadCraftApp {
             }
         }
         if let Some(id) = activate {
-            self.asm.came_from = None;
-            self.activate_document(id);
+            self.open_document_in_tab(id);
         }
     }
 

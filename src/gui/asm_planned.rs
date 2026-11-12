@@ -498,6 +498,7 @@ impl AsmPlanned {
                     ),
                     Button("Browse Templates..."),
                     Text("New File Location", "(the assembly's folder)"),
+                    Combo("Store", &["Separate file", "In this file"], 0),
                     Combo("Default BOM Structure", BOM, 0),
                     Check("Virtual Component", false),
                     Check("Constrain sketch plane to selected face or plane", true),

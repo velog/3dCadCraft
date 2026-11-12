@@ -1,11 +1,14 @@
 //! Create In-Place Component's OK (`docs/spec/3.10-top-down.md` §3.1, step
 //! T1): the panel's values → `assembly::create`, one Undo step, then the new
-//! part opens for its first sketch (Return comes back) until Edit in place
-//! (T2) keeps it inside the assembly.
+//! part is edited in place for its first sketch (Return comes back). Store:
+//! Separate file (the default, Inventor's model) writes it as a file of its
+//! own next to the assembly; In this file keeps it in the design file.
 
 use super::CadCraftApp;
 use super::part_planned::PartDialog;
-use crate::assembly::create::{CreateOptions, Template, create_in_place};
+use crate::assembly::create::{
+    CreateOptions, Template, create_as_file, create_in_place, new_file_path,
+};
 use crate::assembly::relation::{ASSEMBLY, Geom};
 use crate::document::iprops::BomStructure;
 
@@ -46,6 +49,11 @@ impl CadCraftApp {
         };
         let mut trial = self.project.clone();
         let asm = self.part_id;
+        // Inventor's model: the new component is a file of its own next to
+        // the assembly (Store: In this file keeps it in the design file).
+        if d.index(0, "Store") == 0 {
+            return self.create_file_ok(d, &o);
+        }
         match create_in_place(&mut trial, asm, &o) {
             Ok(c) => {
                 self.history.break_coalescing();
@@ -66,6 +74,57 @@ impl CadCraftApp {
                 )));
                 if template != Template::Assembly {
                     self.edit_in_place(c.occurrence, Vec::new());
+                }
+                true
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("Create: {e}")));
+                false
+            }
+        }
+    }
+
+    /// Create with Store: Separate file: the new part file is written next
+    /// to the saved assembly (or in New File Location) and linked; it opens
+    /// in its own tab for Edit in place, the assembly's tab stays.
+    fn create_file_ok(&mut self, d: &PartDialog, o: &CreateOptions) -> bool {
+        let owner = std::path::PathBuf::from(self.file_path.trim());
+        if self.file_path.trim().is_empty() {
+            self.file_status = Some(Err(
+                "Create: save the assembly first: the new part file goes next to it (or choose Store: In this file)"
+                    .into(),
+            ));
+            return false;
+        }
+        let loc = d.text(0, "New File Location");
+        let loc = loc.trim();
+        let folder =
+            (!loc.is_empty() && !loc.starts_with('(')).then(|| std::path::PathBuf::from(loc));
+        let path = match new_file_path(&owner, folder.as_deref(), &o.name, o.template) {
+            Ok(p) => p,
+            Err(e) => {
+                self.file_status = Some(Err(format!("Create: {e}")));
+                return false;
+            }
+        };
+        let mut trial = self.project.clone();
+        match create_as_file(&mut trial, self.part_id, &owner, &path, o) {
+            Ok(made) => {
+                self.history.break_coalescing();
+                self.checkpoint("Create Component");
+                self.project = trial;
+                self.history.break_coalescing();
+                self.asm.libs.forget_linked();
+                self.asm_solve(None);
+                self.asm.sel = vec![made.created.occurrence];
+                self.asm.sub.clear();
+                self.scene_dirty = true;
+                self.file_status = Some(Ok(format!(
+                    "Create: {} written and placed; sketch its first feature, then Return",
+                    path.display()
+                )));
+                if o.template != Template::Assembly {
+                    self.edit_in_place(made.created.occurrence, Vec::new());
                 }
                 true
             }

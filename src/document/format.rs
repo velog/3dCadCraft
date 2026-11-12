@@ -488,6 +488,7 @@ impl Project {
             thumbnail: read(THUMBNAIL_ENTRY).ok(),
             preview: manifest.preview,
             linked_edits: Default::default(),
+            linked_bases: Default::default(),
             newer_file: (manifest.format_revision > FORMAT_REVISION).then(|| {
                 format!(
                     "made by a newer 3DCadCraft ({}, format revision {}; this build: {}): features added since may be missing or built differently, update the program",

@@ -404,6 +404,7 @@ curve divides regions; flat rings of a revolve as one face; Patch takes the whol
 
 ### Waiting for the owner
 
+- Files and assemblies (2026-11-12, spec 0.6 §3.2): Open of a component in its own tab, Create In-Place as a separate file by default. Open question: should Store follow Application Options › New documents (spec 0.6b §3.6, default *In one file*) instead of Inventor's separate file?
 - The row of tabs above the view for a file's own documents: the owner reviews it (keep, hide or shorten).
 - A part or assembly dropped from Windows Explorer: place it in the active assembly? It opens a tab today.
 - The owner's remark cut off at "Men", and what else "a number of others" adds to the browser.

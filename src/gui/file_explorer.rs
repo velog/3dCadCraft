@@ -336,8 +336,7 @@ impl super::CadCraftApp {
         self.files_preview_pane(ui, pane, side, shown.as_ref());
         self.files_drag_label(&ctx);
         if let Some(id) = open {
-            self.asm.came_from = None;
-            self.activate_document(id);
+            self.open_document_in_tab(id);
         }
         if let Some((c, id)) = ask {
             self.docs_apply_to(c, id);
@@ -784,8 +783,7 @@ impl super::CadCraftApp {
         if let Some(id) = open
             && id != self.part_id
         {
-            self.asm.came_from = None;
-            self.activate_document(id);
+            self.open_document_in_tab(id);
         }
     }
 }

@@ -605,7 +605,7 @@ impl CadCraftApp {
         if let Some(d) = self.project.document_mut(id) {
             d.properties = n.properties;
         }
-        self.activate_document(id);
+        self.open_document_in_tab(id);
         self.file_status = Some(Ok(format!(
             "{name}: Place Views > Base View (BV) places a view of a part"
         )));

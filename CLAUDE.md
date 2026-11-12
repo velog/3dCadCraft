@@ -1093,6 +1093,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   of the Hole panel become `project_segment` reference lines (associative, by vertex names)
   plus `PointLineDistance` dimensions of the hole's sketch at OK; `PartDocument::project_edge`
   is also the sketch's Project Geometry (straight edges only).
+- **Tabs of one file share one project** (`gui/doc_tabs.rs`, spec 0.6 §3.2): a tab is (group, document, view); the group's project / Undo / saved state live in the app's fields when the active tab is of the group, else in exactly one `DocTab` with `holds` (`take_holding` moves it). Never write a tab's `project` or read its `dirty` without `holds`; open another document of the file with `open_document_in_tab`, never `activate_document` (that replaced the assembly: the owner's "opening the part closes the assembly"). A file open in another tab stands for itself in assemblies (`share_open_tabs` → `LibCache::take_open`, keyed by the tab's signature). An assembly's pending edit of a linked file (`linked_edits`) is not written over a file saved after it began (`Project::linked_bases`).
 - **Document tabs** (`gui/doc_tabs.rs`): the active document stays in the app's fields (`project`,
   `part_id`, `history`, `file_path`, `saved_sig`, camera, selection); the others are `DocTab`s in `tabs`
   (the active slot is `None`). `switch_tab` first calls `leave_document` (Finish Sketch, every draft

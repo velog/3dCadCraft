@@ -1112,6 +1112,7 @@ impl CadCraftApp {
     pub(super) fn saved_ok(&mut self) {
         remember_recent(Path::new(self.file_path.trim()));
         self.mark_saved();
+        self.sync_group_paths();
         if let Some(next) = self.after_save.take() {
             self.run_pending(next);
         }
