@@ -932,6 +932,22 @@ const TABLES: &[(&str, &str)] = &[
         "iso_8735",
         include_str!("../../data/components/families/iso_8735.csv"),
     ),
+    (
+        "iso_8740",
+        include_str!("../../data/components/families/iso_8740.csv"),
+    ),
+    (
+        "iso_8744",
+        include_str!("../../data/components/families/iso_8744.csv"),
+    ),
+    (
+        "iso_8741",
+        include_str!("../../data/components/families/iso_8741.csv"),
+    ),
+    (
+        "iso_8745",
+        include_str!("../../data/components/families/iso_8745.csv"),
+    ),
 ];
 
 /// A table's lines without comments, the first one the heading.
@@ -3239,8 +3255,17 @@ fn grease(d: Real, l1: Real, l: Real, sw: Real) -> Result<PartDocument, PartErro
 }
 
 /// Plain thread below the seat, a collar, a hexagon head (fine pitches: not in the thread table).
+/// A hexagon whose corners stand out over the collar (DIN 910 M14 x 1.5: across corners 19.6 on
+/// a collar of 19) gets the usual 30° chamfer at its foot, so the collar's top meets a circle.
 fn plug(d: Real, c: Real, dk: Real, i: Real, l: Real, sw: Real) -> Result<PartDocument, PartError> {
     let (r, e) = (d / 2.0, d / 10.0);
+    let mut hex = AxialRun::hexagon(sw, c, l - i, "Flat", Some("Top"));
+    if dk / 2.0 >= sw / 2.0 - 1e-9
+        && dk / 2.0 <= sw / 3f64.sqrt() + 1e-9
+        && let AxialShape::Hexagon { start_cone, .. } = &mut hex.shape
+    {
+        *start_cone = Some(hex_chamfer(sw, "HexChamfer"));
+    }
     axial_part(
         vec![
             AxialRun::turned(
@@ -3253,7 +3278,7 @@ fn plug(d: Real, c: Real, dk: Real, i: Real, l: Real, sw: Real) -> Result<PartDo
                 ],
                 Some("CollarTop"),
             ),
-            AxialRun::hexagon(sw, c, l - i, "Flat", Some("Top")),
+            hex,
         ],
         Some("End"),
         false,

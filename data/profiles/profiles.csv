@@ -22,9 +22,13 @@
 #     r1 (core bore diameter), r2 (outer corner radius), m (grid), A (published area, mm2); the chamber and the
 #     cavities between cells are sized to A. Sources per family in data/components/SOURCES.md.
 #     c, u (thin-walled sections): the published chamber width and the depth where its walls start to slope;
-#     then the chamber is the catalogue's and one wall thickness of the outer walls and webs is sized to A.
+#     then the slot is the catalogue's, corner blocks round it are joined to the core by diagonal webs, and the
+#     blocks' size and the webs' thickness are sized to A and to the published second moment of the strong axis.
+#   Ix, Iy, It (any shape, optional): the maker's published second moments about the section's x axis (along b) and
+#     y axis, and torsion constant, cm4; the section properties and frame analysis use them. A catalogue's Ix of a
+#     section wider than high (40x80L here: h 40, b 80) is our Iy.
 # ANSI rows are typed in inches from the AISC / ASME tables and converted to mm.
-family,standard,shape,size,h,b,t,tw,tf,r1,r2,m,A,c,u
+family,standard,shape,size,h,b,t,tw,tf,r1,r2,m,A,c,u,Ix,Iy,It
 Square hollow section (EN 10219),EN,shs,20x20x2,20,20,2,,,4,2
 Square hollow section (EN 10219),EN,shs,30x30x3,30,30,3,,,6,3
 Square hollow section (EN 10219),EN,shs,40x40x3,40,40,3,,,6,3
@@ -187,19 +191,21 @@ Square HSS (ASTM A500),ANSI,shs,HSS3x3x3/16,76.2,76.2,4.42,,,8.839,4.42
 Square HSS (ASTM A500),ANSI,shs,HSS4x4x1/4,101.6,101.6,5.918,,,11.836,5.918
 Square HSS (ASTM A500),ANSI,shs,HSS6x6x1/4,152.4,152.4,5.918,,,11.836,5.918
 Square HSS (ASTM A500),ANSI,shs,HSS6x6x3/8,152.4,152.4,8.865,,,17.729,8.865
-Strut profile slot 8 R30 (Bosch Rexroth),Other,tslot,30x30,30,30,2.2,8,9,7.3,1,30,310,16.5,4.75
-Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,40x40L,40,40,3,10,12.5,10,1,40,560,20.1,6
-Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,40x80L,40,80,3,10,12.5,10,1,40,990,20.1,6
-Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,80x80L,80,80,3,10,12.5,10,1,40,1820,20.1,6
-Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x45L,45,45,3,10,12.5,10,1,45,600,20.1,6
-Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x90L,45,90,3,10,12.5,10,1,45,1130,20.1,6
-Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x90L,90,90,3,10,12.5,10,1,45,2410,20.1,6
-Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x45,45,45,3,10,12.5,10,1,45,750,20.1,6
-Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x90,45,90,3,10,12.5,10,1,45,1540,20.1,6
-Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x90,90,90,3,10,12.5,10,1,45,3840,20.1,6
-Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x180,90,180,3,10,12.5,10,1,45,6360,20.1,6
-Strut profile slot 10 R50 (Bosch Rexroth),Other,tslot,50x50L,50,50,3,10,12.5,10,1,50,930,20.1,6
-Strut profile slot 10 R60 (Bosch Rexroth),Other,tslot,60x60,60,60,3,10,12.5,10,1,60,1440,20.1,6
+Strut profile slot 8 R30 (Bosch Rexroth),Other,tslot,30x30,30,30,2.2,8,9,7.3,1,30,310,16.5,4.75,2.8,2.8,0.29
+Strut profile slot 8 R30 (Bosch Rexroth),Other,tslot,30x60,30,60,2.2,8,9,7.3,1,30,550,16.5,4.75,5.1,19.6,2.6
+Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,40x40L,40,40,3,10,12.5,10,1,40,560,20.1,6,9.1,9.1,1.3
+Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,40x80L,40,80,3,10,12.5,10,1,40,990,20.1,6,17.3,63.4,8.02
+Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,80x80L,80,80,3,10,12.5,10,1,40,1820,20.1,6,132.1,132.1,59.8
+Strut profile slot 10 R40 (Bosch Rexroth),Other,tslot,80x120L,80,120,3,10,12.5,10,1,40,2560,20.1,6,192.8,389.2,119
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x45L,45,45,3,10,12.5,10,1,45,600,20.1,6,11.7,11.7,1.46
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x90L,45,90,3,10,12.5,10,1,45,1130,20.1,6,23.6,82,15.1
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x90L,90,90,3,10,12.5,10,1,45,2410,20.1,6,211.1,211.1,82.1
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x45,45,45,3,10,12.5,10,1,45,750,20.1,6,18.3,18.3,2.65
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,45x90,45,90,3,10,12.5,10,1,45,1540,20.1,6,32.8,124.6,15.4
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x90,90,90,3,10,12.5,10,1,45,3840,20.1,6,299.8,299.8,118.6
+Strut profile slot 10 R45 (Bosch Rexroth),Other,tslot,90x180,90,180,3,10,12.5,10,1,45,6360,20.1,6,544.3,2138.3,429
+Strut profile slot 10 R50 (Bosch Rexroth),Other,tslot,50x50L,50,50,3,10,12.5,10,1,50,930,20.1,6,21.2,21.2,5.37
+Strut profile slot 10 R60 (Bosch Rexroth),Other,tslot,60x60,60,60,3,10,12.5,10,1,60,1440,20.1,6,52.2,52.2,15.9
 T-slot profile slot 5 (20 grid),Other,tslot,20x20,20,20,2.0,5,6.35,4.2,1.0,20,180
 T-slot profile slot 6 (30 grid),Other,tslot,30x30,30,30,2.0,6,9.0,5.0,1.5,30,467
 T-slot profile slot 6 (30 grid),Other,tslot,60x30,30,60,2.0,6,9.0,5.0,1.5,30,848

@@ -612,7 +612,15 @@ pub fn prism_between(loops: &[[(Plane, Loop2); 2]]) -> Result<(Body, Numbers)> {
         _ => None,
     };
     if flat(p0) && flat(p1) {
-        let body = one(k::extrude(&square, &[region], 0.0, square.height(b))?)?;
+        // A straight extrusion of a section with its loops apart from one another (a frame
+        // section's outline, its holes inside it): SMLib's full check of the solid it sweeps
+        // took two thirds of the time (a T-slot profile with 300 sides: 220 of 330 ms) and
+        // finds nothing a sweep of such a region could get wrong.
+        let height = square.height(b);
+        let (made, _) = solidcraft_kernel::validating(solidcraft_kernel::Validation::Off, || {
+            k::extrude(&square, std::slice::from_ref(&region), 0.0, height)
+        });
+        let body = one(made?)?;
         let roles = swept(&body, swept_role);
         return Ok((body, roles));
     }

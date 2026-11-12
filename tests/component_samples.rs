@@ -532,6 +532,24 @@ fn head_fasteners_build_within_the_budget() {
     }
 }
 
+/// DIN 910 M14 x 1.5: the hexagon's corners (across corners 19.6) stand out over its collar (19);
+/// its foot is chamfered so the collar's top meets a circle, and the part builds exactly.
+#[test]
+fn a_plug_whose_hexagon_overhangs_its_collar_builds() {
+    let s = find("DIN 910 M14x1.5");
+    let p = s.part().unwrap();
+    assert!(
+        p.exact && p.feature_health.is_empty(),
+        "{:?}",
+        p.feature_health
+    );
+    // Thread Ø14 x 12, collar Ø19 x 3, hexagon 17 x 6 less what the chamfer takes.
+    let hex = 3f64.sqrt() / 2.0 * 17.0 * 17.0 * 6.0;
+    let want = PI / 4.0 * (14.0 * 14.0 * 12.0 + 19.0 * 19.0 * 3.0) + hex;
+    let v = volume(&p);
+    assert!(v < want && v > want * 0.96, "{v} vs {want}");
+}
+
 /// A shoulder screw goes by its shoulder, through a hole as deep as the shoulder is long.
 #[test]
 fn a_shoulder_screw_weighs_what_its_table_says() {

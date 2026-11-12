@@ -145,8 +145,15 @@ pub struct Section {
     /// (its maker's catalogue); 0 = the chamber is sized to the area instead.
     pub chamber: Real,
     /// Depth from the face to where a thin-walled section's chamber walls start
-    /// to slope towards its floor.
+    /// to slope towards its floor (where the corner blocks' legs end).
     pub undercut: Real,
+    /// The maker's published second moment about the section's x axis, mm⁴; 0 = none.
+    /// [`Section::properties`] gives it, and a walled T-slot outline is fitted to it.
+    pub ix_published: Real,
+    /// The same about the y axis.
+    pub iy_published: Real,
+    /// The maker's published torsion constant, mm⁴; 0 = none ([`Section::torsion`]).
+    pub it_published: Real,
 }
 
 /// What a T-slot section's published area makes of its inner shape.
@@ -158,6 +165,18 @@ pub struct TSlotFit {
     pub between: Real,
     /// Half side of the square cavity where four cells meet.
     pub node: Real,
+}
+
+/// What a thin-walled T-slot section's published area and second moments make of
+/// its outline ([`Section::walled_fit`]), mm.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WalledFit {
+    /// Thickness of the walls, the hooks at the chambers and the webs.
+    pub wall: Real,
+    /// Side of the solid block in each corner of a cell.
+    pub block: Real,
+    /// Half side of the core round each bore.
+    pub core: Real,
 }
 
 /// The thinnest web a T-slot section keeps between two of its cavities, mm.
@@ -459,13 +478,15 @@ impl Section {
             Shape::Custom => self.inside_point().unwrap_or_else(Point2::origin),
             Shape::TSlot => {
                 let (w, h) = self.extent();
-                let along = (self.tslot_grid() / 2.0 - self.tw / 2.0) / 2.0;
-                let depth = if self.chamber > 0.0 {
-                    self.t.min(self.walled_wall())
+                let m = self.tslot_grid();
+                if self.chamber > 0.0 {
+                    // In the outer wall between the corner and the chamber.
+                    let along = (m / 2.0 - self.chamber / 2.0) / 2.0;
+                    Point2::new(-w / 2.0 + along, -h / 2.0 + self.walled_fit().wall / 2.0)
                 } else {
-                    self.t
-                };
-                Point2::new(-w / 2.0 + along, -h / 2.0 + depth / 2.0)
+                    let along = (m / 2.0 - self.tw / 2.0) / 2.0;
+                    Point2::new(-w / 2.0 + along, -h / 2.0 + self.t / 2.0)
+                }
             }
         }
     }
@@ -552,30 +573,28 @@ impl Section {
             )
     }
 
-    /// The thin-walled T-slot section (a published chamber, spec 6.1 §3.11a):
-    /// the slot's opening, lips, chamber (width `chamber`, its walls upright
-    /// down to `undercut`, then at 45° to the floor at `tf`), a core tube round
-    /// the bore, and in every cell eight cavities between the faces, the
-    /// chambers, the diagonal webs and the core tube. One wall thickness for the
-    /// outer walls and webs is chosen so the area is the published one.
+    /// The thin-walled T-slot section (a published chamber, spec 6.1 §3.11a), drawn
+    /// as these profiles are built: walls round the slots ending in hooks at the
+    /// chambers, a solid block in each corner, diagonal webs from the corners to a
+    /// core round the bore, every slot open down to the core. In each cell a face
+    /// with a slot has its opening, lips (`t`), chamber (`chamber` wide, upright
+    /// walls down to `undercut`), then the space under the walls between two webs,
+    /// down to the core. A face between two cells has the same space closed under a
+    /// plate two walls thick. The wall (= web) thickness, the corner blocks and the
+    /// core are the ones that give the published area and second moments
+    /// ([`Section::walled_fit`]). One outside loop, the bores and the closed spaces:
+    /// a 90x180 is 8 bores and 20 spaces, no longer 72 cavities.
     fn walled_loops(&self) -> Vec<Loop> {
+        self.walled_shape(self.walled_fit())
+    }
+
+    /// The loops of a walled section of the given wall, blocks and core.
+    fn walled_shape(&self, fit: WalledFit) -> Vec<Loop> {
         let (x0, y0) = (-self.b / 2.0, -self.h / 2.0);
         let m = self.tslot_grid();
-        let (w, t, dd, c, u) = (self.tw, self.t, self.tf, self.chamber, self.undercut);
-        let f = self.walled_floor();
         let (nx, ny) = self.tslot_cells();
-        let notch = [
-            (-w / 2.0, 0.0),
-            (-w / 2.0, t),
-            (-c / 2.0, t),
-            (-c / 2.0, u),
-            (-f / 2.0, dd),
-            (f / 2.0, dd),
-            (c / 2.0, u),
-            (c / 2.0, t),
-            (w / 2.0, t),
-            (w / 2.0, 0.0),
-        ];
+        let notch = self.walled_notch(fit, true);
+        let closed = self.walled_notch(fit, false);
         let mut outer: Vec<(Point2, Real)> = Vec::new();
         let sides = [
             (Point2::new(x0, y0), Vector2::new(1.0, 0.0), nx),
@@ -585,131 +604,235 @@ impl Section {
         ];
         for (start, d, cells) in sides {
             outer.push((start, self.r2));
+            // Into the material: left of the direction of a CCW loop.
             let n = Vector2::new(-d.y, d.x);
             for k in 0..cells {
                 let mid = start + d * (m * (k as Real + 0.5));
-                for (a, z) in notch {
-                    outer.push((mid + d * a + n * z, 0.0));
+                for (a, z) in &notch {
+                    outer.push((mid + d * *a + n * *z, 0.0));
                 }
             }
         }
         let mut loops = vec![Loop::Corners(outer)];
-        let wall = self.walled_wall();
-        let slotted = self.walled_octant(wall, true);
-        let plain = self.walled_octant(wall, false);
         for j in 0..ny {
             for i in 0..nx {
-                let cc = Point2::new(x0 + m * (i as Real + 0.5), y0 + m * (j as Real + 0.5));
-                loops.push(Loop::Circle(cc, self.r1 / 2.0, true));
-                // Faces top, left, bottom, right: a turn of 90° each.
-                let external = [j + 1 == ny, i == 0, j == 0, i + 1 == nx];
-                for (k, ext) in external.iter().enumerate() {
-                    let q = if *ext { &slotted } else { &plain };
-                    if q.len() < 3 {
-                        continue;
-                    }
-                    let (sn, cs) = (k as Real * std::f64::consts::FRAC_PI_2).sin_cos();
-                    for mirror in [1.0, -1.0] {
-                        let mut pts: Vec<Point2> = q
-                            .iter()
-                            .map(|p| {
-                                let (x, y) = (p.x * mirror, p.y);
-                                Point2::new(cc.x + x * cs - y * sn, cc.y + x * sn + y * cs)
-                            })
-                            .collect();
-                        // Holes run clockwise.
-                        if polygon_area(&pts) > 0.0 {
-                            pts.reverse();
-                        }
-                        loops.push(Loop::Corners(pts.into_iter().map(|p| (p, 0.0)).collect()));
-                    }
-                }
+                let c = Point2::new(x0 + m * (i as Real + 0.5), y0 + m * (j as Real + 0.5));
+                loops.push(Loop::Circle(c, self.r1 / 2.0, true));
+            }
+        }
+        // The closed spaces on both sides of each face between two cells: the
+        // face's middle `mid`, `n` into the cell.
+        let mut hole = |mid: Point2, n: Vector2| {
+            let d = Vector2::new(n.y, -n.x);
+            let mut pts: Vec<Point2> = closed.iter().map(|(a, z)| mid + d * *a + n * *z).collect();
+            // Holes run clockwise.
+            if polygon_area(&pts) > 0.0 {
+                pts.reverse();
+            }
+            loops.push(Loop::Corners(pts.into_iter().map(|p| (p, 0.0)).collect()));
+        };
+        for j in 0..ny {
+            for i in 1..nx {
+                let mid = Point2::new(x0 + m * i as Real, y0 + m * (j as Real + 0.5));
+                hole(mid, Vector2::new(1.0, 0.0));
+                hole(mid, Vector2::new(-1.0, 0.0));
+            }
+        }
+        for j in 1..ny {
+            for i in 0..nx {
+                let mid = Point2::new(x0 + m * (i as Real + 0.5), y0 + m * j as Real);
+                hole(mid, Vector2::new(0.0, 1.0));
+                hole(mid, Vector2::new(0.0, -1.0));
             }
         }
         loops
     }
 
-    /// A walled section's chamber floor width.
-    fn walled_floor(&self) -> Real {
-        (self.chamber - 2.0 * (self.tf - self.undercut)).max(0.5)
+    /// One face's slot as (along the face, depth into the material), from one end
+    /// of the opening to the other (`open`); or the closed space under a face
+    /// between two cells (`!open`, no corner blocks there).
+    fn walled_notch(&self, fit: WalledFit, open: bool) -> Vec<(Real, Real)> {
+        let m = self.tslot_grid();
+        let (w, t, c, u) = (self.tw, self.t, self.chamber, self.undercut);
+        let WalledFit {
+            wall: k,
+            block: s,
+            core: q,
+        } = fit;
+        // A web's edge is `g` off its diagonal along a face.
+        let g = k / std::f64::consts::SQRT_2;
+        let mut half: Vec<(Real, Real)> = Vec::new();
+        if open {
+            half.extend([(w / 2.0, 0.0), (w / 2.0, t), (c / 2.0, t), (c / 2.0, u)]);
+            if k < u {
+                // The hook at the chamber's side.
+                half.extend([(c / 2.0 + k, u), (c / 2.0 + k, k)]);
+            }
+        }
+        if open && s - g > k {
+            // The corner block reaches below the wall; the web leaves its side.
+            half.extend([(m / 2.0 - s, k), (m / 2.0 - s, s - g)]);
+        } else {
+            half.push((m / 2.0 - k - g, k));
+        }
+        half.push((q - g, m / 2.0 - q));
+        // In from the near end of the opening, across, and out at the far end.
+        let mut out: Vec<(Real, Real)> = half.iter().map(|&(a, z)| (-a, z)).collect();
+        out.extend(half.iter().rev());
+        out
     }
 
-    /// One cavity of a walled cell in the cell's own coordinates: the octant
-    /// above the diagonal of the top face's right half (`slotted`: that face has
-    /// a slot), counter-clockwise; empty when nothing fits.
-    fn walled_octant(&self, wall: Real, slotted: bool) -> Vec<Point2> {
-        use std::f64::consts::SQRT_2;
-        let m = self.tslot_grid();
-        let (c, u, dd) = (self.chamber, self.undercut, self.tf);
-        let p = Point2::new;
-        let g = SQRT_2 * wall / 2.0;
-        let top = m / 2.0 - wall;
-        let tube = self.r1 / 2.0 + 3.0 + wall;
-        let j = p(wall / 2.0, wall / 2.0 + g);
-        let b = p(top - g, top);
-        let q = if slotted {
-            let a = p(c / 2.0 + wall, top);
-            let e = p(c / 2.0 + wall, m / 2.0 - u - (SQRT_2 - 1.0) * wall);
-            if e.y >= a.y || a.x >= b.x {
-                return Vec::new();
+    /// Area and second moments about the section's axes through its middle of a
+    /// walled section's polygons, without sampling: the fit evaluates it often.
+    fn walled_moments(&self, fit: WalledFit) -> (Real, Real, Real) {
+        let (mut a, mut ixx, mut iyy) = (0.0, 0.0, 0.0);
+        for l in self.walled_shape(fit) {
+            match l {
+                Loop::Circle(c, r, _) => {
+                    let ar = std::f64::consts::PI * r * r;
+                    a -= ar;
+                    ixx -= ar * (r * r / 4.0 + c.y * c.y);
+                    iyy -= ar * (r * r / 4.0 + c.x * c.x);
+                }
+                Loop::Corners(cs) => {
+                    let n = cs.len();
+                    for i in 0..n {
+                        let (p, q) = (cs[i].0, cs[(i + 1) % n].0);
+                        let k = p.x * q.y - q.x * p.y;
+                        a += k / 2.0;
+                        ixx += (p.y * p.y + p.y * q.y + q.y * q.y) * k / 12.0;
+                        iyy += (p.x * p.x + p.x * q.x + q.x * q.x) * k / 12.0;
+                    }
+                }
+                Loop::Path(_) => {}
             }
-            let fy = m / 2.0 - dd - wall;
-            if fy > j.y {
-                let f = p(self.walled_floor() / 2.0 + (SQRT_2 - 1.0) * wall, fy);
-                vec![a, e, f, p(wall / 2.0, fy), j, b]
-            } else {
-                // The floor reaches the diagonal web: the slope runs down to it.
-                let x = j.y + c / 2.0 - m / 2.0 + u + SQRT_2 * wall;
-                vec![a, e, p(x, j.y), b]
-            }
-        } else {
-            vec![p(wall / 2.0, top), j, b]
-        };
-        // Clear of the core tube: beyond its tangent across the diagonal.
-        let q = clip_half_plane(&q, 1.0, 1.0, tube * SQRT_2);
-        if q.len() < 3 || polygon_area(&q).abs() < 1e-6 {
-            Vec::new()
-        } else {
-            q
         }
+        // The four rounded corners of the outside.
+        let r = self.r2;
+        let lost = (1.0 - std::f64::consts::FRAC_PI_4) * r * r * 4.0;
+        let (cx, cy) = (self.b / 2.0 - 0.22 * r, self.h / 2.0 - 0.22 * r);
+        (a - lost, ixx - lost * cy * cy, iyy - lost * cx * cx)
     }
 
-    /// The wall thickness of a walled section that gives its published area:
-    /// bisection between 0.8 mm and a quarter of the grid (the cavities shrink
-    /// as the walls grow).
-    fn walled_wall(&self) -> Real {
+    /// The wall, corner blocks and core of a walled section. For a wall and a core,
+    /// the blocks that give the published area (bisection: the area grows with
+    /// them); among walls from 0.8 mm to the lips' thickness and cores from the
+    /// bore's wall to the chamber's, the pair whose second moments are nearest the
+    /// published ones (the strong axis counts most), searched on a grid and then
+    /// on a finer one round the best. Without published moments: walls as thick as
+    /// the lips, the core in the middle of its range. Kept per section: the search
+    /// takes some 10^4 evaluations of the outline.
+    pub fn walled_fit(&self) -> WalledFit {
+        type Cache = std::sync::Mutex<std::collections::HashMap<String, WalledFit>>;
+        static FITS: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+        let key = format!(
+            "{:?}",
+            (
+                self.h,
+                self.b,
+                self.t,
+                self.tw,
+                self.r1,
+                self.r2,
+                self.grid,
+                self.area,
+                self.chamber,
+                self.undercut,
+                self.ix_published,
+                self.iy_published
+            )
+        );
+        let fits = FITS.get_or_init(Default::default);
+        if let Some(f) = fits.lock().ok().and_then(|f| f.get(&key).copied()) {
+            return f;
+        }
+        let fit = self.walled_search();
+        if let Ok(mut f) = fits.lock() {
+            f.insert(key, fit);
+        }
+        fit
+    }
+
+    fn walled_search(&self) -> WalledFit {
         let m = self.tslot_grid();
-        let (nx, ny) = self.tslot_cells();
-        let (nxr, nyr) = (nx as Real, ny as Real);
-        let slots = 2.0 * (nxr + nyr);
-        let (w, t, dd, c, u) = (self.tw, self.t, self.tf, self.chamber, self.undercut);
-        let f = self.walled_floor();
-        let pi = std::f64::consts::PI;
-        let slot = w * t + c * (u - t) + (c + f) / 2.0 * (dd - u);
-        let solid = self.b * self.h
-            - (4.0 - pi) * self.r2 * self.r2
-            - slots * slot
-            - nxr * nyr * pi * self.r1 * self.r1 / 4.0;
-        let need = solid - self.area;
-        let inner = 4.0 * nxr * nyr - slots;
-        let cavity = |wall: Real| {
-            let a = polygon_area(&self.walled_octant(wall, true)).abs();
-            let b = polygon_area(&self.walled_octant(wall, false)).abs();
-            2.0 * (slots * a + inner * b)
-        };
-        let (mut lo, mut hi) = (0.8, m / 4.0);
-        if self.area <= 0.0 || cavity(lo) <= need {
-            return lo;
-        }
-        for _ in 0..60 {
-            let mid = (lo + hi) / 2.0;
-            if cavity(mid) > need {
-                lo = mid;
-            } else {
-                hi = mid;
+        let (c, u, t) = (self.chamber, self.undercut, self.t);
+        let (k_lo, k_hi) = (0.8, t.max(0.8));
+        let (q_lo, q_hi) = (
+            self.r1 / 2.0 + 1.5,
+            (m / 2.0 - u - 1.5).max(self.r1 / 2.0 + 1.5),
+        );
+        let blocks = |k: Real, q: Real| -> WalledFit {
+            let s_lo = k;
+            let s_hi = (m / 2.0 - c / 2.0 - k - TSLOT_WEB).max(s_lo);
+            let at = |s: Real| WalledFit {
+                wall: k,
+                block: s,
+                core: q,
+            };
+            if self.area <= 0.0 {
+                return at(s_lo);
             }
+            let (mut lo, mut hi) = (s_lo, s_hi);
+            for _ in 0..30 {
+                let mid = (lo + hi) / 2.0;
+                if self.walled_moments(at(mid)).0 < self.area {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            at((lo + hi) / 2.0)
+        };
+        let ((strong, weak), about_y) = if self.b > self.h {
+            ((self.iy_published, self.ix_published), true)
+        } else {
+            ((self.ix_published, self.iy_published), false)
+        };
+        if strong <= 0.0 || self.area <= 0.0 {
+            return blocks(k_hi, (q_lo + q_hi) / 2.0);
         }
-        lo
+        // The miss of a candidate; none where the area cannot be met.
+        let miss = |f: WalledFit| -> Option<Real> {
+            let (a, ix, iy) = self.walled_moments(f);
+            if (a - self.area).abs() > 2e-3 * self.area {
+                return None;
+            }
+            let (s, w) = if about_y { (iy, ix) } else { (ix, iy) };
+            let mut e = (s / strong - 1.0).abs();
+            if weak > 0.0 {
+                e += 0.3 * (w / weak - 1.0).abs();
+            }
+            Some(e)
+        };
+        let mut best: Option<(Real, WalledFit)> = None;
+        let search = |best: &mut Option<(Real, WalledFit)>,
+                      (k0, k1): (Real, Real),
+                      (q0, q1): (Real, Real),
+                      n: usize| {
+            for i in 0..=n {
+                for j in 0..=n {
+                    let k = k0 + (k1 - k0) * i as Real / n as Real;
+                    let q = q0 + (q1 - q0) * j as Real / n as Real;
+                    let f = blocks(k, q);
+                    if let Some(e) = miss(f)
+                        && best.is_none_or(|b| e < b.0)
+                    {
+                        *best = Some((e, f));
+                    }
+                }
+            }
+        };
+        search(&mut best, (k_lo, k_hi), (q_lo, q_hi), 8);
+        if let Some((_, f)) = best {
+            let (dk, dq) = ((k_hi - k_lo) / 8.0, (q_hi - q_lo) / 8.0);
+            search(
+                &mut best,
+                ((f.wall - dk).max(k_lo), (f.wall + dk).min(k_hi)),
+                ((f.core - dq).max(q_lo), (f.core + dq).min(q_hi)),
+                6,
+            );
+        }
+        best.map_or_else(|| blocks(k_lo, q_lo), |b| b.1)
     }
 
     /// The outline of a T-slot section: the outside with a slot in the middle
@@ -919,12 +1042,32 @@ impl Section {
             area: 0.0,
             chamber: 0.0,
             undercut: 0.0,
+            ix_published: 0.0,
+            iy_published: 0.0,
+            it_published: 0.0,
         })
     }
 
-    /// The section properties, from the outline (arcs integrated exactly
-    /// enough by fine sampling).
+    /// The section properties: the outline's ([`Section::outline_properties`]),
+    /// with the maker's published second moments where the table gives them (a
+    /// T-slot catalogue's numbers are its real section's; ours is a model of it).
     pub fn properties(&self) -> SectionProps {
+        let mut p = self.outline_properties();
+        let (w, h) = self.extent();
+        if self.ix_published > 0.0 {
+            p.ix = self.ix_published;
+            p.wx = p.ix / (h / 2.0 + p.centroid.y.abs());
+        }
+        if self.iy_published > 0.0 {
+            p.iy = self.iy_published;
+            p.wy = p.iy / (w / 2.0 + p.centroid.x.abs());
+        }
+        p
+    }
+
+    /// The section properties of the outline itself (arcs integrated exactly
+    /// enough by fine sampling).
+    pub fn outline_properties(&self) -> SectionProps {
         // Green's theorem over each loop's polygon (holes run clockwise, so
         // their terms subtract).
         let (mut a, mut sx, mut sy, mut sxx, mut syy) = (0.0, 0.0, 0.0, 0.0, 0.0);
@@ -958,7 +1101,8 @@ impl Section {
     }
 
     /// Torsion constant (mm⁴), torsional modulus (mm³) and the shear areas
-    /// along the section's horizontal and vertical axes (mm²): EN 10219's
+    /// along the section's horizontal and vertical axes (mm²): the maker's
+    /// published constant where the table gives one, else EN 10219's
     /// formulas for hollow sections, thin-wall sums for open ones,
     /// Saint-Venant's approximation for a solid outline of ours.
     pub fn torsion(&self) -> (Real, Real, Real, Real) {
@@ -971,6 +1115,11 @@ impl Section {
             (j, j / r, 5.0 / 6.0 * a, 5.0 / 6.0 * a)
         };
         let ip = p.ix + p.iy;
+        if self.it_published > 0.0 {
+            let (w, d) = self.extent();
+            let j = self.it_published;
+            return (j, j / (w.max(d) / 2.0), 5.0 / 6.0 * a, 5.0 / 6.0 * a);
+        }
         match self.shape {
             Shape::Shs | Shape::Rhs => {
                 let rc = (self.r1 + self.r2) / 2.0;
@@ -1004,9 +1153,8 @@ impl Section {
                 )
             }
             Shape::HexBar => solid(a, ip, h / 2.0),
-            // A T-slot profile's catalogue gives no torsion constant: the
-            // outline's Saint-Venant value, like a custom section (high for
-            // its open slots).
+            // A T-slot profile without a published constant: the outline's
+            // Saint-Venant value, like a custom section (high for its open slots).
             Shape::Custom | Shape::TSlot => {
                 let (w, d) = self.extent();
                 solid(a, ip, w.max(d) / 2.0)
@@ -1078,24 +1226,6 @@ fn polygon_area(p: &[Point2]) -> Real {
         })
         .sum::<Real>()
         / 2.0
-}
-
-/// The part of a polygon where `a·x + b·y >= k` (Sutherland–Hodgman).
-fn clip_half_plane(poly: &[Point2], a: Real, b: Real, k: Real) -> Vec<Point2> {
-    let n = poly.len();
-    let mut out = Vec::with_capacity(n + 2);
-    for i in 0..n {
-        let (p, q) = (poly[i], poly[(i + 1) % n]);
-        let (fp, fq) = (a * p.x + b * p.y - k, a * q.x + b * q.y - k);
-        if fp >= 0.0 {
-            out.push(p);
-        }
-        if (fp >= 0.0) != (fq >= 0.0) {
-            let s = fp / (fp - fq);
-            out.push(p + (q - p) * s);
-        }
-    }
-    out
 }
 
 /// Draws one loop into `sk` (sketch coordinates = the loop's).
@@ -2344,6 +2474,9 @@ impl Library {
                                 area: 0.0,
                                 chamber: 0.0,
                                 undercut: 0.0,
+                                ix_published: 0.0,
+                                iy_published: 0.0,
+                                it_published: 0.0,
                             });
                         }
                     }
@@ -2434,6 +2567,10 @@ impl Library {
                 area: num(f.get(12).copied()),
                 chamber: num(f.get(13).copied()),
                 undercut: num(f.get(14).copied()),
+                // Published in cm⁴.
+                ix_published: num(f.get(15).copied()) * 1e4,
+                iy_published: num(f.get(16).copied()) * 1e4,
+                it_published: num(f.get(17).copied()) * 1e4,
             });
         }
         (lib, bad)
@@ -2795,9 +2932,11 @@ mod tests {
     }
 
     /// T-slot framing (spec 6.1 §3.11a): every size's area is the published
-    /// one within 1 %, the chamber's floor is at least as wide as the opening,
-    /// the loops stay more than 1 mm apart, and a member builds with the
-    /// area's volume.
+    /// one within 1 %, a walled (Bosch Rexroth) outline has the published second
+    /// moments within 2 % (one cell) or 12 % / 17 % (several),
+    /// the properties give the published moments and torsion constant, the
+    /// chamber's floor is at least as wide as the opening, the loops stay more
+    /// than 0.7 mm apart, and a member builds with the area's volume.
     #[test]
     fn t_slot_sections_have_their_published_area() {
         let lib = Library::builtin();
@@ -2806,23 +2945,40 @@ mod tests {
             .iter()
             .filter(|s| s.shape == Shape::TSlot)
             .collect();
-        assert_eq!(rows.len(), 20);
-        for s in rows {
-            let p = s.properties();
+        assert_eq!(rows.len(), 22);
+        for s in &rows {
+            let p = s.outline_properties();
             println!(
-                "{} {}: A {:.0} (published {:.0}) Ix {:.2} cm4 Iy {:.2} cm4",
+                "{} {}: A {:.0} (published {:.0}) Ix {:.2} ({:.2}) Iy {:.2} ({:.2}) cm4, fit {:?}",
                 s.family,
                 s.size,
                 p.area,
                 s.area,
                 p.ix / 1e4,
-                p.iy / 1e4
+                s.ix_published / 1e4,
+                p.iy / 1e4,
+                s.iy_published / 1e4,
+                (s.chamber > 0.0).then(|| s.walled_fit())
             );
+        }
+        for s in rows {
+            let p = s.outline_properties();
+            close(p.area, s.area, 0.01, &s.size);
             if s.chamber > 0.0 {
-                // Thin-walled: the catalogue's chamber, the walls sized.
-                close(p.area, s.area, 0.03, &s.size);
+                let ((strong, weak), (ps, pw)) = if s.b > s.h {
+                    ((p.iy, p.ix), (s.iy_published, s.ix_published))
+                } else {
+                    ((p.ix, p.iy), (s.ix_published, s.iy_published))
+                };
+                // One cell: the moments within 2 %; several: within 12 % / 17 %
+                // (their inside is a guess of ours, see spec 6.1 §3.11a).
+                let one = s.tslot_cells() == (1, 1);
+                close(strong, ps, if one { 0.02 } else { 0.12 }, &s.size);
+                close(weak, pw, if one { 0.02 } else { 0.17 }, &s.size);
+                let q = s.properties();
+                assert_eq!((q.ix, q.iy), (s.ix_published, s.iy_published));
+                assert_eq!(s.torsion().0, s.it_published);
             } else {
-                close(p.area, s.area, 0.01, &s.size);
                 let fit = s.tslot_fit();
                 assert!(
                     fit.chamber - 2.0 * (s.tf - s.t) >= s.tw - 1e-9,
