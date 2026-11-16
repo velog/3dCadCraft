@@ -497,7 +497,8 @@ pub(crate) fn split_body_by_sheet(body: &Body, sheet: &Body, face: usize) -> Res
             // the sheet's own attributes, so its faces' tags see each swap.
             let turned = with_kernel_callbacks(k, &mut copy, |k, b, env| orient_sheet_surfaces(k, b, Some(f), !flip, env));
             copy.refresh_cached_topology();
-            Ok(match turned {
+            // the orientation's note (the sheet was turned) fails the side, as its status 1 did
+            Ok(match solidcore::topology::brep::p9::OrientSheetNote::stop_on_note(turned) {
                 Ok(()) => Ok(copy),
                 Err(e) => Err(status(e)),
             })

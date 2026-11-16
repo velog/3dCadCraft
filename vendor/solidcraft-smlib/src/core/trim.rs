@@ -624,8 +624,10 @@ pub(crate) fn extend_sheet(sheet: &Body, point: [f64; 3], tol: f64, distance: f6
             Continuation::Natural => Continuity::Natural,
         };
         // The kernel's extension is exact: `distance` across the side, or refused.
+        // (`None`: the distance is below what the side can carry, so no exact extension)
         let extended = match surf.extended_by_distance(k, &dom, box_side(grow), continuity, distance) {
-            Ok(e) => e,
+            Ok(Some(e)) => e,
+            Ok(None) => return Ok(Err(Error::NotExact)),
             Err(e) if e.is_unported() || e.is_cancelled() => return Err(e),
             Err(_) => return Ok(Err(Error::NotExact)),
         };
