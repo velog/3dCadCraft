@@ -75,6 +75,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [6.3-content-center.md](6.3-content-center.md) | Component Library: placing, defining and publishing; samples, plan CC0–CC7 |
 | [5.6-sheet-metal.md](5.6-sheet-metal.md) | Sheet Metal: rules, features, flat pattern, DXF — research document and stages (nothing implemented yet) |
 | [3.0-assembly-commands.md](3.0-assembly-commands.md) | The whole assembly command set (Assemble, Design, Inspect, Manage, View, Environments) with every dialog, interface first |
+| [3.7a-pattern-placements.md](3.7a-pattern-placements.md) | Pattern Component at Placements: copies of components at freely picked points, hole rims and faces, associative, no relationships (our extension) |
 | [3.6-bom.md](3.6-bom.md) | Bill of Materials: Model Data / Structured / Parts Only, BOM Structure, merge, Export |
 | [0.16-iproperties.md](0.16-iproperties.md) | Properties: General, Summary, Project, Status and custom properties of every document |
 | [0.13-ui-layout.md](0.13-ui-layout.md) | Interface layout: panel sizes, ribbon collapsing, User Interface, Clean Screen, Full Screen, floating windows, `settings.json` |
