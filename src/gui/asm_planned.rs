@@ -616,7 +616,7 @@ impl AsmPlanned {
                         Sel(
                             "ref_orient",
                             "Orientation",
-                            "select an edge the components are turned by (optional)",
+                            "select an edge the components are turned by, or click the first place (optional)",
                             LINE,
                         ),
                         Head("Places"),

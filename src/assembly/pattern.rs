@@ -707,7 +707,28 @@ impl AssemblyDocument {
 /// references no longer resolve keeps its copies where they are; the
 /// errors come back by pattern id.
 pub fn place(asm: &mut AssemblyDocument, look: &Lookup) -> Result<(), String> {
-    let mut errors = Vec::new();
+    let errors: Vec<String> = place_report(asm, look)
+        .into_iter()
+        .map(|(id, e)| {
+            let name = asm
+                .patterns
+                .iter()
+                .find(|p| p.id == id)
+                .map_or("Component Pattern", |p| p.name.as_str());
+            format!("{name}: {e}")
+        })
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// [`place`], with the problems by pattern id (a pattern's health: the
+/// browser marks it sick with the reason).
+pub fn place_report(asm: &mut AssemblyDocument, look: &Lookup) -> Vec<(u32, String)> {
+    let mut errors: Vec<(u32, String)> = Vec::new();
     for k in 0..asm.patterns.len() {
         let p = asm.patterns[k].clone();
         let at = |id: u32| asm.find(id).map(|o| o.transform);
@@ -716,8 +737,8 @@ pub fn place(asm: &mut AssemblyDocument, look: &Lookup) -> Result<(), String> {
         let found = match &p.layout {
             Layout::Placements { reference, places } => {
                 placement_motions(reference, places, look, &at).map(|(m, e)| {
-                    for e in e {
-                        errors.push(format!("{}: {e}", p.name));
+                    if !e.is_empty() {
+                        errors.push((p.id, e.join("; ")));
                     }
                     m
                 })
@@ -727,7 +748,7 @@ pub fn place(asm: &mut AssemblyDocument, look: &Lookup) -> Result<(), String> {
         let moves = match found {
             Ok(m) => m,
             Err(e) => {
-                errors.push(format!("{}: {e}", p.name));
+                errors.push((p.id, e));
                 continue;
             }
         };
@@ -793,11 +814,7 @@ pub fn place(asm: &mut AssemblyDocument, look: &Lookup) -> Result<(), String> {
         elements.sort_by_key(|e| e.index);
         asm.patterns[k].elements = elements;
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
+    errors
 }
 
 #[cfg(test)]

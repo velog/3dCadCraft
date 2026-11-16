@@ -208,6 +208,9 @@ pub(super) struct AsmUi {
     pub interference: super::interference::InterferenceUi,
     /// Pattern Component: the key of the copies drawn as its preview.
     pub pattern_preview: Option<String>,
+    /// Pattern Component: why a pattern could not place (all) its copies the
+    /// last time it was placed, by pattern id (its browser node is sick).
+    pub pattern_health: std::cell::RefCell<std::collections::HashMap<u32, String>>,
     /// Where the view's context menu was opened (cursor, view rect): its
     /// Constrain / Joint take the face under it as the first selection.
     /// `None` when the menu came from the browser.

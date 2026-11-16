@@ -81,13 +81,41 @@ impl CadCraftApp {
         let snapshot = a.clone();
         let local = |r: &GeomRef| self.asm_local_in(&snapshot, r);
         let feature = |o: u32, id: &str| self.feature_instances_in(&snapshot, o, id);
-        pattern::place(
+        let report = pattern::place_report(
             a,
             &Lookup {
                 local: &local,
                 feature: &feature,
             },
-        )
+        );
+        // The active assembly's patterns: their health for the browser.
+        if self.assembly().is_some_and(|cur| {
+            cur.patterns.iter().map(|p| p.id).collect::<Vec<_>>()
+                == a.patterns.iter().map(|p| p.id).collect::<Vec<_>>()
+        }) {
+            *self.asm.pattern_health.borrow_mut() = report.iter().cloned().collect();
+        }
+        let errors: Vec<String> = report
+            .into_iter()
+            .map(|(id, e)| {
+                let name = a
+                    .patterns
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map_or("Component Pattern", |p| p.name.as_str());
+                format!("{name}: {e}")
+            })
+            .collect();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
+    /// Why pattern `id` is sick, if it is.
+    fn pattern_sick(&self, id: u32) -> Option<String> {
+        self.asm.pattern_health.borrow().get(&id).cloned()
     }
 
     /// On opening an assembly (or coming back to it from a part): pattern
@@ -147,9 +175,22 @@ impl CadCraftApp {
     /// The sources drawn see-through and left out of picking while the
     /// Placements tab picks geometry (spec 3.7a §3).
     pub(super) fn pattern_see_through(&self) -> Vec<u32> {
-        self.placements_dialog()
-            .map(|d| self.pattern_sources(d))
-            .unwrap_or_default()
+        let Some(d) = self.placements_dialog() else {
+            return Vec::new();
+        };
+        let mut ids = self.pattern_sources(d);
+        // Editing: the pattern's own copies stand in the holes too.
+        if let Some(p) = d.edit.and_then(|id| {
+            self.assembly()
+                .and_then(|a| a.patterns.iter().find(|p| p.id == id))
+        }) {
+            ids.extend(
+                p.elements
+                    .iter()
+                    .flat_map(|e| e.occurrences.iter().copied()),
+            );
+        }
+        ids
     }
 
     /// A reference's geometry in assembly coordinates.
@@ -208,7 +249,10 @@ impl CadCraftApp {
         let active = self.placements_dialog()?.active?;
         let straight = |p: &[crate::kernel::Point3]| p.len() == 2;
         let g = match active {
-            "ref_orient" => self.geom_under_with(pos, rect, &straight, false),
+            "ref_orient" => self
+                .geom_under_with(pos, rect, &straight, false)
+                .or_else(|| self.asm_vertex_under_pub(pos, rect))
+                .or_else(|| self.geom_under_pub(pos, rect)),
             "ref_plane" => self.geom_under_pub(pos, rect),
             _ => self
                 .asm_vertex_under_pub(pos, rect)
@@ -218,7 +262,6 @@ impl CadCraftApp {
         let ok = match active {
             "ref_plane" => matches!(k, PlacePick::Plane | PlacePick::Rim),
             "ref_point" => matches!(k, PlacePick::Point | PlacePick::Rim),
-            "ref_orient" => k == PlacePick::Edge,
             _ => true,
         };
         ok.then_some(g)
@@ -312,17 +355,20 @@ impl CadCraftApp {
                 d.picks.remove("ref_plane");
                 d.refs.remove("ref_plane");
                 set(d, "ref_point", label, g);
-                d.active = Some("places");
+                d.active = Some("ref_orient");
             }
             ("ref_point", PlacePick::Point) => {
                 set(d, "ref_point", label, g);
-                d.active = Some("places");
+                d.active = Some("ref_orient");
             }
             ("ref_orient", PlacePick::Edge) => {
                 set(d, "ref_orient", label, g);
                 d.active = Some("places");
             }
-            ("places", k) => {
+            // Orientation is optional: a place clicked while it waits is
+            // the first place (spec 3.7a §2).
+            ("places" | "ref_orient", k) => {
+                d.active = Some("places");
                 if k == PlacePick::Edge && n_places == 0 {
                     return fail(self, "pick a place first; an edge turns the last place");
                 }
@@ -504,8 +550,10 @@ impl CadCraftApp {
         let Ok(moves) = found else {
             return Vec::new();
         };
-        // Editing: the pattern's own copies are already drawn.
-        let skip = d.edit.map_or(0, |id| {
+        // Editing: the pattern's own copies are already drawn (at
+        // Placements they are see-through and may move: all are previewed).
+        let placements = matches!(layout, Layout::Placements { .. });
+        let skip = d.edit.filter(|_| !placements).map_or(0, |id| {
             a.patterns
                 .iter()
                 .find(|p| p.id == id)
@@ -525,6 +573,13 @@ impl CadCraftApp {
     /// Called every frame in an assembly: rebuilds the scene when the
     /// Pattern panel's copies change.
     pub(super) fn pattern_preview_poll(&mut self) {
+        // Place numbers follow a pick dropped with x.
+        if let Some(d) = self.part_planned.as_mut()
+            && d.kind == Planned::Asm(AsmPlanned::Pattern)
+            && let Some(list) = d.picks.get_mut("places")
+        {
+            relabel_places(list);
+        }
         let items = self.pattern_preview_items();
         let through = self.pattern_see_through();
         let key =
@@ -727,7 +782,16 @@ impl CadCraftApp {
         super::panels::tree_fold(ui, ui.make_persistent_id(("asm_pattern", p.id)), false)
             .show_header(ui, |ui| {
                 super::panels::tree_icon(ui, Icon::AsmPattern);
-                let r = ui.selectable_label(on, &p.name);
+                let sick = self.pattern_sick(p.id);
+                let mut text = RichText::new(&p.name);
+                if sick.is_some() {
+                    text = text.color(super::theme::tokens().error);
+                }
+                let r = ui.selectable_label(on, text);
+                let r = match &sick {
+                    Some(e) => r.on_hover_text(format!("Sick: {e}")),
+                    None => r,
+                };
                 if r.clicked() {
                     cmds.push(PatternCmd::Select(p.id));
                 }
@@ -838,5 +902,54 @@ impl CadCraftApp {
             };
             ui.label(RichText::new(format!("{what} {}", p.name)).weak());
         }
+    }
+}
+
+/// The Places list's labels numbered again (`Place n · …`, `Turn place n ·
+/// …`) after a pick was dropped.
+fn relabel_places(list: &mut [String]) {
+    let mut n = 0;
+    for w in list.iter_mut() {
+        let Some((head, rest)) = w.split_once(" · ") else {
+            continue;
+        };
+        let new = if head.starts_with("Place ") {
+            n += 1;
+            format!("Place {n} · {rest}")
+        } else if head.starts_with("Turn place ") {
+            format!("Turn place {n} · {rest}")
+        } else {
+            continue;
+        };
+        if *w != new {
+            *w = new;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Dropping place 1 renumbers the places after it and their turns.
+    #[test]
+    fn place_labels_follow_a_dropped_pick() {
+        let mut list: Vec<String> = [
+            "Place 2 · Plate:1 edge",
+            "Plane · Plate:1 face",
+            "Place 3 · Plate:1 vertex",
+            "Turn place 3 · Plate:1 edge",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        super::relabel_places(&mut list);
+        assert_eq!(
+            list,
+            [
+                "Place 1 · Plate:1 edge",
+                "Plane · Plate:1 face",
+                "Place 2 · Plate:1 vertex",
+                "Turn place 2 · Plate:1 edge",
+            ]
+        );
     }
 }

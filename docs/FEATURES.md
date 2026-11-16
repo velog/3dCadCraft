@@ -920,7 +920,7 @@ Also done: **Renumber Items**, typed item numbers (overrides) and **Static** qua
 
 **Done 2026-10-28:** Pattern Component, Rectangular and Circular (`assembly::pattern`, GUI `gui/asm_pattern.rs`): the copies are real occurrences placed by the pattern (they follow their sources after every solve or drag; the solver and drags never move them), a see-through preview while the panel is open, the browser node with Element:1 (the sources) … Element:n, Edit / Delete, Undo; saved in the assembly (additive field). Associative (following a part's feature pattern; the copies follow its count when the assembly is shown again) done too. Independent / Suppress of single elements, Mirror ⬜.
 
-**At Placements** (our extension, owner 2026-11-13): **Specification:** [spec/3.7a-pattern-placements.md](spec/3.7a-pattern-placements.md) 🟡 2026-11-16 (tab Placements of Pattern Component; checked in the app with bolts and nuts in irregular holes, following a changed plate) — components copied to picked hole rims, points and faces, following them, no relationships.
+**At Placements** (our extension, owner 2026-11-13): **Specification:** [spec/3.7a-pattern-placements.md](spec/3.7a-pattern-placements.md) ✅ 2026-11-16 (tab Placements of Pattern Component; checked in the app: bolts and nuts in irregular holes, a block onto a side face, following a changed plate, sick when a hole is gone) — components copied to picked hole rims, points and faces, following them, no relationships.
 
 **Kinds.**
 - **Patterns:** rectangular, circular, following a feature pattern in a part (bolts in the holes of a flange).
