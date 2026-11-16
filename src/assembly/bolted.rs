@@ -967,26 +967,55 @@ pub fn clearance_spec(diameter: Real) -> crate::part::hole::HoleSpec {
     s
 }
 
-/// A clearance hole with the countersunk seat of a head `head` wide and
-/// `height` tall on a shank `shank` wide: the seat takes the head's own cone,
-/// so the head ends flush with the face and nothing overlaps.
+/// The countersunk seat of a countersunk screw (spec 6.2 §3.1, owner
+/// 2026-11-16: seats follow the standard, not the library model): the
+/// countersinks table's diameter and angle for the screw's standard
+/// (`family`: `ISO 10642`, `DIN 7991`, `ASME B18.3 Flat`) and `size`; a
+/// screw the table does not know gets its head diameter `head` at the
+/// standard's angle (90 degrees metric, 82 degrees inch). The hole is the
+/// connection's own clearance hole `clearance`.
 pub fn countersunk_spec(
+    tables: &Standards,
+    family: &str,
+    size: &str,
     clearance: Real,
-    shank: Real,
     head: Real,
-    height: Real,
 ) -> crate::part::hole::HoleSpec {
     let mut s = clearance_spec(clearance);
     s.seat = crate::part::hole::SeatType::Countersink;
-    s.csink_diameter = head;
-    let half = ((head - shank) / (2.0 * height)).atan();
-    // A cone of exactly 90 degrees is cut as a chamfer, much faster.
-    s.csink_angle = if (half - std::f64::consts::FRAC_PI_4).abs() < 1e-6 {
+    let row = countersink_row(tables, family, size);
+    let inch = !size.starts_with('M');
+    s.csink_diameter = row.map_or(head, |r| r.diameter);
+    let degrees = row.map_or(if inch { 82.0 } else { 90.0 }, |r| r.value);
+    // Exactly 90 degrees is cut as a chamfer of the rim (much faster).
+    s.csink_angle = if (degrees - 90.0).abs() < 1e-9 {
         std::f64::consts::FRAC_PI_2
     } else {
-        2.0 * half
+        degrees.to_radians()
     };
     s
+}
+
+/// The countersinks table's row for a screw of `family` (its designation,
+/// `DIN 7991` or `ASME B18.3 Flat`) and `size` (`M8`, `1/4-20`, `No.10-24`).
+pub fn countersink_row<'a>(
+    tables: &'a Standards,
+    family: &str,
+    size: &str,
+) -> Option<&'a crate::part::standards::SeatRow> {
+    // `ISO 10642`, `ASME B18.3`: the designation without its suffix.
+    let code: String = family
+        .split_whitespace()
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Inch sizes are listed by their diameter (`1/4`, `#10`).
+    let base = size.split('-').next().unwrap_or(size);
+    let base = base.replace("No.", "#");
+    tables
+        .countersinks
+        .iter()
+        .find(|r| r.fastener.ends_with(&code) && (r.size == size || r.size == base))
 }
 
 /// How deep the countersink of `s` reaches into the plate.
@@ -2054,20 +2083,44 @@ mod tests {
     }
 
     #[test]
-    fn a_countersunk_seat_takes_the_heads_cone() {
+    fn a_countersunk_seat_follows_the_standard() {
         use crate::part::hole::SeatType;
         use std::f64::consts::{FRAC_PI_2, PI};
-        // ISO 10642 M8: dk 17.92, k 4.96, a cone of exactly 90 degrees.
-        let iso = countersunk_spec(9.0, 8.0, 17.92, 4.96);
+        let t = Standards::global();
+        // ISO 10642 M8: the table's countersink, 17.92 at 90 degrees.
+        let iso = countersunk_spec(t, "ISO 10642", "M8", 9.0, 17.92);
         assert_eq!(iso.seat, SeatType::Countersink);
         assert!((iso.csink_angle - FRAC_PI_2).abs() < 1e-12);
         assert!((iso.csink_diameter - 17.92).abs() < 1e-12);
         assert!((countersink_depth(&iso) - 4.46).abs() < 1e-9);
-        // DIN 7991 M8: dk 16, k 4.4; the head's own cone reaches the shank
-        // at the head's height.
-        let din = countersunk_spec(9.0, 8.0, 16.0, 4.4);
-        assert!((4.0 / (din.csink_angle / 2.0).tan() - 4.4).abs() < 1e-9);
-        assert!(countersink_depth(&din) < 4.4);
+        // DIN 7991 M8: the head model's cone is 84.5 degrees (dk 16, k 4.4),
+        // the seat is the standard's 90 degrees and 16 wide: 3.5 deep.
+        let din = countersunk_spec(t, "DIN 7991", "M8", 9.0, 16.0);
+        assert!((din.csink_angle - FRAC_PI_2).abs() < 1e-12);
+        assert!((din.csink_diameter - 16.0).abs() < 1e-12);
+        assert!((countersink_depth(&din) - 3.5).abs() < 1e-9);
+        // Every DIN 7991 size the library has is in the table at 90 degrees.
+        for (size, dk) in [
+            ("M3", 6.0),
+            ("M4", 8.0),
+            ("M5", 10.0),
+            ("M6", 12.0),
+            ("M8", 16.0),
+            ("M10", 20.0),
+            ("M12", 24.0),
+            ("M16", 30.0),
+        ] {
+            let r = countersink_row(t, "DIN 7991", size).unwrap_or_else(|| panic!("{size}"));
+            assert_eq!((r.diameter, r.value), (dk, 90.0), "{size}");
+        }
+        // ASME B18.3 flat 1/4-20: 82 degrees, 13.487 wide.
+        let inch = countersunk_spec(t, "ASME B18.3 Flat", "1/4-20", 7.137, 13.0);
+        assert!((inch.csink_angle - 82f64.to_radians()).abs() < 1e-12);
+        assert!((inch.csink_diameter - 13.487).abs() < 1e-12);
+        // A screw the table does not know: its head at the standard's angle.
+        let other = countersunk_spec(t, "ISO 2009", "M5", 5.5, 9.3);
+        assert!((other.csink_angle - FRAC_PI_2).abs() < 1e-12);
+        assert!((other.csink_diameter - 9.3).abs() < 1e-12);
 
         // The screw's origin is the top of its head: flush with the face,
         // and its whole length counts from there.

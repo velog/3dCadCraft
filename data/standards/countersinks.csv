@@ -1,6 +1,8 @@
 # Countersinks for countersunk screws (mm, angle in degrees).
 # ISO 10642 countersunk socket head screws (90 deg): diameter = head diameter dk, theoretical
 #         maximum; hole: ISO 273 medium.
+# DIN 7991 countersunk socket screws (90 deg): diameter = head diameter dk (DIN 7991 table);
+#         hole: ISO 273 medium.
 # ASME B18.3 flat countersunk socket cap screws (82 deg, inch): diameter = head diameter,
 #         theoretical sharp maximum; hole: ASME B18.2.8 normal fit; converted from inches.
 standard,fastener,size,hole,diameter,angle
@@ -14,6 +16,15 @@ ISO,Countersunk Socket Screw ISO 10642,M12,13.5,26.88,90
 ISO,Countersunk Socket Screw ISO 10642,M14,15.5,30.8,90
 ISO,Countersunk Socket Screw ISO 10642,M16,17.5,33.6,90
 ISO,Countersunk Socket Screw ISO 10642,M20,22,40.32,90
+ISO,Countersunk Socket Screw DIN 7991,M3,3.4,6,90
+ISO,Countersunk Socket Screw DIN 7991,M4,4.5,8,90
+ISO,Countersunk Socket Screw DIN 7991,M5,5.5,10,90
+ISO,Countersunk Socket Screw DIN 7991,M6,6.6,12,90
+ISO,Countersunk Socket Screw DIN 7991,M8,9,16,90
+ISO,Countersunk Socket Screw DIN 7991,M10,11,20,90
+ISO,Countersunk Socket Screw DIN 7991,M12,13.5,24,90
+ISO,Countersunk Socket Screw DIN 7991,M16,17.5,30,90
+ISO,Countersunk Socket Screw DIN 7991,M20,22,36,90
 ANSI,Flat Countersunk Socket Cap Screw ASME B18.3,#0,1.93,3.505,82
 ANSI,Flat Countersunk Socket Cap Screw ASME B18.3,#1,2.261,4.267,82
 ANSI,Flat Countersunk Socket Cap Screw ASME B18.3,#2,2.591,5.004,82

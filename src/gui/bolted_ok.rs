@@ -534,7 +534,9 @@ impl CadCraftApp {
             .then(|| bolts.first())
             .flatten()
             .and_then(|b| catalog.countersunk_head(bolt.family, b.0))
-            .map(|(dk, k)| bolted::countersunk_spec(h.clearance, h.major, dk, k));
+            .map(|(dk, _)| {
+                bolted::countersunk_spec(Standards::global(), &bolt_name, &size, h.clearance, dk)
+            });
         let mut drills: Vec<bolted::Drill> = Vec::new();
         let mut add = |r: &panel::PlateRow, tap: bool| -> Result<(), String> {
             let face = r
