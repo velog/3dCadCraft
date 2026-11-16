@@ -3922,6 +3922,90 @@ fn notch_r49_reads() {
 /// (`BodyOp::BoltHole` in the assembly's tools part, the first part of the
 /// file so the volume check reads it): an M8 x 35 hex bolt, two washers and
 /// a nut through two 10 mm plates.
+/// Revision 75: a Component Pattern at Placements (spec 3.7a): a block
+/// copied from the first plate's centre onto two other plates' centres.
+fn pattern_placements_r75() -> Project {
+    use cadcraft3d::assembly::pattern::{Anchor, Layout, Lookup};
+    use cadcraft3d::assembly::relation::{GeomRef, OriginItem};
+    use cadcraft3d::document::{AssemblyDocument, DocRef};
+    use cadcraft3d::kernel::Transform3;
+    let mut p = Project::new("PatternPlacementsR75");
+    let plate = p.add_document(
+        "Plate",
+        DocumentData::Part(PartDocument::with_box("Box1", [40.0, 40.0, 5.0]).unwrap()),
+    );
+    let block = p.add_document(
+        "Block",
+        DocumentData::Part(PartDocument::with_box("Box1", [5.0, 5.0, 10.0]).unwrap()),
+    );
+    let mut a = AssemblyDocument::default();
+    let plates: Vec<u32> = [(0.0, 0.0), (60.0, 0.0), (0.0, 60.0)]
+        .iter()
+        .map(|&(x, y)| {
+            a.place(
+                DocRef::local(plate),
+                "Plate",
+                Transform3::translation(x, y, 0.0),
+                true,
+            )
+        })
+        .collect();
+    let b = a.place(
+        DocRef::local(block),
+        "Block",
+        Transform3::translation(0.0, 0.0, 5.0),
+        false,
+    );
+    let o = |occurrence: u32, item: OriginItem| GeomRef::Origin {
+        occurrence,
+        sub: Vec::new(),
+        item,
+    };
+    let at = |k: usize| Anchor {
+        plane: Some(o(plates[k], OriginItem::XyPlane)),
+        point: o(plates[k], OriginItem::Center),
+        orient: None,
+    };
+    let layout = Layout::Placements {
+        reference: at(0),
+        places: vec![at(1), at(2)],
+    };
+    let local = |r: &GeomRef| match r {
+        GeomRef::Origin { item, .. } => Ok(item.geom()),
+        _ => Err("origin only".to_owned()),
+    };
+    a.add_pattern(vec![b], layout, &Lookup::geometry(&local))
+        .unwrap();
+    p.add_document("Assembly1", DocumentData::Assembly(a));
+    p
+}
+
+/// The revision 75 pattern reads back with its places and copies.
+#[test]
+fn pattern_placements_r75_reads() {
+    use cadcraft3d::assembly::pattern::Layout;
+    let f = root().join("r75/pattern_placements_r75.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let a = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Assembly(a) => Some(a.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(a.patterns.len(), 1);
+    let p = &a.patterns[0];
+    assert!(matches!(&p.layout, Layout::Placements { places, .. } if places.len() == 2));
+    assert_eq!(p.elements.len(), 2);
+    let copy = a.find(p.elements[1].occurrences[0]).unwrap();
+    let c = copy.transform * Point3::origin();
+    assert!((c - Point3::new(0.0, 60.0, 5.0)).norm() < 1e-9, "{c}");
+}
+
 fn bolted_r66() -> Project {
     use cadcraft3d::assembly::bolted::{
         self, Axis, BoltFastener, BoltKind, BoltedConnection, Making, Placement, Placing, Role,
@@ -4624,6 +4708,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             bolted_r66().save(&f).unwrap();
+        }
+        let f = root().join("r75/pattern_placements_r75.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            pattern_placements_r75().save(&f).unwrap();
         }
         let f = root().join("r74/simplify_r74.3dcadcraft");
         if !f.exists() {

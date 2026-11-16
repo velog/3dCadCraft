@@ -210,6 +210,9 @@ pub(super) struct AsmUi {
     pub interference: super::interference::InterferenceUi,
     /// Pattern Component: the key of the copies drawn as its preview.
     pub pattern_preview: Option<String>,
+    /// Pattern Component: why a pattern could not place (all) its copies the
+    /// last time it was placed, by pattern id (its browser node is sick).
+    pub pattern_health: std::cell::RefCell<std::collections::HashMap<u32, String>>,
     /// Where the view's context menu was opened (cursor, view rect): its
     /// Constrain / Joint take the face under it as the first selection.
     /// `None` when the menu came from the browser.
@@ -2063,7 +2066,8 @@ impl CadCraftApp {
     /// appearances, selected ones tinted blue, the one under the cursor
     /// green.
     /// Where occurrence `o` is drawn (the Constrain preview and Motion move components before
-    /// OK) and how see-through: disabled faint, Transparent (or showing an interference) half.
+    /// OK) and how see-through: disabled faint, Transparent (or showing an interference, or a
+    /// source of Pattern at Placements while places are picked) half.
     pub(super) fn occurrence_place_alpha(
         &self,
         o: &crate::document::Occurrence,
@@ -2081,9 +2085,10 @@ impl CadCraftApp {
             .report
             .as_ref()
             .is_some_and(|r| r.found.iter().any(|i| i.a == o.id || i.b == o.id));
+        // Pattern at Placements: its sources see-through while places are picked.
         let alpha = if !o.enabled {
             Some(0.15)
-        } else if o.transparent || overlap {
+        } else if o.transparent || overlap || self.pattern_see_through().contains(&o.id) {
             Some(0.35)
         } else {
             None
@@ -2577,6 +2582,7 @@ impl CadCraftApp {
         self.bolt_follow();
         self.shaft_follow(&ctx);
         self.bolt_preview(&painter, rect, pointer.filter(|_| on_view));
+        self.pattern_place_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.bolt_view_menu(&ctx);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_select_overlay(&painter, rect, pointer.filter(|_| on_view));

@@ -3890,6 +3890,67 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Pattern Component at Placements (spec 3.7a): a bolt and a nut at 400
+    // picked places (the centres of 400 placed plates), placed again as after
+    // a drag step: every place's frame is found from its references.
+    {
+        use cadcraft3d::assembly::pattern::{self, Anchor, Layout};
+        use cadcraft3d::assembly::relation::{Geom, GeomRef, OriginItem};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+        use cadcraft3d::kernel::{Transform3, Vector3};
+        let doc = DocRef {
+            variant: None,
+            document: DocumentId::new_random(),
+            library: None,
+        };
+        let local = |r: &GeomRef| -> Result<Geom, String> {
+            match r {
+                GeomRef::Origin { item, .. } => Ok(item.geom()),
+                _ => Err("origin only".into()),
+            }
+        };
+        let mut asm = AssemblyDocument::default();
+        let plates: Vec<u32> = (0..401)
+            .map(|k| {
+                let (x, y) = (f64::from(k % 20) * 37.0, f64::from(k / 20) * 23.0);
+                asm.place(doc, "Plate", Transform3::translation(x, y, 0.0), true)
+            })
+            .collect();
+        let at = |o: u32| Anchor {
+            plane: Some(GeomRef::Origin {
+                sub: Vec::new(),
+                occurrence: o,
+                item: OriginItem::XyPlane,
+            }),
+            point: GeomRef::Origin {
+                sub: Vec::new(),
+                occurrence: o,
+                item: OriginItem::Center,
+            },
+            orient: None,
+        };
+        let a = asm.place(doc, "Bolt", Transform3::translation(0.0, 0.0, 5.0), false);
+        let b = asm.place(doc, "Nut", Transform3::translation(0.0, 0.0, -3.0), false);
+        let layout = Layout::Placements {
+            reference: at(plates[0]),
+            places: plates[1..].iter().map(|&o| at(o)).collect(),
+        };
+        asm.add_pattern(vec![a, b], layout, &pattern::Lookup::geometry(&local))
+            .unwrap();
+        assert_eq!(asm.occurrences.len(), 401 + 2 * 401);
+        rows.push((
+            "assembly: Pattern Component at 400 placements of 2 components placed again",
+            BUDGET_PATTERN_PLACE,
+            median_ms(5, || {
+                for id in [a, b] {
+                    if let Some(o) = asm.find_mut(id) {
+                        cadcraft3d::assembly::move_by(o, Vector3::new(0.1, 0.0, 0.0));
+                    }
+                }
+                pattern::place(&mut asm, &pattern::Lookup::geometry(&local)).unwrap();
+            }),
+        ));
+    }
     // Assembly solver (docs/spec/3.1 §3.2, A2): a stack of 30 cubes, each
     // mated on the one below and flush on two sides (90 constraints, 174
     // unknowns), solved from scattered places.

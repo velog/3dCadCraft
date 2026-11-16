@@ -2056,7 +2056,7 @@ const POINT_KEYS: &[&str] = &[
 
 /// Selectors that keep taking component edges / faces: a pick never moves
 /// on to the next selector.
-const MANY_KEYS: &[&str] = &["edges"];
+const MANY_KEYS: &[&str] = &["edges", "places"];
 
 /// Selector colours by position (the dots of the rows).
 const COLORS: [[u8; 3]; 5] = [
@@ -2359,6 +2359,42 @@ impl PartDialog {
         let mut keys = tab_keys(self.kind, ti);
         keys.retain(|k| !self.sel_hidden(k));
         keys
+    }
+
+    /// The Places picks one per row (icon, text, x to drop it; the labels
+    /// are numbered again on the next frame).
+    fn places_list_ui(&mut self, ui: &mut egui::Ui) {
+        let list = self.picks.get("places").cloned().unwrap_or_default();
+        let mut drop = None;
+        for (i, w) in list.iter().enumerate() {
+            plabel(ui, "");
+            ui.horizontal(|ui| {
+                let icon = if w.starts_with("Plane") {
+                    Icon::WorkPlane
+                } else if w.starts_with("Turn") {
+                    Icon::WorkAxis
+                } else {
+                    Icon::WorkPoint
+                };
+                super::panels::tree_icon(ui, icon);
+                ui.label(RichText::new(w.as_str()).small());
+                if super::theme::glyph(ui, super::theme::Glyph::Close)
+                    .on_hover_text("Remove")
+                    .clicked()
+                {
+                    drop = Some(i);
+                }
+            });
+            ui.end_row();
+        }
+        if let Some(i) = drop {
+            if let Some(l) = self.picks.get_mut("places") {
+                l.remove(i);
+            }
+            if let Some(r) = self.refs.get_mut("places").filter(|r| i < r.len()) {
+                r.remove(i);
+            }
+        }
     }
 
     /// The colour of selector `key`: its dot in the panel and its picks in the view.
@@ -2773,6 +2809,12 @@ impl PartDialog {
                     && self.members.list.is_empty()
                 {
                     super::frame_list::skeleton_list_ui(ui, self);
+                }
+                // Pattern at Placements: each pick of Places with its x (spec 3.7a).
+                if key == "places"
+                    && self.kind == Planned::Asm(super::asm_planned::AsmPlanned::Pattern)
+                {
+                    self.places_list_ui(ui);
                 }
             }
             Check(label, _) | Num(label, ..) if super::bolted::row_hidden(self, at.0, label) => {}

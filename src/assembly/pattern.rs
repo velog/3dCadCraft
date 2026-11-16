@@ -7,6 +7,10 @@
 //!
 //! Element 1 is the sources themselves (as in Inventor's browser); elements
 //! 2.. hold one occurrence per source, in the sources' order.
+//!
+//! At Placements (`docs/spec/3.7a-pattern-placements.md`, our extension):
+//! each element is moved from a reference frame (plane, point, orientation
+//! where the sources sit) onto a picked place's frame.
 
 use std::collections::HashMap;
 
@@ -90,6 +94,223 @@ pub enum Layout {
         /// Angle between neighbouring elements (radians).
         angle: Real,
     },
+    /// Copies at picked places (our extension, spec 3.7a): element k + 2
+    /// stands on `places[k]` as the sources stand on `reference`.
+    Placements {
+        /// Where the sources sit now.
+        reference: Anchor,
+        /// The new places, in the order picked.
+        places: Vec<Anchor>,
+    },
+}
+
+/// A place a pattern copies components to (spec 3.7a §2): a plane, a point
+/// on it, an in-plane orientation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Anchor {
+    /// The plane (none: a round edge's own plane, else the reference's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane: Option<GeomRef>,
+    /// The point: a vertex, a round edge (its centre), an axis (where it
+    /// crosses the plane), a work point.
+    pub point: GeomRef,
+    /// An in-plane direction (straight edge or axis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orient: Option<GeomRef>,
+}
+
+impl Anchor {
+    /// The references it reads.
+    pub fn refs(&self) -> Vec<&GeomRef> {
+        self.plane
+            .iter()
+            .chain(std::iter::once(&self.point))
+            .chain(self.orient.iter())
+            .collect()
+    }
+}
+
+/// A place's frame in assembly coordinates: origin, unit normal and the
+/// in-plane x direction when an orientation was given.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlaceFrame {
+    /// Origin (the point on the plane).
+    pub o: Point3,
+    /// Unit normal.
+    pub n: Vector3,
+    /// Unit in-plane direction.
+    pub x: Option<Vector3>,
+}
+
+/// The frame of `a` from its references' world geometry (`geom`); `fallback`
+/// is the plane (point, normal) used when the anchor has none of its own.
+pub fn frame_of(
+    a: &Anchor,
+    geom: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+    fallback: Option<(Point3, Vector3)>,
+) -> Result<PlaceFrame, String> {
+    let point = geom(&a.point)?;
+    let plane = match &a.plane {
+        Some(r) => match geom(r)? {
+            Geom::Plane { p, n } => Some((p, n)),
+            Geom::Frame { p, z, .. } => Some((p, z)),
+            _ => return Err("the plane must be a planar face or a work plane".into()),
+        },
+        None => None,
+    };
+    // A round edge or a joint frame is a plane of its own.
+    let own = match point {
+        Geom::Circle { c, n, .. } => Some((c, n)),
+        Geom::Frame { p, z, .. } => Some((p, z)),
+        _ => None,
+    };
+    let (pp, n) = plane
+        .or(own)
+        .or(fallback)
+        .ok_or("select a plane for this place")?;
+    let n = n.try_normalize(1e-12).ok_or("the plane has no normal")?;
+    let o = match point {
+        Geom::Point { p } | Geom::Frame { p, .. } => p,
+        Geom::Circle { c, .. } | Geom::Sphere { c, .. } => c,
+        Geom::Axis { p, d } | Geom::Cylinder { p, d, .. } => {
+            let dn = d.dot(&n);
+            if dn.abs() < 1e-9 {
+                return Err("the axis does not cross the plane".into());
+            }
+            p + d * ((pp - p).dot(&n) / dn)
+        }
+        Geom::Plane { .. } => {
+            return Err("the point must be a vertex, a round edge or an axis".into());
+        }
+    };
+    // Onto the plane.
+    let o = o - n * (o - pp).dot(&n);
+    let x = match &a.orient {
+        Some(r) => {
+            let d = match geom(r)? {
+                Geom::Axis { d, .. } | Geom::Cylinder { d, .. } => d,
+                Geom::Frame { x, .. } => x,
+                _ => return Err("the orientation must be a straight edge or an axis".into()),
+            };
+            let d = d - n * d.dot(&n);
+            Some(
+                d.try_normalize(1e-9)
+                    .ok_or("the orientation edge stands square to the plane")?,
+            )
+        }
+        None => None,
+    };
+    Ok(PlaceFrame { o, n, x })
+}
+
+/// The rigid motion taking frame `from` onto frame `to`: with an orientation
+/// on both, their axes line up; otherwise the shortest turn between the
+/// normals (none on the same plane: a move only).
+pub fn motion_between(from: &PlaceFrame, to: &PlaceFrame) -> Transform3 {
+    use nalgebra::{Matrix3, Rotation3, Translation3, UnitQuaternion};
+    let rot = match (from.x, to.x) {
+        (Some(xa), Some(xb)) => {
+            let basis = |x: Vector3, n: Vector3| {
+                Rotation3::from_matrix_unchecked(Matrix3::from_columns(&[x, n.cross(&x), n]))
+            };
+            UnitQuaternion::from_rotation_matrix(&(basis(xb, to.n) * basis(xa, from.n).inverse()))
+        }
+        _ => UnitQuaternion::rotation_between(&from.n, &to.n).unwrap_or_else(|| {
+            // Opposite normals: half a turn about a direction in the plane.
+            let x = from.x.unwrap_or_else(|| {
+                let t = if from.n.x.abs() < 0.9 {
+                    Vector3::x()
+                } else {
+                    Vector3::y()
+                };
+                (t - from.n * t.dot(&from.n)).normalize()
+            });
+            UnitQuaternion::from_scaled_axis(x * std::f64::consts::PI)
+        }),
+    };
+    let r = Transform3::from_parts(Translation3::identity(), rot);
+    let a = from.o.coords;
+    let b = to.o.coords;
+    Transform3::translation(b.x, b.y, b.z) * r * Transform3::translation(-a.x, -a.y, -a.z)
+}
+
+/// What a pick of the Places selector is (spec 3.7a §2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlacePick {
+    /// A round edge: a whole place.
+    Rim,
+    /// A planar face or work plane: the plane of the places after it.
+    Plane,
+    /// A vertex, work point or hole wall: a place on the current plane.
+    Point,
+    /// A straight edge: the last place's orientation.
+    Edge,
+}
+
+impl PlacePick {
+    /// What geometry `g` is in the Places selector.
+    pub fn of(g: &Geom) -> Option<PlacePick> {
+        Some(match g {
+            Geom::Circle { .. } => PlacePick::Rim,
+            Geom::Plane { .. } => PlacePick::Plane,
+            Geom::Cylinder { .. }
+            | Geom::Point { .. }
+            | Geom::Frame { .. }
+            | Geom::Sphere { .. } => PlacePick::Point,
+            Geom::Axis { .. } => PlacePick::Edge,
+        })
+    }
+}
+
+/// The places a sequence of picks describes (spec 3.7a §2): a rim is a
+/// place, a plane is the plane of the places after it, a point a place on
+/// it, an edge the last place's orientation.
+pub fn places_from_picks(picks: &[(GeomRef, PlacePick)]) -> Result<Vec<Anchor>, String> {
+    let mut out: Vec<Anchor> = Vec::new();
+    let mut plane: Option<GeomRef> = None;
+    for (r, k) in picks {
+        match k {
+            PlacePick::Rim => out.push(Anchor {
+                plane: None,
+                point: r.clone(),
+                orient: None,
+            }),
+            PlacePick::Plane => plane = Some(r.clone()),
+            PlacePick::Point => out.push(Anchor {
+                plane: plane.clone(),
+                point: r.clone(),
+                orient: None,
+            }),
+            PlacePick::Edge => match out.last_mut() {
+                Some(a) => a.orient = Some(r.clone()),
+                None => return Err("pick a place first; an edge turns the last place".into()),
+            },
+        }
+    }
+    Ok(out)
+}
+
+/// The picks that give `places` again (Edit): a plane only where it
+/// changes; `kind` tells a point's pick kind from its geometry.
+pub fn picks_of_places(
+    places: &[Anchor],
+    kind: &dyn Fn(&GeomRef) -> PlacePick,
+) -> Vec<(GeomRef, PlacePick)> {
+    let mut out = Vec::new();
+    let mut plane: Option<&GeomRef> = None;
+    for a in places {
+        if let Some(p) = &a.plane
+            && plane != Some(p)
+        {
+            out.push((p.clone(), PlacePick::Plane));
+            plane = Some(p);
+        }
+        out.push((a.point.clone(), kind(&a.point)));
+        if let Some(o) = &a.orient {
+            out.push((o.clone(), PlacePick::Edge));
+        }
+    }
+    out
 }
 
 fn one() -> u32 {
@@ -107,6 +328,7 @@ impl Layout {
                 ..
             } => column_count.max(&1) * if row.is_some() { *row_count.max(&1) } else { 1 },
             Layout::Circular { count, .. } => *count.max(&1),
+            Layout::Placements { places, .. } => places.len() as u32 + 1,
             // Known only from the part.
             Layout::Feature { .. } => 0,
         }
@@ -119,6 +341,11 @@ impl Layout {
                 std::iter::once(column).chain(row.as_ref()).collect()
             }
             Layout::Circular { axis, .. } => vec![axis],
+            Layout::Placements { reference, places } => reference
+                .refs()
+                .into_iter()
+                .chain(places.iter().flat_map(Anchor::refs))
+                .collect(),
             Layout::Feature { .. } => Vec::new(),
         }
     }
@@ -184,6 +411,32 @@ fn axis_of(g: &Geom) -> Result<(Point3, Vector3), String> {
     }
 }
 
+/// Element motions (element index from 2, motion).
+pub type Motions = Vec<(u32, Transform3)>;
+
+/// The motions of a Placements layout, place by place: those found and the
+/// errors of the others (`place k: ...`, k from 1). A reference that cannot be
+/// found is an error for every place.
+pub fn placement_motions(
+    reference: &Anchor,
+    places: &[Anchor],
+    look: &Lookup,
+    at: &dyn Fn(u32) -> Option<Transform3>,
+) -> Result<(Motions, Vec<String>), String> {
+    let geom = |r: &GeomRef| world(r, look.local, at);
+    let from = frame_of(reference, &geom, None).map_err(|e| format!("reference: {e}"))?;
+    let fallback = reference.plane.as_ref().map(|_| (from.o, from.n));
+    let mut out = Vec::new();
+    let mut errors = Vec::new();
+    for (k, a) in places.iter().enumerate() {
+        match frame_of(a, &geom, fallback) {
+            Ok(to) => out.push((k as u32 + 2, motion_between(&from, &to))),
+            Err(e) => errors.push(format!("place {}: {e}", k + 1)),
+        }
+    }
+    Ok((out, errors))
+}
+
 /// The motion of each element 2.. (by element index), in assembly
 /// coordinates, applied on top of a source's placement.
 pub fn motions(
@@ -194,6 +447,13 @@ pub fn motions(
     let local = look.local;
     let mut out = Vec::new();
     match layout {
+        Layout::Placements { reference, places } => {
+            let (moves, errors) = placement_motions(reference, places, look, at)?;
+            if !errors.is_empty() {
+                return Err(errors.join("; "));
+            }
+            out = moves;
+        }
         Layout::Feature {
             occurrence,
             feature,
@@ -447,14 +707,48 @@ impl AssemblyDocument {
 /// references no longer resolve keeps its copies where they are; the
 /// errors come back by pattern id.
 pub fn place(asm: &mut AssemblyDocument, look: &Lookup) -> Result<(), String> {
-    let mut errors = Vec::new();
+    let errors: Vec<String> = place_report(asm, look)
+        .into_iter()
+        .map(|(id, e)| {
+            let name = asm
+                .patterns
+                .iter()
+                .find(|p| p.id == id)
+                .map_or("Component Pattern", |p| p.name.as_str());
+            format!("{name}: {e}")
+        })
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// [`place`], with the problems by pattern id (a pattern's health: the
+/// browser marks it sick with the reason).
+pub fn place_report(asm: &mut AssemblyDocument, look: &Lookup) -> Vec<(u32, String)> {
+    let mut errors: Vec<(u32, String)> = Vec::new();
     for k in 0..asm.patterns.len() {
         let p = asm.patterns[k].clone();
         let at = |id: u32| asm.find(id).map(|o| o.transform);
-        let moves = match motions(&p.layout, look, &at) {
+        // At Placements: a place whose geometry is gone keeps its copies
+        // where they are; the others still follow (spec 3.7a §3 Health).
+        let found = match &p.layout {
+            Layout::Placements { reference, places } => {
+                placement_motions(reference, places, look, &at).map(|(m, e)| {
+                    if !e.is_empty() {
+                        errors.push((p.id, e.join("; ")));
+                    }
+                    m
+                })
+            }
+            layout => motions(layout, look, &at),
+        };
+        let moves = match found {
             Ok(m) => m,
             Err(e) => {
-                errors.push(format!("{}: {e}", p.name));
+                errors.push((p.id, e));
                 continue;
             }
         };
@@ -464,7 +758,10 @@ pub fn place(asm: &mut AssemblyDocument, look: &Lookup) -> Result<(), String> {
             .filter_map(|&s| asm.find(s).cloned())
             .collect();
         // Extra elements (a count made smaller) go.
-        let keep = moves.len() as u32 + 1;
+        let keep = match &p.layout {
+            Layout::Placements { places, .. } => places.len() as u32 + 1,
+            _ => moves.len() as u32 + 1,
+        };
         let extra: Vec<u32> = p
             .elements
             .iter()
@@ -517,11 +814,7 @@ pub fn place(asm: &mut AssemblyDocument, look: &Lookup) -> Result<(), String> {
         elements.sort_by_key(|e| e.index);
         asm.patterns[k].elements = elements;
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
+    errors
 }
 
 #[cfg(test)]
@@ -686,6 +979,238 @@ mod tests {
         place(&mut a, &look).unwrap();
         assert_eq!(a.patterns[0].elements.len(), 1);
         assert_eq!(a.occurrences.len(), 3);
+    }
+
+    /// Named geometry of the assembly itself (work features of occurrence
+    /// 0), changeable between calls: the "plate" of the Placements tests.
+    struct Plate(std::cell::RefCell<HashMap<String, Geom>>);
+
+    impl Plate {
+        fn new(items: &[(&str, Geom)]) -> Self {
+            Self(std::cell::RefCell::new(
+                items.iter().map(|(k, g)| ((*k).to_owned(), *g)).collect(),
+            ))
+        }
+        fn local(&self, r: &GeomRef) -> Result<Geom, String> {
+            match r {
+                GeomRef::Work { id, .. } => self
+                    .0
+                    .borrow()
+                    .get(id)
+                    .copied()
+                    .ok_or(format!("{id} is gone")),
+                _ => local(r),
+            }
+        }
+        fn set(&self, id: &str, g: Geom) {
+            self.0.borrow_mut().insert(id.to_owned(), g);
+        }
+    }
+
+    fn work(id: &str) -> GeomRef {
+        GeomRef::Work {
+            sub: Vec::new(),
+            occurrence: ASSEMBLY,
+            id: id.into(),
+        }
+    }
+
+    fn rim(x: f64, y: f64, z: f64) -> Geom {
+        Geom::Circle {
+            c: Point3::new(x, y, z),
+            n: Vector3::z(),
+            r: 4.5,
+        }
+    }
+
+    fn at(r: GeomRef) -> Anchor {
+        Anchor {
+            plane: None,
+            point: r,
+            orient: None,
+        }
+    }
+
+    fn near(a: Point3, b: Point3) -> bool {
+        (a - b).norm() < 1e-9
+    }
+
+    /// Holes on the reference plane: a bolt (head 5 mm up) and its nut (8 mm
+    /// down) go to every rim, moved only; a moved hole takes its copies along
+    /// (associative); a hole gone keeps its copies, the others still follow.
+    #[test]
+    fn placements_follow_hole_rims() {
+        let plate = Plate::new(&[
+            ("R0", rim(0.0, 0.0, 0.0)),
+            ("R1", rim(30.0, 10.0, 0.0)),
+            ("R2", rim(-20.0, 45.0, 0.0)),
+        ]);
+        let f = |r: &GeomRef| plate.local(r);
+        let look = Lookup::geometry(&f);
+        let mut a = AssemblyDocument::default();
+        let bolt = a.place(doc(), "Bolt", Transform3::translation(0.0, 0.0, 5.0), false);
+        let nut = a.place(doc(), "Nut", Transform3::translation(0.0, 0.0, -8.0), false);
+        let layout = Layout::Placements {
+            reference: at(work("R0")),
+            places: vec![at(work("R1")), at(work("R2"))],
+        };
+        assert_eq!(layout.count(), 3);
+        a.add_pattern(vec![bolt, nut], layout, &look).unwrap();
+        assert_eq!(a.occurrences.len(), 6);
+        let e = |a: &AssemblyDocument, k: usize, j: usize| {
+            origin(a, a.patterns[0].elements[k].occurrences[j])
+        };
+        assert!(near(e(&a, 0, 0), Point3::new(30.0, 10.0, 5.0)));
+        assert!(near(e(&a, 0, 1), Point3::new(30.0, 10.0, -8.0)));
+        assert!(near(e(&a, 1, 0), Point3::new(-20.0, 45.0, 5.0)));
+        // No turn on the same plane.
+        let o = a.find(a.patterns[0].elements[1].occurrences[0]).unwrap();
+        assert!(o.transform.rotation.angle() < 1e-12);
+
+        // The plate changes: hole 1 moves.
+        plate.set("R1", rim(35.0, 12.0, 0.0));
+        place(&mut a, &look).unwrap();
+        assert!(near(e(&a, 0, 0), Point3::new(35.0, 12.0, 5.0)));
+
+        // Hole 2 deleted: its copies stay, hole 1 still follows.
+        plate.0.borrow_mut().remove("R2");
+        plate.set("R1", rim(36.0, 12.0, 0.0));
+        let err = place(&mut a, &look).unwrap_err();
+        assert!(err.contains("place 2"), "{err}");
+        assert_eq!(a.occurrences.len(), 6);
+        assert!(near(e(&a, 0, 0), Point3::new(36.0, 12.0, 5.0)));
+        assert!(near(e(&a, 1, 0), Point3::new(-20.0, 45.0, 5.0)));
+    }
+
+    /// A reference plane and point; places as points on it (lifted ones
+    /// projected), a place on another plane turned with its orientation.
+    #[test]
+    fn placements_on_planes_and_orientation() {
+        let plate = Plate::new(&[
+            (
+                "Top",
+                Geom::Plane {
+                    p: Point3::origin(),
+                    n: Vector3::z(),
+                },
+            ),
+            (
+                "P0",
+                Geom::Point {
+                    p: Point3::new(0.0, 0.0, 0.0),
+                },
+            ),
+            (
+                "P1",
+                Geom::Point {
+                    p: Point3::new(10.0, 0.0, 3.0),
+                },
+            ),
+            (
+                "X",
+                Geom::Axis {
+                    p: Point3::origin(),
+                    d: Vector3::x(),
+                },
+            ),
+            (
+                "Side",
+                Geom::Plane {
+                    p: Point3::new(50.0, 0.0, 0.0),
+                    n: Vector3::x(),
+                },
+            ),
+            (
+                "P2",
+                Geom::Point {
+                    p: Point3::new(50.0, 5.0, 5.0),
+                },
+            ),
+            (
+                "Y",
+                Geom::Axis {
+                    p: Point3::new(50.0, 0.0, 0.0),
+                    d: Vector3::y(),
+                },
+            ),
+        ]);
+        let f = |r: &GeomRef| plate.local(r);
+        let look = Lookup::geometry(&f);
+        let mut a = AssemblyDocument::default();
+        let s = a.place(doc(), "Bolt", Transform3::translation(1.0, 0.0, 5.0), false);
+        let picks = vec![
+            (work("P1"), PlacePick::Point),
+            (work("Side"), PlacePick::Plane),
+            (work("P2"), PlacePick::Point),
+            (work("Y"), PlacePick::Edge),
+        ];
+        let places = places_from_picks(&picks).unwrap();
+        assert_eq!(places.len(), 2);
+        assert_eq!(places[0].plane, None);
+        assert_eq!(places[1].plane, Some(work("Side")));
+        assert_eq!(places[1].orient, Some(work("Y")));
+        // Edit gives the same picks back.
+        assert_eq!(picks_of_places(&places, &|_| PlacePick::Point), picks);
+        let layout = Layout::Placements {
+            reference: Anchor {
+                plane: Some(work("Top")),
+                point: work("P0"),
+                orient: Some(work("X")),
+            },
+            places,
+        };
+        a.add_pattern(vec![s], layout, &look).unwrap();
+        let e = |k: usize| origin(&a, a.patterns[0].elements[k].occurrences[0]);
+        assert!(near(e(0), Point3::new(11.0, 0.0, 5.0)), "{}", e(0));
+        // X → Y, Z → X: (1, 0, 5) from the reference is (5, 1, 0) from P2.
+        assert!(near(e(1), Point3::new(55.0, 6.0, 5.0)), "{}", e(1));
+        // An edge before any place is refused.
+        assert!(places_from_picks(&[(work("Y"), PlacePick::Edge)]).is_err());
+    }
+
+    /// A place that cannot be found refuses the new pattern and leaves the
+    /// assembly as it was; the pattern survives a save.
+    #[test]
+    fn placements_failure_and_round_trip() {
+        let plate = Plate::new(&[("R0", rim(0.0, 0.0, 0.0)), ("R1", rim(9.0, 0.0, 0.0))]);
+        let f = |r: &GeomRef| plate.local(r);
+        let look = Lookup::geometry(&f);
+        let mut a = AssemblyDocument::default();
+        let s = a.place(doc(), "Bolt", Transform3::identity(), false);
+        let before = a.clone();
+        let bad = Layout::Placements {
+            reference: at(work("R0")),
+            places: vec![at(work("R1")), at(work("Gone"))],
+        };
+        assert!(a.add_pattern(vec![s], bad, &look).is_err());
+        let ids = |a: &AssemblyDocument| -> Vec<(u32, Transform3)> {
+            a.occurrences.iter().map(|o| (o.id, o.transform)).collect()
+        };
+        assert_eq!(ids(&a), ids(&before));
+        assert_eq!(a.patterns, before.patterns);
+        // Opposite normals: half a turn, the point lands on the rim.
+        plate.set(
+            "Under",
+            Geom::Circle {
+                c: Point3::new(0.0, 0.0, -10.0),
+                n: -Vector3::z(),
+                r: 4.5,
+            },
+        );
+        let good = Layout::Placements {
+            reference: at(work("R0")),
+            places: vec![at(work("R1")), at(work("Under"))],
+        };
+        a.add_pattern(vec![s], good, &look).unwrap();
+        let under = a.find(a.patterns[0].elements[1].occurrences[0]).unwrap();
+        assert!(near(
+            under.transform * Point3::origin(),
+            Point3::new(0.0, 0.0, -10.0)
+        ));
+        assert!((under.transform * Vector3::z() + Vector3::z()).norm() < 1e-9);
+        let text = serde_json::to_string(&a).unwrap();
+        let back: AssemblyDocument = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.patterns, a.patterns);
     }
 
     /// A copy deleted leaves a gap; a source deleted takes the pattern;

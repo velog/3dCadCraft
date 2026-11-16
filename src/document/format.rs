@@ -203,7 +203,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 74: Simplify (`BodyOp::Simplify`: features removed by kind and size,
 ///   bodies left out, enveloped or filled; `DeriveLink::simplify` for a
 ///   simplified part of a part or an assembly) (2026-11-12).
-pub const FORMAT_REVISION: u32 = 74;
+/// - 75: Component Pattern at Placements (`pattern::Layout::Placements`:
+///   copies moved onto picked hole rims, points and planes) (2026-11-16).
+pub const FORMAT_REVISION: u32 = 75;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

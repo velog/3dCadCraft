@@ -41,6 +41,17 @@ const BOLT_END: &[PickKind] = &[PickKind::PlanarFace, PickKind::Plane];
 /// A face or edge of a feature (its feature pattern).
 const FEATURE_FACE: &[PickKind] = &[PickKind::Face, PickKind::Edge];
 const POINT: &[PickKind] = &[PickKind::Point];
+/// Pattern at Placements: a start point (vertex, round edge, hole wall).
+const START_POINT: &[PickKind] = &[PickKind::Point, PickKind::Edge, PickKind::Face];
+/// Pattern at Placements: places (rims, points, planes, orientation edges).
+const PLACES: &[PickKind] = &[
+    PickKind::Point,
+    PickKind::Edge,
+    PickKind::StraightEdge,
+    PickKind::Face,
+    PickKind::PlanarFace,
+    PickKind::Plane,
+];
 /// A frame member (a component of the frame).
 const MEMBERS: &[PickKind] = &[PickKind::Body];
 /// Skeleton geometry: model edges and sketch curves.
@@ -364,7 +375,7 @@ impl AsmPlanned {
                 "A new part or subassembly made in place, its first sketch on a face or plane."
             }
             Pattern => {
-                "Repeats components after a feature pattern, in rows and columns, or about an axis."
+                "Repeats components after a feature pattern, in rows and columns, about an axis, or at picked places."
             }
             Mirror => "Mirrors components about a plane: new mirrored files or reused instances.",
             Copy => "Copies components as new independent files or reused instances.",
@@ -578,6 +589,45 @@ impl AsmPlanned {
                         Check("Flip", false),
                         Num("Count", 4.0, ""),
                         Num("Angle", 90.0, "°"),
+                    ],
+                ),
+                Page(
+                    "Placements",
+                    &[
+                        Sel(
+                            "components",
+                            "Components",
+                            "select the components to pattern",
+                            COMPONENTS,
+                        ),
+                        Head("Reference"),
+                        Sel(
+                            "ref_plane",
+                            "Reference Plane",
+                            "select the plane the components sit on (a hole's rim gives plane and point)",
+                            PLANE,
+                        ),
+                        Sel(
+                            "ref_point",
+                            "Start Point",
+                            "select where the components sit now (vertex, hole rim or wall)",
+                            START_POINT,
+                        ),
+                        Sel(
+                            "ref_orient",
+                            "Orientation",
+                            "select an edge the components are turned by, or click the first place (optional)",
+                            LINE,
+                        ),
+                        Head("Places"),
+                        Sel(
+                            "places",
+                            "Places",
+                            "click hole rims or points; a face sets the plane, an edge turns the last place",
+                            PLACES,
+                        ),
+                        Note("A hole's rim is a whole place: plane, centre and axis"),
+                        Note("No relationships are made; the copies follow their places"),
                     ],
                 ),
             ],
@@ -1892,6 +1942,10 @@ impl CadCraftApp {
         if self.bolt_click(p, rect) {
             return;
         }
+        // Pattern at Placements: reference and places (gui/asm_pattern.rs).
+        if self.pattern_place_click(p, rect) {
+            return;
+        }
         let Some(kinds) = self
             .part_planned
             .as_ref()
@@ -1958,6 +2012,10 @@ impl CadCraftApp {
     /// work row of the browser) to the open planned panel's selector.
     pub(super) fn planned_take_ref(&mut self, g: crate::assembly::GeomRef) {
         use crate::assembly::relation::GeomRef;
+        if self.pattern_places_active() {
+            self.pattern_place_take(g);
+            return;
+        }
         let mut label = self.geom_label(&g);
         // Pattern's Feature Pattern row: the pattern's name, not the face.
         if self
