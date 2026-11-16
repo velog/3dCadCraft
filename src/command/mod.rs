@@ -28,6 +28,8 @@ pub struct History<T> {
     /// Label and time of the last record, for coalescing.
     last: Option<(String, Instant)>,
     coalesce_window: Duration,
+    /// Counts every record, undo, redo, cancel and clear ([`History::generation`]).
+    changes: u64,
 }
 
 impl<T> Default for History<T> {
@@ -45,13 +47,21 @@ impl<T> History<T> {
             limit: limit.max(1),
             last: None,
             coalesce_window: Duration::from_millis(800),
+            changes: 0,
         }
+    }
+
+    /// Grows with every change of the history: a state that may have changed since the last
+    /// look (the "unsaved changes" check need not serialize a large project while it has not).
+    pub fn generation(&self) -> u64 {
+        self.changes
     }
 
     /// Records `before` — the state *before* an action named `label`.
     /// Clears the redo stack. If the same label was recorded within the
     /// coalescing window, nothing is pushed (the gesture is one step).
     pub fn record(&mut self, label: &str, before: T) {
+        self.changes += 1;
         let now = Instant::now();
         let coalesce = self
             .last
@@ -78,6 +88,7 @@ impl<T> History<T> {
     /// the redo stack.
     pub fn undo(&mut self, current: T) -> Option<T> {
         let (label, state) = self.undo.pop()?;
+        self.changes += 1;
         self.redo.push((label, current));
         self.last = None;
         Some(state)
@@ -86,6 +97,7 @@ impl<T> History<T> {
     /// Redoes the last undone step.
     pub fn redo(&mut self, current: T) -> Option<T> {
         let (label, state) = self.redo.pop()?;
+        self.changes += 1;
         self.undo.push((label, current));
         self.last = None;
         Some(state)
@@ -104,12 +116,14 @@ impl<T> History<T> {
     /// Drops the step just recorded, when the action it was recorded for
     /// failed and changed nothing (so Undo does not show an empty step).
     pub fn cancel(&mut self) {
+        self.changes += 1;
         self.undo.pop();
         self.last = None;
     }
 
     /// Forgets everything (e.g. after opening another file).
     pub fn clear(&mut self) {
+        self.changes += 1;
         self.undo.clear();
         self.redo.clear();
         self.last = None;

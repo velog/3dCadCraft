@@ -171,7 +171,46 @@ pub(super) fn face_paint(look: &Appearance, source: LookSource, open: bool) -> F
 /// appearance (opaque faces in the shaded pass with the red back-face
 /// check; see-through ones in the transparent pass), plus the edges.
 pub(super) fn add_part_meshes(g: &mut SceneGeometry, part: &PartDocument) {
-    add_part_meshes_at(g, part, None, None);
+    // The scene is built again on every hover and selection change; the part's own faces are
+    // kept from the last build while nothing they show changed (612 imported bodies took 1.1 s
+    // to pack each time).
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        part.body_signature().hash(&mut h);
+        serde_json::to_vec(&part.looks)
+            .unwrap_or_default()
+            .hash(&mut h);
+        part.material.hash(&mut h);
+        part.appearance.hash(&mut h);
+        part.hidden_bodies.hash(&mut h);
+        g.tints_show_through.hash(&mut h);
+        for c in super::theme::scene_rgb(super::theme::canvas().model_edges) {
+            c.to_bits().hash(&mut h);
+        }
+        h.finish()
+    };
+    let kept = PART_SCENE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, s)| s.clone())
+    });
+    let own = kept.unwrap_or_else(|| {
+        let mut own = SceneGeometry::default();
+        own.tints_show_through = g.tints_show_through;
+        add_part_meshes_at(&mut own, part, None, None);
+        let own = std::rc::Rc::new(own);
+        PART_SCENE.with(|c| *c.borrow_mut() = Some((key, own.clone())));
+        own
+    });
+    g.append(&own);
+}
+
+thread_local! {
+    /// [`add_part_meshes`]' last part scene and what it showed.
+    static PART_SCENE: std::cell::RefCell<Option<(u64, std::rc::Rc<SceneGeometry>)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// [`add_part_meshes`] moved by `place` (an assembly occurrence) and
@@ -208,13 +247,15 @@ thread_local! {
 /// Bodies whose meshes are kept.
 const MESHES_KEPT: usize = 512;
 
-/// The display mesh of solid `id` of `part`, tessellated once per body state.
+/// The display mesh of solid `id` of `part`, tessellated once per body state. `key` is the part's
+/// [`PartDocument::body_signature`], taken once by the caller: it hashes every vertex, and taken
+/// per solid it made a scene of 612 imported bodies quadratic.
 fn cached_mesh(
     part: &PartDocument,
+    key: &str,
     id: crate::kernel::SolidId,
 ) -> Option<std::sync::Arc<crate::kernel::SolidMesh>> {
-    let key = part.body_signature();
-    if let Some(m) = MESHES.with(|c| c.borrow().get(&key).and_then(|b| b.get(&id).cloned())) {
+    if let Some(m) = MESHES.with(|c| c.borrow().get(key).and_then(|b| b.get(&id).cloned())) {
         return Some(m);
     }
     match part
@@ -225,10 +266,10 @@ fn cached_mesh(
             let m = std::sync::Arc::new(m);
             MESHES.with(|c| {
                 let mut c = c.borrow_mut();
-                if c.len() >= MESHES_KEPT && !c.contains_key(&key) {
+                if c.len() >= MESHES_KEPT && !c.contains_key(key) {
                     c.clear();
                 }
-                c.entry(key).or_default().insert(id, m.clone());
+                c.entry(key.to_owned()).or_default().insert(id, m.clone());
             });
             Some(m)
         }
@@ -257,14 +298,16 @@ pub(super) fn add_part_meshes_with(
     over: &dyn Fn(Option<&str>) -> FaceOver,
 ) {
     let body = &part.body;
+    let _t = super::frame_trace::span("pack part meshes");
     let looks = Resolver::new(part).face_looks();
     let fallback = (Appearance::fallback(), LookSource::Material);
+    let key = part.body_signature();
     for (id, solid) in body.solids() {
         // Hidden bodies (Combine's kept toolbodies, Visibility off).
         if solid.name.as_deref().is_some_and(|n| !part.body_visible(n)) {
             continue;
         }
-        let Some(cached) = cached_mesh(part, id) else {
+        let Some(cached) = cached_mesh(part, &key, id) else {
             continue;
         };
         let moved_mesh;

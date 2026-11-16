@@ -1063,49 +1063,91 @@ impl CadCraftApp {
         if !self.cat_on(crate::command::selection::Category::Vertex) {
             return None;
         }
+        let _t = super::frame_trace::span("vertex under");
         let body = &self.part().body;
         let picker = self.picker();
+        let map = self.camera.screen(rect);
+        let (origin, dir) = self.camera.ray(pos, rect)?;
+        let dir = dir.try_normalize(1e-12)?;
+        // Only points near the cursor's ray are projected (a part of 612 bodies has hundreds
+        // of thousands, kept per body in runs under a sphere), and only the nearest ones are
+        // tested for being hidden: each test is a ray.
+        let points = self.vertex_points();
+        let mut cands: Vec<(f32, Point3, PointRef)> = Vec::new();
+        for k in points.1.near_ray(&origin, &dir, &map, 12.0) {
+            let Some((p, item)) = points.0.get(k) else {
+                continue;
+            };
+            let Some(s) = map.project(p) else { continue };
+            // Vertices win over a midpoint at the same spot.
+            let (r, bias) = match item {
+                VertexPoint::Vertex(v) => (
+                    body.vertex(*v)
+                        .and_then(|x| x.name.clone())
+                        .map(PointRef::Vertex),
+                    0.0,
+                ),
+                VertexPoint::Mid(e) => (
+                    body.edge(*e)
+                        .and_then(|x| x.name.clone())
+                        .map(PointRef::EdgeMid),
+                    1.0,
+                ),
+            };
+            let d = s.distance(pos) + bias;
+            if let Some(r) = r.filter(|_| d <= 8.0) {
+                cands.push((d, *p, r));
+            }
+        }
+        cands.sort_by(|a, b| a.0.total_cmp(&b.0));
         // Seen along the ray through its own pixel: the cursor's ray can hit
         // a nearer face up to 8 px away (an edge's middle on a wall's rim).
-        let visible = |p: &Point3, s: Pos2| {
-            let Some((origin, dir)) = self.camera.ray(s, rect) else {
+        let visible = |p: &Point3| {
+            let Some((o, d)) = map.ray_to(p) else {
                 return false;
             };
-            let Some(dir) = dir.try_normalize(1e-12) else {
-                return false;
-            };
-            let t = (p - origin).dot(&dir);
+            let t = (p - o).dot(&d);
             !picker
-                .pick(&origin, &dir)
+                .pick(&o, &d)
                 .is_some_and(|(_, ft)| ft < t - 0.01 * t.abs().max(1.0))
         };
-        let mut best: Option<(f32, PointRef)> = None;
-        let mut consider = |p: Point3, r: PointRef, bias: f32| {
-            if let Some(s) = self.camera.project(&p, rect) {
-                let d = s.distance(pos) + bias;
-                if d <= 8.0 && best.as_ref().is_none_or(|(bd, _)| d < *bd) && visible(&p, s) {
-                    best = Some((d, r));
-                }
-            }
-        };
-        for (_, v) in body.vertices() {
-            if let Some(name) = &v.name {
-                consider(v.point, PointRef::Vertex(name.clone()), 0.0);
-            }
+        cands
+            .into_iter()
+            .take(16)
+            .find(|(_, p, _)| visible(p))
+            .map(|(_, _, r)| r)
+    }
+
+    /// The named vertices and straight edges' middles of the body (what
+    /// [`Self::vertex_under`] picks), with their spheres in runs, kept per body.
+    fn vertex_points(&self) -> std::rc::Rc<(Vec<(Point3, VertexPoint)>, super::SphereGroups)> {
+        let key = self.body_key();
+        if let Some(found) = VERTEX_POINTS.with(|c| {
+            c.borrow()
+                .as_ref()
+                .filter(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone())
+        }) {
+            return found;
         }
+        let body = &self.part().body;
+        let mut items: Vec<(Point3, VertexPoint)> = body
+            .vertices()
+            .filter(|(_, v)| v.name.is_some())
+            .map(|(id, v)| (v.point, VertexPoint::Vertex(id)))
+            .collect();
         for (e, x) in body.edges() {
-            if let (Some(name), Some(_)) = (&x.name, body.edge_direction(e))
+            if x.name.is_some()
                 && let (Some(a), Some(b)) = (body.vertex(x.start), body.vertex(x.end))
+                && body.edge_direction(e).is_some()
             {
-                // Vertices win over a midpoint at the same spot.
-                consider(
-                    nalgebra::center(&a.point, &b.point),
-                    PointRef::EdgeMid(name.clone()),
-                    1.0,
-                );
+                items.push((nalgebra::center(&a.point, &b.point), VertexPoint::Mid(e)));
             }
         }
-        best.map(|(_, r)| r)
+        let spheres = super::SphereGroups::new(items.iter().map(|(p, _)| (*p, 0.0)).collect());
+        let v = std::rc::Rc::new((items, spheres));
+        VERTEX_POINTS.with(|c| *c.borrow_mut() = Some((key, v.clone())));
+        v
     }
 
     /// A point, line or curve of a visible sketch under `pos`.
@@ -1980,4 +2022,19 @@ mod visibility_tests {
         v.toggle(VisKind::WorkPlanes);
         assert!(kind_shown(&v, &plane));
     }
+}
+
+/// A point [`CadCraftApp::vertex_under`] picks.
+#[derive(Clone, Copy, Debug)]
+enum VertexPoint {
+    Vertex(crate::kernel::VertexId),
+    /// The middle of a straight edge.
+    Mid(crate::kernel::EdgeId),
+}
+
+thread_local! {
+    /// [`CadCraftApp::vertex_points`] of the last body.
+    static VERTEX_POINTS: std::cell::RefCell<
+        Option<(String, std::rc::Rc<(Vec<(Point3, VertexPoint)>, super::SphereGroups)>)>,
+    > = const { std::cell::RefCell::new(None) };
 }

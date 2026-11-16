@@ -623,6 +623,7 @@ impl CadCraftApp {
 
     /// The tree of the active part.
     fn part_tree(&self, ui: &mut egui::Ui, name: &str, cmds: &mut Vec<BrowserCmd>) {
+        let _t = super::frame_trace::span("browser: part tree");
         let part = self.part();
         tree_fold(ui, ui.make_persistent_id("active_part"), true)
             .show_header(ui, |ui| {

@@ -512,6 +512,11 @@ impl super::PartDocument {
 
     /// Whether feature `k` uses another component (an extent To its face).
     pub fn feature_uses_context(&self, k: usize) -> bool {
+        // Asked for every browser row each frame: an imported part's feature holds the whole
+        // STEP text, and writing it out took 18 ms a frame on a board of 612 bodies.
+        if self.context.is_empty() {
+            return false;
+        }
         self.features.get(k).is_some_and(|f| {
             serde_json::to_string(f).is_ok_and(|t| {
                 self.context

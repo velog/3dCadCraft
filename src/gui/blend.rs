@@ -272,6 +272,25 @@ impl CadCraftApp {
     /// (for highlighting the set): the edges between the two named faces
     /// nearest to its hint, or all of them for a circular edge.
     pub(super) fn edges_of_ref(&self, r: &EdgeRef) -> Vec<EdgeId> {
+        // Asked for every picked edge every frame while the command is open: kept per body.
+        let key = (self.body_key(), format!("{:?}", r));
+        if let Some(found) = EDGES_OF_REF.with(|c| c.borrow().get(&key).cloned()) {
+            return found;
+        }
+        let found = self.find_edges_of_ref(r);
+        EDGES_OF_REF.with(|c| {
+            let mut c = c.borrow_mut();
+            // One body at a time: a new body's references replace the old ones.
+            if c.keys().next().is_some_and(|(b, _)| *b != key.0) {
+                c.clear();
+            }
+            c.insert(key, found.clone());
+        });
+        found
+    }
+
+    fn find_edges_of_ref(&self, r: &EdgeRef) -> Vec<EdgeId> {
+        let _t = super::frame_trace::span("edges of ref");
         let body = &self.part().body;
         let (m0, m1) = (
             crate::part::blend::face_matcher(body, &r.faces[0]),
@@ -362,6 +381,7 @@ impl CadCraftApp {
         face_hover: Option<&str>,
     ) {
         let Some(d) = &self.blend_draft else { return };
+        let _t = super::frame_trace::span("blend edges");
         let body = &self.part().body;
         let opts = TessellationOptions::default();
         let line = |e: EdgeId, color: Color32| {
@@ -659,4 +679,11 @@ mod handle_tests {
         );
         assert!((b.z - 16.0).abs() < 1e-6 && b.y.abs() < 1e-6, "{b:?}");
     }
+}
+
+thread_local! {
+    /// [`CadCraftApp::edges_of_ref`] by (body key, reference).
+    static EDGES_OF_REF: std::cell::RefCell<
+        std::collections::HashMap<(String, String), Vec<EdgeId>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
 }

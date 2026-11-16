@@ -1368,6 +1368,7 @@ impl CadCraftApp {
                 hidden,
             };
             let r = egui::Panel::top(self.layout.panel_id("ribbon")).show(ui, |ui| {
+                let _t = super::frame_trace::span("ribbon");
                 action = super::ribbon::show(ui, &mut self.tab, &state, &mut fold);
             });
             // A click elsewhere (not in a popup of the ribbon) folds a
@@ -1400,7 +1401,10 @@ impl CadCraftApp {
             if let Some(h) = self.layout.s.status_height {
                 p = p.default_size(h);
             }
-            let r = p.show(ui, |ui| self.status_bar(ui));
+            let r = p.show(ui, |ui| {
+                let _t = super::frame_trace::span("status bar");
+                self.status_bar(ui)
+            });
             LayoutUi::note(&mut self.layout.s.status_height, r.response.rect.height());
         }
         // Home has no browser or Properties (spec 0.17 §3.1).
@@ -1419,6 +1423,7 @@ impl CadCraftApp {
                 let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(rect));
                 inner.set_clip_rect(clip);
                 inner.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                let _t = super::frame_trace::span("browser");
                 self.browser(&mut inner);
                 ui.expand_to_include_rect(rect);
             });
@@ -1446,6 +1451,7 @@ impl CadCraftApp {
                     .auto_shrink([false, false])
                     .show(&mut inner, |ui| {
                         ui.set_max_width(ui.available_width());
+                        let _t = super::frame_trace::span("properties");
                         self.properties(ui)
                     });
                 ui.expand_to_include_rect(rect);

@@ -315,12 +315,20 @@ impl CadCraftApp {
             return Vec::new();
         }
         let mut near: Vec<(EdgeId, f32)> = Vec::new();
-        for (e, pts) in self.edge_polylines().iter() {
+        let Some((o, dir)) = self.camera.ray(p, rect) else {
+            return near;
+        };
+        let Some(dir) = dir.try_normalize(1e-12) else {
+            return near;
+        };
+        let map = self.camera.screen(rect);
+        let edges = self.edge_polylines();
+        for (e, pts) in edges.near_ray(&o, &dir, &map, overlay::EDGE_PICK_PX) {
             let d = pts
                 .windows(2)
                 .filter_map(|w| {
-                    let a = self.camera.project(&w[0], rect)?;
-                    let b = self.camera.project(&w[1], rect)?;
+                    let a = map.project(&w[0])?;
+                    let b = map.project(&w[1])?;
                     let ab = b - a;
                     let t = ((p - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
                     Some((a + ab * t).distance(p))
@@ -383,6 +391,7 @@ impl CadCraftApp {
         edge: Option<EdgeId>,
         face: Option<&str>,
     ) -> Option<SelItem> {
+        let _t = super::frame_trace::span("sel item at");
         if let Some(x) = self.measure_snap_at(p, rect) {
             return Some(x);
         }
@@ -485,6 +494,7 @@ impl CadCraftApp {
 
     /// Faces that light up for an item.
     pub(super) fn item_faces(&self, item: &SelItem) -> Vec<FaceId> {
+        let _t = super::frame_trace::span("item faces");
         let body = &self.part().body;
         match item {
             // Every piece of the visible face (a cylinder in halves).
@@ -1021,17 +1031,23 @@ impl CadCraftApp {
     /// Whether model point `q` is hidden behind a face (the eye ray through
     /// it hits a face clearly in front). Very large bodies are not tested.
     pub(super) fn point_hidden(&self, q: &crate::kernel::Point3, rect: egui::Rect) -> bool {
+        self.point_hidden_in(q, &self.camera.screen(rect))
+    }
+
+    /// [`Self::point_hidden`] with the view's map taken once.
+    pub(super) fn point_hidden_in(
+        &self,
+        q: &crate::kernel::Point3,
+        map: &super::camera::ScreenMap,
+    ) -> bool {
         let picker = self.picker();
         if picker.tris.len() >= 200_000 {
             return false;
         }
-        let Some(s) = self.camera.project(q, rect) else {
+        if map.project(q).is_none() {
             return true;
-        };
-        let Some((o, d)) = self.camera.ray(s, rect) else {
-            return false;
-        };
-        let Some(d) = d.try_normalize(1e-12) else {
+        }
+        let Some((o, d)) = map.ray_to(q) else {
             return false;
         };
         let te = (q - o).dot(&d);
@@ -1051,6 +1067,8 @@ impl CadCraftApp {
         pts: &[crate::kernel::Point3],
         stroke: egui::Stroke,
     ) {
+        let _t = super::frame_trace::span("visible polyline");
+        let map = self.camera.screen(rect);
         let n = pts.len().saturating_sub(1);
         let run = n.div_ceil(HIDDEN_TESTS).max(1);
         let mut hidden = false;
@@ -1059,15 +1077,12 @@ impl CadCraftApp {
                 // The middle of this run of segments.
                 let k = (i + run / 2).min(n.saturating_sub(1));
                 let (a, b) = (pts[k], pts[k + 1]);
-                hidden = self.point_hidden(&(a + (b - a) * 0.5), rect);
+                hidden = self.point_hidden_in(&(a + (b - a) * 0.5), &map);
             }
             if hidden {
                 continue;
             }
-            if let (Some(a), Some(b)) = (
-                self.camera.project(&w[0], rect),
-                self.camera.project(&w[1], rect),
-            ) {
+            if let (Some(a), Some(b)) = (map.project(&w[0]), map.project(&w[1])) {
                 painter.line_segment([a, b], stroke);
             }
         }

@@ -317,12 +317,13 @@ impl CadCraftApp {
         place: &crate::kernel::Transform3,
         alpha: Option<f32>,
         looks: &HashMap<String, Appearance>,
+        with_hover: bool,
     ) {
         let whole = if let Some(c) = self.frame_tint(o.id) {
             Some(c)
         } else if self.asm.sel.contains(&o.id) {
             Some(sel_color())
-        } else if self.asm.hover == Some(o.id) {
+        } else if with_hover && self.asm.hover == Some(o.id) {
             Some(hover_color())
         } else {
             None
@@ -338,7 +339,7 @@ impl CadCraftApp {
             .sub_hover
             .as_ref()
             .or(self.asm.tree_hover.as_ref())
-            .filter(|s| s.occurrence() == o.id);
+            .filter(|s| with_hover && s.occurrence() == o.id);
         let tint = |path: &[u32], name: Option<&str>| {
             whole.or_else(|| {
                 let n = name?;
@@ -391,6 +392,149 @@ impl CadCraftApp {
         self.with_part(o.component, |part| {
             super::material::add_part_meshes_with(g, part, Some(place), alpha, &over)
         });
+    }
+
+    /// What [`Self::add_occurrence_mesh`] draws for occurrence `o` depends on, as one number
+    /// (`base`: the scene's own inputs, [`Self::asm_scene_base_key`]). `None`: not cached (a part
+    /// cut by assembly features).
+    pub(super) fn occurrence_scene_key(
+        &self,
+        base: u64,
+        o: &Occurrence,
+        place: &crate::kernel::Transform3,
+        alpha: Option<f32>,
+        with_hover: bool,
+    ) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        if self.assembly().is_some_and(|a| a.features.is_some()) {
+            return None;
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        base.hash(&mut h);
+        format!("{o:?}").hash(&mut h);
+        for x in place.to_homogeneous().iter() {
+            x.to_bits().hash(&mut h);
+        }
+        alpha.map(f32::to_bits).hash(&mut h);
+        let whole = self.frame_tint(o.id).map(|c| c.map(f32::to_bits));
+        let hovered = with_hover && self.asm.hover == Some(o.id);
+        (whole, self.asm.sel.contains(&o.id), hovered).hash(&mut h);
+        let subs: Vec<&AsmSub> = self
+            .asm
+            .sub
+            .iter()
+            .filter(|s| s.occurrence() == o.id)
+            .collect();
+        let hover = self
+            .asm
+            .sub_hover
+            .as_ref()
+            .or(self.asm.tree_hover.as_ref())
+            .filter(|s| with_hover && s.occurrence() == o.id);
+        format!("{subs:?}{hover:?}").hash(&mut h);
+        let part_key = |h: &mut std::collections::hash_map::DefaultHasher,
+                        c: crate::document::DocRef| {
+            format!("{c:?}").hash(h);
+            self.with_part(c, |p| {
+                p.body_signature().hash(h);
+                serde_json::to_vec(&p.looks).unwrap_or_default().hash(h);
+                p.material.hash(h);
+                p.appearance.hash(h);
+                p.hidden_bodies.hash(h);
+            });
+        };
+        let linked = self.linked();
+        if let Some(sub) = crate::assembly::tree::assembly_of(&self.project, &linked, o.component) {
+            format!("{:?}", sub.appearances).hash(&mut h);
+            for l in crate::assembly::tree::leaves_in(&self.project, &linked, o, o.component, sub) {
+                l.path.hash(&mut h);
+                format!("{:?}", l.occurrence.looks).hash(&mut h);
+                self.frame_leaf_tint(o.id, &l.path)
+                    .map(|c| c.map(f32::to_bits))
+                    .hash(&mut h);
+                for x in l.world.to_homogeneous().iter() {
+                    x.to_bits().hash(&mut h);
+                }
+                part_key(&mut h, l.component);
+            }
+        } else {
+            part_key(&mut h, o.component);
+        }
+        Some(h.finish())
+    }
+
+    /// The occurrence under the cursor (or under the browser's hovered row) when its
+    /// prehighlight is drawn in the overlay over the scene (an opaque one), not in the scene.
+    pub(super) fn asm_hover_in_overlay(&self) -> Option<u32> {
+        let id = self.asm.hover.or_else(|| {
+            self.asm
+                .sub_hover
+                .as_ref()
+                .or(self.asm.tree_hover.as_ref())
+                .map(|s| s.occurrence())
+        })?;
+        let a = self.assembly()?;
+        let o = a.find(id)?;
+        (self.asm_shown(o) && self.occurrence_place_alpha(o).1.is_none()).then_some(id)
+    }
+
+    /// The prehighlighted occurrence again over the scene, its faces just outside the model
+    /// (a hover then neither packs nor uploads the whole assembly: a board of 465
+    /// occurrences took 0.3-3 s a hover).
+    pub(super) fn asm_hover_overlay(&self) -> super::renderer::SceneGeometry {
+        let Some(o) = self
+            .asm_hover_in_overlay()
+            .and_then(|id| self.assembly()?.find(id).cloned())
+        else {
+            return Default::default();
+        };
+        let (place, alpha) = self.occurrence_place_alpha(&o);
+        let looks = self.asm_scene_looks();
+        let base = self.asm_scene_base_key(&looks);
+        let key = self.occurrence_scene_key(base, &o, &place, alpha, true);
+        if let Some(k) = key
+            && let Some(g) = HOVER_OVERLAY.with(|c| {
+                c.borrow()
+                    .as_ref()
+                    .filter(|(x, _)| *x == k)
+                    .map(|(_, g)| g.clone())
+            })
+        {
+            return (*g).clone();
+        }
+        let mut g = super::renderer::SceneGeometry::default();
+        g.tints_show_through = self.colors.enhanced;
+        self.add_occurrence_mesh(&mut g, &o, &place, alpha, &looks, true);
+        let lifted = std::rc::Rc::new(g.lifted());
+        if let Some(k) = key {
+            HOVER_OVERLAY.with(|c| *c.borrow_mut() = Some((k, lifted.clone())));
+        }
+        (*lifted).clone()
+    }
+
+    /// What every occurrence's part of the scene depends on: the appearance table, the
+    /// highlight settings and colours.
+    pub(super) fn asm_scene_base_key(&self, looks: &HashMap<String, Appearance>) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut l: Vec<_> = looks.iter().collect();
+        l.sort_by(|a, b| a.0.cmp(b.0));
+        format!("{l:?}").hash(&mut h);
+        self.colors.enhanced.hash(&mut h);
+        self.frame_occ().hash(&mut h);
+        format!("{:?}", self.frame_tints()).hash(&mut h);
+        let canvas = super::theme::canvas();
+        for c in [canvas.model_edges, canvas.selected_face, canvas.hover_face] {
+            for x in super::theme::scene_rgb(c) {
+                x.to_bits().hash(&mut h);
+            }
+        }
+        for c in [sel_color(), hover_color()] {
+            for x in c {
+                x.to_bits().hash(&mut h);
+            }
+        }
+        h.finish()
     }
 
     /// The scene's appearance table (one lookup per scene build).
@@ -775,4 +919,10 @@ impl CadCraftApp {
             ui.close();
         }
     }
+}
+
+thread_local! {
+    /// The last prehighlight overlay and what it showed.
+    static HOVER_OVERLAY: std::cell::RefCell<Option<(u64, std::rc::Rc<super::renderer::SceneGeometry>)>> =
+        const { std::cell::RefCell::new(None) };
 }

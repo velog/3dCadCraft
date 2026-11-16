@@ -383,6 +383,31 @@ impl OrbitCamera {
         self.distance = radius / (self.fov_y / 2.0).sin() * 1.1;
     }
 
+    /// The world-to-screen map of this view in `rect`, built once: [`Self::project`] builds the
+    /// view and projection matrices for every point, and testing every edge of a part of 612
+    /// bodies under the cursor that way took 18 s a frame.
+    pub fn screen(&self, rect: Rect) -> ScreenMap {
+        let ortho = self.is_ortho();
+        let tan = (self.fov_y / 2.0).tan();
+        let height = rect.height().max(1.0) as Real;
+        let eye = self.eye();
+        ScreenMap {
+            m: self.view_projection(aspect(rect)),
+            rect,
+            eye,
+            forward: (self.target - eye)
+                .try_normalize(1e-12)
+                .unwrap_or(Vector3::z()),
+            per_px: if ortho {
+                2.0 * self.distance * tan / height
+            } else {
+                2.0 * tan / height
+            },
+            ortho,
+            far: self.distance * 100.0,
+        }
+    }
+
     /// Projects a world point into the screen rectangle `rect`; `None` if it
     /// is behind the camera.
     pub fn project(&self, p: &Point3, rect: Rect) -> Option<Pos2> {
@@ -514,6 +539,60 @@ impl ViewAnim {
         cam.distance = self.from.distance * ratio.powf(s);
         cam.target = self.from.target + (self.to.target - self.from.target) * s;
         (cam, false)
+    }
+}
+
+/// [`OrbitCamera::screen`]: one view's world-to-screen map.
+#[derive(Clone, Copy, Debug)]
+pub struct ScreenMap {
+    m: Matrix4<Real>,
+    rect: Rect,
+    eye: Point3,
+    forward: Vector3,
+    /// A screen pixel in world units: at unit distance from the eye (perspective), or anywhere
+    /// (parallel).
+    per_px: Real,
+    ortho: bool,
+    far: Real,
+}
+
+impl ScreenMap {
+    /// [`OrbitCamera::project`] of `p`.
+    pub fn project(&self, p: &Point3) -> Option<Pos2> {
+        let clip = self.m * p.to_homogeneous();
+        if clip.w <= 1e-9 {
+            return None;
+        }
+        let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+        let r = self.rect;
+        Some(Pos2::new(
+            r.left() + ((x + 1.0) / 2.0) as f32 * r.width(),
+            r.top() + ((1.0 - y) / 2.0) as f32 * r.height(),
+        ))
+    }
+
+    /// The size in world units of `px` screen pixels at a distance `dist` from the eye.
+    pub fn world_px(&self, px: Real, dist: Real) -> Real {
+        if self.ortho {
+            px * self.per_px
+        } else {
+            px * self.per_px * dist.max(0.0)
+        }
+    }
+
+    /// The distance of `p` from the eye.
+    pub fn eye_distance(&self, p: &Point3) -> Real {
+        (p - self.eye).norm()
+    }
+
+    /// The eye ray through the pixel of `p`, as (origin, unit direction): from the eye
+    /// (perspective), or from far in front along the view (parallel).
+    pub fn ray_to(&self, p: &Point3) -> Option<(Point3, Vector3)> {
+        if self.ortho {
+            Some((p - self.forward * self.far, self.forward))
+        } else {
+            Some((self.eye, (p - self.eye).try_normalize(1e-12)?))
+        }
     }
 }
 

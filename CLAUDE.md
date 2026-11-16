@@ -754,6 +754,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   that vertex (status 1001, "continues tangentially"); `part/exact.rs::kernel_blend` then blends the picks' tangent chain
   (`exact::tangent_chain`, same convexity only), as Inventor's fillets roll on. A cusp where a convex and a concave edge
   leave one vertex along one tangent is not built (solidcore #2256; `tests/fillet_tangent_rim.rs`, ignored case).
+- **Chamfers of whole circles on turned parts** (owner 2026-11-13: a flange's rim whose face runs on into a cone, SMLib status
+  1001 while the other rim worked): when the kernel, `loop_blend` and nothing else take them, `part/exact.rs::rim_chamfer` cuts
+  (outer corner) or fills (inner corner) a ring: the chamfer's triangle in the meridian plane revolved a whole turn, for faces
+  that are surfaces of revolution about the circle's axis (`tests/revolve_flange_chamfer.rs`, volumes by Pappus).
 - **Fillet types** (`BlendFeature::fillet_type`: Constant / Variable / Chord / FullRound) and
   further constant sets (`sets`, fields `radius2..9`) go through `part/exact.rs::special_fillet`
   (kernel `fillet_each` / `fillet_variable_points` / `fillet_chord`); failures are feature
@@ -1586,6 +1590,18 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   debug build panics after 10 s ("Failed to acquire RwLock read"). Read first, then lock.
 - **Display meshes are cached** (`material::cached_mesh`, thread-local, by `body_signature` + solid): a scene rebuild runs on every hover
   and selection change; tessellating each occurrence each time cost 70 ms on 24 parts. `body_signature` therefore hashes every vertex.
+  Take the signature once per scene (`cached_mesh(part, &key, id)`): per solid it was quadratic on an imported board of 612 bodies.
+- **Frames of a large part** (an imported board of 612 bodies: 18-85 s a frame, rule 20): project many points through
+  `OrbitCamera::screen(rect)` (`ScreenMap`: the matrix once; `project` builds it per point); find edges near the cursor with
+  `EdgeSet::near_ray` (bounding spheres) and points by their distance from the ray before projecting; rays go through
+  `PickCache`'s boxes of 64 triangles; a hover or selection change sets `overlay_dirty` (`build_overlay`, its own GPU buffers),
+  never `scene_dirty`; the part's own scene is kept by `material::add_part_meshes` (signature + looks); `is_dirty` serializes the
+  project only after `History::generation` changed (else every 30 s). A slow frame logs its spans (`gui/frame_trace.rs`,
+  `CADCRAFT3D_SLOW_FRAME_MS`) and what asked for the frame (`repaint:`): add a span before guessing. In an assembly each
+  occurrence's packed meshes are kept by what they show (`occurrence_scene_key`: the part's signature, place, tints) and
+  an opaque occurrence's prehighlight is the overlay (`asm_hover_overlay`: that occurrence packed again, lifted along its
+  normals, `SceneGeometry::lifted`) — the board as an assembly took 3.6 s a hover, now 40 ms. Nothing per browser row may
+  serialize a feature (`feature_uses_context` did: an Import holds the whole STEP text, 18 ms a frame).
 - **Mate of axes** (`relation::is_axis_mate`): `solve::gather` gives the pair as frames, its value is the turn, held only when `locked`;
   a value of Mate / Flush of planes keeps meaning an offset. `solve::turn_wrong_sides` turns a component half round where normals stand
   the wrong way: the residual `na + nb` has no slope there, so Mate ↔ Flush did nothing until 2026-11-01.

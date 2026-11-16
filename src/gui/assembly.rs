@@ -151,6 +151,8 @@ pub(super) struct AsmUi {
     pub search: String,
     /// The (selection, hover) the scene was last built with.
     scene_state: (Vec<u32>, Option<u32>),
+    /// The (hovered occurrence, hovered feature / face) the overlay was last built with.
+    overlay_state: (Option<u32>, Option<super::asm_select::AsmSub>),
     /// The frame panel's tinted members the scene was last built with.
     scene_frame: Vec<(u32, [u8; 3])>,
     scene_sub: (
@@ -2060,43 +2062,77 @@ impl CadCraftApp {
     /// The scene of the assembly: each visible occurrence in its part's
     /// appearances, selected ones tinted blue, the one under the cursor
     /// green.
+    /// Where occurrence `o` is drawn (the Constrain preview and Motion move components before
+    /// OK) and how see-through: disabled faint, Transparent (or showing an interference) half.
+    pub(super) fn occurrence_place_alpha(
+        &self,
+        o: &crate::document::Occurrence,
+    ) -> (Transform3, Option<f32>) {
+        let place = self
+            .cons
+            .preview
+            .as_ref()
+            .and_then(|p| p.get(&o.id).copied())
+            .or_else(|| self.motion.display.get(&o.id).copied())
+            .unwrap_or(o.transform);
+        let overlap = self
+            .asm
+            .interference
+            .report
+            .as_ref()
+            .is_some_and(|r| r.found.iter().any(|i| i.a == o.id || i.b == o.id));
+        let alpha = if !o.enabled {
+            Some(0.15)
+        } else if o.transparent || overlap {
+            Some(0.35)
+        } else {
+            None
+        };
+        (place, alpha)
+    }
+
     pub(super) fn assembly_scene(&self, g: &mut super::renderer::SceneGeometry) {
         let Some(a) = self.assembly() else {
             return;
         };
-        let looks = self.asm_scene_looks();
+        let looks = {
+            let _t = super::frame_trace::span("asm looks");
+            self.asm_scene_looks()
+        };
+        let base = self.asm_scene_base_key(&looks);
+        // An opaque occurrence's prehighlight is the overlay's (`asm_hover_overlay`).
+        let with_hover = self.asm_hover_in_overlay().is_none();
+        let mut used = HashMap::new();
         let mut threads = Vec::new();
         for o in a.occurrences.iter().filter(|o| self.asm_shown(o)) {
-            // The Constrain preview moves components before OK.
-            let place = self
-                .cons
-                .preview
-                .as_ref()
-                .and_then(|p| p.get(&o.id).copied())
-                .or_else(|| self.motion.display.get(&o.id).copied())
-                .unwrap_or(o.transform);
-            // Disabled: faint; Transparent (or showing an interference):
-            // see-through.
-            let overlap = self
-                .asm
-                .interference
-                .report
-                .as_ref()
-                .is_some_and(|r| r.found.iter().any(|i| i.a == o.id || i.b == o.id));
-            let alpha = if !o.enabled {
-                Some(0.15)
-            } else if o.transparent || overlap {
-                Some(0.35)
-            } else {
-                None
-            };
+            let (place, alpha) = self.occurrence_place_alpha(o);
             g.tints_show_through = self.colors.enhanced;
-            self.add_occurrence_mesh(g, o, &place, alpha, &looks);
+            {
+                // Kept per occurrence: a hover or a selection change packs only the occurrences
+                // it touches again (a board of 465 occurrences took 1-3 s for every hover).
+                let _t = super::frame_trace::span("occurrence meshes");
+                let key = self.occurrence_scene_key(base, o, &place, alpha, with_hover);
+                let kept = key.and_then(|k| ASM_SCENE.with(|c| c.borrow().get(&k).cloned()));
+                let own = kept.unwrap_or_else(|| {
+                    let _t = super::frame_trace::span("occurrence packed");
+                    let mut own = super::renderer::SceneGeometry::default();
+                    own.tints_show_through = g.tints_show_through;
+                    self.add_occurrence_mesh(&mut own, o, &place, alpha, &looks, with_hover);
+                    std::rc::Rc::new(own)
+                });
+                g.append(&own);
+                if let Some(k) = key {
+                    used.insert(k, own);
+                }
+            }
             g.tints_show_through = false;
             if self.thread_texture && o.enabled {
+                let _t = super::frame_trace::span("occurrence threads");
                 self.occurrence_threads(o, &place, &mut threads);
             }
         }
+        // Only what this scene used stays.
+        ASM_SCENE.with(|c| *c.borrow_mut() = used);
         // Cosmetic threads: one mesh for every occurrence (spec 2.9).
         if !threads.is_empty() {
             g.add_thread_bands(&crate::part::ThreadBands::of(&threads));
@@ -2465,7 +2501,17 @@ impl CadCraftApp {
         });
 
         // --- 3D ---
-        let state = (self.asm.sel.clone(), self.asm.hover);
+        // A prehighlight the overlay draws changes only the overlay.
+        let in_overlay = self.asm_hover_in_overlay().is_some();
+        let hovered = (
+            self.asm.hover,
+            self.asm.sub_hover.clone().or(self.asm.tree_hover.clone()),
+        );
+        if hovered != self.asm.overlay_state {
+            self.asm.overlay_state = hovered;
+            self.overlay_dirty = true;
+        }
+        let state = (self.asm.sel.clone(), self.asm.hover.filter(|_| !in_overlay));
         if state != self.asm.scene_state {
             self.asm.scene_state = state;
             self.scene_dirty = true;
@@ -2477,7 +2523,11 @@ impl CadCraftApp {
         }
         let sub = (
             self.asm.sub.clone(),
-            self.asm.sub_hover.clone().or(self.asm.tree_hover.clone()),
+            self.asm
+                .sub_hover
+                .clone()
+                .or(self.asm.tree_hover.clone())
+                .filter(|_| !in_overlay),
         );
         if sub != self.asm.scene_sub {
             self.asm.scene_sub = sub;
@@ -3543,4 +3593,11 @@ mod tests {
         assert!((leaf.world * q - place * q).norm() < 1e-9);
         assert_eq!(sub, vec![p2]);
     }
+}
+
+thread_local! {
+    /// The packed meshes of the last assembly scene, per occurrence and what it showed
+    /// ([`CadCraftApp::occurrence_scene_key`]).
+    static ASM_SCENE: std::cell::RefCell<HashMap<u64, std::rc::Rc<super::renderer::SceneGeometry>>> =
+        std::cell::RefCell::new(HashMap::new());
 }

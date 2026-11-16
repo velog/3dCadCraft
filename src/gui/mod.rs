@@ -90,6 +90,7 @@ mod frame_ctx;
 mod frame_edit;
 mod frame_list;
 mod frame_select;
+mod frame_trace;
 mod freeform;
 mod gear_key;
 mod hole;
@@ -388,6 +389,11 @@ struct SelectOther {
 pub(super) struct PickCache {
     /// Every triangle of every face.
     tris: Vec<(crate::kernel::FaceId, [Point3; 3])>,
+    /// Runs of at most [`PICK_CHUNK`] triangles of one face with their box, so a ray tests only
+    /// the triangles of the boxes it passes through (a part of 612 bodies has millions).
+    chunks: Vec<(std::ops::Range<usize>, Point3, Point3)>,
+    /// Runs of [`PICK_CHUNK`] chunks with the box round them.
+    groups: Vec<(std::ops::Range<usize>, Point3, Point3)>,
     /// Faces using each edge.
     edge_faces: std::collections::HashMap<crate::kernel::EdgeId, Vec<crate::kernel::FaceId>>,
 }
@@ -425,7 +431,47 @@ impl PickCache {
                 }
             }
         }
-        Self { tris, edge_faces }
+        Self::from_parts(tris, edge_faces)
+    }
+
+    /// The cache of these triangles (each face's in one run), boxed in [`PICK_CHUNK`]s.
+    fn from_parts(
+        tris: Vec<(crate::kernel::FaceId, [Point3; 3])>,
+        edge_faces: std::collections::HashMap<crate::kernel::EdgeId, Vec<crate::kernel::FaceId>>,
+    ) -> Self {
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        while start < tris.len() {
+            let face = tris[start].0;
+            let mut end = start;
+            let (mut lo, mut hi) = (tris[start].1[0], tris[start].1[0]);
+            while end < tris.len() && tris[end].0 == face && end - start < PICK_CHUNK {
+                for q in &tris[end].1 {
+                    lo = lo.inf(q);
+                    hi = hi.sup(q);
+                }
+                end += 1;
+            }
+            chunks.push((start..end, lo, hi));
+            start = end;
+        }
+        let groups = chunks
+            .chunks(PICK_CHUNK)
+            .enumerate()
+            .filter_map(|(k, run)| {
+                let (lo, hi) = run
+                    .iter()
+                    .map(|(_, lo, hi)| (*lo, *hi))
+                    .reduce(|(a, b), (c, d)| (a.inf(&c), b.sup(&d)))?;
+                Some((k * PICK_CHUNK..k * PICK_CHUNK + run.len(), lo, hi))
+            })
+            .collect();
+        Self {
+            tris,
+            chunks,
+            groups,
+            edge_faces,
+        }
     }
 
     /// Every face the ray `o + t·d` (t > 0) hits, nearest first, with t.
@@ -435,7 +481,33 @@ impl PickCache {
         d: &crate::kernel::Vector3,
     ) -> Vec<(crate::kernel::FaceId, f64)> {
         let mut out: Vec<(crate::kernel::FaceId, f64)> = Vec::new();
-        for (f, [a, b, c]) in &self.tris {
+        let inv = d.map(|x| 1.0 / x);
+        let crosses = |lo: &Point3, hi: &Point3| {
+            // Slab test, the box grown a little (triangles on its faces).
+            let pad = 1e-9 * (hi - lo).norm().max(1.0);
+            let (mut t0, mut t1) = (0.0_f64, f64::INFINITY);
+            for k in 0..3 {
+                let (a, b) = ((lo[k] - pad - o[k]) * inv[k], (hi[k] + pad - o[k]) * inv[k]);
+                if a.is_nan() || b.is_nan() {
+                    // A ray along the slab: inside it or not at all.
+                    if o[k] < lo[k] - pad || o[k] > hi[k] + pad {
+                        return false;
+                    }
+                    continue;
+                }
+                t0 = t0.max(a.min(b));
+                t1 = t1.min(a.max(b));
+            }
+            t0 <= t1
+        };
+        let tris = self
+            .groups
+            .iter()
+            .filter(|(_, lo, hi)| crosses(lo, hi))
+            .flat_map(|(g, _, _)| &self.chunks[g.clone()])
+            .filter(|(_, lo, hi)| crosses(lo, hi))
+            .flat_map(|(r, _, _)| &self.tris[r.clone()]);
+        for (f, [a, b, c]) in tris {
             // Möller–Trumbore.
             let (e1, e2) = (b - a, c - a);
             let p = d.cross(&e2);
@@ -504,8 +576,120 @@ impl PickCache {
     }
 }
 
+/// Triangles per box of [`PickCache`].
+const PICK_CHUNK: usize = 64;
+
 /// Visible model edges with their sampled points.
-type EdgePolylines = std::rc::Rc<Vec<(crate::kernel::EdgeId, Vec<Point3>)>>;
+type EdgePolylines = std::rc::Rc<EdgeSet>;
+
+/// [`EdgePolylines`]: the edges and a bounding sphere of each, so the edges near the cursor are
+/// found without projecting every point of every edge.
+pub(super) struct EdgeSet {
+    lines: Vec<(crate::kernel::EdgeId, Vec<Point3>)>,
+    spheres: SphereGroups,
+}
+
+impl EdgeSet {
+    fn new(lines: Vec<(crate::kernel::EdgeId, Vec<Point3>)>) -> Self {
+        let spheres = SphereGroups::new(lines.iter().map(|(_, pts)| sphere_of(pts)).collect());
+        Self { lines, spheres }
+    }
+
+    /// The edges that may pass within `px` pixels of the eye ray `o + t·d` (`d` a unit
+    /// vector): those whose bounding sphere does.
+    pub(super) fn near_ray<'a>(
+        &'a self,
+        o: &Point3,
+        d: &crate::kernel::Vector3,
+        map: &camera::ScreenMap,
+        px: f32,
+    ) -> impl Iterator<Item = &'a (crate::kernel::EdgeId, Vec<Point3>)> + 'a {
+        self.spheres
+            .near_ray(o, d, map, px)
+            .filter_map(|k| self.lines.get(k))
+    }
+}
+
+/// The bounding sphere of `pts` (radius −1 when there are none).
+fn sphere_of(pts: &[Point3]) -> (Point3, Real) {
+    let Some(first) = pts.first() else {
+        return (Point3::origin(), -1.0);
+    };
+    let (lo, hi) = pts
+        .iter()
+        .fold((*first, *first), |(lo, hi), q| (lo.inf(q), hi.sup(q)));
+    (nalgebra::center(&lo, &hi), (hi - lo).norm() / 2.0)
+}
+
+/// Bounding spheres of items (edges, points), in runs of [`PICK_CHUNK`] consecutive ones under
+/// a sphere of their own: a ray tests a run's sphere first (a board of 612 bodies has hundreds
+/// of thousands of edges and points).
+pub(super) struct SphereGroups {
+    items: Vec<(Point3, Real)>,
+    runs: Vec<(std::ops::Range<usize>, Point3, Real)>,
+}
+
+impl SphereGroups {
+    pub(super) fn new(items: Vec<(Point3, Real)>) -> Self {
+        let mut runs = Vec::new();
+        let mut start = 0;
+        while start < items.len() {
+            let end = (start + PICK_CHUNK).min(items.len());
+            let mut b: Option<(Point3, Point3)> = None;
+            for (c, r) in items[start..end].iter().filter(|(_, r)| *r >= 0.0) {
+                let (lo, hi) = (
+                    c - crate::kernel::Vector3::repeat(*r),
+                    c + crate::kernel::Vector3::repeat(*r),
+                );
+                b = Some(b.map_or((lo, hi), |(a, z)| (a.inf(&lo), z.sup(&hi))));
+            }
+            if let Some((lo, hi)) = b {
+                runs.push((
+                    start..end,
+                    nalgebra::center(&lo, &hi),
+                    (hi - lo).norm() / 2.0,
+                ));
+            }
+            start = end;
+        }
+        Self { items, runs }
+    }
+
+    /// The indices of the items whose sphere comes within `px` pixels of the eye ray `o + t·d`
+    /// (`d` a unit vector).
+    pub(super) fn near_ray<'a>(
+        &'a self,
+        o: &Point3,
+        d: &crate::kernel::Vector3,
+        map: &camera::ScreenMap,
+        px: f32,
+    ) -> impl Iterator<Item = usize> + 'a {
+        let (o, d, map) = (*o, *d, *map);
+        let near = move |c: &Point3, r: Real| {
+            if r < 0.0 {
+                return false;
+            }
+            let v = c - o;
+            let off = (v - d * v.dot(&d)).norm();
+            // The pixel's size at the sphere's far side (the larger one).
+            off <= r + map.world_px(1.5 * px as Real, map.eye_distance(c) + r)
+        };
+        self.runs
+            .iter()
+            .filter(move |(_, c, r)| near(c, *r))
+            .flat_map(move |(run, _, _)| {
+                run.clone()
+                    .filter(move |&k| self.items.get(k).is_some_and(|(c, r)| near(c, *r)))
+            })
+    }
+}
+
+impl std::ops::Deref for EdgeSet {
+    type Target = Vec<(crate::kernel::EdgeId, Vec<Point3>)>;
+    fn deref(&self) -> &Self::Target {
+        &self.lines
+    }
+}
 
 /// A drawn handle of an interpolation spline.
 struct SplineGrip {
@@ -659,6 +843,8 @@ struct CadCraftApp {
     camera: OrbitCamera,
     renderer: Option<ViewportRenderer>,
     scene_dirty: bool,
+    /// The overlay over the model must be built again ([`Self::build_overlay`]).
+    overlay_dirty: bool,
     /// Regions of the edited sketch, keyed by the sketch's serialised form
     /// (recomputed only when the sketch changes).
     regions_cache: std::cell::RefCell<Option<(String, Vec<crate::sketch::Region>)>>,
@@ -738,6 +924,8 @@ struct CadCraftApp {
     saved_sig: u64,
     /// (time checked, dirty) — "unsaved changes", recomputed once a second.
     dirty_cache: (f64, bool),
+    /// [`History::generation`] at the last look of [`Self::is_dirty`].
+    dirty_generation: u64,
     /// "Save changes?" is open for this.
     unsaved_prompt: Option<files::Pending>,
     /// What runs once the save the prompt asked for succeeds.
@@ -1113,6 +1301,7 @@ impl CadCraftApp {
             camera: OrbitCamera::default(),
             renderer: cc.wgpu_render_state.as_ref().map(ViewportRenderer::new),
             scene_dirty: true,
+            overlay_dirty: true,
             regions_cache: Default::default(),
             dragging: None,
             extrude: None,
@@ -1150,6 +1339,7 @@ impl CadCraftApp {
             file_dialog: None,
             saved_sig: 0,
             dirty_cache: (f64::NEG_INFINITY, false),
+            dirty_generation: 0,
             unsaved_prompt: None,
             after_save: None,
             close_ok: false,
@@ -2901,6 +3091,7 @@ impl CadCraftApp {
         if let (true, Some(k)) = &*self.body_key_frame.borrow() {
             return k.clone();
         }
+        let _t = frame_trace::span("body key");
         let k = self.compute_body_key();
         let mut c = self.body_key_frame.borrow_mut();
         if c.0 {
@@ -2925,6 +3116,7 @@ impl CadCraftApp {
         {
             return v.clone();
         }
+        let _t = frame_trace::span("pick cache build");
         let v = std::rc::Rc::new(PickCache::build(&self.part().body, &self.hidden_faces()));
         *self.pick_cache.borrow_mut() = Some((key, v.clone()));
         v
@@ -2938,16 +3130,17 @@ impl CadCraftApp {
         {
             return v.clone();
         }
+        let _t = frame_trace::span("edge polylines build");
         let opts = TessellationOptions::default();
         let shown = self.shown_edges();
-        let v: EdgePolylines = std::rc::Rc::new(
+        let v: EdgePolylines = std::rc::Rc::new(EdgeSet::new(
             body.visible_edges()
                 .into_iter()
                 .filter(|e| shown.as_ref().is_none_or(|s| s.contains(e)))
                 .filter(|&e| body.solids().any(|(_, s)| !s.open) || body.edge(e).is_some())
                 .filter_map(|e| Some((e, body.sample_edge(e, &opts).ok()?)))
                 .collect(),
-        );
+        ));
         *self.edge_cache.borrow_mut() = Some((key, v.clone()));
         v
     }
@@ -2967,14 +3160,17 @@ impl CadCraftApp {
         // Unit direction: ray parameters are then mm, which the occlusion
         // tolerance below assumes (an unscaled ray let hidden edges through).
         let dir = dir.try_normalize(1e-12)?;
-        let face_t = self.picker().pick(&origin, &dir).map(|(_, t)| t);
+        let _t = frame_trace::span("edge under");
+        let face_t = {
+            let _t = frame_trace::span("edge under: face ray");
+            self.picker().pick(&origin, &dir).map(|(_, t)| t)
+        };
         let mut best: Option<(crate::kernel::EdgeId, f32)> = None;
-        for (e, pts) in self.edge_polylines().iter() {
+        let map = self.camera.screen(rect);
+        let edges = self.edge_polylines();
+        for (e, pts) in edges.near_ray(&origin, &dir, &map, overlay::EDGE_PICK_PX) {
             for w in pts.windows(2) {
-                let (Some(a), Some(b)) = (
-                    self.camera.project(&w[0], rect),
-                    self.camera.project(&w[1], rect),
-                ) else {
+                let (Some(a), Some(b)) = (map.project(&w[0]), map.project(&w[1])) else {
                     continue;
                 };
                 let ab = b - a;
@@ -5791,18 +5987,43 @@ impl CadCraftApp {
             return g;
         }
         // Faces in their appearance (face > feature > body > part > material).
-        material::add_part_meshes(&mut g, self.part());
+        {
+            let _t = frame_trace::span("part meshes");
+            material::add_part_meshes(&mut g, self.part());
+        }
+        let _hl = frame_trace::span("in place and threads");
         // Edit in place: the rest of the assembly around it (spec 3.10).
         self.in_place_scene(&mut g);
         // Cosmetic threads: a banded texture on their faces (one mesh).
         if self.thread_texture {
             g.add_thread_bands(&crate::part::ThreadBands::of(&self.part().cosmetic_threads));
         }
+        g
+    }
+
+    /// What lies over the part and changes with the hover and the selection: the selected and
+    /// prehighlighted faces and the Trim preview, in buffers of their own
+    /// (`ViewportRenderer::upload_overlay`), so a hover does not build and upload the part again.
+    fn build_overlay(&self) -> SceneGeometry {
+        if self.is_assembly() && !self.is_drawing() {
+            let _t = frame_trace::span("assembly overlay");
+            return self.asm_hover_overlay();
+        }
+        let mut g = SceneGeometry::default();
+        if self.is_drawing() || self.sm.flat {
+            return g;
+        }
+        let _t = frame_trace::span("overlay");
         let body = &self.part().body;
         // Selected (blue) and prehighlighted (green) faces: drawn again just
         // outside the body, so the depth test hides them behind other faces.
+        // The box of the vertices: `bounding_box` reads every mesh position, on every hover.
         let eps = body
-            .bounding_box()
+            .vertices()
+            .map(|(_, v)| v.point)
+            .fold(None, |b: Option<(Point3, Point3)>, p| {
+                Some(b.map_or((p, p), |(lo, hi)| (lo.inf(&p), hi.sup(&p))))
+            })
             .map_or(1e-3, |(a, b)| ((b - a).norm() * 2e-4).max(1e-4));
         let opts = TessellationOptions::default();
         let mut paint = |faces: Vec<crate::kernel::FaceId>, color: [f32; 3], through: bool| {
@@ -5912,13 +6133,23 @@ impl CadCraftApp {
         rect: egui::Rect,
         painter: &egui::Painter,
     ) {
-        let scene = std::mem::take(&mut self.scene_dirty).then(|| self.build_scene());
+        let scene = std::mem::take(&mut self.scene_dirty).then(|| {
+            let _t = frame_trace::span("build scene");
+            self.build_scene()
+        });
+        let overlay_dirty = std::mem::take(&mut self.overlay_dirty);
+        let overlay = (scene.is_some() || overlay_dirty).then(|| self.build_overlay());
+        let _t = frame_trace::span("render");
         let cut = self.view_cut();
         let style = self.visual_style.style();
         match (frame.wgpu_render_state(), self.renderer.as_mut()) {
             (Some(rs), Some(renderer)) => {
                 if let Some(scene) = scene {
                     renderer.upload(rs, &scene);
+                }
+                if let Some(overlay) = overlay {
+                    let _t = frame_trace::span("overlay upload");
+                    renderer.upload_overlay(rs, &overlay);
                 }
                 for (slot, picture) in self.colors.finished_pictures() {
                     renderer.set_picture(rs, slot, &picture);
@@ -5960,6 +6191,7 @@ impl CadCraftApp {
     }
 
     fn viewport(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
+        let _t = frame_trace::span("viewport");
         // A drawing has its own 2D sheet view (`drawing.rs`).
         if self.is_drawing() {
             self.drawing_viewport(ui);
@@ -7711,7 +7943,8 @@ impl CadCraftApp {
             let want_hover = want_hover.filter(|_| self.select.prehighlight);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);
-                self.scene_dirty = true;
+                // Only the overlay: the part itself did not change.
+                self.overlay_dirty = true;
             }
             self.draw_holes_and_threads(&painter, rect);
             self.hole_dim_windows(ui.ctx(), rect);
@@ -8783,19 +9016,40 @@ impl eframe::App for CadCraftApp {
         theme::sync(&ctx);
         self.body_key_frame.replace((true, None));
         // Expression fields everywhere evaluate against the part's parameters.
-        valuefield::set_frame_table(&ctx, self.part().parameter_table());
+        {
+            let _t = frame_trace::span("parameter table");
+            valuefield::set_frame_table(&ctx, self.part().parameter_table());
+        }
+        let early = frame_trace::span("before panels");
         self.layout_begin(&ctx);
-        self.in_place_features_adaptive();
-        self.home_follow_documents();
-        self.shortcuts(&ctx);
-        self.files_ui(&ctx);
-        self.import_ask_ui(&ctx);
-        self.import_ui(&ctx);
-        self.import_report_ui(&ctx);
+        {
+            let _t = frame_trace::span("in place adaptive");
+            self.in_place_features_adaptive();
+        }
+        {
+            let _t = frame_trace::span("home follow");
+            self.home_follow_documents();
+        }
+        {
+            let _t = frame_trace::span("shortcuts");
+            self.shortcuts(&ctx);
+        }
+        {
+            let _t = frame_trace::span("files and import windows");
+            self.files_ui(&ctx);
+            self.import_ask_ui(&ctx);
+            self.import_ui(&ctx);
+            self.import_report_ui(&ctx);
+        }
         self.confirm_delete_window(&ctx);
-
-        egui::Panel::top("quick_access").show(ui, |ui| self.quick_access(ui));
+        drop(early);
+        egui::Panel::top("quick_access").show(ui, |ui| {
+            let _t = frame_trace::span("quick access");
+            self.quick_access(ui)
+        });
         self.docked_panels(ui, frame);
+        let _late = frame_trace::span("windows after panels");
+        let windows_a = frame_trace::span("windows: options .. measure");
 
         self.options_window(&ctx);
         self.documents_windows(&ctx);
@@ -8809,6 +9063,8 @@ impl eframe::App for CadCraftApp {
         self.show_dims_requests(&ctx);
         self.show_dims_window(&ctx);
         valuefield::draw_whip(&ctx);
+        drop(windows_a);
+        let windows_b = frame_trace::span("windows: alias .. variants");
         self.alias_window(&ctx);
         self.place_window(&ctx);
         self.library_window(&ctx);
@@ -8818,6 +9074,8 @@ impl eframe::App for CadCraftApp {
         self.part_family_window(&ctx);
         self.variants_window(&ctx);
         self.part_variants_tick(ctx.input(|i| i.time));
+        drop(windows_b);
+        let _windows_c = frame_trace::span("windows: drawing .. diag");
         self.drawing_windows(&ctx);
         self.asm_sketch_tick();
         self.doc_settings_window(&ctx);
@@ -8842,14 +9100,25 @@ impl eframe::App for CadCraftApp {
         self.customize_window(&ctx);
         self.dimension_windows(&ctx);
         self.layout_end(&ctx);
+        drop(_windows_c);
+        let _diag = frame_trace::span("diag frame");
         self.diag_frame(&ctx);
+        drop(_diag);
         // The work of this frame (the status bar shows it next frame; the
         // time between frames grows while nothing happens).
         let work = frame_start.elapsed().as_secs_f32() * 1000.0;
         // A pause the user feels (a tab switch rebuilt every linked part
         // for 0.8 s) leaves a trace in the session log.
-        if work > 250.0 {
-            log::info!("slow frame: {work:.0} ms");
+        drop(_late);
+        let spans = frame_trace::take();
+        if work > slow_frame_ms() {
+            // What asked for this frame: a view that keeps painting while nothing changes shows
+            // it here.
+            let why: Vec<String> = ctx.repaint_causes().iter().map(|c| c.to_string()).collect();
+            log::info!(
+                "slow frame: {work:.0} ms ({spans}; repaint: {})",
+                why.join(", ")
+            );
         }
         ctx.memory_mut(|m| {
             let v: &mut f32 = m.data.get_temp_mut_or(egui::Id::new("frame_ms"), work);
@@ -8923,7 +9192,172 @@ fn tolerance_editor(ui: &mut egui::Ui, tol: &mut crate::sketch::Tolerance, angle
 #[cfg(test)]
 mod pick_tests {
     use super::closest_on_segment;
-    use crate::kernel::{Point3, Vector3};
+    use super::{EdgeSet, PickCache, camera::OrbitCamera};
+    use crate::kernel::{EdgeId, FaceId, Point3, Vector3};
+    use eframe::egui::{Rect, pos2};
+
+    /// A board of many small parts (an imported circuit board has 612): `n`×`n` boxes 2 mm wide
+    /// whose top and bottom are 10×10 grids (400 triangles, one face a box), and their 8 edges
+    /// sampled at 33 points.
+    fn board(n: usize) -> (Vec<(FaceId, [Point3; 3])>, Vec<Vec<Point3>>) {
+        let mut faces = slotmap::SlotMap::<FaceId, ()>::with_key();
+        let (mut tris, mut edges) = (Vec::new(), Vec::new());
+        let corners = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0), (0.0, 0.0)];
+        for i in 0..n {
+            for j in 0..n {
+                let f = faces.insert(());
+                let (x, y) = (i as f64 * 3.0, j as f64 * 3.0);
+                for z in [0.0, 1.0] {
+                    let p =
+                        |u: usize, v: usize| Point3::new(x + u as f64 * 0.2, y + v as f64 * 0.2, z);
+                    for a in 0..10 {
+                        for b in 0..10 {
+                            tris.push((f, [p(a, b), p(a + 1, b), p(a + 1, b + 1)]));
+                            tris.push((f, [p(a, b), p(a + 1, b + 1), p(a, b + 1)]));
+                        }
+                    }
+                    for w in corners.windows(2) {
+                        let ((u0, v0), (u1, v1)) = (w[0], w[1]);
+                        edges.push(
+                            (0..=32)
+                                .map(|k| {
+                                    let t = k as f64 / 32.0;
+                                    Point3::new(x + u0 + (u1 - u0) * t, y + v0 + (v1 - v0) * t, z)
+                                })
+                                .collect(),
+                        );
+                    }
+                }
+            }
+        }
+        (tris, edges)
+    }
+
+    fn median_ms(mut f: impl FnMut()) -> f64 {
+        let mut runs: Vec<f64> = (0..15)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                f();
+                t.elapsed().as_secs_f64() * 1e3
+            })
+            .collect();
+        runs.sort_by(f64::total_cmp);
+        runs[runs.len() / 2]
+    }
+
+    /// The boxed rays find what testing every triangle finds, and a ray over a board of 625
+    /// parts (250 000 triangles) stays far inside a frame: through every triangle it took tens
+    /// of ms, and a hover casts several.
+    #[test]
+    fn a_ray_tests_only_the_boxes_it_crosses() {
+        let (tris, _) = board(25);
+        let cache = PickCache::from_parts(tris.clone(), Default::default());
+        let far = (Point3::new(-1e9, -1e9, -1e9), Point3::new(1e9, 1e9, 1e9));
+        let all = PickCache {
+            chunks: vec![(0..tris.len(), far.0, far.1)],
+            groups: vec![(0..1, far.0, far.1)],
+            tris,
+            edge_faces: Default::default(),
+        };
+        let rays: Vec<(Point3, Vector3)> = (0..40)
+            .map(|k| {
+                let a = k as f64 * 0.37;
+                let o = Point3::new(40.0 + 30.0 * a.cos(), 40.0 + 30.0 * a.sin(), 80.0);
+                let t = Point3::new(1.0 + k as f64 * 1.81, 2.0 + k as f64 * 1.67, 0.5);
+                (o, (t - o).normalize())
+            })
+            .collect();
+        let mut hits = 0;
+        for (o, d) in &rays {
+            let (a, b) = (cache.pick(o, d), all.pick(o, d));
+            assert_eq!(a.map(|x| x.0), b.map(|x| x.0), "ray from {o:?}");
+            if let (Some(a), Some(b)) = (a, b) {
+                assert!((a.1 - b.1).abs() < 1e-9);
+                hits += 1;
+            }
+        }
+        assert!(hits > 10, "{hits} rays hit");
+        let ms = median_ms(|| {
+            for (o, d) in &rays {
+                std::hint::black_box(cache.pick(o, d));
+            }
+        }) / rays.len() as f64;
+        eprintln!("one ray over 250 000 triangles: {ms:.3} ms");
+        assert!(ms < 2.0, "{ms} ms a ray");
+    }
+
+    /// The edges near the cursor's ray come from their bounding spheres: every edge within the
+    /// pick distance on screen is among them, and finding them among 5000 edges takes far less
+    /// than projecting each of their points did.
+    #[test]
+    fn the_edges_near_the_ray_include_every_edge_under_the_cursor() {
+        let (_, polys) = board(25);
+        let mut ids = slotmap::SlotMap::<EdgeId, ()>::with_key();
+        let set = EdgeSet::new(polys.into_iter().map(|p| (ids.insert(()), p)).collect());
+        let mut cam = OrbitCamera::default();
+        cam.fit(Point3::new(0.0, 0.0, 0.0), Point3::new(75.0, 75.0, 1.0));
+        let rect = Rect::from_min_max(pos2(250.0, 110.0), pos2(1100.0, 875.0));
+        let map = cam.screen(rect);
+        let px = super::overlay::EDGE_PICK_PX;
+        for at in [pos2(600.0, 500.0), pos2(400.0, 300.0), pos2(900.0, 700.0)] {
+            let (o, d) = cam.ray(at, rect).unwrap_or_else(|| panic!("no ray"));
+            let d = d.normalize();
+            let near: Vec<EdgeId> = set.near_ray(&o, &d, &map, px).map(|(e, _)| *e).collect();
+            for (e, pts) in set.iter() {
+                let under = pts.windows(2).any(|w| {
+                    let (Some(a), Some(b)) = (map.project(&w[0]), map.project(&w[1])) else {
+                        return false;
+                    };
+                    let ab = b - a;
+                    let t = ((at - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+                    (a + ab * t).distance(at) <= px
+                });
+                assert!(
+                    !under || near.contains(e),
+                    "{at:?}: an edge under the cursor left out"
+                );
+            }
+            assert!(
+                near.len() < set.len() / 10,
+                "{at:?}: {} of {}",
+                near.len(),
+                set.len()
+            );
+        }
+        let (o, d) = cam
+            .ray(pos2(600.0, 500.0), rect)
+            .unwrap_or_else(|| panic!("no ray"));
+        let d = d.normalize();
+        let ms = median_ms(|| {
+            std::hint::black_box(set.near_ray(&o, &d, &map, px).count());
+        });
+        eprintln!("edges near the ray among {}: {ms:.3} ms", set.len());
+        assert!(ms < 2.0, "{ms} ms");
+    }
+
+    /// The map taken once projects as the camera does, and its ray to a point passes through it.
+    #[test]
+    fn the_screen_map_projects_as_the_camera() {
+        let mut cam = OrbitCamera::default();
+        cam.fit(Point3::new(-10.0, -5.0, 0.0), Point3::new(30.0, 20.0, 15.0));
+        let rect = Rect::from_min_max(pos2(250.0, 110.0), pos2(1100.0, 875.0));
+        let map = cam.screen(rect);
+        for k in 0..50 {
+            let p = Point3::new(
+                k as f64 * 0.7 - 10.0,
+                (k * 7 % 25) as f64 - 5.0,
+                (k % 15) as f64,
+            );
+            match (cam.project(&p, rect), map.project(&p)) {
+                (Some(a), Some(b)) => assert!(a.distance(b) < 1e-3),
+                (a, b) => assert_eq!(a.is_some(), b.is_some()),
+            }
+            if let Some((o, d)) = map.ray_to(&p) {
+                let v = p - o;
+                assert!((v - d * v.dot(&d)).norm() < 1e-6);
+            }
+        }
+    }
 
     /// The eye ray crosses a long edge near one end: the occlusion test
     /// must use that 3D point, not the middle (perspective).
@@ -8939,4 +9373,15 @@ mod pick_tests {
         let o2 = Point3::new(150.0, -50.0, 30.0);
         assert!((closest_on_segment(&a, &b, &o2, &d) - b).norm() < 1e-9);
     }
+}
+
+/// A frame slower than this is logged with its spans (`CADCRAFT3D_SLOW_FRAME_MS`, default 250).
+fn slow_frame_ms() -> f32 {
+    static MS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| {
+        std::env::var("CADCRAFT3D_SLOW_FRAME_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(250.0)
+    })
 }

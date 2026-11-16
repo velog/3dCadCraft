@@ -1322,10 +1322,15 @@ pub(super) fn blend(
         Err(Kernel(msg)) => match loop_blend(bl, body, cur) {
             Err(Kernel(e)) => {
                 log::debug!("loop blend: {e}");
-                wedge_blend(bl, body, cur).map_err(|e| {
-                    log::debug!("wedge blend: {e}");
-                    User(format!("this shape cannot be built ({msg})"))
-                })
+                rim_chamfer(bl, body, cur)
+                    .or_else(|e| {
+                        log::debug!("rim chamfer: {e}");
+                        wedge_blend(bl, body, cur)
+                    })
+                    .map_err(|e| {
+                        log::debug!("wedge blend: {e}");
+                        User(format!("this shape cannot be built ({msg})"))
+                    })
             }
             r => r,
         },
@@ -3248,6 +3253,196 @@ fn loop_blend(bl: &BlendFeature, body: &BRep, cur: &[ExactSolid]) -> Result<Vec<
             Kernel(e)
         }
     })
+}
+
+/// An equal chamfer of whole circles whose two faces are surfaces of revolution about the
+/// circle's axis (a plane square to it, a coaxial cylinder or cone): the rims of a turned part, of
+/// a flange, of a hole. Each is a ring cut off (or, at an inner corner, added): the chamfer's
+/// triangle in the meridian plane, run on past both faces and past the corner, revolved a whole
+/// turn. `Err`: not such edges.
+fn rim_chamfer(
+    bl: &BlendFeature,
+    body: &BRep,
+    cur: &[ExactSolid],
+) -> Result<Vec<ExactSolid>, String> {
+    use crate::kernel::{ProfileSegment, Segment2};
+    use nalgebra::{Point2, Vector2};
+    let BlendKind::Chamfer {
+        method: ChamferMethod::Distance,
+        distance,
+        ..
+    } = bl.kind
+    else {
+        return Err("only an equal chamfer".into());
+    };
+    if !(distance.is_finite() && distance > 0.0) {
+        return Err("the distance must be positive".into());
+    }
+    let opts = TessellationOptions::default();
+    let solids: Vec<crate::kernel::SolidId> = body.solids().map(|(id, _)| id).collect();
+    let owner = EdgePoints::new(body, cur).owner;
+    let mut out = cur.to_vec();
+    for (k, r) in bl.edges.iter().enumerate() {
+        let (i, pieces) = edge_points(body, &solids, r)?;
+        let target = owner
+            .get(i)
+            .copied()
+            .flatten()
+            .ok_or("the edge's body is not there any more")?;
+        // One whole circle, in pieces or not.
+        let mut circle: Option<crate::kernel::Circle> = None;
+        let mut turn = 0.0;
+        for (e, _) in &pieces {
+            let x = body.edge(*e).ok_or("edge missing")?;
+            let Some(Curve::Circle(c)) = body.curve(x.curve) else {
+                return Err("the edge is not a circle".into());
+            };
+            turn += x.range.length().abs();
+            match &circle {
+                None => circle = Some(c.clone()),
+                Some(c0) => {
+                    let tol = 1e-6 * c0.radius.max(1.0);
+                    let same = (c0.center - c.center).norm() < tol
+                        && (c0.radius - c.radius).abs() < tol
+                        && c0.normal.into_inner().cross(&c.normal.into_inner()).norm() < 1e-6;
+                    if !same {
+                        return Err("the pieces are not one circle".into());
+                    }
+                }
+            }
+        }
+        let c = circle.ok_or("no edge")?;
+        if (turn - std::f64::consts::TAU).abs() > 1e-6 {
+            return Err("the edge is not a whole circle".into());
+        }
+        let axis = c.normal.into_inner();
+        let (o, big) = (c.center, c.radius);
+        // A point as (radial, axial) in the meridian plane.
+        let meridian = |q: &Point3| {
+            let v = q - o;
+            let a = v.dot(&axis);
+            Vector2::new((v - axis * a).norm(), a)
+        };
+        let corner = Vector2::new(big, 0.0);
+        let size = big.max(1.0);
+        let tol = 1e-5 * size;
+        // Each face's way out of the corner in the meridian plane: every point of the face on
+        // one ray from it (a surface of revolution about this axis, straight in its meridian).
+        let mut ways = Vec::new();
+        for name in &r.faces {
+            let m = super::blend::face_matcher(body, name);
+            let mut pts: Vec<Vector2<Real>> = Vec::new();
+            for (e, _) in &pieces {
+                for f in body.edge_faces(*e) {
+                    if !m(body.face(f).and_then(|x| x.name.as_deref())) {
+                        continue;
+                    }
+                    let mesh = body.face_mesh(f, &opts).map_err(|e| e.to_string())?;
+                    pts.extend(mesh.positions.iter().map(|q| meridian(q) - corner));
+                }
+            }
+            let far = pts
+                .iter()
+                .copied()
+                .max_by(|a, b| a.norm().total_cmp(&b.norm()))
+                .ok_or("a face has no triangles")?;
+            if far.norm() < tol {
+                return Err("a face has no extent".into());
+            }
+            let u = far.normalize();
+            if pts
+                .iter()
+                .any(|p| (p.x * u.y - p.y * u.x).abs() > tol || p.dot(&u) < -tol)
+            {
+                return Err("a face is not a surface of revolution about the circle's axis".into());
+            }
+            // The chamfer must end on the face.
+            if far.norm() < distance - tol {
+                return Err("the chamfer is wider than a face".into());
+            }
+            ways.push(u);
+        }
+        let [u1, u2] = ways[..] else {
+            return Err("not an edge between two faces".into());
+        };
+        let det = u1.x * u2.y - u1.y * u2.x;
+        if det.abs() < 1e-6 {
+            return Err("the faces are tangent at the edge".into());
+        }
+        // The meridian plane: x radial (towards the edge's first piece), y along the axis.
+        let at = pieces.first().map(|(_, p)| *p).ok_or("no edge")?;
+        let radial = {
+            let v = at - o;
+            (v - axis * v.dot(&axis)).normalize()
+        };
+        let plane = Plane::new(o, radial.cross(&axis), radial).map_err(|e| e.to_string())?;
+        let world = |p: Vector2<Real>| o + radial * p.x + axis * p.y;
+        // Material between the two ways: an outer corner, cut off; else an inner one, filled.
+        let probe = corner + (u1 + u2) * (0.05 * distance);
+        let outer = exact::contains(&out[target], world(probe));
+        let mut pair = r.faces.clone();
+        pair.sort();
+        let face = format!("Bevel[{}]", pair.join("|"));
+        // The wedge in the faces' own frame (x along face 1, y along face 2), run on past both
+        // faces and past the corner, then into the meridian plane.
+        let to_plane = |q: Point2<Real>| {
+            let m = corner + u1 * q.x + u2 * q.y;
+            Point2::new(m.x, m.y)
+        };
+        let mut section: Vec<ProfileSegment> = chamfer_wedge(distance, distance, &face)?
+            .into_iter()
+            .map(|sgm| match sgm.geometry {
+                Segment2::Line { a, b } => Ok(ProfileSegment {
+                    geometry: Segment2::Line {
+                        a: to_plane(a),
+                        b: to_plane(b),
+                    },
+                    name: sgm.name,
+                }),
+                _ => Err("the wedge is made of lines".to_owned()),
+            })
+            .collect::<Result<_, _>>()?;
+        if det < 0.0 {
+            // The map turned the wedge round: counter-clockwise again.
+            section.reverse();
+            for sgm in &mut section {
+                if let Segment2::Line { a, b } = &mut sgm.geometry {
+                    std::mem::swap(a, b);
+                }
+            }
+        }
+        let off_axis = section.iter().all(|sgm| match &sgm.geometry {
+            Segment2::Line { a, b } => a.x > tol && b.x > tol,
+            _ => false,
+        });
+        if !off_axis {
+            return Err("the chamfer reaches the axis".into());
+        }
+        let prof = exact::profile(&section, &[])?;
+        let prefix = format!("{}#r{k}", bl.id);
+        let tool = exact::revolve(
+            &plane,
+            &prof,
+            Point2::new(0.0, 0.0),
+            Vector2::new(0.0, 1.0),
+            0.0,
+            std::f64::consts::TAU,
+            &prefix,
+        )?;
+        let op = if outer { ExactOp::Cut } else { ExactOp::Union };
+        let mut s = exact::boolean(&out[target], &tool, op)?.ok_or("nothing is left")?;
+        // The bevel `<id>#r<k>:...<face>` becomes `<id>:<face>`; the tool's other faces lay in
+        // the air or in the material and are gone.
+        let head = format!("{prefix}:");
+        for n in s.face_names.iter_mut().flatten() {
+            if let Some(rest) = n.strip_prefix(&head) {
+                let face = rest.strip_prefix("Side:").unwrap_or(rest);
+                *n = format!("{}:{face}", bl.id);
+            }
+        }
+        out[target] = s;
+    }
+    Ok(out)
 }
 
 fn loop_tools(

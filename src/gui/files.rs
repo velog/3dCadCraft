@@ -906,9 +906,15 @@ impl CadCraftApp {
         // the moment a feature was opened. Keep the last answer meanwhile.
         let rolled_back =
             !self.is_assembly() && !self.is_drawing() && self.part().rollback.is_some();
-        if !rolled_back && (force || now - self.dirty_cache.0 > 1.0) {
+        // The periodic look serializes the whole project (an imported board of 612 bodies with
+        // its 16 MB of STEP text: 335 ms): only after the history changed, else every 30 s.
+        let generation = self.history.generation();
+        let due = now - self.dirty_cache.0 > 30.0
+            || (now - self.dirty_cache.0 > 1.0 && generation != self.dirty_generation);
+        if !rolled_back && (force || due) {
             let d = self.project_signature() != self.saved_sig;
             self.dirty_cache = (now, d);
+            self.dirty_generation = generation;
         }
         self.dirty_cache.1
     }

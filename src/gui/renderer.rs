@@ -33,7 +33,7 @@ const CLEAR: wgpu::Color = wgpu::Color {
 const UNIFORM_SIZE: u64 = 16 * 4 + 7 * 4 * 4;
 
 /// CPU-side geometry for one upload: triangles and line segments.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SceneGeometry {
     tri_vertices: Vec<u8>,
     tri_count: u32,
@@ -59,6 +59,111 @@ pub struct SceneGeometry {
 }
 
 impl SceneGeometry {
+    /// Its shaded and show-through triangles moved out along their normals by a hair of their
+    /// size (2e-4 of the box's diagonal), so that drawn over the same model they win the depth
+    /// test where they lie on it and stay hidden behind what is in front: a prehighlight
+    /// drawn over the scene. Edges, lines and see-through faces are left out.
+    pub fn lifted(&self) -> SceneGeometry {
+        fn at(b: &[u8], k: usize) -> f32 {
+            let mut x = [0u8; 4];
+            x.copy_from_slice(&b[k * 4..k * 4 + 4]);
+            f32::from_le_bytes(x)
+        }
+        const SHADED: usize = 9 * 4;
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for v in self.tri_vertices.chunks_exact(SHADED) {
+            for k in 0..3 {
+                lo[k] = lo[k].min(at(v, k));
+                hi[k] = hi[k].max(at(v, k));
+            }
+        }
+        let diag = (0..3)
+            .map(|k| (hi[k] - lo[k]).max(0.0).powi(2))
+            .sum::<f32>()
+            .sqrt();
+        let eps = if diag.is_finite() {
+            (diag * 2e-4).max(1e-4)
+        } else {
+            1e-3
+        };
+        let lift = |buf: &[u8], stride: usize| {
+            let mut out = buf.to_vec();
+            for v in out.chunks_exact_mut(stride) {
+                for k in 0..3 {
+                    let p = at(v, k) + at(v, k + 3) * eps;
+                    v[k * 4..k * 4 + 4].copy_from_slice(&p.to_le_bytes());
+                }
+            }
+            out
+        };
+        SceneGeometry {
+            tri_vertices: lift(&self.tri_vertices, SHADED),
+            tri_count: self.tri_count,
+            tri_indices: self.tri_indices.clone(),
+            through_vertices: lift(&self.through_vertices, 10 * 4),
+            through_count: self.through_count,
+            through_indices: self.through_indices.clone(),
+            tints_show_through: self.tints_show_through,
+            ..Default::default()
+        }
+    }
+
+    /// Appends everything of `other` (its indices moved past this one's vertices).
+    pub fn append(&mut self, other: &SceneGeometry) {
+        fn join(
+            verts: &mut Vec<u8>,
+            count: &mut u32,
+            idx: &mut Vec<u32>,
+            (ov, oc, oi): (&[u8], u32, &[u32]),
+        ) {
+            let base = *count;
+            verts.extend_from_slice(ov);
+            idx.extend(oi.iter().map(|i| base + i));
+            *count += oc;
+        }
+        join(
+            &mut self.tri_vertices,
+            &mut self.tri_count,
+            &mut self.tri_indices,
+            (&other.tri_vertices, other.tri_count, &other.tri_indices),
+        );
+        join(
+            &mut self.alpha_vertices,
+            &mut self.alpha_count,
+            &mut self.alpha_indices,
+            (
+                &other.alpha_vertices,
+                other.alpha_count,
+                &other.alpha_indices,
+            ),
+        );
+        join(
+            &mut self.thread_vertices,
+            &mut self.thread_count,
+            &mut self.thread_indices,
+            (
+                &other.thread_vertices,
+                other.thread_count,
+                &other.thread_indices,
+            ),
+        );
+        join(
+            &mut self.through_vertices,
+            &mut self.through_count,
+            &mut self.through_indices,
+            (
+                &other.through_vertices,
+                other.through_count,
+                &other.through_indices,
+            ),
+        );
+        self.line_vertices.extend_from_slice(&other.line_vertices);
+        self.line_vertex_count += other.line_vertex_count;
+        self.edge_vertices.extend_from_slice(&other.edge_vertices);
+        self.edge_vertex_count += other.edge_vertex_count;
+    }
+
     /// Index count of the highlights over everything.
     #[cfg(test)]
     pub fn through_count(&self) -> usize {
@@ -192,6 +297,15 @@ impl SceneGeometry {
             self.edge_vertex_count += 2;
         }
     }
+}
+
+/// The bytes of `v` for an index buffer.
+fn le_bytes(v: &[u32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for i in v {
+        out.extend_from_slice(&i.to_le_bytes());
+    }
+    out
 }
 
 /// How the view draws the model (View › Visual Style).
@@ -380,6 +494,10 @@ pub struct ViewportRenderer {
     pub use_cap: bool,
     sample_count: u32,
     geometry: Option<GpuGeometry>,
+    /// What lies over the model and changes with every hover and selection (highlighted faces,
+    /// previews): its own small buffers, so a hover does not upload the whole model again (612
+    /// imported bodies took 165-290 ms a time).
+    overlay: Option<GpuGeometry>,
     target: Option<Target>,
     texture_id: Option<egui::TextureId>,
 }
@@ -771,6 +889,7 @@ impl ViewportRenderer {
             use_cap: false,
             sample_count,
             geometry: None,
+            overlay: None,
             target: None,
             texture_id: None,
         }
@@ -810,6 +929,15 @@ impl ViewportRenderer {
 
     /// Replaces the displayed geometry.
     pub fn upload(&mut self, rs: &RenderState, g: &SceneGeometry) {
+        self.geometry = Some(Self::gpu(rs, g));
+    }
+
+    /// Uploads the overlay over the model ([`Self::upload`] the model itself).
+    pub fn upload_overlay(&mut self, rs: &RenderState, g: &SceneGeometry) {
+        self.overlay = Some(Self::gpu(rs, g));
+    }
+
+    fn gpu(rs: &RenderState, g: &SceneGeometry) -> GpuGeometry {
         // A buffer over the device's limit is a validation error, and a
         // device in error makes egui-wgpu's own next upload panic (owner's
         // crash 2026-10-27): such geometry is left out and logged instead.
@@ -831,23 +959,11 @@ impl ViewportRenderer {
                     })
             })
         };
-        let index_bytes: Vec<u8> = g.tri_indices.iter().flat_map(|i| i.to_le_bytes()).collect();
-        let alpha_index_bytes: Vec<u8> = g
-            .alpha_indices
-            .iter()
-            .flat_map(|i| i.to_le_bytes())
-            .collect();
-        let thread_index_bytes: Vec<u8> = g
-            .thread_indices
-            .iter()
-            .flat_map(|i| i.to_le_bytes())
-            .collect();
-        let through_index_bytes: Vec<u8> = g
-            .through_indices
-            .iter()
-            .flat_map(|i| i.to_le_bytes())
-            .collect();
-        self.geometry = Some(GpuGeometry {
+        let index_bytes = le_bytes(&g.tri_indices);
+        let alpha_index_bytes = le_bytes(&g.alpha_indices);
+        let thread_index_bytes = le_bytes(&g.thread_indices);
+        let through_index_bytes = le_bytes(&g.through_indices);
+        GpuGeometry {
             tri_vbuf: buffer("tri vertices", &g.tri_vertices, wgpu::BufferUsages::VERTEX),
             tri_ibuf: buffer("tri indices", &index_bytes, wgpu::BufferUsages::INDEX),
             tri_index_count: g.tri_indices.len() as u32,
@@ -896,7 +1012,7 @@ impl ViewportRenderer {
                 wgpu::BufferUsages::INDEX,
             ),
             through_index_count: g.through_indices.len() as u32,
-        });
+        }
     }
 
     /// Renders the scene at `size` physical pixels and returns the egui
@@ -989,7 +1105,11 @@ impl ViewportRenderer {
             pass.set_pipeline(&self.background);
             pass.draw(0..3, 0..1);
 
-            if let Some(g) = &self.geometry {
+            let layers: Vec<&GpuGeometry> = [&self.geometry, &self.overlay]
+                .into_iter()
+                .flatten()
+                .collect();
+            for g in &layers {
                 if let (Some(vb), Some(ib)) = (&g.tri_vbuf, &g.tri_ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
@@ -1008,6 +1128,8 @@ impl ViewportRenderer {
                         pass.draw_indexed(0..g.tri_index_count, 0, 0..1);
                     }
                 }
+            }
+            for g in &layers {
                 // Thread texture over the opaque faces, under the edges.
                 if let (Some(vb), Some(ib)) = (&g.thread_vbuf, &g.thread_ibuf)
                     && style.faces
@@ -1017,6 +1139,8 @@ impl ViewportRenderer {
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..g.thread_index_count, 0, 0..1);
                 }
+            }
+            for g in &layers {
                 // Model edges: the hidden ones (behind faces) first, dashed.
                 if let Some(vb) = &g.edge_vbuf {
                     pass.set_vertex_buffer(0, vb.slice(..));
@@ -1034,6 +1158,8 @@ impl ViewportRenderer {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.draw(0..g.line_vertex_count, 0..1);
                 }
+            }
+            for g in &layers {
                 // Transparent faces last, over everything opaque.
                 if let (Some(vb), Some(ib)) = (&g.alpha_vbuf, &g.alpha_ibuf)
                     && style.faces
@@ -1043,6 +1169,8 @@ impl ViewportRenderer {
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..g.alpha_index_count, 0, 0..1);
                 }
+            }
+            for g in &layers {
                 if let (Some(vb), Some(ib)) = (&g.through_vbuf, &g.through_ibuf) {
                     pass.set_pipeline(&self.through);
                     pass.set_vertex_buffer(0, vb.slice(..));
