@@ -1120,7 +1120,7 @@ impl CadCraftApp {
 
     /// The named vertices and straight edges' middles of the body (what
     /// [`Self::vertex_under`] picks), with their spheres in runs, kept per body.
-    fn vertex_points(&self) -> std::rc::Rc<(Vec<(Point3, VertexPoint)>, super::SphereGroups)> {
+    fn vertex_points(&self) -> std::rc::Rc<VertexPoints> {
         let key = self.body_key();
         if let Some(found) = VERTEX_POINTS.with(|c| {
             c.borrow()
@@ -2032,9 +2032,11 @@ enum VertexPoint {
     Mid(crate::kernel::EdgeId),
 }
 
+/// The body's pickable points and their bounding spheres.
+type VertexPoints = (Vec<(Point3, VertexPoint)>, super::SphereGroups);
+
 thread_local! {
     /// [`CadCraftApp::vertex_points`] of the last body.
-    static VERTEX_POINTS: std::cell::RefCell<
-        Option<(String, std::rc::Rc<(Vec<(Point3, VertexPoint)>, super::SphereGroups)>)>,
-    > = const { std::cell::RefCell::new(None) };
+    static VERTEX_POINTS: std::cell::RefCell<Option<(String, std::rc::Rc<VertexPoints>)>> =
+        const { std::cell::RefCell::new(None) };
 }

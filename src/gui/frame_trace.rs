@@ -38,7 +38,7 @@ impl Drop for Span {
 pub(super) fn take() -> String {
     let mut spans = SPANS.with(|s| std::mem::take(&mut *s.borrow_mut()));
     spans.retain(|(_, d, _)| d.as_secs_f64() >= 1e-3);
-    spans.sort_by(|a, b| b.1.cmp(&a.1));
+    spans.sort_by_key(|s| std::cmp::Reverse(s.1));
     spans
         .iter()
         .map(|(n, d, k)| {

@@ -9189,6 +9189,17 @@ fn tolerance_editor(ui: &mut egui::Ui, tol: &mut crate::sketch::Tolerance, angle
     *tol != before
 }
 
+/// A frame slower than this is logged with its spans (`CADCRAFT3D_SLOW_FRAME_MS`, default 250).
+fn slow_frame_ms() -> f32 {
+    static MS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| {
+        std::env::var("CADCRAFT3D_SLOW_FRAME_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(250.0)
+    })
+}
+
 #[cfg(test)]
 mod pick_tests {
     use super::closest_on_segment;
@@ -9199,7 +9210,10 @@ mod pick_tests {
     /// A board of many small parts (an imported circuit board has 612): `n`×`n` boxes 2 mm wide
     /// whose top and bottom are 10×10 grids (400 triangles, one face a box), and their 8 edges
     /// sampled at 33 points.
-    fn board(n: usize) -> (Vec<(FaceId, [Point3; 3])>, Vec<Vec<Point3>>) {
+    /// A board's triangles (with their faces) and its sampled edges.
+    type Board = (Vec<(FaceId, [Point3; 3])>, Vec<Vec<Point3>>);
+
+    fn board(n: usize) -> Board {
         let mut faces = slotmap::SlotMap::<FaceId, ()>::with_key();
         let (mut tris, mut edges) = (Vec::new(), Vec::new());
         let corners = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0), (0.0, 0.0)];
@@ -9373,15 +9387,4 @@ mod pick_tests {
         let o2 = Point3::new(150.0, -50.0, 30.0);
         assert!((closest_on_segment(&a, &b, &o2, &d) - b).norm() < 1e-9);
     }
-}
-
-/// A frame slower than this is logged with its spans (`CADCRAFT3D_SLOW_FRAME_MS`, default 250).
-fn slow_frame_ms() -> f32 {
-    static MS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *MS.get_or_init(|| {
-        std::env::var("CADCRAFT3D_SLOW_FRAME_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(250.0)
-    })
 }

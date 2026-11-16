@@ -72,7 +72,7 @@ impl SceneGeometry {
         const SHADED: usize = 9 * 4;
         let mut lo = [f32::INFINITY; 3];
         let mut hi = [f32::NEG_INFINITY; 3];
-        for v in self.tri_vertices.chunks_exact(SHADED) {
+        for v in self.tri_vertices.as_chunks::<SHADED>().0 {
             for k in 0..3 {
                 lo[k] = lo[k].min(at(v, k));
                 hi[k] = hi[k].max(at(v, k));
