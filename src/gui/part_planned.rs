@@ -2056,7 +2056,7 @@ const POINT_KEYS: &[&str] = &[
 
 /// Selectors that keep taking component edges / faces: a pick never moves
 /// on to the next selector.
-const MANY_KEYS: &[&str] = &["edges"];
+const MANY_KEYS: &[&str] = &["edges", "places"];
 
 /// Selector colours by position (the dots of the rows).
 const COLORS: [[u8; 3]; 5] = [

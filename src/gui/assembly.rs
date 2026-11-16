@@ -2066,6 +2066,8 @@ impl CadCraftApp {
         };
         let looks = self.asm_scene_looks();
         let mut threads = Vec::new();
+        // Pattern at Placements: its sources see-through while places are picked.
+        let through = self.pattern_see_through();
         for o in a.occurrences.iter().filter(|o| self.asm_shown(o)) {
             // The Constrain preview moves components before OK.
             let place = self
@@ -2085,7 +2087,7 @@ impl CadCraftApp {
                 .is_some_and(|r| r.found.iter().any(|i| i.a == o.id || i.b == o.id));
             let alpha = if !o.enabled {
                 Some(0.15)
-            } else if o.transparent || overlap {
+            } else if o.transparent || overlap || through.contains(&o.id) {
                 Some(0.35)
             } else {
                 None
@@ -2527,6 +2529,7 @@ impl CadCraftApp {
         self.bolt_follow();
         self.shaft_follow(&ctx);
         self.bolt_preview(&painter, rect, pointer.filter(|_| on_view));
+        self.pattern_place_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.bolt_view_menu(&ctx);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_select_overlay(&painter, rect, pointer.filter(|_| on_view));

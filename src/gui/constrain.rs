@@ -811,10 +811,12 @@ impl CadCraftApp {
         };
         let linked = self.linked();
         let mut out = Vec::new();
+        // Pattern at Placements: the sources do not stand in the way.
+        let through = self.pattern_see_through();
         for occ in a
             .occurrences
             .iter()
-            .filter(|o| o.pickable() && self.asm_isolated(o.id))
+            .filter(|o| o.pickable() && self.asm_isolated(o.id) && !through.contains(&o.id))
         {
             match crate::assembly::tree::assembly_of(&self.project, &linked, occ.component) {
                 Some(sub) => {

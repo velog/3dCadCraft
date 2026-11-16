@@ -3,6 +3,8 @@
 //! [`assembly::pattern::Layout`](crate::assembly::pattern::Layout); the copies
 //! show see-through while the panel is open, OK adds the pattern (one Undo
 //! step), and the browser lists it with its elements (Edit, Delete).
+//! The Placements tab (spec 3.7a) copies them to picked places: hole rims,
+//! points, faces; its sources turn see-through while places are picked.
 
 use eframe::egui::{self, RichText};
 
@@ -10,7 +12,7 @@ use super::CadCraftApp;
 use super::asm_planned::AsmPlanned;
 use super::icons::Icon;
 use super::part_planned::{PartDialog, Planned};
-use crate::assembly::pattern::{self, ComponentPattern, Layout, Lookup};
+use crate::assembly::pattern::{self, Anchor, ComponentPattern, Layout, Lookup, PlacePick};
 use crate::assembly::relation::{self, Geom, GeomRef};
 use crate::document::AssemblyDocument;
 use crate::kernel::Transform3;
@@ -19,6 +21,7 @@ use crate::kernel::Transform3;
 const ASSOCIATIVE: usize = 0;
 const RECTANGULAR: usize = 1;
 const CIRCULAR: usize = 2;
+const PLACEMENTS: usize = 3;
 
 /// What the browser asked for.
 pub(super) enum PatternCmd {
@@ -112,17 +115,241 @@ impl CadCraftApp {
         }
     }
 
-    /// The sources and layout the panel describes.
-    fn pattern_layout(&self, d: &PartDialog) -> Result<(Vec<u32>, Layout), String> {
-        let a = self.assembly().ok_or("no assembly")?;
-        let sources: Vec<u32> = d
-            .picks_of("components")
+    /// The occurrences the panel's Components selector holds.
+    fn pattern_sources(&self, d: &PartDialog) -> Vec<u32> {
+        let Some(a) = self.assembly() else {
+            return Vec::new();
+        };
+        d.picks_of("components")
             .iter()
             .filter_map(|w| {
                 let name = w.split(" · ").next().unwrap_or(w);
                 a.occurrences.iter().find(|o| o.name == name).map(|o| o.id)
             })
-            .collect();
+            .collect()
+    }
+
+    /// The open Pattern panel at Placements, when one of its geometry
+    /// selectors is active.
+    fn placements_dialog(&self) -> Option<&PartDialog> {
+        self.part_planned.as_ref().filter(|d| {
+            d.kind == Planned::Asm(AsmPlanned::Pattern)
+                && d.tab() == PLACEMENTS
+                && d.active.is_some_and(|k| k != "components")
+        })
+    }
+
+    /// Whether the Placements tab is picking geometry.
+    pub(super) fn pattern_places_active(&self) -> bool {
+        self.placements_dialog().is_some()
+    }
+
+    /// The sources drawn see-through and left out of picking while the
+    /// Placements tab picks geometry (spec 3.7a §3).
+    pub(super) fn pattern_see_through(&self) -> Vec<u32> {
+        self.placements_dialog()
+            .map(|d| self.pattern_sources(d))
+            .unwrap_or_default()
+    }
+
+    /// A reference's geometry in assembly coordinates.
+    fn pattern_world(&self, r: &GeomRef) -> Result<Geom, String> {
+        let a = self.assembly().ok_or("no assembly")?;
+        let g = self.asm_local_in(a, r)?;
+        Ok(match a.find(r.occurrence()) {
+            Some(o) => g.moved(&o.transform),
+            None => g,
+        })
+    }
+
+    /// The Placements tab's reference and places.
+    fn placements_of(&self, d: &PartDialog) -> Result<Layout, String> {
+        let r = |key: &str| d.refs.get(key).and_then(|v| v.first()).cloned();
+        let point = r("ref_point").ok_or("select the start point")?;
+        let reference = Anchor {
+            plane: r("ref_plane"),
+            point,
+            orient: r("ref_orient"),
+        };
+        let picks: Vec<(GeomRef, PlacePick)> = d
+            .refs
+            .get("places")
+            .map(|v| {
+                v.iter()
+                    .filter_map(|g| {
+                        let k = PlacePick::of(&self.pattern_world(g).ok()?)?;
+                        Some((g.clone(), k))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let places = pattern::places_from_picks(&picks)?;
+        if places.is_empty() {
+            return Err("pick at least one place".into());
+        }
+        Ok(Layout::Placements { reference, places })
+    }
+
+    /// A click in the view while the Placements tab picks geometry: the
+    /// reference and the places (spec 3.7a §2). `true`: the click was used.
+    pub(super) fn pattern_place_click(&mut self, pos: egui::Pos2, rect: egui::Rect) -> bool {
+        if !self.pattern_places_active() {
+            return false;
+        }
+        if let Some(g) = self.pattern_place_candidate(pos, rect) {
+            self.pattern_place_take(g);
+        }
+        true
+    }
+
+    /// What a click at `pos` would give the active Placements selector
+    /// (rule 19: only what it takes).
+    fn pattern_place_candidate(&self, pos: egui::Pos2, rect: egui::Rect) -> Option<GeomRef> {
+        let active = self.placements_dialog()?.active?;
+        let straight = |p: &[crate::kernel::Point3]| p.len() == 2;
+        let g = match active {
+            "ref_orient" => self.geom_under_with(pos, rect, &straight, false),
+            "ref_plane" => self.geom_under_pub(pos, rect),
+            _ => self
+                .asm_vertex_under_pub(pos, rect)
+                .or_else(|| self.geom_under_pub(pos, rect)),
+        }?;
+        let k = PlacePick::of(&self.pattern_world(&g).ok()?)?;
+        let ok = match active {
+            "ref_plane" => matches!(k, PlacePick::Plane | PlacePick::Rim),
+            "ref_point" => matches!(k, PlacePick::Point | PlacePick::Rim),
+            "ref_orient" => k == PlacePick::Edge,
+            _ => true,
+        };
+        ok.then_some(g)
+    }
+
+    /// The Placements tab in the view (rule 23): every pick in its
+    /// selector's colour, each place's number at its point, what a click
+    /// would take.
+    pub(super) fn pattern_place_overlay(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        pointer: Option<egui::Pos2>,
+    ) {
+        let Some(d) = self
+            .part_planned
+            .as_ref()
+            .filter(|d| d.kind == Planned::Asm(AsmPlanned::Pattern) && d.tab() == PLACEMENTS)
+        else {
+            return;
+        };
+        let centre = |g: &GeomRef| match self.pattern_world(g).ok()? {
+            Geom::Point { p } | Geom::Frame { p, .. } => Some(p),
+            Geom::Circle { c, .. } | Geom::Sphere { c, .. } => Some(c),
+            _ => None,
+        };
+        for key in ["ref_plane", "ref_point", "ref_orient", "places"] {
+            let col = d.sel_color(key);
+            for g in d.refs.get(key).into_iter().flatten() {
+                self.draw_geom(painter, rect, g, col);
+                if let Some(p) = centre(g)
+                    && let Some(s) = self.camera.project(&p, rect)
+                {
+                    painter.circle_filled(s, 4.5, col);
+                }
+            }
+        }
+        // Each place's number beside its point.
+        if let Ok(Layout::Placements { places, .. }) = self.placements_of(d) {
+            for (k, a) in places.iter().enumerate() {
+                if let Some(p) = centre(&a.point)
+                    && let Some(s) = self.camera.project(&p, rect)
+                {
+                    painter.text(
+                        s + egui::vec2(7.0, -7.0),
+                        egui::Align2::LEFT_BOTTOM,
+                        format!("{}", k + 1),
+                        egui::FontId::proportional(13.0),
+                        d.sel_color("places"),
+                    );
+                }
+            }
+        }
+        if let (Some(p), Some(key)) = (pointer, d.active)
+            && let Some(g) = self.pattern_place_candidate(p, rect)
+        {
+            self.draw_geom(painter, rect, &g, d.sel_color(key).gamma_multiply(0.75));
+        }
+    }
+
+    /// Gives `g` to the Placements tab's active selector.
+    pub(super) fn pattern_place_take(&mut self, g: GeomRef) {
+        let fail = |app: &mut Self, e: &str| {
+            app.file_status = Some(Err(format!("Pattern Component: {e}")));
+        };
+        let Some(active) = self.placements_dialog().and_then(|d| d.active) else {
+            return;
+        };
+        let Some(kind) = self.pattern_world(&g).ok().as_ref().and_then(PlacePick::of) else {
+            return fail(self, "that geometry cannot be used here");
+        };
+        let label = self.geom_label(&g);
+        let n_places = self
+            .placements_dialog()
+            .and_then(|d| self.placements_of(d).ok())
+            .map_or(0, |l| l.count() as usize - 1);
+        let Some(d) = self.part_planned.as_mut() else {
+            return;
+        };
+        let set = |d: &mut PartDialog, key: &'static str, w: String, g: GeomRef| {
+            d.picks.insert(key, vec![w]);
+            d.refs.insert(key, vec![g]);
+        };
+        match (active, kind) {
+            ("ref_plane", PlacePick::Plane) => {
+                set(d, "ref_plane", label, g);
+                d.active = Some("ref_point");
+            }
+            // A rim: plane and point at once.
+            ("ref_plane" | "ref_point", PlacePick::Rim) => {
+                d.picks.remove("ref_plane");
+                d.refs.remove("ref_plane");
+                set(d, "ref_point", label, g);
+                d.active = Some("places");
+            }
+            ("ref_point", PlacePick::Point) => {
+                set(d, "ref_point", label, g);
+                d.active = Some("places");
+            }
+            ("ref_orient", PlacePick::Edge) => {
+                set(d, "ref_orient", label, g);
+                d.active = Some("places");
+            }
+            ("places", k) => {
+                if k == PlacePick::Edge && n_places == 0 {
+                    return fail(self, "pick a place first; an edge turns the last place");
+                }
+                let w = match k {
+                    PlacePick::Rim | PlacePick::Point => {
+                        format!("Place {} · {label}", n_places + 1)
+                    }
+                    PlacePick::Plane => format!("Plane · {label}"),
+                    PlacePick::Edge => format!("Turn place {n_places} · {label}"),
+                };
+                d.picks.entry("places").or_default().push(w);
+                d.refs.entry("places").or_default().push(g);
+            }
+            (_, _) => {
+                let asked = d
+                    .flow()
+                    .current()
+                    .map_or(String::new(), |s| s.label.to_lowercase());
+                fail(self, &format!("{label} cannot be the {asked}"));
+            }
+        }
+    }
+
+    /// The sources and layout the panel describes.
+    fn pattern_layout(&self, d: &PartDialog) -> Result<(Vec<u32>, Layout), String> {
+        let a = self.assembly().ok_or("no assembly")?;
+        let sources = self.pattern_sources(d);
         if sources.is_empty() {
             return Err("select the components to pattern".into());
         }
@@ -175,6 +402,7 @@ impl CadCraftApp {
                 count: count(d.num(CIRCULAR, "Count")),
                 angle: d.num(CIRCULAR, "Angle").unwrap_or(0.0).to_radians(),
             },
+            PLACEMENTS => self.placements_of(d)?,
             _ => return Err("no such tab".into()),
         };
         if !matches!(layout, Layout::Feature { .. }) && layout.count() < 2 {
@@ -267,7 +495,13 @@ impl CadCraftApp {
             local: &local,
             feature: &feature,
         };
-        let Ok(moves) = pattern::motions(&layout, &look, &at) else {
+        let found = match &layout {
+            Layout::Placements { reference, places } => {
+                pattern::placement_motions(reference, places, &look, &at).map(|m| m.0)
+            }
+            l => pattern::motions(l, &look, &at),
+        };
+        let Ok(moves) = found else {
             return Vec::new();
         };
         // Editing: the pattern's own copies are already drawn.
@@ -292,7 +526,9 @@ impl CadCraftApp {
     /// Pattern panel's copies change.
     pub(super) fn pattern_preview_poll(&mut self) {
         let items = self.pattern_preview_items();
-        let key = (!items.is_empty()).then(|| format!("{items:?}"));
+        let through = self.pattern_see_through();
+        let key =
+            (!items.is_empty() || !through.is_empty()).then(|| format!("{items:?}{through:?}"));
         if key != self.asm.pattern_preview {
             self.asm.pattern_preview = key;
             self.scene_dirty = true;
@@ -396,6 +632,37 @@ impl CadCraftApp {
                     d.picks
                         .insert("feature", vec![format!("{feature} · feature pattern")]);
                     d.refs.insert("feature", vec![g]);
+                }
+            }
+            Layout::Placements { reference, places } => {
+                d.set_tab(PLACEMENTS);
+                if let Some(g) = &reference.plane {
+                    take(&mut d, "ref_plane", g);
+                }
+                take(&mut d, "ref_point", &reference.point);
+                if let Some(g) = &reference.orient {
+                    take(&mut d, "ref_orient", g);
+                }
+                let kind = |g: &GeomRef| {
+                    self.pattern_world(g)
+                        .ok()
+                        .as_ref()
+                        .and_then(PlacePick::of)
+                        .unwrap_or(PlacePick::Point)
+                };
+                let mut n = 0;
+                for (g, k) in pattern::picks_of_places(places, &kind) {
+                    let label = self.geom_label(&g);
+                    let w = match k {
+                        PlacePick::Rim | PlacePick::Point => {
+                            n += 1;
+                            format!("Place {n} · {label}")
+                        }
+                        PlacePick::Plane => format!("Plane · {label}"),
+                        PlacePick::Edge => format!("Turn place {n} · {label}"),
+                    };
+                    d.picks.entry("places").or_default().push(w);
+                    d.refs.entry("places").or_default().push(g);
                 }
             }
             Layout::Circular {

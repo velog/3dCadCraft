@@ -1903,5 +1903,13 @@
     "Box1:Left",
     "Box1:Right",
     "Box1:Top"
+  ],
+  "r75/pattern_placements_r75.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top"
   ]
 }

@@ -984,7 +984,7 @@ fn layout_fields(l: &Layout) -> Vec<(&'static str, &'static str, Unit, Real)> {
             ("count", "Count", Unit::Ul, *count as Real),
             ("angle", "Angle", Unit::Deg, *angle),
         ],
-        Layout::Feature { .. } => Vec::new(),
+        Layout::Feature { .. } | Layout::Placements { .. } => Vec::new(),
     }
 }
 
