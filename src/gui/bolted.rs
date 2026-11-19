@@ -410,6 +410,43 @@ pub(super) fn holes(d: &PartDialog) -> Option<(String, bolted::HoleSizes)> {
     Some((size, h))
 }
 
+/// The countersunk seat the first plate gets (spec 6.2 §3.1): only for a
+/// countersunk screw alone on the head side, sized by the standard's
+/// countersinks table ([`bolted::countersunk_spec`]).
+pub(super) fn seat_spec(d: &PartDialog) -> Option<crate::part::hole::HoleSpec> {
+    let [bolt] = d.bolt.head.as_slice() else {
+        return None;
+    };
+    if bolt.role != Role::Bolt {
+        return None;
+    }
+    let c = d.bolt.catalog.as_ref()?;
+    let (size, h) = holes(d)?;
+    let member = super::bolted_ok::bolt_members(c, bolt.family, h.major)
+        .first()?
+        .0;
+    let (dk, _) = c.countersunk_head(bolt.family, member)?;
+    let name = &c.families.get(bolt.family)?.name;
+    Some(bolted::countersunk_spec(
+        Standards::global(),
+        name,
+        &size,
+        h.clearance,
+        dk,
+    ))
+}
+
+/// A seated plate's hole in the plates list: `Ø9 clearance, countersink
+/// Ø16 x 90°, 3.50 deep`.
+fn seat_text(clearance: f64, s: &crate::part::hole::HoleSpec) -> String {
+    format!(
+        "Ø{clearance} clearance, countersink Ø{} x {:.0}°, {:.2} deep",
+        s.csink_diameter,
+        s.csink_angle.to_degrees(),
+        bolted::countersink_depth(s)
+    )
+}
+
 /// Whether family `f` of role `role` fits nominal diameter `dn`.
 fn family_fits(c: &Catalog, f: usize, role: Role, dn: f64) -> bool {
     c.fits(f).iter().any(|fit| match (role, fit) {
@@ -946,6 +983,7 @@ fn length_row(d: &PartDialog, ui: &mut egui::Ui, act: &mut Option<Act>) {
 /// The plates the first bolt passes with the hole each gets, the grip.
 fn plates_ui(d: &PartDialog, ui: &mut egui::Ui, blind: bool) {
     let hs = holes(d);
+    let seat = seat_spec(d);
     ui.horizontal(|ui| {
         fit_cell(ui);
         plate_icon(ui);
@@ -959,7 +997,12 @@ fn plates_ui(d: &PartDialog, ui: &mut egui::Ui, blind: bool) {
                         (Some((size, h)), true, true) => {
                             format!("{size} tapped, drill Ø{}", h.tap_drill)
                         }
-                        (Some((_, h)), true, false) => format!("Ø{} clearance", h.clearance),
+                        (Some((_, h)), true, false) => {
+                            match seat.as_ref().filter(|_| p.from <= 0.05) {
+                                Some(s) => seat_text(h.clearance, s),
+                                None => format!("Ø{} clearance", h.clearance),
+                            }
+                        }
                         (None, ..) => "no hole for this size".to_owned(),
                     };
                     ui.add(
@@ -2166,6 +2209,38 @@ mod tests {
         let mut d = PartDialog::new(Planned::Asm(AsmPlanned::BoltedConnection));
         start(&mut d);
         d
+    }
+
+    /// A countersunk screw alone on the head side seats the first plate by
+    /// the standard's table (DIN 7991 M8: Ø16 at 90°, 3.5 deep); a washer
+    /// under it or a hex bolt means a plain clearance hole.
+    #[test]
+    fn the_first_plate_names_its_countersunk_seat() {
+        let root = std::env::temp_dir().join(format!("cc-bolt-seat-{}", std::process::id()));
+        let mut d = dialog();
+        let c = Arc::new(Catalog::load(&root));
+        let at =
+            |name: &str, role| family_named(&c, name, role).unwrap_or_else(|| panic!("{name}"));
+        let (din, iso, washer) = (
+            at("DIN 7991", Role::Bolt),
+            at("ISO 4017", Role::Bolt),
+            at("ISO 7089", Role::Washer),
+        );
+        d.bolt.catalog = Some(c);
+        assert_eq!(choice(&d, "Diameter").as_deref(), Some("M8"));
+        d.bolt.head = vec![item(din, Role::Bolt)];
+        let s = seat_spec(&d).expect("a seat");
+        assert!((s.csink_diameter - 16.0).abs() < 1e-12);
+        assert!((s.csink_angle.to_degrees() - 90.0).abs() < 1e-9);
+        assert_eq!(
+            seat_text(9.0, &s),
+            "Ø9 clearance, countersink Ø16 x 90°, 3.50 deep"
+        );
+        d.bolt.head.push(item(washer, Role::Washer));
+        assert!(seat_spec(&d).is_none());
+        d.bolt.head = vec![item(iso, Role::Bolt)];
+        assert!(seat_spec(&d).is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Use case 8: the head side keeps one bolt first; washers go under it

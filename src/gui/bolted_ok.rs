@@ -98,7 +98,7 @@ fn over_member(c: &Catalog, f: usize, major: Real) -> Option<usize> {
 }
 
 /// A bolt family's members of diameter `major`: (member, length).
-fn bolt_members(c: &Catalog, f: usize, major: Real) -> Vec<(usize, Real)> {
+pub(super) fn bolt_members(c: &Catalog, f: usize, major: Real) -> Vec<(usize, Real)> {
     c.fits(f)
         .iter()
         .enumerate()
@@ -530,13 +530,7 @@ impl CadCraftApp {
             .collect();
         let tapped = bolted::tapped_spec(Standards::global(), &thread, &size, depth);
         // A countersunk head alone on the head side sinks into the first plate.
-        let seated = (head_t.len() == 1)
-            .then(|| bolts.first())
-            .flatten()
-            .and_then(|b| catalog.countersunk_head(bolt.family, b.0))
-            .map(|(dk, _)| {
-                bolted::countersunk_spec(Standards::global(), &bolt_name, &size, h.clearance, dk)
-            });
+        let seated = panel::seat_spec(d);
         let mut drills: Vec<bolted::Drill> = Vec::new();
         let mut add = |r: &panel::PlateRow, tap: bool| -> Result<(), String> {
             let face = r
@@ -747,10 +741,15 @@ impl CadCraftApp {
         if let Some(cur) = self.assembly_mut() {
             *cur = a;
         }
+        self.cons.last = s;
         if !plan.record.free_turn {
             self.bolt_lock_turns(&placed);
+            // The locked turns take the last degree of freedom: solve once
+            // more, or Properties read "1 of 6" until the next solve.
+            if let Some(a) = self.assembly().cloned() {
+                self.cons.last = self.solve_copy(&a, None);
+            }
         }
-        self.cons.last = s;
         self.asm.sel = placed;
         self.context_follow();
         Ok(format!(
