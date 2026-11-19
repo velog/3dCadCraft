@@ -772,7 +772,7 @@ impl CadCraftApp {
             let Some(ip) = self.in_place_now() else {
                 break;
             };
-            if ip.sub.len() + 1 <= i {
+            if ip.sub.len() < i {
                 break;
             }
             self.return_to_assembly();
