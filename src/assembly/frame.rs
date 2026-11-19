@@ -1665,14 +1665,12 @@ fn edge_to_edge(
     // The point of line c + sa·pa + t·da on line c + sb·pb + u·db (2D in
     // the plane, coordinates along da and pa).
     let meet = |sa: Real, sb: Real| -> Option<Point3> {
-        let (x, y) = (db.dot(&da), db.dot(&pa));
-        let (px, py) = (pb.dot(&da), pb.dot(&pa));
-        // t·(1, 0) + sa·(0, 1) = sb·(px, py) + u·(x, y)
-        // => t − u·x = sb·px,  −u·y = sb·py − sa
+        // Along pa: sa = sb·(pb·pa) + u·(db·pa).
+        let y = db.dot(&pa);
         if y.abs() < 1e-9 {
             return None;
         }
-        let u = (sa - sb * py) / y;
+        let u = (sa - sb * pb.dot(&pa)) / y;
         Some(c + pb * sb + db * u)
     };
     let outer = meet(a0, b1)?;
