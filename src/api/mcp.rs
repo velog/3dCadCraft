@@ -349,10 +349,7 @@ fn progress<W: Write>(out: &mut W, r: &mut Running) -> io::Result<()> {
     }
     r.sent += 1;
     r.last = text.clone();
-    let mut params = json!({"progressToken": token, "progress": r.sent, "message": text});
-    if let Some((_, k, n)) = job.feature {
-        params["message"] = json!(format!("{text}: feature {k} of {n}"));
-    }
+    let params = json!({"progressToken": token, "progress": r.sent, "message": text});
     send(
         out,
         &json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": params}),
