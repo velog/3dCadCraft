@@ -880,19 +880,23 @@ pub fn balloon_prims(
 }
 
 /// The BOM rows of a model (callback of [`Tables::build`]).
-pub type BomRows<'a> = &'a dyn Fn(DocRef, BomKind, bool) -> Option<Vec<BomRow>>;
+pub type BomRows<'a> = &'a dyn Fn(DocRef, super::ViewReps, BomKind, bool) -> Option<Vec<BomRow>>;
+
+/// A view's model as its BOM is read: the document and the representations
+/// (Model State = variant, positional, design view) the view stands in.
+pub type ModelKey = (DocRef, super::ViewReps);
 
 /// What parts lists and balloons of a sheet read, computed once per frame:
 /// the models of the views, the BOM rows of each model, and the item
 /// numbers (through the drawing's parts lists).
 #[derive(Clone, Debug, Default)]
 pub struct Tables {
-    /// The model of each view of the sheet.
-    pub view_model: HashMap<u32, DocRef>,
+    /// The model of each view of the sheet, in its representations.
+    pub view_model: HashMap<u32, ModelKey>,
     /// BOM rows by (model, BOM view, merge).
-    pub rows: HashMap<(DocRef, BomKind, bool), Vec<BomRow>>,
+    pub rows: HashMap<(ModelKey, BomKind, bool), Vec<BomRow>>,
     /// Item and quantity by (model, BOM view) and occurrence.
-    pub items: HashMap<(DocRef, BomKind), HashMap<u32, (String, String)>>,
+    pub items: HashMap<(ModelKey, BomKind), HashMap<u32, (String, String)>>,
     /// The art of the sheet's symbols by (definition, prompted values).
     pub symbols: HashMap<(String, Vec<(String, String)>), super::resources::SymbolArt>,
 }
@@ -940,12 +944,12 @@ impl Tables {
         t.add_symbols(doc, i, &|_| None);
         for v in &sheet.views {
             if let Some(m) = doc.model_of(sheet, v.id) {
-                t.view_model.insert(v.id, m);
+                t.view_model.insert(v.id, (m, doc.reps_of(sheet, v.id)));
             }
         }
-        let rows_of = |t: &mut Tables, m: DocRef, k: BomKind, merge: bool| {
+        let rows_of = |t: &mut Tables, m: ModelKey, k: BomKind, merge: bool| {
             if !t.rows.contains_key(&(m, k, merge))
-                && let Some(r) = bom(m, k, merge)
+                && let Some(r) = bom(m.0, m.1, k, merge)
             {
                 t.rows.insert((m, k, merge), r);
             }
@@ -962,6 +966,7 @@ impl Tables {
                 let Some(m) = doc.model_of(s, pl.view) else {
                     continue;
                 };
+                let m = (m, doc.reps_of(s, pl.view));
                 rows_of(&mut t, m, pl.bom, pl.merge);
                 if si != i && t.items.contains_key(&(m, pl.bom)) {
                     continue;

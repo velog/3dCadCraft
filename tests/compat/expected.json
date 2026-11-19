@@ -511,5 +511,7 @@
   },
   "r73/slot_r73.3dcadcraft": {"volume": 21148.87437952713, "faces": 20, "features": 3, "sketches": 1, "exact": true},
   "r74/simplify_r74.3dcadcraft": {"volume": 24000.00000000001, "faces": 6, "features": 3, "sketches": 1, "exact": true},
-  "r75/pattern_placements_r75.3dcadcraft": {"volume": 7999.999999999997, "faces": 6, "features": 1, "sketches": 0, "exact": true}
+  "r75/pattern_placements_r75.3dcadcraft": {"volume": 7999.999999999997, "faces": 6, "features": 1, "sketches": 0, "exact": true},
+  "r76/drawing_r76.3dcadcraft": {"volume": 31458.046097366463, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r77/drawing_r77.3dcadcraft": {"volume": 31458.046097366463, "faces": 54, "features": 3, "sketches": 1, "exact": true}
 }

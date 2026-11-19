@@ -205,7 +205,11 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   simplified part of a part or an assembly) (2026-11-12).
 /// - 75: Component Pattern at Placements (`pattern::Layout::Placements`:
 ///   copies moved onto picked hole rims, points and planes) (2026-11-16).
-pub const FORMAT_REVISION: u32 = 75;
+/// - 76: drawing symbols of machined parts (`AnnotationKind::Mark`: Surface
+///   Texture, Feature Control Frame, Datum Identifier) (2026-11-19).
+/// - 77: drawing Overlay View (`ViewKind::Overlay`: another positional
+///   representation over an assembly view) (2026-11-19).
+pub const FORMAT_REVISION: u32 = 77;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

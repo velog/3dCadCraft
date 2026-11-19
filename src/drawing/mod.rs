@@ -21,8 +21,10 @@ pub mod dimset;
 pub mod dimtext;
 pub mod fields;
 pub mod fits;
+pub mod gdt;
 pub mod hlr;
 pub mod hole_table;
+pub mod participation;
 pub mod parts;
 pub mod pdf;
 pub mod render;
@@ -544,6 +546,20 @@ pub enum ViewKind {
     /// Draft View: no model, only the view's own sketches (spec 4.12;
     /// format revision 65).
     Draft,
+    /// Overlay View: the parent's assembly in another Positional
+    /// Representation (and optionally another Design View), drawn over the
+    /// parent in phantom lines (format revision 77).
+    Overlay {
+        /// The parent (an assembly view).
+        parent: u32,
+        /// The positional representation shown (`positional` in files:
+        /// the view's own `position` is its place on the sheet).
+        #[serde(rename = "positional")]
+        position: u32,
+        /// The design view representation (`None`: the parent's).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        design: Option<u32>,
+    },
 }
 
 fn is_true(b: &bool) -> bool {
@@ -657,6 +673,9 @@ pub struct DisplayOptions {
     pub bend_centerlines: bool,
     /// Flat pattern views: the lines where each bend starts and ends.
     pub bend_extents: bool,
+    /// Section Standard Parts (spec 4.15).
+    #[serde(skip_serializing_if = "participation::StandardSection::is_default")]
+    pub standard_section: participation::StandardSection,
 }
 
 impl Default for DisplayOptions {
@@ -673,6 +692,7 @@ impl Default for DisplayOptions {
             center_justified: true,
             bend_centerlines: true,
             bend_extents: true,
+            standard_section: Default::default(),
         }
     }
 }
@@ -766,6 +786,10 @@ pub struct DrawingView {
     /// with it; spec 4.12; old builds leave them out).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sketches: Vec<view_sketch::DrawingSketch>,
+    /// Section views of assemblies: this view's own Section Participation
+    /// of components (spec 4.15; old builds cut every component).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub participation: Vec<participation::ParticipationOverride>,
 }
 
 /// A Break Out of a view (spec 4.11): inside a closed profile drawn on the
@@ -856,7 +880,11 @@ impl BreakOut {
                 break_out_sketch_plane(*line, &frame_of(*view)?, frame).ok()?
             }
         };
-        Some(hlr::OutCut::new(self.profile.clone(), depth).sloped(slope))
+        Some(
+            hlr::OutCut::new(self.profile.clone(), depth)
+                .sloped(slope)
+                .every_part(self.section_all),
+        )
     }
 }
 
@@ -927,7 +955,8 @@ impl DrawingView {
             ViewKind::Projected { parent, .. }
             | ViewKind::Section { parent, .. }
             | ViewKind::Auxiliary { parent, .. }
-            | ViewKind::Detail { parent, .. } => Some(parent),
+            | ViewKind::Detail { parent, .. }
+            | ViewKind::Overlay { parent, .. } => Some(parent),
             ViewKind::Base { .. } | ViewKind::Draft => None,
         }
     }
@@ -1202,6 +1231,7 @@ impl DrawingDocument {
             break_outs: Vec::new(),
             reps: ViewReps::default(),
             sketches: Vec::new(),
+            participation: Vec::new(),
         });
         Some(id)
     }
@@ -1234,6 +1264,7 @@ impl DrawingDocument {
             break_outs: Vec::new(),
             reps: ViewReps::default(),
             sketches: Vec::new(),
+            participation: Vec::new(),
         };
         align(&mut v.position, p.position, dir);
         self.sheet_mut()?.views.push(v);
@@ -1262,6 +1293,27 @@ impl DrawingDocument {
 
     /// The representations of view `id` (through its parents, from its base).
     pub fn reps_of(&self, sheet: &Sheet, id: u32) -> ViewReps {
+        // An overlay: its parent's, with its own positional (and design
+        // view) representation.
+        if let Some(ViewKind::Overlay {
+            parent,
+            position,
+            design,
+        }) = sheet.view(id).map(|v| &v.kind)
+            && *parent != id
+        {
+            let mut r = self.reps_of(sheet, *parent);
+            r.position = Some(*position);
+            if design.is_some() {
+                r.view = *design;
+            }
+            return r;
+        }
+        self.reps_of_base(sheet, id)
+    }
+
+    /// [`Self::reps_of`] read from the base view.
+    fn reps_of_base(&self, sheet: &Sheet, id: u32) -> ViewReps {
         let mut v = sheet.view(id);
         for _ in 0..64 {
             match v {
@@ -1346,6 +1398,7 @@ impl DrawingDocument {
                         unfold: false,
                         depth: None,
                         outs,
+                        uncut: Vec::new(),
                     }))
                 }
             }
@@ -1389,6 +1442,7 @@ impl DrawingDocument {
                         unfold,
                         depth,
                         outs: Vec::new(),
+                        uncut: Vec::new(),
                     })),
                     flat,
                     reps,
@@ -1402,6 +1456,32 @@ impl DrawingDocument {
                 reps,
             },
         })
+    }
+
+    /// Overlay View over assembly view `parent`: its assembly in positional
+    /// representation `position` (and design view `design`), on the
+    /// parent's place, without a label.
+    pub fn add_overlay_view(
+        &mut self,
+        parent: u32,
+        position: u32,
+        design: Option<u32>,
+    ) -> Option<u32> {
+        let at = self.sheet()?.view(parent)?.position;
+        let id = self.add_child(
+            parent,
+            ViewKind::Overlay {
+                parent,
+                position,
+                design,
+            },
+            at,
+            None,
+        )?;
+        if let Some(v) = self.sheet_mut()?.view_mut(id) {
+            v.label_visible = false;
+        }
+        Some(id)
     }
 
     /// The next free letter for a section / detail / auxiliary view
@@ -1469,6 +1549,7 @@ impl DrawingDocument {
             break_outs: Vec::new(),
             reps: ViewReps::default(),
             sketches: Vec::new(),
+            participation: Vec::new(),
         };
         self.sheet_mut()?.views.push(v);
         // Positions are kept to 0.1 mm (readable in Properties).
@@ -1895,6 +1976,12 @@ impl DrawingDocument {
     /// Where view `id` may be when it wants `at`: aligned views slide on
     /// their axis from the parent.
     pub fn aligned_position(&self, id: u32, at: [f64; 2]) -> [f64; 2] {
+        if let Some(p) = self.sheet().and_then(|sh| match sh.view(id)?.kind {
+            ViewKind::Overlay { parent, .. } => sh.view(parent),
+            _ => None,
+        }) {
+            return p.position;
+        }
         let Some(sheet) = self.sheet() else {
             return at;
         };
@@ -1954,7 +2041,9 @@ impl DrawingDocument {
                 let fp = self.frame_of(sheet, *parent)?;
                 self.line_frame(&fp, *a, *b, *side)?.0
             }
-            ViewKind::Detail { parent, .. } => self.frame_of(sheet, *parent)?,
+            ViewKind::Detail { parent, .. } | ViewKind::Overlay { parent, .. } => {
+                self.frame_of(sheet, *parent)?
+            }
             ViewKind::Draft => return None,
         })
     }
@@ -1974,6 +2063,10 @@ impl DrawingDocument {
             Some((_, st)) if v.style_from_base => st,
             _ => v.style,
         };
+        // An overlay draws its lines dashed (its hidden lines are left out).
+        if matches!(v.kind, ViewKind::Overlay { .. }) {
+            return Some((parent.map_or(v.scale, |p| p.0), ViewStyle::HiddenShown));
+        }
         Some((scale, style))
     }
 
@@ -2011,6 +2104,7 @@ impl DrawingDocument {
                         ProjectDir::Up | ProjectDir::Down => c.position[0] = to[0],
                         ProjectDir::Iso(..) => {}
                     },
+                    ViewKind::Overlay { .. } => c.position = to,
                     ViewKind::Section { a, b, .. } | ViewKind::Auxiliary { a, b, .. } => {
                         let b = first_segment_end(&c.kind).unwrap_or(b);
                         let d = [b[0] - a[0], b[1] - a[1]];
@@ -2235,6 +2329,7 @@ impl DrawingDocument {
             break_outs: Vec::new(),
             reps: ViewReps::default(),
             sketches: Vec::new(),
+            participation: Vec::new(),
         });
         Some(id)
     }

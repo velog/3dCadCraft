@@ -4006,6 +4006,134 @@ fn pattern_placements_r75_reads() {
     assert!((c - Point3::new(0.0, 60.0, 5.0)).norm() < 1e-9, "{c}");
 }
 
+/// Revision 76: the three symbols of machined part drawings.
+fn drawing_r76_project() -> Project {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::gdt::{
+        Characteristic, ControlFrame, FrameRow, Mark, MarkSymbol, SurfaceTexture, SurfaceType,
+    };
+    let mut project = drawing_r67_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        for (at, tip, mark) in [
+            (
+                [100.0, 100.0],
+                None,
+                Mark::SurfaceTexture(SurfaceTexture {
+                    kind: SurfaceType::Removal,
+                    a: "Ra 1.6".into(),
+                    lay: "=".into(),
+                    ..Default::default()
+                }),
+            ),
+            (
+                [140.0, 100.0],
+                Some([120.0, 90.0]),
+                Mark::ControlFrame(ControlFrame {
+                    rows: vec![FrameRow {
+                        symbol: Characteristic::Position,
+                        tolerance: "Ø0.1".into(),
+                        datums: vec!["A".into(), "B".into()],
+                    }],
+                    note: "4x".into(),
+                }),
+            ),
+            (
+                [80.0, 120.0],
+                Some([80.0, 105.0]),
+                Mark::Datum { letter: "A".into() },
+            ),
+        ] {
+            d.add_annotation(AnnotationKind::Mark(MarkSymbol {
+                view: None,
+                at,
+                tip,
+                mark,
+            }))
+            .unwrap();
+        }
+    }
+    project
+}
+
+/// Revision 77: an Overlay View over the revision 76 drawing's base view.
+fn drawing_r77_project() -> Project {
+    let mut project = drawing_r76_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let base = d.sheets[0].views[0].id;
+        d.add_overlay_view(base, 1, None).unwrap();
+    }
+    project
+}
+
+/// The revision 77 drawing reads back with its overlay.
+#[test]
+fn drawing_r77_reads() {
+    use cadcraft3d::drawing::ViewKind;
+    let f = root().join("r77/drawing_r77.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(d) => Some(d.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        d.sheets[0]
+            .views
+            .iter()
+            .any(|v| matches!(v.kind, ViewKind::Overlay { position: 1, .. }))
+    );
+}
+
+/// The revision 76 drawing reads back with its three symbols.
+#[test]
+fn drawing_r76_reads() {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::gdt::Mark;
+    let f = root().join("r76/drawing_r76.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(d) => Some(d.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let marks: Vec<&Mark> = d.sheets[0]
+        .annotations
+        .iter()
+        .filter_map(|a| match &a.kind {
+            AnnotationKind::Mark(m) => Some(&m.mark),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(marks.len(), 3);
+    assert!(matches!(marks[0], Mark::SurfaceTexture(s) if s.a == "Ra 1.6"));
+    assert!(matches!(marks[1], Mark::ControlFrame(f) if f.rows[0].datums.len() == 2));
+    assert!(matches!(marks[2], Mark::Datum { letter } if letter == "A"));
+}
+
 fn bolted_r66() -> Project {
     use cadcraft3d::assembly::bolted::{
         self, Axis, BoltFastener, BoltKind, BoltedConnection, Making, Placement, Placing, Role,
@@ -4712,6 +4840,16 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             pattern_placements_r75().save(&f).unwrap();
+        }
+        let f = root().join("r76/drawing_r76.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r76_project().save(&f).unwrap();
+        }
+        let f = root().join("r77/drawing_r77.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r77_project().save(&f).unwrap();
         }
         let f = root().join("r74/simplify_r74.3dcadcraft");
         if !f.exists() {

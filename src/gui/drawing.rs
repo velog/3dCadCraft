@@ -18,6 +18,7 @@ use eframe::egui::{
 use super::CadCraftApp;
 use super::icons::Icon;
 use super::valuefield::ExprValue;
+use crate::document::iprops::SectionParticipation as Sp;
 use crate::document::{DocRef, DocumentData, DocumentKind};
 use crate::drawing::hlr::{self, ViewLines};
 use crate::drawing::sheet::{self as fmt, Prim, TitleField};
@@ -33,6 +34,10 @@ const DEFAULT_SECTION_DEPTH: f64 = 10.0;
 /// Drawing commands of the ribbon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrwCmd {
+    /// Place Views › Overlay View.
+    Overlay,
+    /// Symbols › Surface Texture / Feature Control Frame / Datum Identifier.
+    Mark(super::drawing_gdt::MarkKind),
     /// Place Views › Base View.
     BaseView,
     /// Place Views › Projected View.
@@ -203,6 +208,10 @@ pub(super) enum DrwTool {
     HoleTable(super::drawing_holetable::HtDraft),
     /// Chamfer Note: chamfer edge, reference edge, place.
     ChamferNote(super::drawing_chamfer::ChDraft),
+    /// Surface Texture, Feature Control Frame, Datum Identifier.
+    Mark(Box<super::drawing_gdt::MarkDraft>),
+    /// Overlay View: the parent, then the representation (window).
+    Overlay(super::drawing_overlay::OverlayDraft),
     /// Table: the general table follows the cursor.
     GeneralTable(crate::drawing::table::GeneralTable),
     /// Revision Table: the table follows the cursor; `true`: Revision Tag
@@ -294,8 +303,21 @@ struct BrokenLines {
 type PhysicalCache =
     std::cell::RefCell<HashMap<(crate::document::DocRef, String), (f64, f64, f64)>>;
 
+/// An assembly's parts for section participation: the assembly's signature,
+/// when they were read, the parts.
+pub(super) type SecLeaves = (
+    u64,
+    std::time::Instant,
+    Arc<Vec<super::drawing_participation::SecLeaf>>,
+);
+
 #[derive(Default)]
 pub(super) struct DrwUi {
+    /// Section participation: each assembly model's parts with their own
+    /// settings, by the assembly's signature (spec 4.15).
+    pub(super) sec_leaves: HashMap<(DocRef, drw::ViewReps), SecLeaves>,
+    /// Overlay views' lines turned phantom, by view (from, to).
+    pub(super) phantom: HashMap<u32, (Arc<ViewLines>, Arc<ViewLines>)>,
     pub cam: SheetCam,
     /// Selected view.
     pub sel: Option<u32>,
@@ -352,6 +374,9 @@ pub(super) struct DrwUi {
     menu_break: Option<(u32, usize)>,
     /// The break out under the pointer at the last right click.
     menu_break_out: Option<(u32, usize)>,
+    /// The component of an assembly section view under the right click
+    /// (its view and instance prefix, spec 4.15).
+    menu_comp: Option<(u32, String)>,
     /// The Text window.
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).
@@ -432,7 +457,7 @@ fn quant(f: &ViewFrame) -> [i64; 6] {
     ]
 }
 
-fn hash_str(s: &str) -> u64 {
+pub(super) fn hash_str(s: &str) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);
     h.finish()
@@ -661,6 +686,7 @@ impl CadCraftApp {
                 Some(view) => self.new_drawing_sketch(Some(view)),
                 None => self.start_annotation(DrwTool::StartSketch),
             },
+            DrwCmd::Overlay => self.start_overlay(),
             DrwCmd::DraftView => {
                 let draft = self.draft_view_defaults();
                 self.start_annotation(DrwTool::DraftView(draft));
@@ -673,6 +699,7 @@ impl CadCraftApp {
             DrwCmd::HoleNote => self.start_annotation(DrwTool::HoleNote(None)),
             DrwCmd::BendNote => self.start_annotation(DrwTool::BendNote),
             DrwCmd::ChamferNote => self.start_annotation(DrwTool::ChamferNote(Default::default())),
+            DrwCmd::Mark(k) => self.start_mark(k),
             DrwCmd::PartsList => self.open_parts_list(),
             DrwCmd::Table => self.open_table(),
             DrwCmd::RevisionTable => self.open_revision_table(false),
@@ -956,6 +983,8 @@ impl CadCraftApp {
             Some(DrwTool::Arrange(p)) => Self::arrange_prompt(p),
             Some(DrwTool::HoleTable(d)) => d.prompt(),
             Some(DrwTool::ChamferNote(d)) => d.prompt(),
+            Some(DrwTool::Mark(d)) => d.prompt(),
+            Some(DrwTool::Overlay(d)) => d.prompt().into(),
             Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
             Some(DrwTool::Centerline(None)) => "Centerline: click the first circle".into(),
             Some(DrwTool::Centerline(Some(_))) => {
@@ -1148,13 +1177,33 @@ impl CadCraftApp {
             .iter()
             .filter_map(|v| Some((v.id, doc.lines_job(sheet, v.id)?)))
             .collect();
+        for (id, job) in &mut jobs {
+            self.fill_participation(sheet, *id, job);
+        }
         // Detail views wait for their parent (a few rounds for chains).
         for _ in 0..8 {
             let mut left = Vec::new();
             for (id, job) in jobs {
                 match self.job_lines(ctx, &job, &out) {
                     Some(l) => {
-                        out.insert(id, l);
+                        // An overlay is centred where its parent is (its own
+                        // extent differs: the parts stand elsewhere).
+                        let parent = sheet.view(id).and_then(|v| match v.kind {
+                            ViewKind::Overlay { parent, .. } => Some(parent),
+                            _ => None,
+                        });
+                        match parent {
+                            None => {
+                                out.insert(id, l);
+                            }
+                            Some(p) => match out.get(&p).map(|pl| pl.center()) {
+                                Some(c) => {
+                                    let l = self.overlay_lines(id, l, c);
+                                    out.insert(id, l);
+                                }
+                                None => left.push((id, job)),
+                            },
+                        }
                     }
                     None => left.push((id, job)),
                 }
@@ -1502,6 +1551,8 @@ impl CadCraftApp {
                 self.revision_cloud_tool(&painter, rect, &response, &views)
             }
             Some(DrwTool::Symbol(..)) => self.symbol_tool(&painter, rect, &response),
+            Some(DrwTool::Overlay(_)) => self.overlay_tool(&response),
+            Some(DrwTool::Mark(_)) => self.mark_tool(&painter, rect, &response, &views),
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             // Edit View of a base view: its preview and ViewCube.
@@ -1544,6 +1595,8 @@ impl CadCraftApp {
                 Some(DrwTool::DimSet(d)) if d.placing => {}
                 // The tool itself arranges on the right click.
                 Some(DrwTool::Arrange(_)) => {}
+                // With a leader's end: pick again (`mark_tool`).
+                Some(DrwTool::Mark(_)) => {}
                 Some(DrwTool::ChamferNote(d)) if *d != Default::default() => {
                     let mut d = d.clone();
                     d.back();
@@ -1849,6 +1902,11 @@ impl CadCraftApp {
         }
         if response.secondary_clicked() {
             self.drw.sel = self.drw.hover;
+            self.drw.menu_comp = response.interact_pointer_pos().and_then(|p| {
+                let g = self.geometry_under(views, rect, p)?;
+                let pre = crate::drawing::participation::prefix_of(&g.edge)?;
+                Some((g.view, pre.to_string()))
+            });
             self.drw.menu_break = at
                 .and_then(|q| self.break_near(views, q))
                 .map(|(v, k, _)| (v, k));
@@ -1977,6 +2035,30 @@ impl CadCraftApp {
                     self.edit_section_line(id);
                     ui.close();
                 }
+                // The component under the click (spec 4.15).
+                if section
+                    && let Some((_, pre)) = self.drw.menu_comp.clone().filter(|(v, _)| *v == id)
+                {
+                    let i = self.drawing().map_or(0, |d| d.active_sheet);
+                    let row = self
+                        .participation_tree_rows()
+                        .remove(&(i, id))
+                        .and_then(|rows| {
+                            rows.into_iter().find(|r| {
+                                crate::drawing::participation::prefix(
+                                    r.leaf.occurrence,
+                                    &r.leaf.sub,
+                                ) == pre
+                            })
+                        });
+                    if let Some(r) = row {
+                        ui.label(RichText::new(&r.text).weak());
+                        if let Some(p) = super::drawing_participation::participation_menu(ui, r.own)
+                        {
+                            self.set_view_participation(i, id, r.leaf.occurrence, r.leaf.sub, p);
+                        }
+                    }
+                }
                 if ui.button("Break (BRK)").clicked() {
                     self.drw_apply(DrwCmd::Break);
                     ui.close();
@@ -2067,6 +2149,8 @@ impl CadCraftApp {
         self.dim_edit_window(ctx);
         self.hole_table_window(ctx);
         self.rev_windows(ctx);
+        self.mark_window(ctx);
+        self.overlay_window(ctx);
         if self.drw.chamfer_edit.is_some() {
             let views = self.shown_views(ctx);
             self.chamfer_window(ctx, &views);
@@ -2372,6 +2456,9 @@ impl CadCraftApp {
 
     /// The browser tree of the active drawing.
     pub(super) fn drawing_tree(&mut self, ui: &mut egui::Ui, name: &str) {
+        // Assembly section views list their components (spec 4.15).
+        let comp_rows = self.participation_tree_rows();
+        let mut part_action: Option<(usize, u32, crate::drawing::participation::Leaf, Sp)> = None;
         let Some(d) = self.drawing() else {
             return;
         };
@@ -2578,6 +2665,43 @@ impl CadCraftApp {
                                     });
                                 });
                             }
+                            // Its components and whether the section cuts
+                            // them (spec 4.15).
+                            if let Some(rows) = comp_rows.get(&(i, id)) {
+                                ui.horizontal(|ui| {
+                                    ui.add_space((depth + 1) as f32 * 14.0);
+                                    egui::CollapsingHeader::new(format!(
+                                        "Components ({})",
+                                        rows.len()
+                                    ))
+                                    .id_salt(("drw_sec_comps", i, id))
+                                    .default_open(false)
+                                    .show(ui, |ui| {
+                                        for r in rows {
+                                            let text = RichText::new(&r.text);
+                                            let text = if r.cut { text } else { text.italics() };
+                                            let resp = ui
+                                                .horizontal(|ui| {
+                                                    let icon =
+                                                        if r.cut { Icon::Part } else { Icon::Bolt };
+                                                    super::panels::tree_icon(ui, icon);
+                                                    ui.selectable_label(false, text).on_hover_text(&r.text)
+                                                })
+                                                .inner;
+                                            resp.context_menu(|ui| {
+                                                if let Some(p) =
+                                                    super::drawing_participation::participation_menu(
+                                                        ui, r.own,
+                                                    )
+                                                {
+                                                    part_action =
+                                                        Some((i, id, r.leaf.clone(), p));
+                                                }
+                                            });
+                                        }
+                                    });
+                                });
+                            }
                             // Its sketches (spec 4.12).
                             for k in &v.5 {
                                 let mut a = None;
@@ -2680,6 +2804,9 @@ impl CadCraftApp {
         if let Some((i, view)) = new_sketch {
             switch(self, i);
             self.new_drawing_sketch(view);
+        }
+        if let Some((i, id, leaf, p)) = part_action {
+            self.set_view_participation(i, id, leaf.occurrence, leaf.sub, p);
         }
         if let Some((i, (id, a))) = sk_action {
             // The sheet was drawn before the browser this frame: draw it again.
@@ -2855,12 +2982,14 @@ impl CadCraftApp {
             ViewKind::Auxiliary { .. } => "Auxiliary View".to_string(),
             ViewKind::Detail { .. } => "Detail View".to_string(),
             ViewKind::Draft => "Draft View".to_string(),
+            ViewKind::Overlay { .. } => "Overlay View".to_string(),
         };
         let model = d
             .model_of(sheet, v.id)
             .map_or_else(String::new, |m| self.model_name(m));
         let parent = v.parent();
         let flat = d.flat_of(sheet, v.id);
+        let part_src = d.model_of(sheet, v.id).map(|m| (m, d.reps_of(sheet, v.id)));
         let mut nv = v.clone();
         egui::Grid::new("drw_view_props")
             .num_columns(2)
@@ -3056,6 +3185,8 @@ impl CadCraftApp {
                 ui.add(ExprValue::new(&mut nv.position[1]).suffix(" mm"));
                 ui.end_row();
             });
+        self.representation_rows(ui, part_src.map(|(m, _)| m), &mut nv);
+        self.participation_rows(ui, part_src, &mut nv);
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             if ui.button("Edit View...").clicked() {
@@ -3190,6 +3321,10 @@ fn component_tab(
             row(ui, "Variant", &lists[2], &mut d.reps.variant);
             row(ui, "Design View", &lists[0], &mut d.reps.view);
             row(ui, "Position", &lists[1], &mut d.reps.position);
+            ui.add_enabled(false, egui::Checkbox::new(&mut true, "Associative"))
+                .on_disabled_hover_text(
+                    "The view always follows later changes of the design view (a snapshot is not kept yet)",
+                );
         })
         .response
         .on_disabled_hover_text(if d.projected {
@@ -3327,25 +3462,30 @@ fn display_tab(ui: &mut egui::Ui, d: &mut ViewDialog) {
                     .selected_text("Obey Browser")
                     .show_ui(ui, |_| {});
             });
-            ui.horizontal(|ui| {
-                ui.label("Section");
-                egui::ComboBox::from_id_salt("drw_std_section")
-                    .selected_text("Obey Browser")
-                    .show_ui(ui, |_| {});
-            });
         })
         .response
         .on_disabled_hover_text("Assemblies: planned (spec 4 §3.2)");
+        ui.horizontal(|ui| {
+            ui.label("Section");
+            egui::ComboBox::from_id_salt("drw_std_section")
+                .selected_text(d.display.standard_section.label())
+                .show_ui(ui, |ui| {
+                    for s in crate::drawing::participation::StandardSection::ALL {
+                        ui.selectable_value(&mut d.display.standard_section, s, s.label());
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Section views of assemblies: Obey Browser follows each component's Section Participation; Never / Always for library parts and generated shafts (spec 4.15)",
+                );
+        });
         planned_check(
             ui,
             "Cut Inheritance",
             "With section and break views (stage D2)",
         );
-        planned_check(
-            ui,
-            "Thread Feature",
-            "Cosmetic threads in views: planned (stage D3)",
-        );
+        ui.checkbox(&mut d.display.thread_feature, "Thread Feature")
+            .on_hover_text("Cosmetic threads in narrow lines: the other diameter along the thread, 3/4 of a circle seen end-on (ISO 6410)");
         let mut te = d.display.tangent_edges;
         ui.add_enabled(false, egui::Checkbox::new(&mut te, "Tangent Edges"))
             .on_disabled_hover_text("Tangent edges are always shown for now (stage D1 follow-up)");
@@ -3445,6 +3585,10 @@ impl CadCraftApp {
             _ => None,
         };
         let dim_before = dim.clone();
+        let mark = match &a.kind {
+            crate::drawing::AnnotationKind::Mark(m) => Some(m.clone()),
+            _ => None,
+        };
         egui::Grid::new("drw_ann_props")
             .num_columns(2)
             .min_col_width(label_w)
@@ -3474,6 +3618,10 @@ impl CadCraftApp {
                     dimension_rows(ui, d);
                 }
             });
+        if let Some(m) = mark {
+            ui.add_space(6.0);
+            self.mark_properties(ui, a.id, &m);
+        }
         if dim != dim_before
             && let Some(d) = dim
         {
@@ -3589,6 +3737,11 @@ fn annotation_kind_name(k: &crate::drawing::AnnotationKind) -> &'static str {
         crate::drawing::AnnotationKind::RevisionTag(_) => "Revision Tag",
         crate::drawing::AnnotationKind::RevisionCloud(_) => "Revision Cloud",
         crate::drawing::AnnotationKind::Symbol(_) => "Sketched Symbol",
+        crate::drawing::AnnotationKind::Mark(m) => match m.mark {
+            crate::drawing::gdt::Mark::SurfaceTexture(_) => "Surface Texture Symbol",
+            crate::drawing::gdt::Mark::ControlFrame(_) => "Feature Control Frame",
+            crate::drawing::gdt::Mark::Datum { .. } => "Datum Identifier Symbol",
+        },
         crate::drawing::AnnotationKind::Text { .. } => "Text",
     }
 }

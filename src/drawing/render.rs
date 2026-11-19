@@ -224,16 +224,48 @@ pub fn view_extras<'a>(
                 .iter()
                 .map(|lp| lp.iter().map(|q| pl.to_sheet(*q)).collect())
                 .collect();
-            let angles: &[f64] = if hs.double {
-                &[hs.angle, hs.angle + 90.0]
-            } else {
-                &[hs.angle]
-            };
-            for ang in angles {
-                for (a, b) in hatch(&loops, ang.to_radians(), hs.spacing) {
+            // Assembly sections: each component hatched on its own, every
+            // other one turned a quarter (spec 4.15 §5); a part: all loops
+            // as one (holes by parity).
+            let groups = hatch_groups(&loops, &l.section_owner);
+            let cover: Vec<Vec<[f64; 2]>> = l
+                .section_cover
+                .iter()
+                .map(|lp| lp.iter().map(|q| pl.to_sheet(*q)).collect())
+                .collect();
+            for (turn, group) in groups {
+                let base = hs.angle + if turn { 90.0 } else { 0.0 };
+                let angles: &[f64] = if hs.double {
+                    &[base, base + 90.0]
+                } else {
+                    &[base]
+                };
+                for ang in angles {
+                    let lines = uncovered(hatch(&group, ang.to_radians(), hs.spacing), &cover);
+                    for (a, b) in lines {
+                        out.push(Prim::Path {
+                            pts: vec![a, b],
+                            width: hatch_layer.weight,
+                            dashed: false,
+                        });
+                    }
+                }
+            }
+        }
+        // Thread Feature: the cosmetic threads in narrow lines (ISO 6410).
+        if v.display.thread_feature && !l.threads.is_empty() {
+            let narrow = st
+                .layers
+                .iter()
+                .find(|x| x.name.starts_with("Visible Narrow"))
+                .cloned()
+                .unwrap_or_else(|| st.layer(&st.defaults.visible_layer));
+            if let Some(p) = pen(&narrow) {
+                out.push(p);
+                for t in &l.threads {
                     out.push(Prim::Path {
-                        pts: vec![a, b],
-                        width: hatch_layer.weight,
+                        pts: t.iter().map(|q| pl.to_sheet(*q)).collect(),
+                        width: narrow.weight.min(0.35),
                         dashed: false,
                     });
                 }
@@ -552,6 +584,93 @@ fn section_line(
             angle: 0.0,
         });
     }
+}
+
+/// `segs` without their pieces inside any of `cover`'s loops (even-odd
+/// per loop).
+pub fn uncovered(
+    segs: Vec<([f64; 2], [f64; 2])>,
+    cover: &[Vec<[f64; 2]>],
+) -> Vec<([f64; 2], [f64; 2])> {
+    if cover.is_empty() {
+        return segs;
+    }
+    let boxes: Vec<([f64; 2], [f64; 2])> = cover
+        .iter()
+        .map(|l| {
+            l.iter()
+                .fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), q| {
+                    (
+                        [lo[0].min(q[0]), lo[1].min(q[1])],
+                        [hi[0].max(q[0]), hi[1].max(q[1])],
+                    )
+                })
+        })
+        .collect();
+    let inside = |q: [f64; 2]| {
+        cover.iter().zip(&boxes).any(|(l, (lo, hi))| {
+            q[0] >= lo[0]
+                && q[0] <= hi[0]
+                && q[1] >= lo[1]
+                && q[1] <= hi[1]
+                && super::hlr::inside_loop(l, q)
+        })
+    };
+    let mut out = Vec::with_capacity(segs.len());
+    for (a, b) in segs {
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let mut ts = vec![0.0, 1.0];
+        for (l, (lo, hi)) in cover.iter().zip(&boxes) {
+            if a[0].max(b[0]) < lo[0]
+                || a[0].min(b[0]) > hi[0]
+                || a[1].max(b[1]) < lo[1]
+                || a[1].min(b[1]) > hi[1]
+            {
+                continue;
+            }
+            for w in l.windows(2) {
+                let e = [w[1][0] - w[0][0], w[1][1] - w[0][1]];
+                let den = d[0] * e[1] - d[1] * e[0];
+                if den.abs() < 1e-15 {
+                    continue;
+                }
+                let f = [w[0][0] - a[0], w[0][1] - a[1]];
+                let t = (f[0] * e[1] - f[1] * e[0]) / den;
+                let s = (f[0] * d[1] - f[1] * d[0]) / den;
+                if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&s) {
+                    ts.push(t);
+                }
+            }
+        }
+        ts.sort_by(f64::total_cmp);
+        for w in ts.windows(2) {
+            if w[1] - w[0] < 1e-9 {
+                continue;
+            }
+            let at = |t: f64| [a[0] + d[0] * t, a[1] + d[1] * t];
+            if !inside(at((w[0] + w[1]) * 0.5)) {
+                out.push((at(w[0]), at(w[1])));
+            }
+        }
+    }
+    out
+}
+
+/// The cut faces grouped per component (`owners` parallel to `loops`), each
+/// with whether its hatch is turned a quarter (every other component); no
+/// owners: one group, not turned.
+pub fn hatch_groups(loops: &[Vec<[f64; 2]>], owners: &[u32]) -> Vec<(bool, Vec<Vec<[f64; 2]>>)> {
+    if owners.len() != loops.len() || owners.is_empty() {
+        return vec![(false, loops.to_vec())];
+    }
+    let mut by: std::collections::BTreeMap<u32, Vec<Vec<[f64; 2]>>> = Default::default();
+    for (lp, o) in loops.iter().zip(owners) {
+        by.entry(*o).or_default().push(lp.clone());
+    }
+    by.into_values()
+        .enumerate()
+        .map(|(k, g)| (k % 2 == 1, g))
+        .collect()
 }
 
 /// Hatch lines (sheet mm) filling the even-odd region of `loops` at

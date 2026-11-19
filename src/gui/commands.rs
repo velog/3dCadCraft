@@ -29,6 +29,7 @@ use super::camera::Projection;
 use super::demos::Demo;
 use super::documents::DocCmd;
 use super::drawing::DrwCmd;
+use super::drawing_gdt::MarkKind;
 use super::drawing_holetable::HtMode;
 use super::drawing_planned::Planned as Dp;
 use super::frame_analysis::FaCmd;
@@ -2714,10 +2715,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["DV"])
         .at(&[D_CREATE])
         .tip("Click the parent view, the circle's centre and size, then place the enlarged view"),
-    dp("drw.overlay", "Overlay View", "Изглед с наслагване", Icon::ProjectedView, Dp::Overlay)
+    d("drw.overlay", "Overlay View", "Изглед с наслагване", Icon::ProjectedView)
+        .run(Action::Drawing(DrwCmd::Overlay))
+        .spec("4-drawings.md")
         .alias(&["OV"])
         .at(&[D_CREATE])
-        .tip("Positional representations of an assembly in phantom lines"),
+        .tip("Click an assembly view, choose a positional representation: it is drawn over the view in phantom lines"),
     d("drw.draft_view", "Draft View", "Изглед-скица", Icon::DraftView)
         .run(Action::Drawing(DrwCmd::DraftView))
         .spec("4.12-drawing-sketches.md")
@@ -2814,18 +2817,24 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["CL"])
         .at(&[N_SYMBOLS])
         .tip("Click two circles of a view: a centreline through their centres"),
-    dp("drw.surface", "Surface Texture Symbol", "Грапавост", Icon::SurfaceSymbol, Dp::SurfaceTexture)
+    d("drw.surface", "Surface Texture Symbol", "Грапавост", Icon::SurfaceSymbol)
+        .run(Action::Drawing(DrwCmd::Mark(MarkKind::Surface)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["ST"])
         .at(&[N_SYMBOLS])
-        .tip("A surface texture symbol"),
-    dp("drw.datum", "Datum Identifier Symbol", "База", Icon::Datum, Dp::DatumIdentifier)
+        .tip("Click an edge (the symbol on it, or a leader to it) or the sheet; the type and the requirements in the window"),
+    d("drw.datum", "Datum Identifier Symbol", "База", Icon::Datum)
+        .run(Action::Drawing(DrwCmd::Mark(MarkKind::Datum)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["DI"])
         .at(&[N_SYMBOLS])
-        .tip("A datum identifier symbol"),
-    dp("drw.fcf", "Feature Control Frame", "Рамка на допуск", Icon::ControlFrame, Dp::ControlFrame)
+        .tip("Click the datum feature's edge, then where the letter goes"),
+    d("drw.fcf", "Feature Control Frame", "Рамка на допуск", Icon::ControlFrame)
+        .run(Action::Drawing(DrwCmd::Mark(MarkKind::Frame)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["FCF"])
         .at(&[N_SYMBOLS])
-        .tip("A GD&T feature control frame"),
+        .tip("Click an edge for the leader, then where the frame goes; characteristic, tolerance and datums in the window"),
     d("drw.parts_list", "Parts List", "Спецификация", Icon::PartsList)
         .run(Action::Drawing(DrwCmd::PartsList))
         .spec("4.4-parts-list.md")

@@ -3481,6 +3481,31 @@ impl CadCraftApp {
             self.toggle_flag(ids, "Enabled", |o| &mut o.enabled);
             ui.close();
         }
+        // Section views in drawings (spec 4.15): over the part's own.
+        let now = self
+            .assembly()
+            .and_then(|a| a.find(*ids.first()?))
+            .map(|o| o.section)
+            .unwrap_or_default();
+        ui.menu_button("Section Participation", |ui| {
+            use crate::document::iprops::SectionParticipation as Sp;
+            for p in Sp::ALL {
+                if ui.selectable_label(now == p, p.label()).clicked() {
+                    self.edit_assembly("Section Participation", |a| {
+                        for &i in ids {
+                            if let Some(o) = a.find_mut(i) {
+                                o.section = p;
+                            }
+                        }
+                    });
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text(
+            "Whether drawing section views cut this component: Default follows the part (library parts and shafts are not cut)",
+        );
         // Inventor's browser: into a new subassembly, into a folder.
         if ui
             .button("Demote")

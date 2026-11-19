@@ -275,6 +275,13 @@ pub struct Occurrence {
     /// stands where the subassembly put it).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub flex: Vec<FlexPlace>,
+    /// Section participation of this occurrence over its part's (spec
+    /// 4.15); a subassembly's reaches the parts inside.
+    #[serde(
+        default,
+        skip_serializing_if = "iprops::SectionParticipation::is_default"
+    )]
+    pub section: iprops::SectionParticipation,
 }
 
 /// Where one component of a flexible subassembly stands inside an
@@ -371,6 +378,7 @@ impl Occurrence {
             adaptive: false,
             flexible: false,
             flex: Vec::new(),
+            section: Default::default(),
         }
     }
 

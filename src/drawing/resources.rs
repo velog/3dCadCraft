@@ -1533,7 +1533,7 @@ mod tests {
         s.leader = vec![[20.0, 20.0]];
         let kind = AnnotationKind::Symbol(s.clone());
         assert!(d.add_annotation(kind.clone()).is_some());
-        let tables = Tables::build(&d, 0, &|_, _, _| None);
+        let tables = Tables::build(&d, 0, &|_, _, _, _| None);
         let look = d.styles.look();
         let shown = annot::resolve_in(&kind, &|_| None, &look, &tables);
         let Ok(shown) = shown else {

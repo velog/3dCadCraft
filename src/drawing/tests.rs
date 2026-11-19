@@ -1748,7 +1748,7 @@ fn assembly_parts_list_and_balloons() {
         file_name: project.document(r.document).unwrap().name.clone(),
         ..Default::default()
     };
-    let rows = |_: DocRef, k: super::parts::BomKind, merge: bool| {
+    let rows = |_: DocRef, _: ViewReps, k: super::parts::BomKind, merge: bool| {
         Some(bom::rows(&asm, k.view(), merge, &info))
     };
     let texts = |prims: &[Prim]| -> Vec<String> {
@@ -3617,4 +3617,346 @@ fn silhouettes_of_a_revolved_part_take_dimensions() {
     // A silhouette that is gone: an orphan, not a panic.
     let gone = dim(DimKind::Horizontal, &format!("{shaft}:SilU"), &sl);
     assert!(resolve(&gone, &view).is_err());
+}
+
+/// Section participation (spec 4.15): a pin through a plate's hole is cut
+/// in one section view and left whole in another of the same drawing, by
+/// that view's own override; the cut faces are hatched per component.
+#[test]
+fn a_pin_is_cut_in_one_section_and_whole_in_another() {
+    use super::participation::{self as dp, Leaf, StandardSection};
+    use crate::document::iprops::SectionParticipation as Sp;
+    use crate::kernel::Transform3;
+    // Plate 60 × 40 × 10 with a Ø10 hole at the origin; a Ø10 pin 20 long
+    // standing in it from z = -5.
+    let plate = Arc::new(part_model(&plate_with_hole()));
+    let pin = Arc::new(part_model(&primitive(
+        PrimitiveKind::Cylinder,
+        Point2::new(0.0, 0.0),
+        Point2::new(5.0, 0.0),
+        20.0,
+    )));
+    let instances = vec![
+        hlr::Instance {
+            id: 1,
+            sub: Vec::new(),
+            transform: Transform3::identity(),
+            model: plate,
+        },
+        hlr::Instance {
+            id: 2,
+            sub: Vec::new(),
+            transform: Transform3::translation(0.0, 0.0, -5.0),
+            model: pin,
+        },
+    ];
+    let vm = hlr::assembly_model(&instances, hlr::Simplify::default());
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let s1 = d
+        .add_section_view(b, [-40.0, 0.0], [40.0, 0.0], [150.0, 60.0])
+        .unwrap();
+    let s2 = d
+        .add_section_view(b, [-40.0, 0.0], [40.0, 0.0], [150.0, 260.0])
+        .unwrap();
+    if let Some(v) = d.sheet_mut().and_then(|sh| sh.view_mut(s2)) {
+        dp::set_override(&mut v.participation, 2, &[], Sp::None);
+    }
+    let leaves = [
+        Leaf {
+            occurrence: 1,
+            occurrences: vec![Sp::Default],
+            ..Default::default()
+        },
+        Leaf {
+            occurrence: 2,
+            occurrences: vec![Sp::Default],
+            ..Default::default()
+        },
+    ];
+    let sheet = d.sheet().unwrap().clone();
+    let lines_of = |id: u32| {
+        let LinesJob::Model {
+            frame, mut aligned, ..
+        } = d.lines_job(&sheet, id).unwrap()
+        else {
+            panic!("a model job");
+        };
+        let v = sheet.view(id).unwrap();
+        if let Some(a) = aligned.as_mut() {
+            a.uncut = dp::uncut(&v.participation, v.display.standard_section, &leaves);
+        }
+        hlr::view_lines_with(&vm, &frame, aligned.as_deref())
+    };
+    let cut = lines_of(s1);
+    let whole = lines_of(s2);
+    let sum = |l: &hlr::ViewLines| l.section.iter().map(|lp| area(lp)).sum::<f64>();
+    // Plate (60 − 10) × 10 + pin 10 × 20.
+    close(sum(&cut), 500.0 + 200.0, 2.0, "both cut");
+    close(sum(&whole), 500.0, 2.0, "the pin left whole");
+    // One hatch group per component, the second turned.
+    let groups = super::render::hatch_groups(&cut.section, &cut.section_owner);
+    assert_eq!(groups.len(), 2, "plate and pin hatched apart");
+    assert!(groups[0].0 != groups[1].0, "alternating directions");
+    assert_eq!(
+        super::render::hatch_groups(&whole.section, &whole.section_owner).len(),
+        1
+    );
+    // The whole pin keeps its outline on the viewer's side: its edges run
+    // up to y = ±5 (in front of the cut too).
+    let pin_lines = |l: &hlr::ViewLines| {
+        l.visible
+            .iter()
+            .zip(&l.visible_src)
+            .filter(|(_, s)| {
+                s.and_then(|k| l.edges.get(k as usize))
+                    .and_then(|e| e.name.as_deref())
+                    .is_some_and(|n| n.starts_with("o2/"))
+            })
+            .count()
+    };
+    assert!(pin_lines(&whole) > 0, "the whole pin is drawn");
+    // Where the plane meets the whole pin no hatching is drawn: its section
+    // is a cover over the plate's cut face.
+    assert!(cut.section_cover.is_empty());
+    close(
+        whole.section_cover.iter().map(|lp| area(lp)).sum::<f64>(),
+        200.0,
+        2.0,
+        "the pin's cover",
+    );
+    let square = vec![
+        [0.0, 0.0],
+        [10.0, 0.0],
+        [10.0, 10.0],
+        [0.0, 10.0],
+        [0.0, 0.0],
+    ];
+    let kept = super::render::uncovered(vec![([-5.0, 5.0], [15.0, 5.0])], &[square]);
+    assert_eq!(kept.len(), 2, "the hatch line cut out under the cover");
+    close(kept[0].1[0], 0.0, 1e-9, "stops at the cover");
+    close(kept[1].0[0], 10.0, 1e-9, "starts after it");
+    // Standard parts: Always cuts a library pin that the view leaves alone.
+    let std_leaves = [
+        leaves[0].clone(),
+        Leaf {
+            standard: true,
+            ..leaves[1].clone()
+        },
+    ];
+    assert_eq!(
+        dp::uncut(&[], StandardSection::ObeyBrowser, &std_leaves),
+        vec!["o2/"]
+    );
+    assert!(dp::uncut(&[], StandardSection::Always, &std_leaves).is_empty());
+    // A break out through the middle of the front view leaves the pin whole
+    // unless it cuts every part (Section All Parts).
+    let front = ViewOrientation::Front.frame();
+    let square = vec![[-50.0, -20.0], [50.0, -20.0], [50.0, 30.0], [-50.0, 30.0]];
+    let cut_at = front.depth(&crate::kernel::Point3::origin());
+    let out_area = |every: bool| {
+        let a = hlr::Aligned {
+            parent: front,
+            line: [0.0, 0.0],
+            cut: None,
+            poly: Vec::new(),
+            unfold: false,
+            depth: None,
+            outs: vec![hlr::OutCut::new(vec![square.clone()], cut_at).every_part(every)],
+            uncut: vec!["o2/".into()],
+        };
+        let l = hlr::view_lines_with(&vm, &front, Some(&a));
+        l.section.iter().map(|lp| area(lp)).sum::<f64>()
+    };
+    close(out_area(false), 500.0, 2.0, "break out: the pin left whole");
+    close(
+        out_area(true),
+        700.0,
+        2.0,
+        "Section All Parts: the pin cut too",
+    );
+    // Saved with the drawing; Default removes the entry.
+    let json = serde_json::to_string(&d).unwrap();
+    let back: DrawingDocument = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        back.sheet().unwrap().view(s2).unwrap().participation.len(),
+        1
+    );
+    assert!(
+        !json.contains("standard_section"),
+        "the default is not written"
+    );
+}
+
+/// Thread Feature (ISO 6410): a thread across the view gives two lines at
+/// its other diameter (a shaft's on its front surface), one seen end-on
+/// three quarters of a circle on its nearer end, an inclined one nothing.
+#[test]
+fn cosmetic_thread_lines() {
+    use crate::kernel::{Point3, Vector3};
+    let th = hlr::ThreadMark {
+        start: Point3::new(0.0, 0.0, 0.0),
+        axis: Vector3::new(0.0, 0.0, 1.0),
+        radius: 3.3,
+        face_radius: 4.0,
+        length: 12.0,
+        internal: false,
+        owner: String::new(),
+    };
+    let front = ViewOrientation::Front.frame();
+    let side = th.curves(&front);
+    assert_eq!(side.len(), 2);
+    for c in &side {
+        let q = front.project(&c[0]);
+        close(q[0].abs(), 3.3, 1e-9, "minor radius across");
+        // On the shaft's front surface: √(4² − 3.3²) towards the viewer.
+        close(
+            front.depth(&c[0]),
+            (16.0f64 - 3.3 * 3.3).sqrt(),
+            1e-9,
+            "lifted",
+        );
+        close((c[1] - c[0]).norm(), 12.0, 1e-9, "the thread's length");
+    }
+    let top = ViewOrientation::Top.frame();
+    let end = th.curves(&top);
+    assert_eq!(end.len(), 1);
+    let arc = &end[0];
+    // Three quarters of the circle, open in the upper right quadrant.
+    let len: f64 = arc.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+    close(len, 1.5 * std::f64::consts::PI * 3.3, 0.02, "3/4 circle");
+    assert!(arc.iter().all(|p| {
+        let q = top.project(p);
+        !(q[0] > 0.1 && q[1] > 0.1)
+    }));
+    // On the end nearer the viewer.
+    assert!(arc.iter().all(
+        |p| (top.depth(p) - top.depth(&Point3::new(0.0, 0.0, 12.0))).abs() < 1e-9
+            || (top.depth(p) - top.depth(&Point3::new(0.0, 0.0, 0.0))).abs() < 1e-9
+    ));
+    // Inclined towards the viewer: nothing (a thread lying in the view
+    // plane at an angle still gives its two lines).
+    let tilted = hlr::ThreadMark {
+        axis: (Vector3::new(0.0, 1.0, 1.0)).normalize(),
+        ..th.clone()
+    };
+    assert!(tilted.curves(&front).is_empty());
+    let slanted = hlr::ThreadMark {
+        axis: Vector3::new(1.0, 0.0, 1.0).normalize(),
+        ..th
+    };
+    assert_eq!(slanted.curves(&front).len(), 2);
+}
+
+/// Overlay View: over its parent in the same frame and place, its own
+/// positional representation over the parent's representations, dashed,
+/// following the parent when it moves, saved.
+#[test]
+fn overlay_view_follows_its_parent() {
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    if let Some(v) = d.sheet_mut().and_then(|s| s.view_mut(b)) {
+        v.reps = ViewReps {
+            view: Some(4),
+            position: None,
+            variant: Some(2),
+        };
+    }
+    let o = d.add_overlay_view(b, 7, None).unwrap();
+    let s = d.sheet().unwrap().clone();
+    assert_eq!(d.frame_of(&s, o), d.frame_of(&s, b));
+    assert_eq!(
+        d.reps_of(&s, o),
+        ViewReps {
+            view: Some(4),
+            position: Some(7),
+            variant: Some(2),
+        },
+        "the parent's variant and design view, its own position"
+    );
+    assert_eq!(
+        d.effective(&s, o).map(|e| e.1),
+        Some(ViewStyle::HiddenShown)
+    );
+    assert!(!s.view(o).unwrap().label_visible);
+    // A design view of its own.
+    if let Some(ViewKind::Overlay { design, .. }) = d
+        .sheet_mut()
+        .and_then(|s| s.view_mut(o))
+        .map(|v| &mut v.kind)
+    {
+        *design = Some(9);
+    }
+    let s = d.sheet().unwrap().clone();
+    assert_eq!(d.reps_of(&s, o).view, Some(9));
+    // It moves with its parent and cannot be moved off it.
+    d.move_view(b, [200.0, 120.0]);
+    assert_eq!(d.sheet().unwrap().view(o).unwrap().position, [200.0, 120.0]);
+    d.move_view(o, [10.0, 10.0]);
+    assert_eq!(d.sheet().unwrap().view(o).unwrap().position, [200.0, 120.0]);
+    let json = serde_json::to_string(&d).unwrap();
+    let back: DrawingDocument = serde_json::from_str(&json).unwrap();
+    assert!(matches!(
+        back.sheet().unwrap().view(o).unwrap().kind,
+        ViewKind::Overlay { parent, position: 7, design: Some(9) } if parent == b
+    ));
+}
+
+/// Parts lists read the BOM of their view's representations: a view in
+/// another variant gets rows of its own.
+#[test]
+fn parts_list_rows_follow_the_view_variant() {
+    use super::parts::{BomKind, PartsList, Tables};
+    let mut d = DrawingDocument::default();
+    let m = model();
+    let a = d
+        .add_base_view(
+            m,
+            ViewOrientation::Front,
+            [100.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let b = d
+        .add_base_view(
+            m,
+            ViewOrientation::Top,
+            [300.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    if let Some(v) = d.sheet_mut().and_then(|s| s.view_mut(b)) {
+        v.reps.variant = Some(3);
+    }
+    d.add_annotation(AnnotationKind::PartsList(PartsList::new(a, [10.0, 10.0])));
+    d.add_annotation(AnnotationKind::PartsList(PartsList::new(b, [10.0, 60.0])));
+    let asked = std::cell::RefCell::new(Vec::new());
+    let rows = |_: DocRef, r: ViewReps, _: BomKind, _: bool| {
+        asked.borrow_mut().push(r.variant);
+        Some(Vec::new())
+    };
+    let t = Tables::build(&d, 0, &rows);
+    let mut seen = asked.borrow().clone();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen, [None, Some(3)], "one BOM per variant");
+    assert_ne!(t.view_model[&a], t.view_model[&b]);
 }

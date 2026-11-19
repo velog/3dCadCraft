@@ -48,7 +48,6 @@ use Row::{Button, Check, Combo, Head, Note, Num, Radio, Sel, Text};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Planned {
     // Place Views
-    Overlay,
     Slice,
     Crop,
     AlignHorizontal,
@@ -61,12 +60,9 @@ pub enum Planned {
     PunchNote,
     // Symbols
     SketchedSymbols,
-    SurfaceTexture,
     Welding,
     Caterpillar,
     EndFill,
-    ControlFrame,
-    DatumIdentifier,
     FeatureIdentifier,
     DatumTargetLeader,
     DatumTargetCircle,
@@ -102,8 +98,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 32] = [
-        Self::Overlay,
+    pub const ALL: [Planned; 28] = [
         Self::Slice,
         Self::Crop,
         Self::AlignHorizontal,
@@ -113,12 +108,9 @@ impl Planned {
         Self::Retrieve,
         Self::PunchNote,
         Self::SketchedSymbols,
-        Self::SurfaceTexture,
         Self::Welding,
         Self::Caterpillar,
         Self::EndFill,
-        Self::ControlFrame,
-        Self::DatumIdentifier,
         Self::FeatureIdentifier,
         Self::DatumTargetLeader,
         Self::DatumTargetCircle,
@@ -140,7 +132,6 @@ impl Planned {
     /// The dialog's title (Inventor's command name).
     pub fn title(self) -> &'static str {
         match self {
-            Self::Overlay => "Overlay View",
             Self::Slice => "Slice",
             Self::Crop => "Crop",
             Self::AlignHorizontal => "Horizontally Align View",
@@ -150,12 +141,9 @@ impl Planned {
             Self::Retrieve => "Retrieve Model Annotations",
             Self::PunchNote => "Punch Notes",
             Self::SketchedSymbols => "Symbols",
-            Self::SurfaceTexture => "Surface Texture",
             Self::Welding => "Welding Symbol",
             Self::Caterpillar => "Caterpillar",
             Self::EndFill => "End Fill",
-            Self::ControlFrame => "Feature Control Frame",
-            Self::DatumIdentifier => "Datum Identifier Symbol",
             Self::FeatureIdentifier => "Feature Identifier Symbol",
             Self::DatumTargetLeader => "Datum Target - Leader",
             Self::DatumTargetCircle => "Datum Target - Circle",
@@ -178,29 +166,6 @@ impl Planned {
     /// The dialog's tabs and options.
     pub fn pages(self) -> &'static [Page] {
         match self {
-            Self::Overlay => &[Page(
-                "Overlay",
-                &[
-                    Sel(
-                        "parent",
-                        "Parent View",
-                        "select the parent view of an assembly",
-                    ),
-                    Combo("Positional Representation", &["Master"], 0),
-                    Combo("Design View Representation", &["Default"], 0),
-                    Text("View Identifier", "VIEW"),
-                    Check("Toggle Label Visibility", false),
-                    Radio(
-                        "Style",
-                        &["Hidden Line", "Hidden Line Removed", "Shaded"],
-                        1,
-                    ),
-                    Combo("Layer", &["Phantom (ISO)"], 0),
-                    Note(
-                        "Each positional representation is drawn over the parent in phantom lines",
-                    ),
-                ],
-            )],
             Self::Slice => &[Page(
                 "Slice",
                 &[
@@ -301,40 +266,6 @@ impl Planned {
                     Note(
                         "Symbols are sketches in Drawing Resources > Sketched Symbols (spec 4.13 §3.4)",
                     ),
-                ],
-            )],
-            Self::SurfaceTexture => &[Page(
-                "Surface Texture",
-                &[
-                    Sel(
-                        "surface",
-                        "Surface",
-                        "click an edge (with a leader) or the sheet",
-                    ),
-                    Head("Surface Type"),
-                    Radio(
-                        "Type",
-                        &[
-                            "Basic",
-                            "Material removal required",
-                            "Material removal prohibited",
-                        ],
-                        0,
-                    ),
-                    Head("Options"),
-                    Check("Force tail", false),
-                    Check("All-round", false),
-                    Check("Place as majority symbol", false),
-                    Head("Requirements"),
-                    Text("A (roughness value)", "Ra 3.2"),
-                    Text("A'", ""),
-                    Text("B (production method)", ""),
-                    Text("C (sampling length)", ""),
-                    Combo("D (lay)", &["", "=", "⊥", "X", "M", "C", "R", "P"], 0),
-                    Text("E (machining allowance)", ""),
-                    Head("Preset"),
-                    Combo("Preset", &["(none)"], 0),
-                    Button("Create Preset"),
                 ],
             )],
             Self::Welding => &[
@@ -458,69 +389,6 @@ impl Planned {
                     Num("Size", 5.0, " mm"),
                     Combo("Fill", &["Solid", "Hatch"], 0),
                     Combo("Shape", &["Fillet", "Groove"], 0),
-                ],
-            )],
-            Self::ControlFrame => &[Page(
-                "Feature Control Frame",
-                &[
-                    Sel(
-                        "leader",
-                        "Leader",
-                        "click the edge (leader start), then where the frame goes",
-                    ),
-                    Text("Note (top)", ""),
-                    Head("Row 1"),
-                    Combo(
-                        "Sym",
-                        &[
-                            "",
-                            "⏤ Straightness",
-                            "⏥ Flatness",
-                            "○ Circularity",
-                            "⌭ Cylindricity",
-                            "⌒ Profile of a line",
-                            "⌓ Profile of a surface",
-                            "∠ Angularity",
-                            "⟂ Perpendicularity",
-                            "∥ Parallelism",
-                            "⌖ Position",
-                            "◎ Concentricity",
-                            "⌯ Symmetry",
-                            "↗ Circular runout",
-                            "⌰ Total runout",
-                        ],
-                        0,
-                    ),
-                    Text("Tolerance 1", ""),
-                    Text("Tolerance 2 (ANSI)", ""),
-                    Text("Datum 1", ""),
-                    Text("Datum 2", ""),
-                    Text("Datum 3", ""),
-                    Head("Row 2"),
-                    Combo(
-                        "Sym ",
-                        &["", "⌖ Position", "⟂ Perpendicularity", "∥ Parallelism"],
-                        0,
-                    ),
-                    Text("Tolerance", ""),
-                    Text("Datums", ""),
-                    Head("Notes"),
-                    Text("Notes", ""),
-                    Text("Datum Identifier", ""),
-                    Radio("Profile", &["None", "All Around", "All Over"], 0),
-                    Button("Insert Modifier: Ⓜ Ⓛ Ⓟ Ⓕ Ⓣ Ⓤ"),
-                ],
-            )],
-            Self::DatumIdentifier => &[Page(
-                "Datum Identifier",
-                &[
-                    Sel(
-                        "leader",
-                        "Leader",
-                        "click the edge, then where the symbol goes",
-                    ),
-                    Text("Datum", "A"),
-                    Combo("Style", &["Datum Identifier (ISO)"], 0),
                 ],
             )],
             Self::FeatureIdentifier => &[Page(
@@ -739,9 +607,6 @@ impl Planned {
     /// What the command does (Inventor's behaviour, our words).
     pub fn about(self) -> &'static str {
         match self {
-            Self::Overlay => {
-                "Positional representations of an assembly drawn over a view in phantom lines"
-            }
             Self::Slice => "A zero-depth section of a view along a sketch line",
             Self::Crop => "Clips a view to a rectangle or a closed sketch",
             Self::AlignHorizontal | Self::AlignVertical | Self::AlignInPosition => {
@@ -753,12 +618,9 @@ impl Planned {
             }
             Self::PunchNote => "A note of a punch in a flat pattern view",
             Self::SketchedSymbols => "Places a sketched symbol from Drawing Resources",
-            Self::SurfaceTexture => "A surface texture (roughness) symbol, ISO 1302 / 21920",
             Self::Welding => "A welding symbol (ISO 2553): arrow and other side, flags, tail",
             Self::Caterpillar => "Weld beads drawn along edges",
             Self::EndFill => "The filled end section of a weld bead",
-            Self::ControlFrame => "A GD&T feature control frame (ISO 1101)",
-            Self::DatumIdentifier => "A datum letter on an edge or surface",
             Self::FeatureIdentifier => "A feature identifier symbol",
             Self::DatumTargetLeader
             | Self::DatumTargetCircle

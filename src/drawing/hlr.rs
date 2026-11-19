@@ -32,6 +32,18 @@ pub struct ViewLines {
     pub edges: Vec<ViewEdge>,
     /// Section views: the cut faces' outlines (closed loops), hatched.
     pub section: Vec<Vec<[f64; 2]>>,
+    /// The component of each cut face (assembly views: neighbours are
+    /// hatched in alternating directions, spec 4.15); empty: all one.
+    pub section_owner: Vec<u32>,
+    /// Thread Feature (ISO 6410): the visible narrow lines of cosmetic
+    /// threads (the other diameter along the thread, three quarters of a
+    /// circle seen end-on).
+    pub threads: Vec<Vec<[f64; 2]>>,
+    /// Section views of assemblies: where the cutting plane meets the
+    /// components left whole (closed loops). They stand in front of the cut
+    /// faces, so no hatching is drawn there (a bolt in a tapped hole covers
+    /// the thread's material, ISO 6410).
+    pub section_cover: Vec<Vec<[f64; 2]>>,
     /// The view-plane point placed at the view's position when it is not
     /// the extent's middle (section and auxiliary views stay aligned with
     /// their parent; detail views centre on their fence).
@@ -164,6 +176,89 @@ pub struct ViewModel {
     pub smooth: Option<Vec<SmoothEdge>>,
     /// The curved faces the smooth edges lie on ([`SmoothEdge::face`]).
     pub faces: Vec<SilFace>,
+    /// Assembly views: the instance prefix of each mesh (`o<id>/`,
+    /// [`super::participation::prefix`]); empty for a part.
+    pub mesh_owner: Vec<String>,
+    /// Cosmetic threads (Thread Feature).
+    pub threads: Vec<ThreadMark>,
+}
+
+/// A cosmetic thread as a view draws it (ISO 6410).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadMark {
+    /// Start on the axis.
+    pub start: Point3,
+    /// Unit axis along the thread.
+    pub axis: Vector3,
+    /// The thread's other diameter's radius (a hole: major; a shaft: minor).
+    pub radius: f64,
+    /// The threaded face's radius.
+    pub face_radius: f64,
+    /// Length along the axis.
+    pub length: f64,
+    /// A hole's thread.
+    pub internal: bool,
+    /// The component's instance prefix (assembly views; empty for a part).
+    pub owner: String,
+}
+
+impl ThreadMark {
+    fn moved(&self, t: &Transform3, owner: String) -> Self {
+        Self {
+            start: t * self.start,
+            axis: t * self.axis,
+            owner,
+            ..self.clone()
+        }
+    }
+
+    /// Its lines seen in `frame` (3D, on the thread's surface where the
+    /// convention draws them visible): two along a thread lying across the
+    /// view, three quarters of a circle on the nearer end of one seen
+    /// end-on; nothing when inclined.
+    pub fn curves(&self, frame: &ViewFrame) -> Vec<Vec<Point3>> {
+        let t = frame.toward;
+        let along = self.axis.dot(&t);
+        let end = self.start + self.axis * self.length;
+        if along.abs() > 1.0 - 1e-6 {
+            // The end nearer the viewer.
+            let e = if frame.depth(&end) > frame.depth(&self.start) {
+                end
+            } else {
+                self.start
+            };
+            // Open in the upper right quadrant.
+            let pts = (0..=48)
+                .map(|k| {
+                    let a = std::f64::consts::FRAC_PI_2
+                        + 1.5 * std::f64::consts::PI * f64::from(k) / 48.0;
+                    e + (frame.right * a.cos() + frame.up * a.sin()) * self.radius
+                })
+                .collect();
+            return vec![pts];
+        }
+        if along.abs() > 1e-3 {
+            return Vec::new();
+        }
+        let n = self.axis.cross(&t).normalize();
+        // A shaft's minor lines are drawn on its front surface (inside the
+        // material they would be hidden); a hole's lie inside, seen in
+        // sections.
+        let lift = if self.internal {
+            Vector3::zeros()
+        } else {
+            t * (self.face_radius.powi(2) - self.radius.powi(2))
+                .max(0.0)
+                .sqrt()
+        };
+        [1.0, -1.0]
+            .iter()
+            .map(|s| {
+                let o = n * (s * self.radius) + lift;
+                vec![self.start + o, end + o]
+            })
+            .collect()
+    }
 }
 
 /// A curved face silhouettes can lie on: its persistent name (silhouettes
@@ -310,7 +405,13 @@ pub fn assembly_model(instances: &[Instance], simplify: Simplify) -> ViewModel {
             moved.faces.positions = mesh.faces.positions.iter().map(|q| t * *q).collect();
             moved.faces.triangles = mesh.faces.triangles.clone();
             out.meshes.push(moved);
+            out.mesh_owner.push(instance_edge(inst, ""));
         }
+        out.threads.extend(
+            m.threads
+                .iter()
+                .map(|th| th.moved(t, instance_edge(inst, ""))),
+        );
         let base = out.faces.len() as u32;
         out.faces.extend(m.faces.iter().map(|f| SilFace {
             name: f.name.as_ref().map(|n| instance_edge(inst, n)),
@@ -625,6 +726,20 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
     }
     out.faces = kept;
     out.smooth = Some(smooth);
+    out.threads = part
+        .cosmetic_threads
+        .iter()
+        .filter(|c| c.length > 1e-9 && c.radius > 1e-9)
+        .map(|c| ThreadMark {
+            start: c.start,
+            axis: c.axis.normalize(),
+            radius: c.radius,
+            face_radius: c.face_radius,
+            length: c.length,
+            internal: c.internal,
+            owner: String::new(),
+        })
+        .collect();
     out
 }
 
@@ -764,6 +879,9 @@ pub struct Aligned {
     /// Break outs of the view (spec 4.11), in this view's plane. A view
     /// with only break outs has no parent line (`line` zero, no anchor).
     pub outs: Vec<OutCut>,
+    /// Section views of assemblies: the instance prefixes of the
+    /// components left whole (spec 4.15, sorted).
+    pub uncut: Vec<String>,
 }
 
 /// The visible and hidden lines of `model` seen in `frame`.
@@ -800,6 +918,7 @@ pub fn view_lines_simplified(
             unfold: false,
             depth: a.depth,
             outs: a.outs.clone(),
+            uncut: a.uncut.clone(),
         };
         return view_lines_simplified(&unfolded, frame, Some(&straight), simplify);
     }
@@ -859,9 +978,38 @@ pub fn view_lines_simplified(
     let outs: &[OutCut] = aligned.map_or(&[], |a| a.outs.as_slice());
     let out_cells: Vec<Vec<Cell>> = outs.iter().map(OutCut::cells).collect();
     let mut out_cross: Vec<Vec<([f64; 2], [f64; 2])>> = vec![Vec::new(); outs.len()];
-    // The kept parts of a curve (model edges, silhouettes).
-    let clip_curve = |pts: &[Point3]| -> Vec<Vec<Point3>> {
+    // Components a section leaves whole (spec 4.15): their meshes, edges
+    // and silhouettes are not clipped by the cut and give no cut faces.
+    let uncut: std::collections::HashSet<&str> = aligned
+        .map(|a| a.uncut.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    let whole_name = |n: Option<&str>| {
+        !uncut.is_empty()
+            && n.and_then(super::participation::prefix_of)
+                .is_some_and(|p| uncut.contains(p))
+    };
+    // Each mesh's component (cut faces are chained and hatched per one).
+    let mut owner_index: HashMap<&str, u32> = HashMap::new();
+    let mesh_owner: Vec<u32> = model
+        .mesh_owner
+        .iter()
+        .map(|o| {
+            let n = owner_index.len() as u32;
+            *owner_index.entry(o.as_str()).or_insert(n)
+        })
+        .collect();
+    let mesh_whole = |i: usize| {
+        !uncut.is_empty()
+            && model
+                .mesh_owner
+                .get(i)
+                .is_some_and(|p| uncut.contains(p.as_str()))
+    };
+    // The kept parts of a curve (model edges, silhouettes); `whole`: of a
+    // component the section does not cut.
+    let clip_curve = |pts: &[Point3], whole: bool| -> Vec<Vec<Point3>> {
         let mut kept = match &cells {
+            _ if whole => vec![pts.to_vec()],
             Some((c, pf)) => clip_curve_cells(pts, c, pf),
             None => clip_polyline(pts, &side),
         };
@@ -874,7 +1022,7 @@ pub fn view_lines_simplified(
         if !outs.is_empty() {
             kept = kept
                 .iter()
-                .flat_map(|k| clip_outs(k, outs, frame))
+                .flat_map(|k| clip_outs(k, outs, frame, whole))
                 .collect();
         }
         kept
@@ -888,6 +1036,10 @@ pub fn view_lines_simplified(
     // clips them to the kept side and collects where they cross the plane.
     let mut tris = Vec::new();
     let mut crossings: Vec<([f64; 2], [f64; 2])> = Vec::new();
+    // The component of each crossing and of each offset-section chord.
+    let mut crossing_owner: Vec<u32> = Vec::new();
+    let mut chord_owner: Vec<u32> = Vec::new();
+    let mut cover_cross: Vec<([f64; 2], [f64; 2])> = Vec::new();
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
     // No cut of any kind: mesh by mesh on every core, in the same order (a tenth of a view of
     // 20 000 components).
@@ -925,12 +1077,21 @@ pub fn view_lines_simplified(
             tris.extend(part);
         }
     }
-    for m in meshes.iter().filter(|_| !plain) {
+    for (mi, m) in meshes.iter().enumerate().filter(|_| !plain) {
         let pos = &m.faces.positions;
+        let whole = mesh_whole(mi);
+        let owner = mesh_owner.get(mi).copied().unwrap_or(0);
         for tri in &m.faces.triangles {
             let [a, b, c] = tri.map(|i| pos[i as usize]);
             let nrm = (b - a).cross(&(c - a));
-            let polys: Vec<Vec<Point3>> = if let Some((cs, pf)) = &cells {
+            let polys: Vec<Vec<Point3>> = if whole {
+                if cut.is_some()
+                    && let (_, Some((x, y))) = clip_polygon(&[a, b, c], &side)
+                {
+                    cover_cross.push((p2(&x), p2(&y)));
+                }
+                vec![vec![a, b, c]]
+            } else if let Some((cs, pf)) = &cells {
                 let mut pieces = vec![vec![a, b, c]];
                 for cell in cs {
                     let mut next = Vec::new();
@@ -942,11 +1103,13 @@ pub fn view_lines_simplified(
                         break;
                     }
                 }
+                chord_owner.resize(chords3.len(), owner);
                 pieces
             } else if cut.is_some() {
                 let (kept, cross) = clip_polygon(&[a, b, c], &side);
                 if let Some((x, y)) = cross {
                     crossings.push((p2(&x), p2(&y)));
+                    crossing_owner.push(owner);
                 }
                 vec![kept]
             } else {
@@ -970,7 +1133,7 @@ pub fn view_lines_simplified(
             let polys = if outs.is_empty() {
                 polys
             } else {
-                cut_outs(polys, outs, &out_cells, frame, &mut out_cross)
+                cut_outs(polys, outs, &out_cells, frame, &mut out_cross, whole)
             };
             if nrm.dot(&t) <= 1e-12 * nrm.norm().max(1e-30) {
                 continue;
@@ -998,7 +1161,7 @@ pub fn view_lines_simplified(
     let mut chord_depth: std::collections::HashMap<(i64, i64), f64> = Default::default();
     let qk = (diag * 1e-7).max(1e-9);
     let key = |p: [f64; 2]| ((p[0] / qk).round() as i64, (p[1] / qk).round() as i64);
-    for (x, y) in &chords3 {
+    for (k, (x, y)) in chords3.iter().enumerate() {
         let (px, py) = (p2(x), p2(y));
         if (px[0] - py[0]).hypot(px[1] - py[1]) < 1e-12 {
             continue; // a jog's cut face, seen edge-on
@@ -1006,16 +1169,31 @@ pub fn view_lines_simplified(
         chord_depth.insert(key(px), dp(x));
         chord_depth.insert(key(py), dp(y));
         crossings.push((px, py));
+        crossing_owner.push(chord_owner.get(k).copied().unwrap_or(0));
     }
     lap("tris");
     let grid = (!tris.is_empty()).then(|| Grid::new(tris, lo, hi));
     lap("grid");
-    // The cut faces: the crossings chained into loops.
-    let section = chain_loops(&crossings, diag * 1e-7);
-    let closed: Vec<&Vec<[f64; 2]>> = section
-        .iter()
-        .filter(|l| l.len() > 3 && l.first() == l.last())
+    // The cut faces: the crossings chained into loops, component by
+    // component (touching neighbours never share a loop).
+    type Segs = Vec<([f64; 2], [f64; 2])>;
+    let mut by_owner: std::collections::BTreeMap<u32, Segs> = Default::default();
+    for (k, seg) in crossings.iter().enumerate() {
+        let o = crossing_owner.get(k).copied().unwrap_or(0);
+        by_owner.entry(o).or_default().push(*seg);
+    }
+    let mut section: Vec<Vec<[f64; 2]>> = Vec::new();
+    let mut section_owner: Vec<u32> = Vec::new();
+    for (o, segs) in &by_owner {
+        for l in chain_loops(segs, diag * 1e-7) {
+            section.push(l);
+            section_owner.push(*o);
+        }
+    }
+    let closed_at: Vec<usize> = (0..section.len())
+        .filter(|&i| section[i].len() > 3 && section[i].first() == section[i].last())
         .collect();
+    let closed: Vec<&Vec<[f64; 2]>> = closed_at.iter().map(|&i| &section[i]).collect();
     // The depth of each cut face (offset sections: the farthest of its
     // planes).
     let loop_depth: Vec<f64> = closed
@@ -1102,7 +1280,7 @@ pub fn view_lines_simplified(
         if short(&e.pts) {
             continue;
         }
-        for part in clip_curve(&e.pts) {
+        for part in clip_curve(&e.pts, whole_name(e.name.as_deref())) {
             curves.push((part, Some(k as u32)));
         }
     }
@@ -1117,11 +1295,23 @@ pub fn view_lines_simplified(
             sil_edges.push(e.clone());
             (model.edges.len() + sil_edges.len() - 1) as u32
         });
-        for part in clip_curve(&s.pts) {
+        let whole = whole_name(s.edge.as_ref().and_then(|e| e.name.as_deref()));
+        for part in clip_curve(&s.pts, whole) {
             curves.push((part, src));
         }
     }
     let silhouette_curves = silhouettes_from..curves.len();
+    // Cosmetic threads: classified like edges, kept apart (narrow lines).
+    let threads_from = curves.len();
+    for th in &model.threads {
+        let whole = !uncut.is_empty() && uncut.contains(th.owner.as_str());
+        for c in th.curves(frame) {
+            for part in clip_curve(&c, whole) {
+                curves.push((part, None));
+            }
+        }
+    }
+    let thread_curves = threads_from..curves.len();
     if let Some(c) = cut_depth {
         let lift =
             |q: &[f64; 2]| Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * c);
@@ -1229,6 +1419,10 @@ pub fn view_lines_simplified(
     let mut seen = SegGrid::new(cell);
     let mut drop = vec![Vec::new(); pieces.len()];
     for (k, list) in pieces.iter().enumerate() {
+        if thread_curves.contains(&k) {
+            drop[k] = vec![false; list.len()];
+            continue;
+        }
         for p in list {
             let dup = !p.hidden && seen.covers(p, tol);
             drop[k].push(dup);
@@ -1239,6 +1433,9 @@ pub fn view_lines_simplified(
     }
     let mut seen_hidden = SegGrid::new(cell);
     for (k, list) in pieces.iter().enumerate() {
+        if thread_curves.contains(&k) {
+            continue;
+        }
         for (i, p) in list.iter().enumerate() {
             if p.hidden {
                 let gone = seen.covers(p, tol) || seen_hidden.covers(p, tol);
@@ -1254,6 +1451,31 @@ pub fn view_lines_simplified(
     let (mut olo, mut ohi) = ([f64::MAX; 2], [f64::MIN; 2]);
     for (k, (list, gone)) in pieces.iter().zip(&drop).enumerate() {
         let src = curves[k].1;
+        if thread_curves.contains(&k) {
+            // Visible runs only (a hidden thread is not drawn).
+            let mut run: Vec<[f64; 2]> = Vec::new();
+            for p in list {
+                let joined = run
+                    .last()
+                    .is_some_and(|l| (l[0] - p.a[0]).hypot(l[1] - p.a[1]) < 1e-12);
+                if p.hidden || !joined {
+                    if run.len() >= 2 {
+                        out.threads.push(std::mem::take(&mut run));
+                    }
+                    run.clear();
+                }
+                if !p.hidden {
+                    if run.is_empty() {
+                        run.push(p.a);
+                    }
+                    run.push(p.b);
+                }
+            }
+            if run.len() >= 2 {
+                out.threads.push(run);
+            }
+            continue;
+        }
         let mut run: Vec<[f64; 2]> = Vec::new();
         let mut run_hidden = false;
         for (p, &covered) in list.iter().zip(gone) {
@@ -1317,8 +1539,18 @@ pub fn view_lines_simplified(
             e
         }));
     out.section = closed.into_iter().cloned().collect();
+    out.section_cover = chain_loops(&cover_cross, diag * 1e-7)
+        .into_iter()
+        .filter(|l| l.len() > 3 && l.first() == l.last())
+        .collect();
+    if !model.mesh_owner.is_empty() {
+        out.section_owner = closed_at.iter().map(|&i| section_owner[i]).collect();
+    }
     // Break outs: the cut faces hatched, the profiles drawn.
     for (_, caps, _, _) in out_caps {
+        if !out.section_owner.is_empty() {
+            out.section_owner.extend(std::iter::repeat_n(0, caps.len()));
+        }
         out.section.extend(caps);
     }
     for o in outs {
@@ -1419,6 +1651,9 @@ pub struct OutCut {
     /// The profile's box: lower left, upper right.
     lo: [f64; 2],
     hi: [f64; 2],
+    /// Section All Parts: it cuts the components a section leaves whole
+    /// too ([`Aligned::uncut`], spec 4.15).
+    pub every_part: bool,
 }
 
 /// The box of view-plane points: lower left, upper right.
@@ -1437,6 +1672,13 @@ fn boxes_meet(a: ([f64; 2], [f64; 2]), b: ([f64; 2], [f64; 2])) -> bool {
 }
 
 impl OutCut {
+    /// The same break out cutting every component (Section All Parts) or
+    /// not.
+    pub fn every_part(mut self, on: bool) -> Self {
+        self.every_part = on;
+        self
+    }
+
     /// A break out of `loops` (each closed or not; holes are loops inside
     /// others) cut at `depth`.
     pub fn new(loops: Vec<Vec<[f64; 2]>>, depth: f64) -> Self {
@@ -1490,6 +1732,7 @@ impl OutCut {
             tris,
             lo,
             hi,
+            every_part: false,
         }
     }
 
@@ -1626,7 +1869,12 @@ fn seg_cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> Option<f64> 
 }
 
 /// The parts of a 3D curve outside every break out's removed region.
-fn clip_outs(pts: &[Point3], outs: &[OutCut], frame: &ViewFrame) -> Vec<Vec<Point3>> {
+fn clip_outs(pts: &[Point3], outs: &[OutCut], frame: &ViewFrame, whole: bool) -> Vec<Vec<Point3>> {
+    // A component left whole is cut only by break outs that cut every part.
+    let outs: Vec<&OutCut> = outs.iter().filter(|o| !whole || o.every_part).collect();
+    if outs.is_empty() {
+        return vec![pts.to_vec()];
+    }
     let removed = |q: &Point3| {
         let v = frame.project(q);
         outs.iter()
@@ -1639,7 +1887,7 @@ fn clip_outs(pts: &[Point3], outs: &[OutCut], frame: &ViewFrame) -> Vec<Vec<Poin
         let (va, vb) = (frame.project(&a), frame.project(&b));
         let mut ts = vec![0.0, 1.0];
         let seg_box = box_of([&va, &vb]);
-        for o in outs {
+        for o in &outs {
             let (fa, fb) = (o.front(&a, frame), o.front(&b, frame));
             if fa * fb < 0.0 {
                 ts.push(fa / (fa - fb));
@@ -1693,10 +1941,14 @@ fn cut_outs(
     cells: &[Vec<Cell>],
     frame: &ViewFrame,
     cross: &mut [Vec<([f64; 2], [f64; 2])>],
+    whole: bool,
 ) -> Vec<Vec<Point3>> {
     let mut cur = polys;
     let mut scratch = Vec::new();
     for (i, o) in outs.iter().enumerate() {
+        if whole && !o.every_part {
+            continue;
+        }
         let mut next = Vec::new();
         for p in cur.into_iter().filter(|p| p.len() >= 3) {
             let (back, c) = clip_polygon(&p, &|q: &Point3| o.front(q, frame));
@@ -2243,6 +2495,8 @@ fn unfold_model(model: &ViewModel, parent: &ViewFrame, poly: &[[f64; 2]]) -> (Vi
                     cone: None,
                 })
                 .collect(),
+            mesh_owner: model.mesh_owner.clone(),
+            threads: model.threads.clone(),
         },
         Point3::from(f.right * start[0] + f.up * start[1]),
     )
@@ -2557,7 +2811,11 @@ pub fn clip_fence(lines: &ViewLines, fence: &Fence) -> ViewLines {
     };
     let (visible, visible_src) = clip(&lines.visible, &lines.visible_src);
     let (hidden, hidden_src) = clip(&lines.hidden, &lines.hidden_src);
-    let (section, _) = clip(&lines.section, &[]);
+    let owners: Vec<Option<u32>> = lines.section_owner.iter().map(|o| Some(*o)).collect();
+    let (section, section_src) = clip(&lines.section, &owners);
+    let closed: Vec<usize> = (0..section.len())
+        .filter(|&i| section[i].first() == section[i].last())
+        .collect();
     // A straight line's part inside the fence (its longest piece).
     let inside = |seg: [[f64; 2]; 2]| -> Option<[[f64; 2]; 2]> {
         let len = |s: &[[f64; 2]; 2]| (s[1][0] - s[0][0]).hypot(s[1][1] - s[0][1]);
@@ -2591,10 +2849,17 @@ pub fn clip_fence(lines: &ViewLines, fence: &Fence) -> ViewLines {
         hidden,
         hidden_src,
         edges: lines.edges.clone(),
-        section: section
-            .into_iter()
-            .filter(|l| l.first() == l.last())
-            .collect(),
+        section_owner: if lines.section_owner.is_empty() {
+            Vec::new()
+        } else {
+            closed
+                .iter()
+                .map(|&i| section_src.get(i).copied().flatten().unwrap_or(0))
+                .collect()
+        },
+        section: closed.iter().map(|&i| section[i].clone()).collect(),
+        threads: clip(&lines.threads, &[]).0,
+        section_cover: lines.section_cover.clone(),
         min: [c[0] - half[0] * reach, c[1] - half[1] * reach],
         max: [c[0] + half[0] * reach, c[1] + half[1] * reach],
         anchor: None,

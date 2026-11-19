@@ -178,6 +178,51 @@ pub struct IProperties {
     /// How the document counts in a BOM.
     #[serde(default, skip_serializing_if = "is_normal")]
     pub bom_structure: BomStructure,
+    /// Whether section views cut this part (spec 4.15; Inventor's
+    /// *Participate in Assembly and Drawing sections*).
+    #[serde(default, skip_serializing_if = "SectionParticipation::is_default")]
+    pub section: SectionParticipation,
+}
+
+/// Whether a section view cuts a component (spec 4.15). Default leaves the
+/// choice to the next setting down (assembly occurrence → part → category).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SectionParticipation {
+    /// Not set here.
+    #[default]
+    Default,
+    /// Cut by section views.
+    Section,
+    /// Drawn whole in section views.
+    None,
+}
+
+impl SectionParticipation {
+    /// Not set (skipped in files).
+    pub fn is_default(&self) -> bool {
+        *self == Self::Default
+    }
+
+    /// `Some(cut)` when set.
+    pub fn cut(self) -> Option<bool> {
+        match self {
+            Self::Default => None,
+            Self::Section => Some(true),
+            Self::None => Some(false),
+        }
+    }
+
+    /// The three choices, as menus list them.
+    pub const ALL: [Self; 3] = [Self::Section, Self::None, Self::Default];
+
+    /// Its name in menus.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::Section => "Section",
+            Self::None => "None",
+        }
+    }
 }
 
 fn is_normal(b: &BomStructure) -> bool {
@@ -195,6 +240,7 @@ impl IProperties {
             && is_default_state(&self.design_state)
             && self.custom.is_empty()
             && is_normal(&self.bom_structure)
+            && self.section.is_default()
     }
 
     /// The properties of a new document: Author and Designer = the login

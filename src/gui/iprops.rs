@@ -160,6 +160,23 @@ impl CadCraftApp {
                                     }
                                 });
                         });
+                        // Inventor: Participate in Assembly and Drawing
+                        // sections (spec 4.15).
+                        ui.horizontal(|ui| {
+                            use crate::document::iprops::SectionParticipation as Sp;
+                            super::panels::plabel(ui, "Section Participation");
+                            egui::ComboBox::from_id_salt("section_participation")
+                                .selected_text(edited.section.label())
+                                .show_ui(ui, |ui| {
+                                    for s in Sp::ALL {
+                                        ui.selectable_value(&mut edited.section, s, s.label());
+                                    }
+                                })
+                                .response
+                                .on_hover_text(
+                                    "Whether drawing section views cut this part; Default: library parts and generated shafts are not cut",
+                                );
+                        });
                     }
                     4 => custom_tab(ui, &mut edited, &mut w),
                     _ => {
