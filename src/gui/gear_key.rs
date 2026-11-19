@@ -920,7 +920,8 @@ impl super::CadCraftApp {
         // turns with the shaft.
         let hub_ref = d.refs.get("hub").and_then(|v| v.first()).cloned();
         if let Some(h) = hub_ref {
-            match self.groove_hub(&mut trial, h.occurrence(), shaft_occ, &k, place)? {
+            let hub_radius = self.axis_placement(d, "hub", "", false)?.1;
+            match self.groove_hub(&mut trial, h.occurrence(), shaft_occ, &k, place, hub_radius)? {
                 Some(note) => notes.push(note),
                 None => {
                     if let Some(DocumentData::Part(p)) = trial
@@ -963,13 +964,22 @@ impl super::CadCraftApp {
         shaft: Option<u32>,
         k: &key::KeySize,
         key_place: Transform3,
+        hub_radius: Option<f64>,
     ) -> Result<Option<&'static str>, String> {
         let asm_id = self.part_id;
         let doc = part_doc_of(trial, asm_id, hub)?;
         let Some(old) = element_in(trial, doc).filter(|e| e.command == GEAR_ID) else {
-            return Ok(Some(
-                "only gears made by Spur Gears get their hub groove yet; cut it in the hub",
-            ));
+            // Any other hub: the groove cut into its part through all, on a
+            // UCS at the key's place in the hub's coordinates.
+            let a = asm_copy(trial, asm_id)?;
+            let t = a.find(hub).ok_or("the hub is gone")?.transform;
+            let r = hub_radius.ok_or("pick the hub's bore (a cylindrical face)")?;
+            let at = t.inverse() * key_place;
+            let Some(DocumentData::Part(p)) = trial.document_mut(doc).map(|x| &mut x.data) else {
+                return Err("the hub is not a part".into());
+            };
+            gear_parts::cut_hub_groove(p, &at, r, k.b, k.t2)?;
+            return Ok(None);
         };
         let bore = old.extra.get("bore").copied().unwrap_or(0.0);
         if bore <= 0.0 {

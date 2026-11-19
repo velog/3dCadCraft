@@ -15,7 +15,7 @@ fn current_id(generator: &str) -> egui::Id {
 
 /// The entry `e` as hover / pane text.
 fn entry_ui(ui: &mut egui::Ui, e: &Entry, formula: Option<&Formula>, numbers: Option<&str>) {
-    ui.set_max_width(380.0);
+    ui.set_max_width(ui.available_width().min(380.0));
     let mut head = super::i18n::tr(e.id).into_owned();
     if !e.symbol.is_empty() || !e.unit.is_empty() {
         head.push_str(&format!(
@@ -161,6 +161,8 @@ pub(super) fn pane(ui: &mut egui::Ui, generator: &str) {
         .id_salt(("explain_pane", generator))
         .default_open(false)
         .show(ui, |ui| {
+            // The Properties panel does not widen: keep every line inside it.
+            super::bolted::fit_cell(ui);
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             let cur: Option<(String, bool)> = ui.ctx().data(|d| d.get_temp(current_id(generator)));
             match cur.as_ref().and_then(|(id, res)| {

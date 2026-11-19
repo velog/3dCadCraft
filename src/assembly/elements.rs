@@ -102,8 +102,17 @@ pub fn value(project: &Project, asm: &AssemblyDocument, c: &Constraint) -> Optio
         relation::for_kind(c.kind, &c.a, a),
         relation::for_kind(c.kind, &c.b, b),
     );
-    if relation::is_axis_mate(c.kind, &a, &b) {
-        return relation::measure(c, &a.as_frame(), &b.as_frame());
+    if relation::is_axis_mate(c.kind, &a, &b) || c.kind.is_joint() {
+        // Frames made in the part's own coordinates, then moved (as the solver
+        // does): a frame made from the moved axis would lose the part's turn.
+        let frame = |r: &GeomRef| -> Option<Geom> {
+            let g = relation::for_kind(c.kind, r, local(project, asm, r).ok()?).as_frame();
+            Some(match r.occurrence() {
+                ASSEMBLY => g,
+                o => g.moved(&asm.find(o)?.transform),
+            })
+        };
+        return relation::measure(c, &frame(&c.a)?, &frame(&c.b)?);
     }
     relation::measure(c, &a, &b)
 }
@@ -157,6 +166,10 @@ pub fn seat(
 ) -> Result<Seated, String> {
     let ax = hold(project, asm, origin(occ, OriginItem::ZAxis), axis)?;
     let st = hold(project, asm, origin(occ, OriginItem::XyPlane), start)?;
+    // Held by its relationships: it turns about its axis.
+    if let Some(o) = asm.find_mut(occ) {
+        o.grounded = false;
+    }
     Ok(Seated {
         axis: ax,
         start: st,
@@ -176,9 +189,10 @@ pub fn ucs_seat(
     let Some(DocumentData::Part(p)) = project.document_mut(doc).map(|d| &mut d.data) else {
         return Err("the assembly's features part is missing".into());
     };
-    let id = p
-        .add_work(WorkFeature::new(def))
-        .map_err(|e| e.to_string())?;
+    let mut w = WorkFeature::new(def);
+    // A seat, not something to look at (the browser still lists it).
+    w.visible = false;
+    let id = p.add_work(w).map_err(|e| e.to_string())?;
     p.regenerate().map_err(|e| e.to_string())?;
     let w = |s: &str| GeomRef::Work {
         occurrence: occ,
@@ -283,6 +297,11 @@ pub fn move_ucs(
     };
     f.def = def;
     p.regenerate().map_err(|e| e.to_string())
+}
+
+/// A UCS work feature's definition placing it at `at`.
+pub fn ucs_def_of(at: &Transform3) -> WorkDef {
+    ucs_def(at)
 }
 
 fn ucs_def(at: &Transform3) -> WorkDef {
@@ -459,7 +478,7 @@ mod tests {
             ..GearPair::default()
         };
         let g = pair.geometry().unwrap();
-        let mut p = Project::default();
+        let mut p = Project::new("Test");
         let a = p.add_document("Gears", DocumentData::Assembly(AssemblyDocument::default()));
         let mut occ = [0u32; 2];
         let places = [
@@ -489,6 +508,23 @@ mod tests {
         assert!((l.ratio + 18.0 / 30.0).abs() < 1e-12, "{}", l.ratio);
         solve_apply(&mut p, a);
         let before = [angle(&p, a, occ[0]), angle(&p, a, occ[1])];
+        // Following the link where the gears stand moves nothing (the offset
+        // keeps them meshing).
+        {
+            let asm = asm_of(&p, a);
+            let v = value(&p, asm, asm.constraint(mates[0]).unwrap()).unwrap();
+            let w = value(&p, asm, asm.constraint(mates[1]).unwrap()).unwrap();
+            assert!(
+                (l.driven_value(v) - w).abs() < 1e-9,
+                "{} vs {w}",
+                l.driven_value(v)
+            );
+        }
+        assert!(
+            (before[1] - (PI / 30.0 - PI)).abs() < 1e-6,
+            "gear 2 at {}",
+            before[1]
+        );
         let c2 = asm_of(&p, a).find(occ[1]).unwrap().transform * crate::kernel::Point3::origin();
         assert!((c2.x - g.center_distance).abs() < 1e-6 && c2.y.abs() < 1e-6);
         // Gear 1 turns by θ: its Mate's value held there.
@@ -525,7 +561,7 @@ mod tests {
     /// moves (three plane relationships, measured where they stood).
     #[test]
     fn a_key_follows_its_shaft() {
-        let mut p = Project::default();
+        let mut p = Project::new("Test");
         let a = p.add_document("Asm", DocumentData::Assembly(AssemblyDocument::default()));
         let shaft = crate::part::PartDocument::with_box("Box1", [10.0, 10.0, 60.0]).unwrap();
         let key = crate::part::PartDocument::with_box("Box1", [4.0, 6.0, 20.0]).unwrap();

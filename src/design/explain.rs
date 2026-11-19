@@ -248,7 +248,7 @@ pub const INPUTS: &[Entry] = &[
         "Reduced stress",
         "σred",
         "MPa",
-        "How bending and torsional stress are combined into one: HMH (distortion energy, von Mises) or Tresca–Guest (maximum shear).",
+        "How bending and torsional stress are combined into one; HMH (distortion energy, von Mises) or Tresca–Guest (maximum shear).",
         "HMH for ductile steels (recommended); Tresca is about 15 % more conservative.",
         "—",
         "—"
@@ -258,7 +258,7 @@ pub const INPUTS: &[Entry] = &[
         "Surface factor ka (Fig. 3)",
         "ka",
         "",
-        "Reduces the fatigue limit for the surface finish: rough surfaces start cracks earlier. Read it from RP-1123 Fig. 3 for the finish and σu.",
+        "Reduces the fatigue limit for the surface finish; rough surfaces start cracks earlier. Read it from RP-1123 Fig. 3 for the finish and σu.",
         "Ground 0.85–0.9; machined or cold drawn 0.7–0.8; hot rolled 0.5–0.7; as forged 0.35–0.55 (lower for stronger steels).",
         "Too low: conservative.",
         "Too high: fatigue strength overstated, typical for an unground high-strength shaft."
@@ -308,7 +308,7 @@ pub const INPUTS: &[Entry] = &[
         "Notch sensitivity q (Fig. 5)",
         "q",
         "",
-        "How much of Kt the material feels: 0 none, 1 all of it. Read it from RP-1123 Fig. 5 for the notch radius and the steel.",
+        "How much of Kt the material feels; 0 none, 1 all of it. Read it from RP-1123 Fig. 5 for the notch radius and the steel.",
         "Steels with a notch radius of 1–3 mm 0.7–0.95, higher for stronger steels; 1.0 when unsure.",
         "Too low: the notch is underrated.",
         "Too high: conservative."
@@ -389,7 +389,7 @@ pub const INPUTS: &[Entry] = &[
         "Design Guide",
         "",
         "",
-        "Which value follows from the others: Center Distance from module and teeth, or the unit corrections from a given centre distance.",
+        "Which value follows from the others; Center Distance from module and teeth, or the unit corrections from a given centre distance.",
         "Center Distance for a new pair; Total Unit Correction when the shafts' distance is fixed.",
         "—",
         "—"
@@ -419,7 +419,7 @@ pub const INPUTS: &[Entry] = &[
         "Module",
         "m",
         "mm",
-        "The tooth size: the pitch diameter is m·z, the tooth height about 2.25·m.",
+        "The tooth size; the pitch diameter is m·z, the tooth height about 2.25·m.",
         "Preferred series (ISO 54): 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20. Choose it from the bending stress: double the module, roughly a quarter the stress.",
         "Too small: the teeth break in bending.",
         "Too large: big, heavy gears and fewer teeth (less smooth)."
@@ -449,7 +449,7 @@ pub const INPUTS: &[Entry] = &[
         "Gear 1",
         "",
         "",
-        "What is made for the first gear: Component (a part placed in the assembly), Feature or No Model.",
+        "What is made for the first gear; Component (a part placed in the assembly), Feature or No Model.",
         "Component.",
         "—",
         "—"
@@ -489,7 +489,7 @@ pub const INPUTS: &[Entry] = &[
         "Unit Correction 1",
         "x1",
         "",
-        "Profile shift of gear 1 in modules: the rack is moved out (+) or in (−) while generating the teeth.",
+        "Profile shift of gear 1 in modules; the rack is moved out (+) or in (−) while generating the teeth.",
         "0 for standard gears; +0.3 … +0.6 against undercut on small pinions; x1 + x2 sets the centre distance.",
         "Too negative: undercut, thin roots.",
         "Too positive: pointed tips (check the tip thickness)."
@@ -609,7 +609,7 @@ pub const INPUTS: &[Entry] = &[
         "Life Factor (material)",
         "",
         "",
-        "Scales the NASA surface life for the material: 1 for the vacuum-melted AISI 9310 steel of the NASA tests.",
+        "Scales the NASA surface life for the material; 1 for the vacuum-melted AISI 9310 steel of the NASA tests.",
         "1 for premium carburised steels; lower (0.2–0.5) for ordinary air-melted steels.",
         "—",
         "Too high: pitting earlier than predicted."
@@ -741,7 +741,7 @@ pub const INPUTS: &[Entry] = &[
         "Category",
         "",
         "",
-        "Which bearings the library lists: radial ball, radial roller or thrust bearings.",
+        "Which bearings the library lists; radial ball, radial roller or thrust bearings.",
         "Ball bearings for moderate loads and high speeds; roller bearings for heavy radial loads; thrust bearings for axial loads only.",
         "—",
         "—"
@@ -761,7 +761,7 @@ pub const INPUTS: &[Entry] = &[
         "Radial Load (N)",
         "Fr",
         "N",
-        "The radial load on the bearing: the shaft's support reaction there.",
+        "The radial load on the bearing; the shaft's support reaction there.",
         "Take it from the Shaft Generator's Support Reaction.",
         "—",
         "—"
@@ -892,7 +892,7 @@ pub const INPUTS: &[Entry] = &[
         "Ends",
         "",
         "",
-        "How the ends are made: closed and ground, closed, or open. Closed ends add one inactive coil each.",
+        "How the ends are made; closed and ground, closed, or open. Closed ends add one inactive coil each.",
         "Closed and ground for an even seat (most compression springs).",
         "—",
         "—"
