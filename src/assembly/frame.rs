@@ -4996,9 +4996,10 @@ mod tests {
         new.material = Some("Aluminium 6061-T6".into());
         change_keeping(&mut p, &lk, aid, &[a, b], &new, &base, lib).unwrap();
         let d = asm(&p, aid);
-        let mb = d.frames[0]
-            .members
+        let mb = d
+            .frames
             .iter()
+            .flat_map(|f| &f.members)
             .find(|m| m.occurrence == b)
             .unwrap();
         assert_eq!(mb.size, "50x50x4");
@@ -5013,13 +5014,14 @@ mod tests {
         new.orientation.h_offset = 5.0;
         change_keeping(&mut p, &lk, aid, &[a, b], &new, &base, lib).unwrap();
         let d = asm(&p, aid);
-        for m in &d.frames[0].members {
+        for m in d.frames.iter().flat_map(|f| &f.members) {
             assert_eq!(m.size, "30x30x3");
             assert!((m.orientation.h_offset - 5.0).abs() < 1e-12);
         }
-        let mb = d.frames[0]
-            .members
+        let mb = d
+            .frames
             .iter()
+            .flat_map(|f| &f.members)
             .find(|m| m.occurrence == b)
             .unwrap();
         assert!((mb.orientation.angle - 0.5).abs() < 1e-12);
