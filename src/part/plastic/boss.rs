@@ -321,6 +321,10 @@ impl BossOp {
     }
 }
 
+/// How much wider a post tangent to a wall is made so that it joins the wall: on Ø6 the two then
+/// share a strip 0.15 mm wide.
+const TOUCHING: Real = 1e-3;
+
 /// How far a tool goes on into a wall `thick` deep.
 fn embed(thick: Real) -> Real {
     (thick / 2.0).clamp(1e-3, 2.0)
@@ -436,9 +440,10 @@ fn one(
     d: Vector3,
     (x, y): (Vector3, Vector3),
     prefix: &str,
+    grow: Real,
 ) -> Result<Tools, Fail> {
     let user = |m: &str| Fail::User(m.to_owned());
-    let r0 = op.outer_radius();
+    let r0 = op.outer_radius() + grow;
     let tan_o = op.outer_draft.tan();
     // The wall under the axis, and how deep it lies round the outside.
     let (enter, exit) = rays
@@ -534,16 +539,38 @@ pub(in crate::part) fn boss(
     let d = op.direction(&rays, &pts, n).map_err(Fail::User)?;
     // Angles count in the sketch, seen from its normal, whichever way the boss runs.
     let frame = (x, n.cross(&x));
-    let (mut posts, mut ribs, mut cut) = (Vec::new(), Vec::new(), Vec::new());
-    for (k, p) in pts.iter().enumerate() {
-        let start = *p - d * op.offset;
-        let t = one(op, &rays, start, d, frame, &format!("{id}:{}", k + 1))?;
-        posts.push(t.post);
-        ribs.push(t.ribs);
-        cut.extend(t.cut);
-    }
+    let tools = |grow: Real| -> Result<_, Fail> {
+        let (mut posts, mut ribs, mut cut) = (Vec::new(), Vec::new(), Vec::new());
+        for (k, p) in pts.iter().enumerate() {
+            let start = *p - d * op.offset;
+            let t = one(op, &rays, start, d, frame, &format!("{id}:{}", k + 1), grow)?;
+            posts.push(t.post);
+            ribs.push(t.ribs);
+            cut.extend(t.cut);
+        }
+        Ok((posts, ribs, cut))
+    };
+    let join = |posts| combine(cur.to_vec(), posts, Operation::Join, &op.solids, false);
+    let (posts, mut ribs, mut cut) = tools(0.0)?;
+    let first = join(posts);
+    let whole = |s: &[ExactSolid]| {
+        exact::to_brep_with(s, true).is_ok_and(|b| crate::part::invalid_solid(&b).is_none())
+    };
+    // A post exactly tangent to a wall touches it along a line, which no solid can hold.
+    let mut out = match first {
+        Ok(o) if whole(&o) => o,
+        first => {
+            let (posts, r, c) = tools(TOUCHING)?;
+            match join(posts) {
+                Ok(o) if whole(&o) => {
+                    (ribs, cut) = (r, c);
+                    o
+                }
+                _ => first?,
+            }
+        }
+    };
     let own = format!("{id}:");
-    let mut out = combine(cur.to_vec(), posts, Operation::Join, &op.solids, false)?;
     // The kernel cannot carry a round through the corners where ribs meet the post and the body,
     // so the post's foot is rounded while it stands alone and the ribs come after it.
     if op.fillet > 0.0 {

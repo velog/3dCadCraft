@@ -400,9 +400,32 @@ pub fn edge_convex(body: &BRep, e: EdgeId) -> Option<bool> {
     let [f1, f2] = fs[..] else {
         return None;
     };
-    let p = polyline_middle(&body.sample_edge(e, &opts).ok()?)?;
+    let pts = body.sample_edge(e, &opts).ok()?;
+    let p = polyline_middle(&pts)?;
     let m1 = body.face_mesh(f1, &opts).ok()?;
     let m2 = body.face_mesh(f2, &opts).ok()?;
+    // Tangent faces: the side test below sees a flat face leave a curved one by the chord of its
+    // triangles and called the seam of a rounded corner sharp, so read the normals on the edge
+    // itself (its ends are vertices of both meshes).
+    let normal_at = |m: &crate::kernel::TriangleMesh, q: Point3| {
+        (0..m.positions.len())
+            .min_by(|&a, &b| {
+                (m.positions[a] - q)
+                    .norm()
+                    .total_cmp(&(m.positions[b] - q).norm())
+            })
+            .and_then(|k| m.normals.get(k).copied())
+    };
+    let tangent_at = |q: Point3| match (normal_at(&m1, q), normal_at(&m2, q)) {
+        (Some(a), Some(b)) => a.dot(&b).abs() > 1.0 - 1e-5,
+        _ => false,
+    };
+    if let (Some(&a), Some(&b)) = (pts.first(), pts.last())
+        && tangent_at(a)
+        && tangent_at(b)
+    {
+        return None;
+    }
     let k = (0..m1.positions.len()).min_by(|&a, &b| {
         (m1.positions[a] - p)
             .norm()
