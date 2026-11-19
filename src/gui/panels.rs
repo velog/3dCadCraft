@@ -5742,6 +5742,28 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     "Features are initially adaptive",
                 )
                 .on_hover_text("Features made while a part is edited in place are adaptive");
+                ui.label(RichText::new("File Naming Defaults: Frame Generator").strong());
+                ui.horizontal(|ui| {
+                    ui.label("Frame member");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.frame_member_naming)
+                            .desired_width(220.0),
+                    )
+                    .on_hover_text(
+                        "The file name of a new frame member; {#} is the next free number",
+                    );
+                    ui.menu_button("+", |ui| {
+                        for t in crate::assembly::frame::NAMING_TOKENS {
+                            if ui.button(*t).clicked() {
+                                self.frame_member_naming.push_str(t);
+                                ui.close();
+                            }
+                        }
+                    });
+                    if ui.button("Default").clicked() {
+                        self.frame_member_naming = crate::assembly::frame::DEFAULT_NAMING.into();
+                    }
+                });
                 }
                 if tab == "Display" {
                 ui.label(RichText::new("Display").strong());

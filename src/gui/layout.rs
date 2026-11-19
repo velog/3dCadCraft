@@ -259,6 +259,9 @@ pub struct AppOptions {
     pub thread_texture: bool,
     /// Fast path for many identical through cuts (spec 0.19 §3.2).
     pub fast_cuts: bool,
+    /// File Naming Defaults › Frame Generator: the pattern of a new frame
+    /// member's file name (spec 6.1 §3.7, `frame::names_from_pattern`).
+    pub frame_member_naming: String,
     /// Dimension Display of sketches (Value, Name, Expression...).
     pub dim_display: crate::sketch::DimDisplay,
     /// A command's value and its editor next to the cursor.
@@ -376,6 +379,7 @@ impl Default for AppOptions {
             show_labels: true,
             thread_texture: true,
             fast_cuts: true,
+            frame_member_naming: crate::assembly::frame::DEFAULT_NAMING.into(),
             dim_display: Default::default(),
             cursor_value: true,
             constraint_ring: false,
@@ -1017,6 +1021,7 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             fast_cuts: self.fast_cuts,
+            frame_member_naming: self.frame_member_naming.clone(),
             dim_display: self.dim_display,
             ui_theme: super::theme::current(),
             canvas_scheme: self.colors.active.clone(),
@@ -1082,6 +1087,7 @@ impl CadCraftApp {
         }
         self.internal_names = o.internal_names;
         self.fast_cuts = o.fast_cuts;
+        self.frame_member_naming = o.frame_member_naming;
         crate::kernel::exact::set_fast_cuts(o.fast_cuts);
         super::theme::set_current(o.ui_theme);
         self.colors.load(&o.canvas_scheme, o.canvas_gradient);

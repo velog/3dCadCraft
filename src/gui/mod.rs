@@ -810,6 +810,8 @@ struct CadCraftApp {
     thread_texture: bool,
     /// Application Options › Part › Fast path for many identical through cuts.
     fast_cuts: bool,
+    /// Application Options › Assembly › Frame member file names (pattern).
+    frame_member_naming: String,
     /// Application Options › Display: the projection at start.
     default_projection: camera::Projection,
     /// Application Options › Display: the visual style at start.
@@ -1284,6 +1286,7 @@ impl CadCraftApp {
             show_labels: true,
             thread_texture: true,
             fast_cuts: true,
+            frame_member_naming: crate::assembly::frame::DEFAULT_NAMING.into(),
             default_projection: Default::default(),
             default_visual_style: Default::default(),
             view_defaults_taken: false,

@@ -3280,6 +3280,90 @@ pub fn member_names(project: &Project, a: &AssemblyDocument, occs: &[u32]) -> Ve
         .collect()
 }
 
+/// File Naming Defaults › Frame Generator: the default pattern of a new
+/// member's file name (Stock Number and a unique number).
+pub const DEFAULT_NAMING: &str = "{Stock Number}-{#}";
+
+/// The attributes a naming pattern can hold (the Options' **+** list).
+pub const NAMING_TOKENS: &[&str] = &[
+    "{Stock Number}",
+    "{Standard}",
+    "{Family}",
+    "{Size}",
+    "{Length}",
+    "{#}",
+];
+
+/// The names `pattern` gives members `occs` of `a` (Frame Member Naming's
+/// prefill): each attribute replaced by the member's, `{#}` by the smallest
+/// number that makes the file name unique in the project (a name without
+/// `{#}` that is taken gets `-<n>`). Display Name = File Name + `:1`.
+pub fn names_from_pattern(
+    project: &Project,
+    a: &AssemblyDocument,
+    occs: &[u32],
+    pattern: &str,
+) -> Vec<MemberName> {
+    let pattern = if pattern.trim().is_empty() {
+        DEFAULT_NAMING
+    } else {
+        pattern
+    };
+    let mut taken: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for &occ in occs {
+        let Some(m) = a
+            .frames
+            .iter()
+            .flat_map(|f| &f.members)
+            .find(|m| m.occurrence == occ)
+        else {
+            continue;
+        };
+        let Some(doc) = a.find(occ).map(|o| o.component.document) else {
+            continue;
+        };
+        let s = m.section();
+        let stock = s.as_ref().map(Section::stock_number).unwrap_or_default();
+        let length = m
+            .built
+            .as_ref()
+            .map(|b| format!("{:.0}", b.length))
+            .unwrap_or_default();
+        let base = pattern
+            .replace("{Stock Number}", &stock)
+            .replace("{Standard}", &m.section.standard)
+            .replace("{Family}", &m.family)
+            .replace("{Size}", &m.size)
+            .replace("{Length}", &length);
+        let free = |n: &str, taken: &[String]| {
+            !n.trim().is_empty()
+                && !project.name_taken(n, Some(doc))
+                && !taken.iter().any(|t| t.eq_ignore_ascii_case(n))
+        };
+        let file = if base.contains("{#}") {
+            (1..)
+                .map(|k| base.replace("{#}", &k.to_string()))
+                .find(|n| free(n, &taken))
+                .unwrap_or_default()
+        } else if free(&base, &taken) {
+            base
+        } else {
+            (2..)
+                .map(|k| format!("{base}-{k}"))
+                .find(|n| free(n, &taken))
+                .unwrap_or_default()
+        };
+        taken.push(file.clone());
+        out.push(MemberName {
+            occurrence: occ,
+            display: format!("{file}:1"),
+            file,
+        });
+    }
+    out
+}
+
 /// Frame Member Naming's OK: every row's occurrence and part take its names.
 /// An empty name, a file name used twice or by another document is refused
 /// and nothing changes (rule 5).
@@ -6105,6 +6189,41 @@ mod tests {
         assert!(
             (p.transform_vector(&Vector3::x()) - plain.transform_vector(&Vector3::x())).norm()
                 < 1e-9
+        );
+    }
+
+    /// File Naming Defaults: a pattern of attributes and `{#}`; numbers skip
+    /// names taken in the file and by the other new members.
+    #[test]
+    fn member_names_follow_the_pattern() {
+        let (mut p, aid, _) = project();
+        let lk = Linked::new();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let (_, occs) =
+            insert(&mut p, &lk, aid, &[x, y], &opts(), Library::builtin(), None).unwrap();
+        let a = asm(&p, aid);
+        let n = names_from_pattern(&p, a, &occs, "{Standard} {Stock Number} {Length} #{#}");
+        assert_eq!(n[0].file, "EN SHS 40x40x3 400 #1");
+        assert_eq!(n[1].file, "EN SHS 40x40x3 300 #1");
+        let n = names_from_pattern(&p, a, &occs, "Rail");
+        assert_eq!(n[0].file, "Rail");
+        assert_eq!(n[1].file, "Rail-2");
+        assert_eq!(n[1].display, "Rail-2:1");
+        // The skeleton's name is taken.
+        let n = names_from_pattern(&p, a, &occs[..1], "Skeleton");
+        assert_eq!(n[0].file, "Skeleton-2");
+        // The default: what insert gave them already.
+        let n = names_from_pattern(&p, a, &occs, DEFAULT_NAMING);
+        assert_eq!(
+            n,
+            member_names(&p, a, &occs)
+                .into_iter()
+                .map(|r| MemberName {
+                    display: format!("{}:1", r.file),
+                    ..r
+                })
+                .collect::<Vec<_>>()
         );
     }
 

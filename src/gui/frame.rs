@@ -447,13 +447,17 @@ impl CadCraftApp {
             o.family,
             o.size
         );
+        // File Naming Defaults (Application Options › Assembly).
+        let rows = match trial.document(doc).map(|x| &x.data) {
+            Some(crate::document::DocumentData::Assembly(a)) => {
+                frame::names_from_pattern(&trial, a, &occs, &self.frame_member_naming)
+            }
+            _ => Vec::new(),
+        };
+        if !d.check(0, NAMING) {
+            frame::rename_members(&mut trial, doc, &rows)?;
+        }
         if d.check(0, NAMING) {
-            let rows = match trial.document(doc).map(|x| &x.data) {
-                Some(crate::document::DocumentData::Assembly(a)) => {
-                    frame::member_names(&trial, a, &occs)
-                }
-                _ => Vec::new(),
-            };
             self.asm.frame_naming = Some(FrameNaming {
                 trial,
                 doc,
