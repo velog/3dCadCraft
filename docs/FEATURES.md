@@ -956,6 +956,11 @@ Also done: **Renumber Items**, typed item numbers (overrides) and **Static** qua
 - **Create in place:** creating a part directly in the assembly, with a sketch on a face of another component
   (🟡 2026-10-29: Create In-Place, Edit in place of parts of this file and of linked files, a sketch on another
   component's face that follows it on Update, edges (straight, round, free-form), single loops and whole faces of other components projected into sketches).
+- **Edit in place, Return and the browser** (2026-11-19, spec 3.10 §3.2, 3.0 §3.9): Return (`RU`, Ctrl+=) one level up
+  and Return to Top (`RTT`, Ctrl+-) on every ribbon tab and the view's menu while editing in place, a bar above the
+  browser with the path from the top assembly (each level a link back); the assembly browser's rows are cached per
+  assembly state and drawn only where they are seen (625 components), drag and drop to reorder, file into folders and
+  promote, a red mark on components with sick relationships.
 - **Adaptivity:** a part's size driven by the assembly (🟡 2026-10-29: Adaptive components, sketches and
   extrusions; the free sizes are solved with the placements when the relationships need them, also while a partner is dragged, for parts inside subassemblies and parts of linked files — saved into their files with the assembly).
 - **Derive:** a part derived from another, e.g. a casting mould from a model (🟡 2026-10-31: Derive Part — bodies of a part of

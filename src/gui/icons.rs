@@ -51,6 +51,8 @@ pub enum Icon {
     StepBack,
     /// Back up from Edit in place to the assembly.
     ReturnUp,
+    /// Back from Edit in place to the top assembly.
+    ReturnTop,
     /// OK.
     MenuOk,
     /// Apply.
@@ -1418,6 +1420,13 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
         ReturnUp => {
             p.line(&[(3.5, 13.0), (11.5, 13.0), (11.5, 3.5)], ink);
             p.line(&[(7.5, 7.0), (11.5, 3.0), (15.0, 7.0)], acc);
+        }
+        ReturnTop => {
+            // Up past every level to the bar on top.
+            p.line(&[(2.5, 1.5), (13.5, 1.5)], ink);
+            p.line(&[(8.0, 14.5), (8.0, 4.0)], acc);
+            p.line(&[(4.5, 7.5), (8.0, 4.0), (11.5, 7.5)], acc);
+            p.line(&[(4.5, 12.0), (8.0, 8.5), (11.5, 12.0)], acc);
         }
         MenuOk => {
             p.line(&[(2.5, 8.5), (6.5, 12.5), (13.5, 3.5)], ok);

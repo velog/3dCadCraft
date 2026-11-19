@@ -149,6 +149,10 @@ pub(super) struct AsmUi {
     pub tree_hover: Option<super::asm_select::AsmSub>,
     /// The browser's search text.
     pub search: String,
+    /// The browser's component rows and the key they were built for
+    /// (`assembly::browser::key` + the linked files): rebuilt only when it
+    /// changes, never walked per row.
+    pub tree_rows: Option<(u64, std::rc::Rc<crate::assembly::browser::Rows>)>,
     /// The (selection, hover) the scene was last built with.
     scene_state: (Vec<u32>, Option<u32>),
     /// The (hovered occurrence, hovered feature / face) the overlay was last built with.
@@ -240,6 +244,9 @@ pub(super) struct InPlace {
     pub parent: DocumentId,
     /// That subassembly's own edit, restored on Return.
     pub outer: Option<Box<InPlace>>,
+    /// The occurrence names from the top assembly down to it (the
+    /// browser's path bar), taken when the edit starts.
+    pub crumbs: Option<Vec<String>>,
 }
 
 /// The path and placement in the top assembly of what sits at `top`/`sub`
@@ -714,6 +721,190 @@ impl CadCraftApp {
         }
     }
 
+    /// Return to Top (spec 3.10 §3.2): up level by level until no edit in
+    /// place is left, so each level's own Return work (Update of cross-part
+    /// references, bolted connections, a linked file's tab) is done.
+    pub(super) fn return_to_top(&mut self) {
+        for _ in 0..=crate::assembly::tree::MAX_DEPTH {
+            if self.in_place_now().is_none() {
+                break;
+            }
+            self.return_to_assembly();
+        }
+        if self.in_place_now().is_none() && self.asm.came_from.is_some() {
+            self.return_to_assembly();
+        }
+    }
+
+    /// How many levels Edit in place is below the top assembly (0: none).
+    pub(super) fn in_place_depth(&self) -> usize {
+        let mut n = 0;
+        let mut at = self.in_place_now();
+        while let Some(ip) = at {
+            n += 1;
+            at = ip.outer.as_deref();
+        }
+        n
+    }
+
+    /// The path of Edit in place for the browser's bar: the top assembly's
+    /// name, then every occurrence down to the edited one (`Top › Bracket:2
+    /// › Post:1`).
+    pub(super) fn in_place_crumbs(&self) -> Vec<String> {
+        let Some(ip) = self.in_place_now() else {
+            return Vec::new();
+        };
+        let top_name = match &ip.linked {
+            Some(le) => le.assembly_name.clone(),
+            None => self
+                .project
+                .document(ip.assembly)
+                .map_or_else(|| "Assembly".to_owned(), |d| d.name.clone()),
+        };
+        let mut path = vec![ip.top];
+        path.extend(&ip.sub);
+        if let Some(c) = &ip.crumbs {
+            return std::iter::once(top_name).chain(c.iter().cloned()).collect();
+        }
+        crate::assembly::browser::crumbs(&top_name, &path, |_| None)
+    }
+
+    /// Goes back up until the edited level is crumb `i` of
+    /// [`Self::in_place_crumbs`] (0: the top assembly).
+    fn return_to_crumb(&mut self, i: usize) {
+        for _ in 0..=crate::assembly::tree::MAX_DEPTH {
+            let Some(ip) = self.in_place_now() else {
+                break;
+            };
+            if ip.sub.len() < i {
+                break;
+            }
+            self.return_to_assembly();
+        }
+    }
+
+    /// The crumbs that are a level of Edit in place one can return to (the
+    /// top assembly and every subassembly edited in place on the way).
+    fn crumb_levels(&self) -> Vec<usize> {
+        let mut v = vec![0];
+        let mut at = self.in_place_now().and_then(|ip| ip.outer.as_deref());
+        while let Some(ip) = at {
+            v.push(ip.sub.len() + 1);
+            at = ip.outer.as_deref();
+        }
+        v
+    }
+
+    /// The bar above the browser while a component is edited in place
+    /// (spec 3.10 §3.2): Return (one level up), Return to Top, and the path
+    /// from the top assembly, each level a link back to it. Also for a
+    /// component opened from an assembly without Edit in place. `true` when
+    /// it returned (the browser starts again next frame).
+    pub(super) fn in_place_bar(&mut self, ui: &mut egui::Ui) -> bool {
+        let k = super::theme::tokens();
+        if self.in_place_now().is_none() {
+            let Some(back) = self
+                .asm
+                .came_from
+                .and_then(|id| self.project.document(id))
+                .map(|d| d.name.clone())
+            else {
+                return false;
+            };
+            if ui
+                .button(format!("Return to {back}"))
+                .on_hover_text("Back to the assembly this was opened from")
+                .clicked()
+            {
+                self.return_to_assembly();
+                return true;
+            }
+            return false;
+        }
+        let crumbs = self.in_place_crumbs();
+        let levels = self.crumb_levels();
+        let depth = self.in_place_depth();
+        let mut go: Option<usize> = None;
+        let mut up = false;
+        egui::Frame::new()
+            .fill(k.raised)
+            .stroke(egui::Stroke::new(1.0, k.accent))
+            .corner_radius(4.0)
+            .inner_margin(egui::Margin::same(4))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    let parent = crumbs
+                        .len()
+                        .checked_sub(2)
+                        .and_then(|i| crumbs.get(levels.iter().copied().filter(|&l| l <= i).max()?))
+                        .cloned()
+                        .unwrap_or_default();
+                    let r = menu_item(ui, Some(Icon::ReturnUp), "Return", true)
+                        .on_hover_text(format!("Up one level, to {parent} (Ctrl+=, RU, Esc)"));
+                    up = r.clicked();
+                    if depth > 1
+                        && menu_item(ui, Some(Icon::ReturnTop), "Return to Top", true)
+                            .on_hover_text("Back to the top assembly (Ctrl+-, RTT)")
+                            .clicked()
+                    {
+                        go = Some(0);
+                    }
+                    ui.label(RichText::new("Edit in place").color(k.text_weak).small());
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    let last = crumbs.len().saturating_sub(1);
+                    for (i, c) in crumbs.iter().enumerate() {
+                        if i > 0 {
+                            ui.label(RichText::new("›").color(k.text_weak));
+                        }
+                        if i == last {
+                            ui.label(RichText::new(c).strong().color(k.accent));
+                        } else if levels.contains(&i) {
+                            if ui.link(c).on_hover_text(format!("Return to {c}")).clicked() {
+                                go = Some(i);
+                            }
+                        } else {
+                            ui.label(RichText::new(c).color(k.text_weak));
+                        }
+                    }
+                });
+            });
+        if up {
+            self.return_to_assembly();
+            return true;
+        }
+        match go {
+            Some(0) => self.return_to_top(),
+            Some(i) => self.return_to_crumb(i),
+            None => return false,
+        }
+        true
+    }
+
+    /// Return and Return to Top as menu items while editing in place; `true`
+    /// when one was chosen.
+    pub(super) fn return_menu_items(&mut self, ui: &mut egui::Ui) -> bool {
+        if self.in_place_now().is_none() {
+            return false;
+        }
+        let up = menu_item(ui, Some(Icon::ReturnUp), "Return", true).clicked();
+        let top = self.in_place_depth() > 1
+            && menu_item(ui, Some(Icon::ReturnTop), "Return to Top", true).clicked();
+        if up {
+            self.return_to_assembly();
+        } else if top {
+            self.return_to_top();
+        }
+        if up || top {
+            ui.close();
+            return true;
+        }
+        ui.separator();
+        false
+    }
+
     /// Edit (double-click, right-click › Edit; spec 3.10 §3.2): the part at
     /// `sub` below occurrence `top` becomes the edited document, drawn where
     /// it lies with the rest of the assembly around it; *Return* comes back.
@@ -738,6 +929,17 @@ impl CadCraftApp {
             .in_place_now()
             .filter(|ip| ip.linked.is_none() && ip.document == asm_id)
             .cloned();
+        // The names down the path, after the subassembly's own.
+        let mut crumbs = outer
+            .as_ref()
+            .and_then(|o| o.crumbs.clone())
+            .unwrap_or_default();
+        for k in 0..=sub.len() {
+            let name = crate::assembly::tree::nested(&self.project, &linked, a, top, &sub[..k])
+                .map_or_else(|_| "?".to_owned(), |n| n.name);
+            // `nested` names a part inside a subassembly `Bracket:1/Post:2`.
+            crumbs.push(name.rsplit('/').next().unwrap_or(&name).to_owned());
+        }
         let (assembly, top, sub, place) = match &outer {
             Some(o) => {
                 let (top, sub, place) = nest_in(o.top, &o.sub, o.place, top, &sub, local);
@@ -755,7 +957,7 @@ impl CadCraftApp {
                 place,
                 local,
             };
-            self.edit_linked_in_place(lib, r.document, at, outer, name);
+            self.edit_linked_in_place(lib, r.document, at, outer, name, crumbs);
             return;
         }
         let view = self.camera.clone();
@@ -772,6 +974,7 @@ impl CadCraftApp {
             linked: None,
             parent: asm_id,
             outer: outer.map(Box::new),
+            crumbs: Some(crumbs),
         });
         self.scene_dirty = true;
         self.file_status = Some(Ok(format!("Edit: {name} in place (Return goes back)")));
@@ -786,6 +989,7 @@ impl CadCraftApp {
         at: LinkedAt,
         outer: Option<InPlace>,
         name: String,
+        crumbs: Vec<String>,
     ) {
         let LinkedAt {
             assembly,
@@ -866,6 +1070,7 @@ impl CadCraftApp {
             linked: Some(le),
             parent: asm_id,
             outer: outer.map(Box::new),
+            crumbs: Some(crumbs),
         });
         self.scene_dirty = true;
         self.file_status = Some(Ok(format!(
@@ -2942,6 +3147,10 @@ impl CadCraftApp {
                 self.asm.tool = None;
                 ui.close();
             }
+            return;
+        }
+        // A subassembly edited in place: Return first (Inventor's menu).
+        if self.return_menu_items(ui) {
             return;
         }
         // The component under the cursor joins the selection.

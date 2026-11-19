@@ -193,8 +193,10 @@ pub enum AppCmd {
     NewVariant,
     /// Solves every positional representation (spec 3.9).
     VerifyPositions,
-    /// Return: from Edit in place back to the assembly.
+    /// Return: from Edit in place one level up (the parent).
     Return,
+    /// Return to Top: from Edit in place back to the top assembly.
+    ReturnTop,
     /// Find in Browser: the selected component's row.
     FindInBrowser,
     /// The browser's search field.
@@ -2063,8 +2065,18 @@ pub static COMMANDS: &[Command] = &[
     c("asm.return_parent", "Return", "Връщане", Icon::ReturnUp)
         .run(Action::App(AppCmd::Return))
         .key("Ctrl+Equals")
+        .alias(&["RU"])
         .at(&[Place::Ribbon("3D Model", "Return"), KEY])
-        .tip("Back from Edit in place to the assembly")
+        .env(Envs::MODELS)
+        .tip("Edit in place: up one level, to the assembly or subassembly it was opened from")
+        .spec("3.10-top-down.md"),
+    c("asm.return_top", "Return to Top", "Връщане към главния", Icon::ReturnTop)
+        .run(Action::App(AppCmd::ReturnTop))
+        .key("Ctrl+Minus")
+        .alias(&["RTT"])
+        .at(&[Place::Ribbon("3D Model", "Return"), KEY])
+        .env(Envs::MODELS)
+        .tip("Edit in place: back to the top assembly, however deep the edit is")
         .spec("3.10-top-down.md"),
     c("asm.promote", "Promote", "Издигане", Icon::Assembly)
         .run(Action::App(AppCmd::Promote))
@@ -3641,8 +3653,14 @@ mod tests {
             let Some(c) = by_id(id) else {
                 panic!("ribbon button {id} ({tab} › {panel}) is not in the registry");
             };
+            // Return (Edit in place) stands at the end of every tab; the
+            // registry names its 3D Model place.
+            let every_tab = *panel == "Return"
+                && c.places
+                    .iter()
+                    .any(|p| matches!(p, Place::Ribbon(_, "Return")));
             assert!(
-                c.places.contains(&Place::Ribbon(tab, panel)),
+                every_tab || c.places.contains(&Place::Ribbon(tab, panel)),
                 "{id} is on the ribbon at {tab} › {panel}, the registry says {:?}",
                 c.places
             );

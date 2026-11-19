@@ -244,21 +244,8 @@ impl CadCraftApp {
         self.browser_hover = None;
         let mut cmds = Vec::new();
         let mut activate = None;
-        let linked_back = self
-            .in_place_now()
-            .and_then(|ip| ip.linked.as_ref())
-            .map(|le| le.assembly_name.clone());
-        if let Some(back) = linked_back.or_else(|| {
-            self.asm
-                .came_from
-                .and_then(|id| self.project.document(id))
-                .map(|d| d.name.clone())
-        }) && ui
-            .button(format!("Return to {back}"))
-            .on_hover_text("Back to the assembly this part was opened from")
-            .clicked()
-        {
-            self.return_to_assembly();
+        // Edit in place: Return, Return to Top and the path (spec 3.10 §3.2).
+        if self.in_place_bar(ui) {
             return;
         }
         let docs: Vec<(

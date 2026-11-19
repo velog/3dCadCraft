@@ -50,6 +50,50 @@ impl AssemblyDocument {
     pub fn delete_folder(&mut self, id: u32) {
         self.folders.retain(|f| f.id != id);
     }
+
+    /// Browser drag and drop (Inventor: drag a component up or down the
+    /// browser): `items` move, in their present order, to just before
+    /// occurrence `before` (`None`: to the end), and join `before`'s folder
+    /// (or leave theirs when it has none). Only the order of the list
+    /// changes: ids, placements, relationships and the BOM's quantities stay.
+    /// `false` (nothing changed) when an item is missing or `before` is one
+    /// of them.
+    pub fn reorder(&mut self, items: &[u32], before: Option<u32>) -> bool {
+        if items.is_empty()
+            || before.is_some_and(|b| items.contains(&b) || self.find(b).is_none())
+            || items.iter().any(|i| self.find(*i).is_none())
+        {
+            return false;
+        }
+        let (moved, mut rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.occurrences)
+            .into_iter()
+            .partition(|o| items.contains(&o.id));
+        let at = before
+            .and_then(|b| rest.iter().position(|o| o.id == b))
+            .unwrap_or(rest.len());
+        rest.splice(at..at, moved);
+        self.occurrences = rest;
+        let folder = before.and_then(|b| {
+            self.folders
+                .iter()
+                .find(|f| f.items.contains(&b))
+                .map(|f| f.id)
+        });
+        self.move_to_folder(folder, items);
+        // In the folder too, right before `before`.
+        if let (Some(fid), Some(b)) = (folder, before)
+            && let Some(f) = self.folders.iter_mut().find(|f| f.id == fid)
+        {
+            f.items.retain(|i| !items.contains(i));
+            let at = f
+                .items
+                .iter()
+                .position(|&i| i == b)
+                .unwrap_or(f.items.len());
+            f.items.splice(at..at, items.iter().copied());
+        }
+        true
+    }
 }
 
 /// What a Demote did.
@@ -256,6 +300,42 @@ pub fn promote(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reorder_moves_components_before_another_and_into_its_folder() {
+        let (mut p, doc, [a, b, c]) = setup();
+        let Some(DocumentData::Assembly(asm)) = p.document_mut(doc).map(|d| &mut d.data) else {
+            panic!("no assembly");
+        };
+        let before = asm.clone();
+        let order = |x: &AssemblyDocument| x.occurrences.iter().map(|o| o.id).collect::<Vec<_>>();
+        assert!(asm.reorder(&[c], Some(a)));
+        assert_eq!(order(asm), vec![c, a, b]);
+        assert!(asm.reorder(&[c], None));
+        assert_eq!(order(asm), vec![a, b, c]);
+        // Dropped on a component in a folder: into the folder, before it.
+        let f = asm.add_folder(None, &[a]);
+        assert!(asm.reorder(&[b, c], Some(a)));
+        assert_eq!(order(asm), vec![b, c, a]);
+        assert_eq!(asm.folders[0].items, vec![b, c, a]);
+        assert_eq!(asm.folders[0].id, f);
+        // Out to the end leaves the folder.
+        assert!(asm.reorder(&[b], None));
+        assert_eq!(asm.folders[0].items, vec![c, a]);
+        // Nothing else changed.
+        let json = |x: &AssemblyDocument| serde_json::to_string(&x.constraints).unwrap_or_default();
+        assert_eq!(json(asm), json(&before));
+        for o in &asm.occurrences {
+            let was = before.find(o.id).expect("kept");
+            assert_eq!(o.transform, was.transform);
+            assert_eq!(o.name, was.name);
+        }
+        // Refused: onto itself, an unknown id.
+        let now = (order(asm), asm.folders.clone());
+        assert!(!asm.reorder(&[a], Some(a)));
+        assert!(!asm.reorder(&[99], None));
+        assert_eq!((order(asm), asm.folders.clone()), now);
+    }
     use crate::assembly::relation::{Constraint, ConstraintKind};
     use crate::kernel::Vector3;
     use crate::part::PartDocument;

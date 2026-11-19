@@ -519,4 +519,4 @@ Part › Manage › Variants: VAR New Variant, VTB Variants Table.
 Assembly › Representations: DVR New View Representation, PRP New Positional Representation, VAR New Variant, VTB Variants Table, VPR Verify Positions.
 
 Assembly › Motion: CSO Contact Solver, CST Contact Sets, MLK Motion, MST Motion Study, EXV Exploded View. Tab Demote, Shift+Tab Promote, Ctrl+B
-Find in Browser, Ctrl+F browser search, Ctrl+= / Ctrl+- Return (also the 3D Model tab's Return panel and the view's right-click menu while editing in place; Esc when no command, sketch or selection is left to end).
+Find in Browser, Ctrl+F browser search, Ctrl+= / `RU` Return (one level up) and Ctrl+- / `RTT` Return to Top while editing in place (also the Return panel at the end of every ribbon tab, the bar above the browser with the path `Top › Sub › Part` whose levels are links, and the view's right-click menu; Esc returns one level when no command, sketch or selection is left to end). Browser drag and drop: a component onto another row goes before it, onto a folder into it, onto the assembly's row to the end; a part inside a subassembly onto the assembly's row is promoted.

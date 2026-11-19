@@ -599,8 +599,12 @@ fn panel(title: &'static str, cmds: Vec<Cmd>) -> PanelDef {
 
 fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
     let mut all = tab_panels(tab, st);
-    if st.in_place && tab == Tab::Model {
-        all.push(panel("Return", vec![c("asm.return_parent").large()]));
+    // Edit in place: Return on every tab (Inventor), Return to Top beside it.
+    if st.in_place {
+        all.push(panel(
+            "Return",
+            vec![c("asm.return_parent").large(), c("asm.return_top").large()],
+        ));
     }
     all
 }
@@ -1734,8 +1738,10 @@ fn collapsed_panels(widths: &[f32], titles: &[&str], avail: f32) -> Vec<bool> {
     let mut total: f32 = (0..n)
         .map(|k| if out[k] { COLLAPSED_W } else { widths[k] })
         .sum();
-    let groups: [&dyn Fn(&str) -> bool; 3] = [
-        &|t| COLLAPSE_LAST.contains(&t),
+    // Return (Edit in place) opens before any other panel: it is the way out.
+    let groups: [&dyn Fn(&str) -> bool; 4] = [
+        &|t| t == "Return",
+        &|t| t != "Return" && COLLAPSE_LAST.contains(&t),
         &|t| !COLLAPSE_LAST.contains(&t) && !COLLAPSE_FIRST.contains(&t),
         &|t| COLLAPSE_FIRST.contains(&t),
     ];
