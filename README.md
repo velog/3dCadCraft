@@ -71,7 +71,7 @@ sheet metal cut across a bend (`tests/data/*_journal.jsonl`).
 | Drawings | 🟡 | sheets and title blocks, base / projected / section / detail / auxiliary views with hidden lines, dimensions, hole notes, parts lists, balloons, bend tables, PDF; Break / Crop, DXF — to do |
 | Interface | 🟡 | ribbon with the full Inventor command set (unimplemented commands disabled with their spec), ViewCube, visual styles, section views, selection filters, right-click menus by selection, aliases and command search (Alt+S), presets, materials and appearances |
 | Files and exchange | 🟡 | one `.3dcadcraft` file with many documents, Link / Append / Pack, autosave and crash recovery; export STEP / STL / GLB / PDF / DXF; **STEP import — to do** |
-| API for AI agents | ⬜ | JSON-RPC / MCP server — planned |
+| API for AI agents | 🟡 | MCP server over stdio (`3dcadcraft-mcp`): sketches, features, queries, assemblies — [docs/MCP.md](docs/MCP.md) |
 
 Behind it: an exact B-Rep kernel, about 930 automated tests (including
 reference cases, file compatibility fixtures and speed budgets) and 58 feature

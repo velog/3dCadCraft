@@ -12,6 +12,11 @@ license = "MIT OR Apache-2.0"
 name = "cadcraft3d_core"
 path = "../../src/core_lib.rs"
 
+# The MCP server for AI agents, headless (spec 0.7): `3dcadcraft-mcp [PROJECT]`.
+[[bin]]
+name = "3dcadcraft-mcp"
+path = "../../src/mcp_main.rs"
+
 [dependencies]
 # --- Math & kernel ---------------------------------------------------------
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
