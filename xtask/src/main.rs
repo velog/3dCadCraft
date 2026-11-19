@@ -184,7 +184,7 @@ fn quick_tests() -> bool {
     for t in &light {
         integ.extend(["--test", t.as_str()]);
     }
-    let mut gui = vec!["cargo", "test", "--lib", "gui::"];
+    let mut gui = vec!["cargo", "test", "--lib", "gui::", "--"];
     for t in TIMED_GUI_UNIT {
         gui.extend(["--skip", t]);
     }
