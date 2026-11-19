@@ -304,9 +304,9 @@ pub struct AppOptions {
     pub library_detail: String,
     /// Place from Library places by hand instead of Smart Drop.
     pub library_manual: bool,
-    /// Place from Library: the members placed last, newest first (`family	size`, at most 20).
+    /// Place from Library: the members placed last, newest first (family and size, at most 20).
     pub library_recent: Vec<String>,
-    /// Place from Library: the user's favourite members (`family	size`).
+    /// Place from Library: the user's favourite members (family and size).
     pub library_favorites: Vec<String>,
     /// The assembly browser's view and filters (spec 3.0 §3.9).
     pub asm_browser: super::asm_browser::AsmBrowserOpts,

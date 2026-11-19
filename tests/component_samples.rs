@@ -914,7 +914,7 @@ fn automation_elements_weigh_their_envelopes() {
         );
     }
     println!("slowest: {} {:.0} ms", worst.1, worst.0);
-    assert_eq!(names.len(), 10);
+    assert_eq!(names.len(), 11);
 }
 
 /// A profile rail at the Full level weighs the maker's kg/m with its counterbored holes, and its

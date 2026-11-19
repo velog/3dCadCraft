@@ -1,0 +1,11 @@
+# Shaft support for round linear shafts, SK pattern (a block with a base), mm: Motion-and-Drives SK steel shaft supports technical specification (2021-03-12). D shaft, h shaft above the base, W width (2 E), L length along the shaft, F height, G base thickness, P width of the body above the base, B mounting hole pitch, S hole. The clamping slit and its screw are left out.
+size,D,h,W,L,F,G,P,B,S
+SK8,8,20,42,14,32.8,6,18,32,5.5
+SK10,10,20,42,14,32.8,6,18,32,5.5
+SK12,12,23,42,14,37.5,6,20,32,5.5
+SK16,16,27,48,16,44,8,25,38,5.5
+SK20,20,31,60,20,51,10,30,45,6.6
+SK25,25,35,70,24,60,12,38,56,6.6
+SK30,30,42,84,28,70,12,44,64,9
+SK35,35,50,98,32,82,15,50,74,11
+SK40,40,60,114,36,96,15,60,90,11

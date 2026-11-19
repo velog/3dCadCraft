@@ -884,7 +884,7 @@ struct CadCraftApp {
     library_detail: String,
     /// Place from Library places by hand instead of Smart Drop.
     library_manual: bool,
-    /// Place from Library's History and Favorites (`family	size`), kept in the settings.
+    /// Place from Library's History and Favorites (family and size), kept in the settings.
     library_recent: Vec<String>,
     library_favorites: Vec<String>,
     /// Bolted Connections' inputs as last seen (assembly, connection → a hash of

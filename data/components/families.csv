@@ -181,6 +181,7 @@ din_69051,Machine Elements/Linear Motion,Ball Nut,DIN 69051-5 B,"Flanged ball nu
 support_bk,Machine Elements/Linear Motion,Support Unit,Fixed Support Unit,"Ball screw support unit, fixed side",families/support_bk.csv,6,TPI support unit catalogue (TBK),Other
 support_bf,Machine Elements/Linear Motion,Support Unit,Floating Support Unit,"Ball screw support unit, floating side",families/support_bf.csv,6,TPI support unit catalogue (TBF),Other
 profile_tnut,Aluminium Framing,Slot Nut,Profile T-Nut,"T-nut for strut profiles, turned in",families/profile_tnut.csv,8,Bosch Rexroth Aluminum Framing catalogue (T-Nuts),Other
+shaft_support_sk,Machine Elements/Linear Motion,Shaft Support,SK Shaft Support,"Shaft support for round shafts, SK pattern",families/shaft_support_sk.csv,9,Motion-and-Drives SK technical specification,Other
 jaw_coupling,Machine Elements/Couplings,Jaw Coupling,Jaw Coupling,"Curved-jaw coupling, aluminium hubs",families/jaw_coupling.csv,7,KTR ROTEX GS instructions (tables 1 and 2),Other
 ball_screw,Machine Elements/Linear Motion,Ball Screw,Ball Screw,"Ball screw shaft, plain",families/ball_screw.csv,20,diameters of DIN 69051-5 (lengths typed),Other
 din_7984,Fasteners/Bolts,Socket Head,DIN 7984,"Hexagon socket head cap screw, low head",families/din_7984.csv,11,fasten.it (lengths typed),DIN

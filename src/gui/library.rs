@@ -42,6 +42,8 @@ pub(super) struct LibraryUi {
     /// Opened by Bolted Connection's stack (Change, Library...): only its
     /// kinds are listed and Use puts the family into the stack.
     pub(super) bolt: Option<super::bolted::BoltPick>,
+    /// Opened by Replace from Library: the components the chosen member replaces.
+    pub(super) replace: Vec<u32>,
     /// What the middle list shows: the picked category, the History or the Favorites.
     list: ListKind,
     /// Members placed last, newest first, and the favourites (`member_key`).
@@ -122,6 +124,7 @@ impl CadCraftApp {
             shown: None,
             yaw: 0.6,
             bolt: None,
+            replace: Vec::new(),
             list: ListKind::Category,
             recent: self.library_recent.clone(),
             favorites: self.library_favorites.clone(),
@@ -195,6 +198,8 @@ impl CadCraftApp {
         lib.take_thumbnails(ctx);
         let title = if lib.bolt.is_some() {
             "Bolted Connection: choose from the Library"
+        } else if !lib.replace.is_empty() {
+            "Replace from Library"
         } else {
             "Place from Library"
         };
@@ -253,6 +258,8 @@ impl CadCraftApp {
                         ui.add_space(12.0);
                         let (label, tip) = if lib.bolt.is_some() {
                             ("Use", "Puts this family into the stack; its size follows the connection's diameter")
+                        } else if !lib.replace.is_empty() {
+                            ("Replace", "Replaces the selected components with the size picked; their relationships stay where its faces have the same names")
                         } else {
                             ("Place", "Places the size picked; Alt + Place uses the other way (Smart Drop or by hand) once")
                         };
@@ -520,6 +527,17 @@ impl CadCraftApp {
         self.library_detail = lib.detail.label().to_owned();
         self.library_manual = !lib.smart;
         if place
+            && !lib.replace.is_empty()
+            && let Some(path) = lib.shown.clone()
+        {
+            match self.replace_from_library(&lib.replace, &path) {
+                Ok(()) => return,
+                Err(e) => lib.error = Some(e),
+            }
+            self.asm.library = Some(lib);
+            return;
+        }
+        if place
             && lib.smart != other_way
             && let Some(f) = lib.family
             && lib.catalog.fits(f).iter().any(|x| x.droppable())
@@ -541,6 +559,63 @@ impl CadCraftApp {
         if !(cancel || !open) {
             self.asm.library = Some(lib);
         }
+    }
+}
+
+impl CadCraftApp {
+    /// A component's menu › Replace from Library: the window, its Place button replacing `ids`.
+    pub(super) fn replace_from_library_start(&mut self, ids: &[u32]) {
+        if ids.is_empty() {
+            return;
+        }
+        self.place_from_library();
+        if let Some(lib) = self.asm.library.as_mut() {
+            lib.replace = ids.to_vec();
+            lib.smart = false;
+        }
+    }
+
+    /// Links the member file at `path` and replaces the components `ids` with it, solving after
+    /// (rule 5: on any failure the design is as it was, and the reason is returned).
+    fn replace_from_library(&mut self, ids: &[u32], path: &std::path::Path) -> Result<(), String> {
+        let doc = first_document(self, path).ok_or("the member's file holds no part")?;
+        let before = self.project.clone();
+        self.checkpoint("Replace from Library");
+        let owner = PathBuf::from(self.file_path.trim());
+        let mut resolver = crate::document::Resolver::new();
+        let undo = |app: &mut Self, e: String| {
+            app.project = before.clone();
+            app.history.cancel();
+            Err(format!("Replace from Library: {e}"))
+        };
+        let r = match resolver.link(&mut self.project, &owner, path, doc) {
+            Ok(r) => r,
+            Err(e) => return undo(self, e.to_string()),
+        };
+        let base = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let Some(a) = self.assembly() else {
+            return undo(self, "no assembly".into());
+        };
+        let mut trial = a.clone();
+        let n = match trial.replace(ids, r, &base) {
+            Ok(n) => n,
+            Err(e) => return undo(self, e),
+        };
+        if let Err(e) = self.asm_try("Replace from Library", |a| {
+            let _ = a.replace(ids, r, &base);
+        }) {
+            return undo(self, e);
+        }
+        self.asm.sel.retain(|i| !ids.contains(i));
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        self.file_status = Some(Ok(format!(
+            "Replace from Library: {n} component(s) replaced by {base}"
+        )));
+        Ok(())
     }
 }
 

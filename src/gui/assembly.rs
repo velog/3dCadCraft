@@ -3172,6 +3172,10 @@ impl CadCraftApp {
             self.change_size_start(ids);
             ui.close();
         }
+        if !ids.is_empty() && ui.button("Replace from Library...").clicked() {
+            self.replace_from_library_start(ids);
+            ui.close();
+        }
         ui.separator();
         if ids.len() == 1 && ui.button("Edit").clicked() {
             self.edit_in_place(ids[0], Vec::new());

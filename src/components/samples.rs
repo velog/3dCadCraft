@@ -985,6 +985,10 @@ const TABLES: &[(&str, &str)] = &[
         "profile_tnut",
         include_str!("../../data/components/families/profile_tnut.csv"),
     ),
+    (
+        "shaft_support_sk",
+        include_str!("../../data/components/families/shaft_support_sk.csv"),
+    ),
 ];
 
 /// A table's lines without comments, the first one the heading.
@@ -1345,6 +1349,20 @@ fn row_members(
         "profile_tnut" => one((|| {
             Some(Kind::SlotNut(get("d")?, get("L")?, get("W")?, get("T")?))
         })()),
+        // A shaft support's columns: base G thick and W wide, the body P wide up to F.
+        "shaft_support" => one((|| {
+            Some(Kind::Support(
+                get("D")?,
+                get("L")?,
+                get("W")?,
+                get("F")?,
+                get("h")?,
+                get("P")?,
+                get("G")?,
+                get("B")?,
+                get("S")?,
+            ))
+        })()),
         // One member per bore: `GS14 bore 8`.
         "jaw_coupling" => lengths
             .iter()
@@ -1689,6 +1707,7 @@ impl Sample {
             Kind::Spring(..) => "Spring",
             Kind::Rail(..) => "Profile rail",
             Kind::Carriage(..) => "Profile rail carriage",
+            Kind::Support(..) if self.category.ends_with("Shaft Support") => "Shaft support",
             Kind::Support(..) => "Ball screw support unit",
             Kind::JawCoupling(..) => "Jaw coupling",
             Kind::ClampCollar(..) => "Clamp collar",
@@ -3785,9 +3804,10 @@ fn vertical_holes(
     Ok(())
 }
 
-/// A ball screw end support's square housing as one prism along Z with the shaft's bore, no
-/// Boolean: the base at y = -`axis`, full width up to the shoulders at `h1`, the raised middle `b1`
-/// wide above them. The Full level adds the two mounting holes down through the shoulders.
+/// A ball screw end support's square housing, or a round shaft's support, as one prism along Z with
+/// the shaft's bore, no Boolean: the base at y = -`axis`, full width up to the shoulders at `h1`,
+/// the middle `b1` wide above them. The Full level adds the two mounting holes down through the
+/// shoulders.
 #[allow(clippy::too_many_arguments)]
 fn support(
     d1: Real,
@@ -3802,7 +3822,7 @@ fn support(
     holes: bool,
 ) -> Result<PartDocument, PartError> {
     let (y0, ys, y1) = (-axis, h1 - axis, h - axis);
-    if !(d1 < b1 && b1 < b && d1 / 2.0 < axis.min(h - axis) && ys > 0.0 && ys < y1) {
+    if !(d1 < b1 && b1 < b && d1 / 2.0 < axis.min(h - axis) && ys > y0 && ys < y1) {
         return Err(bad("the support unit's housing does not hold its shaft"));
     }
     if !(p / 2.0 - x / 2.0 > b1 / 2.0 && p / 2.0 + x / 2.0 < b / 2.0) {
@@ -4017,7 +4037,7 @@ fn slot_nut(d: Real, l: Real, w: Real, t: Real) -> Result<PartDocument, PartErro
     let spec = thread_spec(d, true)?;
     let (x, y, c) = (l / 2.0, w / 2.0, 0.35 * w);
     let rb = spec.minor / 2.0;
-    if !(rb + 0.3 < y) {
+    if rb + 0.3 >= y {
         return Err(bad("the T-nut is too narrow for its thread"));
     }
     let k = |x: Real, y: Real| (Point2::new(x, y), 0.0);

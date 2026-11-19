@@ -1312,6 +1312,24 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
             p.rect(1.5, 6.0, 14.5, 10.0, ink);
             p.line(&[(1.5, 8.0), (14.5, 8.0)], acc);
         }
+        "Shaft Support" => {
+            // A thin base, the tall body over it, the round shaft through the body.
+            p.closed(
+                &[
+                    (1.0, 14.5),
+                    (15.0, 14.5),
+                    (15.0, 12.0),
+                    (11.0, 12.0),
+                    (11.0, 1.5),
+                    (5.0, 1.5),
+                    (5.0, 12.0),
+                    (1.0, 12.0),
+                ],
+                ink,
+            );
+            p.circle(8.0, 6.5, 2.4, acc);
+            p.line(&[(8.0, 1.5), (8.0, 4.1)], ink);
+        }
         "Support Unit" => {
             // The housing seen along the screw: shoulders, the raised middle, the shaft.
             p.closed(

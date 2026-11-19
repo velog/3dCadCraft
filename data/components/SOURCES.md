@@ -56,6 +56,7 @@ typed, which a source contradicts, is simply corrected.
 | [Hiwin HG / QH catalogue](https://almotion.nl/wp-content/uploads/2020/01/HG_QH_serie.pdf) (via Almotion), table 3.6 | HG carriages 15 to 65: W, H, H1, L (the Sorotec sheet's shorter L of 15, 20, 30 kept as rows of their own); with the HGR table's mass per metre for the rails |
 | Ruland MCL product pages and their listings (MCL-7 to MCL-60, black oxide), [RS PRO listings](https://uk.rs-online.com/web/p/shaft-collars/0145657) (16, 35) | one-piece clamp collars: bore, outside diameter, width |
 | [Bosch Rexroth Aluminum Framing catalogue 8981 500 201, section 4](https://files.valinonline.com/userfiles/documents/bosch-rexroth-fasteners-t-nuts.pdf) (via Valin) | T-nuts for slots 6, 8, 10: length, width, thickness and the threads offered |
+| [Motion-and-Drives SK steel shaft supports specification](https://cdn.shopify.com/s/files/1/0509/9690/4105/files/SK_supports_technical_specification.pdf) (2021-03-12) | SK8 to SK40 shaft supports: D, h, W, L, F, G, P, B, S |
 | PEM FH metric catalogue listing ([catalog.pemnet.com](https://catalog.pemnet.com/viewitems/flush-head-threaded-studs-types-fh-fha-fhs/lf-clinching-threaded-studs-type-fh-fhs-fha-metric)) | clinch studs: head diameters M3 to M6 |
 
 Corrected, a typed value against a source:
