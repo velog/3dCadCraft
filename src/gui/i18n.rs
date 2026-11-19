@@ -64,6 +64,14 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
+    ("Explanations", "Обяснения"),
+    ("Method", "Метод"),
+    ("Formulas", "Формули"),
+    ("Typical", "Обичайно"),
+    (
+        "Click a ? beside a field, or a result, to read about it here",
+        "Щракнете ? до поле или резултат, за да прочетете за него тук",
+    ),
     (
         "Place: click in the view to place an occurrence (on a component or the XY plane); right-click for OK, Place Grounded at Origin or a 90° turn; Esc ends",
         "Place: щракнете в изгледа, за да поставите екземпляр (върху компонент или в равнината XY); десен бутон за OK, Place Grounded at Origin или завъртане на 90°; Esc приключва",

@@ -80,6 +80,7 @@ mod drawing_styles;
 mod drawing_symbols;
 mod drawing_text;
 mod drive;
+mod explain;
 mod feature_cmd;
 mod file_explorer;
 mod files;

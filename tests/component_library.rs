@@ -399,3 +399,39 @@ fn a_typed_phrase_comes_first() {
     assert_eq!(c.families[f].name, "Compression Spring");
     assert_eq!(c.families[f].members[m].size, "De 18 d 2");
 }
+
+/// The Bearing generator's list: every built-in radial ball bearing with a
+/// 20 mm bore (6204, 6304, 6004 …), roller bearings (NU204, 30204 …) and a
+/// thrust bearing (51104), narrowest outside diameter first.
+#[test]
+fn bearings_for_a_bore() {
+    let c = Catalog::load(&tmp("bearings_for"));
+    let ball = c.bearings_for(20.0, 0);
+    let names: Vec<&str> = ball
+        .iter()
+        .map(|&(f, m, ..)| c.families[f].members[m].size.as_str())
+        .collect();
+    assert!(names.iter().any(|n| n.contains("6204")), "{names:?}");
+    assert!(names.iter().any(|n| n.contains("6304")), "{names:?}");
+    assert!(ball.windows(2).all(|w| w[0].3 <= w[1].3));
+    assert!(ball.iter().all(|b| (b.2 - 20.0).abs() < 1e-9));
+    let roller = c.bearings_for(20.0, 1);
+    assert!(
+        roller
+            .iter()
+            .any(|&(f, m, ..)| c.families[f].members[m].size.contains("NU204"))
+    );
+    assert!(
+        roller
+            .iter()
+            .all(|&(f, ..)| !c.families[f].category.contains("Ball"))
+    );
+    let thrust = c.bearings_for(20.0, 2);
+    assert!(
+        thrust
+            .iter()
+            .any(|&(f, m, ..)| c.families[f].members[m].size.contains("51104")),
+        "{thrust:?}"
+    );
+    assert!(c.bearings_for(19.5, 0).is_empty());
+}

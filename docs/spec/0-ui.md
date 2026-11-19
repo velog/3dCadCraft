@@ -329,6 +329,21 @@ While a part or assembly command is open and its inputs are complete, its first 
    the menu options); this gives it Enter, the right click, the prompt and the status bar ready-made;
 5. picking in the view asks `Flow::accepts(kind)` and calls `picked()` after a valid pick.
 
+### 4.3 Explanations of a calculator (owner's request, 2026-11-19)
+
+Every generator that calculates (Shaft, Spur Gears, Key, Bearing, the springs; later Bolted Connection and Frame
+Analysis) explains itself, from one shared data module (`design::explain`) and one shared GUI piece
+(`gui/explain.rs`), spec [6.2-design-calculators §3.6](6.2-design-calculators.md):
+
+- a **?** beside each input and result: its entry (what it is, what it is for, symbol and unit, typical values and how
+  to choose them, what a value too high or too low does);
+- a hover on a result: its formula with the symbols explained, the source (book, equation) and the formula again with
+  the actual numbers in it;
+- an **Explanations** pane in the generator (Properties panel or window) with the entry of the field last pointed at
+  and the calculation's formulas, assumptions and limits.
+
+Formulas are readable Unicode text (`σ = 32·M / (π·d³)`), no LaTeX. A field without an entry fails a test.
+
 ## 5. Performance
 
 | Requirement | Status |

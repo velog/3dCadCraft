@@ -982,6 +982,10 @@ pub struct PartDocument {
     /// the part (rule 8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generator: Option<crate::design::Generator>,
+    /// The input of a planned-panel generator (gears, key, bearing, spring)
+    /// that made this part, to edit it again (`design::Element`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element: Option<crate::design::Element>,
     /// Sketches in creation order.
     pub sketches: Vec<PartSketch>,
     /// 3D sketches in creation order (`docs/spec/1.10-3d-sketch.md`;

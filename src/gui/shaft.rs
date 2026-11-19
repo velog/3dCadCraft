@@ -20,10 +20,12 @@ use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke, Vec2};
 
 use super::CadCraftApp;
 use super::asm_planned::AsmPlanned;
+use super::explain::{help_for, label_help};
 use super::panels::plabel;
 use super::part_planned::{PartDialog, Planned};
 use super::valuefield::ExprValue;
 use crate::assembly::relation::{ASSEMBLY, Geom};
+use crate::design::explain::SHAFT;
 use crate::design::key;
 use crate::design::shaft::{Bore, EdgeFeature, RingGroove, Section, SectionShape, ShaftDesign};
 use crate::design::shaft_calc::{
@@ -1727,8 +1729,19 @@ fn calculation_tab(p: &mut ShaftPanel, ui: &mut egui::Ui) {
     ui.columns(2, |c| {
         calc_inputs(p, &mut c[0]);
         calc_results(p, &mut c[1]);
+        c[1].add_space(6.0);
+        super::explain::pane(&mut c[1], SHAFT);
     });
 }
+
+/// The material's strengths and moduli on the Calculation tab (MPa).
+pub(super) const MATERIAL_ROWS: [&str; 5] = [
+    "Ultimate Strength σu",
+    "Yield Strength σy",
+    "Fatigue Limit σ'f",
+    "Modulus of Elasticity E",
+    "Modulus of Rigidity G",
+];
 
 fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
     let presets = Material::presets();
@@ -1755,32 +1768,38 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
     egui::Grid::new("shaft_material_grid")
         .num_columns(2)
         .show(ui, |ui| {
-            for (label, v) in [
-                ("Ultimate Strength σu", &mut m.ultimate),
-                ("Yield Strength σy", &mut m.yield_strength),
-                ("Fatigue Limit σ'f", &mut m.fatigue_limit),
-                ("Modulus of Elasticity E", &mut m.e),
-                ("Modulus of Rigidity G", &mut m.g),
-            ] {
-                ui.label(label);
+            for (label, v) in MATERIAL_ROWS.into_iter().zip([
+                &mut m.ultimate,
+                &mut m.yield_strength,
+                &mut m.fatigue_limit,
+                &mut m.e,
+                &mut m.g,
+            ]) {
+                super::explain::label_help(ui, SHAFT, label);
                 typed |= qty(ui, v, "MPa", 1.0);
                 ui.end_row();
             }
-            ui.label("Density ρ");
+            label_help(ui, SHAFT, "Density ρ");
             typed |= qty(ui, &mut m.density, "kg/m³", 1.0);
             ui.end_row();
         });
-    typed |= ui
-        .checkbox(&mut m.hardened, "Hardened above 200 BHN (keyway factors)")
-        .changed();
+    ui.horizontal(|ui| {
+        typed |= ui
+            .checkbox(&mut m.hardened, "Hardened above 200 BHN (keyway factors)")
+            .changed();
+        help_for(ui, SHAFT, "Hardened above 200 BHN (keyway factors)");
+    });
     if typed {
         p.preset = presets.len();
     }
     ui.add_space(6.0);
     ui.label(RichText::new("Calculation Properties").strong());
-    ui.checkbox(&mut p.loads.use_density, "Use density (own weight)");
     ui.horizontal(|ui| {
-        ui.label("Number of shaft divisions");
+        ui.checkbox(&mut p.loads.use_density, "Use density (own weight)");
+        help_for(ui, SHAFT, "Use density (own weight)");
+    });
+    ui.horizontal(|ui| {
+        label_help(ui, SHAFT, "Number of shaft divisions");
         let mut n = p.loads.divisions as f64;
         if ui
             .add(ExprValue::new(&mut n).range(10.0..=5000.0))
@@ -1790,7 +1809,7 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
         }
     });
     ui.horizontal(|ui| {
-        ui.label("Reduced stress");
+        label_help(ui, SHAFT, "Reduced stress");
         ui.radio_value(&mut p.loads.reduced, ReducedStress::Hmh, "HMH");
         ui.radio_value(&mut p.loads.reduced, ReducedStress::Tresca, "Tresca-Guest");
     });
@@ -1801,7 +1820,10 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
     .on_disabled_hover_text("Spec 6.2-design-calculators §3.2: shear deflection comes later");
     ui.add_space(6.0);
     let len = p.design.length();
-    ui.label(RichText::new("Supports").strong());
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Supports").strong());
+        help_for(ui, SHAFT, "Support");
+    });
     let mut gone = None;
     for (k, s) in p.loads.supports.iter_mut().enumerate() {
         ui.horizontal(|ui| {
@@ -1850,6 +1872,7 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
             match l {
                 Load::Radial { z, force, angle } => {
                     ui.label(RichText::new("Force").strong());
+                    help_for(ui, SHAFT, "Force");
                     ui.label("z");
                     mm(ui, z);
                     ui.label("F");
@@ -1859,6 +1882,7 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                 }
                 Load::Axial { z, force } => {
                     ui.label(RichText::new("Axial Force").strong());
+                    help_for(ui, SHAFT, "Axial Force");
                     ui.label("z");
                     mm(ui, z);
                     ui.label("F");
@@ -1866,6 +1890,7 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                 }
                 Load::Continuous { z0, z1, q, angle } => {
                     ui.label(RichText::new("Continuous Load").strong());
+                    help_for(ui, SHAFT, "Continuous Load");
                     ui.label("from");
                     mm(ui, z0);
                     ui.label("to");
@@ -1877,6 +1902,7 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                 }
                 Load::Torque { z, torque } => {
                     ui.label(RichText::new("Torque").strong());
+                    help_for(ui, SHAFT, "Torque");
                     ui.label("z");
                     mm(ui, z);
                     ui.label("T");
@@ -1884,6 +1910,7 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                 }
                 Load::Moment { z, moment, angle } => {
                     ui.label(RichText::new("Bending Moment").strong());
+                    help_for(ui, SHAFT, "Bending Moment");
                     ui.label("z");
                     mm(ui, z);
                     ui.label("M");
@@ -1957,10 +1984,10 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
     egui::Grid::new("shaft_fatigue")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("Surface factor ka (Fig. 3)");
+            label_help(ui, SHAFT, "Surface factor ka (Fig. 3)");
             ui.add(ExprValue::new(&mut f.surface));
             ui.end_row();
-            ui.label("Reliability kc (Table III)");
+            label_help(ui, SHAFT, "Reliability kc (Table III)");
             egui::ComboBox::from_id_salt("shaft_reliability")
                 .selected_text(f.reliability.label())
                 .show_ui(ui, |ui| {
@@ -1969,19 +1996,19 @@ fn calc_inputs(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                     }
                 });
             ui.end_row();
-            ui.label("Temperature factor kd (Table IV)");
+            label_help(ui, SHAFT, "Temperature factor kd (Table IV)");
             ui.add(ExprValue::new(&mut f.temperature));
             ui.end_row();
-            ui.label("Other factors kf·kg·kh·ki");
+            label_help(ui, SHAFT, "Other factors kf·kg·kh·ki");
             ui.add(ExprValue::new(&mut f.other));
             ui.end_row();
-            ui.label("Stress concentration Kt");
+            label_help(ui, SHAFT, "Stress concentration Kt");
             ui.add(ExprValue::new(&mut f.kt_bending));
             ui.end_row();
-            ui.label("Notch sensitivity q (Fig. 5)");
+            label_help(ui, SHAFT, "Notch sensitivity q (Fig. 5)");
             ui.add(ExprValue::new(&mut f.notch_sensitivity));
             ui.end_row();
-            ui.label("Required safety factor");
+            label_help(ui, SHAFT, "Required safety factor");
             ui.add(ExprValue::new(&mut f.safety));
             ui.end_row();
         });
@@ -2022,7 +2049,13 @@ fn calc_results(p: &mut ShaftPanel, ui: &mut egui::Ui) {
         .striped(true)
         .show(ui, |ui| {
             let mut row = |a: &str, b: String| {
-                ui.label(a);
+                let key = if a.starts_with("Support ") {
+                    "Support Reaction"
+                } else {
+                    a
+                };
+                let r = ui.add(egui::Label::new(a).sense(egui::Sense::click()));
+                super::explain::result_hover(r, SHAFT, key, None);
                 ui.label(b);
                 ui.end_row();
             };
@@ -2063,7 +2096,8 @@ fn calc_results(p: &mut ShaftPanel, ui: &mut egui::Ui) {
                     format!("Fy {:.1} N, Fx {:.1} N, Fz {:.1} N", re[0], re[1], re[2]),
                 );
             }
-            ui.label("Fatigue Safety");
+            let r = ui.add(egui::Label::new("Fatigue Safety").sense(egui::Sense::click()));
+            super::explain::result_hover(r, SHAFT, "Fatigue Safety", None);
             ui.colored_label(fs_col, format!("{fs_text} at z = {at:.1} mm"));
             ui.end_row();
         });
@@ -2394,7 +2428,18 @@ impl CadCraftApp {
             return false;
         };
         let first = a.occurrences.is_empty();
-        let occ = a.place(DocRef::local(id), &name, place, first);
+        let picked = ["axis", "start"]
+            .iter()
+            .any(|k| d.refs.get(k).is_some_and(|v| !v.is_empty()));
+        let occ = a.place(DocRef::local(id), &name, place, first && !picked);
+        // On its picks: an axis Mate (the turn free) and its start plane.
+        if picked
+            && let Err(e) =
+                super::gear_key::seat_on(&mut trial, asm, d, occ, "axis", "start", &place)
+        {
+            self.file_status = Some(Err(format!("Shaft: {e}")));
+            return false;
+        }
         self.history.break_coalescing();
         self.checkpoint("Shaft");
         self.project = trial;

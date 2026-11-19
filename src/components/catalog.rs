@@ -292,6 +292,40 @@ impl Catalog {
         })
     }
 
+    /// The rolling bearings of the library whose bore is `bore` (within
+    /// 0.01 mm) and whose type is of `kind`: 0 radial ball bearings, 1 radial
+    /// roller bearings, 2 thrust bearings (the Bearing generator's
+    /// Category). Each as (family, member, bore, outside diameter, width),
+    /// narrowest outside first.
+    pub fn bearings_for(&self, bore: f64, kind: usize) -> Vec<(usize, usize, f64, f64, f64)> {
+        let mut out = Vec::new();
+        for (fi, f) in self.families.iter().enumerate() {
+            if !f.category.starts_with("Shaft Parts/Bearings") {
+                continue;
+            }
+            let t = f.category.rsplit('/').next().unwrap_or("");
+            let thrust = t.contains("Thrust");
+            let ok = match kind {
+                0 => t.contains("Ball") && !thrust,
+                1 => t.contains("Roller") && !thrust,
+                _ => thrust,
+            };
+            if !ok {
+                continue;
+            }
+            for (mi, m) in f.members.iter().enumerate() {
+                if let Source::Sample(s) = &m.source
+                    && let samples::Kind::Bearing(d, od, b) = s.kind
+                    && (d - bore).abs() < 0.01
+                {
+                    out.push((fi, mi, d, od, b));
+                }
+            }
+        }
+        out.sort_by(|a, b| a.3.total_cmp(&b.3).then(a.4.total_cmp(&b.4)));
+        out
+    }
+
     /// The fit of each member, in order (a published family goes by its
     /// connection; without one it is placed by hand).
     pub fn fits(&self, family: usize) -> Vec<super::fit::Fit> {

@@ -15,6 +15,7 @@ pub mod bom;
 pub mod context;
 pub mod copy;
 pub mod create;
+pub mod elements;
 pub mod features;
 pub mod flexible;
 pub mod frame;
