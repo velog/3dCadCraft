@@ -291,6 +291,12 @@ impl CadCraftApp {
                     self.draw_geom(painter, rect, g, color(c));
                 }
             }
+            // Insert Frame's / Change's Align edge (rule 23).
+            if *key == "align" {
+                for g in refs {
+                    self.draw_geom(painter, rect, g, crate::gui::theme::canvas().hover_edge);
+                }
+            }
         }
         if let (Some(key), Some(p)) = (d.active, pointer)
             && face_colour(d, key).is_some()
