@@ -49,6 +49,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [0.17-home.md](0.17-home.md) | Home: the start page — active project, New / Open, recent documents, learning links |
 | [0.18-themes-colours.md](0.18-themes-colours.md) | Themes and colour management: UI Theme, In-canvas Color Scheme, the Colors tab |
 | [0.19-long-operations.md](0.19-long-operations.md) | Long operations: progress in the status bar, fast path for many through cuts, work off the main thread |
+| [0.20-large-models.md](0.20-large-models.md) | Large models: levels of detail, instancing, Undo with shared snapshots / deltas, parallel regeneration, OK in the background, hover and pick at scale (plan, all ⬜) |
 | [0.10-physical.md](0.10-physical.md) | Physical Properties: mass, volume, area, centre of gravity, inertia |
 | [0.9-selection.md](0.9-selection.md) | Selection, filters, prehighlight, Select Other, context suggestions |
 | [0.15-context-menus-shortcuts.md](0.15-context-menus-shortcuts.md) | Right-click by object kind and place, marking menu, keys and aliases, alias field, command search (Alt+S), mouse, accessibility; plan of the groups |
