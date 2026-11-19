@@ -1154,8 +1154,9 @@ impl AsmPlanned {
                     Button("Initial View"),
                     Head("Advanced Settings"),
                     Check("Apply Appearance to Part", false),
+                    Check("Frame Member Naming dialog", true),
                     Note(
-                        "The first Apply asks for the frame's file names (Create New Frame) and each member's (Frame Member Naming).",
+                        "The first Apply asks for the frame's file names (Create New Frame), the naming dialog for each new member's.",
                     ),
                 ],
             )],
@@ -2094,6 +2095,14 @@ impl CadCraftApp {
         if self.frame_anchor_click(p, rect) {
             return;
         }
+        // Copy Properties of Insert Frame / Change: a member to copy from.
+        if self.frame_copy_click(p, rect) {
+            return;
+        }
+        // Insert Frame / Change: an anchor point of the section in the view.
+        if self.frame_anchor_dot_click(p, rect) {
+            return;
+        }
         // Insert Frame's Between Points: ends of edges and sketch lines.
         if self.frame_between_click(p, rect) {
             return;
@@ -2212,7 +2221,9 @@ impl CadCraftApp {
             Some(d)
                 if matches!(
                     d.kind,
-                    Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::Reuse)
+                    Planned::Asm(
+                        AsmPlanned::InsertFrame | AsmPlanned::Reuse | AsmPlanned::ChangeReuse
+                    )
                 ) && d.active == Some("edges") =>
             {
                 Some(d.index(0, "Select"))

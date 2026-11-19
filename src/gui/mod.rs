@@ -94,6 +94,7 @@ mod frame_analysis;
 mod frame_ctx;
 mod frame_edit;
 mod frame_list;
+mod frame_manip;
 mod frame_select;
 mod frame_trace;
 mod freeform;
@@ -898,6 +899,8 @@ struct CadCraftApp {
     background_ok: bool,
     /// The job building the part on a worker thread (spec 0.19 §3.3).
     bg: Option<background::BgJob>,
+    /// Application Options › Assembly › Frame member file names (pattern).
+    frame_member_naming: String,
     /// Application Options › Display: the projection at start.
     default_projection: camera::Projection,
     /// Application Options › Display: the visual style at start.
@@ -1381,6 +1384,7 @@ impl CadCraftApp {
             fast_cuts: true,
             background_ok: !cfg!(test),
             bg: None,
+            frame_member_naming: crate::assembly::frame::DEFAULT_NAMING.into(),
             default_projection: Default::default(),
             default_visual_style: Default::default(),
             view_defaults_taken: false,

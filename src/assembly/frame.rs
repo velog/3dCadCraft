@@ -118,6 +118,11 @@ pub struct Orientation {
     /// Flip Direction: run from the line's end to its start.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub flip: bool,
+    /// Align: the direction (frame coordinates, a copy of the picked edge's
+    /// at insertion) the section's horizontal axis follows, square to the
+    /// line; `None` = the default orientation. Older builds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<[Real; 3]>,
 }
 
 /// The skeleton line a member follows.
@@ -303,8 +308,11 @@ pub enum MiterOffset {
 /// An end treatment between members (by occurrence id).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Treatment {
-    /// Full Miter Cut where `a` and `b` meet: both cut on the bisector
-    /// plane, `gap` between the cut faces.
+    /// A mitre where `a` and `b` meet, `gap` between the cut faces: Full
+    /// Miter Cut (`full`) cuts both on the plane through the meeting points
+    /// of their outer and of their inner edges (edge to edge, also for
+    /// sections of different sizes); Bisect Miter Cut on the bisector plane
+    /// of their axes (every mitre saved before 2026-11-19).
     Miter {
         /// First member.
         a: u32,
@@ -316,6 +324,10 @@ pub enum Treatment {
         /// Which member gives the gap.
         #[serde(default)]
         offset: MiterOffset,
+        /// Full Miter Cut (edge to edge); off = Bisect Miter Cut. Older
+        /// builds read it as a bisect cut.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        full: bool,
     },
     /// Corner Joint: `a` (the first pick) runs on to the far side of `b`;
     /// `b` stops at `a`'s near side. `offsets` pull each end back.
@@ -539,6 +551,73 @@ pub struct InsertOptions {
     pub corners: Corners,
     /// Where the sections lie relative to the frame's centre (§3.12).
     pub layout: Layout,
+    /// Appearance of the new members (`None`: As Material).
+    pub appearance: Option<String>,
+    /// Advanced Settings › Apply Appearance to Part: the appearance goes
+    /// into the member parts (else it is the occurrence's override in the
+    /// frame assembly).
+    pub appearance_to_part: bool,
+}
+
+/// Gives member `occ` (part `doc`) appearance `name` the way `to_part`
+/// says: on the part (the occurrence's override removed) or as the
+/// occurrence's override in `asm` (the part's own removed). `None` = As
+/// Material on both. An unknown appearance is an error.
+pub fn set_member_appearance(
+    project: &mut Project,
+    asm: DocumentId,
+    occ: u32,
+    doc: DocumentId,
+    name: Option<&str>,
+    to_part: bool,
+) -> Result<(), String> {
+    let lib = crate::materials::with_user();
+    let part_look = if to_part { name } else { None };
+    if let Some(DocumentData::Part(p)) = project.document_mut(doc).map(|d| &mut d.data) {
+        p.set_appearance(&crate::part::appearance::LookTarget::Part, part_look, lib)?;
+    }
+    let occ_look = if to_part { None } else { name };
+    let a = asm_mut(project, asm)?;
+    a.set_look(
+        &super::looks::AsmLookTarget::Occurrence(occ),
+        occ_look,
+        lib,
+        &[],
+    )?;
+    Ok(())
+}
+
+/// `new` (a rebuilt member or cap part) with the appearance `old` had:
+/// a rebuild must not lose the user's colour.
+fn keep_looks(old: &DocumentData, mut new: PartDocument) -> PartDocument {
+    if let DocumentData::Part(p) = old {
+        new.appearance = p.appearance.clone();
+        for a in &p.looks.appearances {
+            if !new.looks.appearances.iter().any(|x| x.name == a.name) {
+                new.looks.appearances.push(a.clone());
+            }
+        }
+    }
+    new
+}
+
+/// A member's appearance now: the occurrence's override, else its part's
+/// (`None`: As Material), and whether it sits on the part.
+pub fn member_appearance(
+    project: &Project,
+    a: &AssemblyDocument,
+    occ: u32,
+) -> (Option<String>, bool) {
+    let Some(o) = a.find(occ) else {
+        return (None, false);
+    };
+    if let Some(n) = &o.looks.appearance {
+        return (Some(n.clone()), false);
+    }
+    match project.document(o.component.document).map(|d| &d.data) {
+        Some(DocumentData::Part(p)) if p.appearance.is_some() => (p.appearance.clone(), true),
+        _ => (None, false),
+    }
 }
 
 /// Where a member's section lies across its line, relative to the centre of
@@ -696,6 +775,7 @@ impl Corners {
                 b: second,
                 gap: self.gap,
                 offset: MiterOffset::Symmetric,
+                full: true,
             }),
             CornerType::ButtFirst => Some(joint(first, second)),
             CornerType::ButtSecond => Some(joint(second, first)),
@@ -980,6 +1060,17 @@ pub fn member_pieces(path: &PathGeom, m: &Transform3) -> Vec<MemberPiece> {
 fn section_axes(a: Point3, b: Point3, o: &Orientation) -> Option<(Vector3, Vector3, Vector3)> {
     let (a, b) = if o.flip { (b, a) } else { (a, b) };
     let d = (b - a).try_normalize(1e-9)?;
+    // Align: the horizontal axis along the picked direction, square to the line.
+    if let Some(w) = o.align
+        && let Some(u) = {
+            let w = Vector3::new(w[0], w[1], w[2]);
+            (w - d * d.dot(&w)).try_normalize(1e-6)
+        }
+    {
+        let v = d.cross(&u);
+        let (c, sn) = (o.angle.cos(), o.angle.sin());
+        return Some((d, u * c + v * sn, v * c - u * sn));
+    }
     let up = if d.z.abs() > 0.999 {
         Vector3::x()
     } else {
@@ -1120,6 +1211,16 @@ pub fn insert_with(
             }
             let a = asm_mut(project, asm)?;
             let occ = a.place(DocRef::local(doc), &name, place, true);
+            if o.appearance.is_some() {
+                set_member_appearance(
+                    project,
+                    asm,
+                    occ,
+                    doc,
+                    o.appearance.as_deref(),
+                    o.appearance_to_part,
+                )?;
+            }
             made.push(FrameMember {
                 occurrence: occ,
                 skeleton: e.clone(),
@@ -1495,7 +1596,14 @@ fn miter_cuts(
     live: &[Live],
     find: &dyn Fn(u32) -> Result<usize, String>,
 ) -> Result<[Cut; 2], String> {
-    let Treatment::Miter { a, b, gap, offset } = t else {
+    let Treatment::Miter {
+        a,
+        b,
+        gap,
+        offset,
+        full,
+    } = t
+    else {
         return Err("not a mitre".into());
     };
     let (ia, ib) = (find(*a)?, find(*b)?);
@@ -1511,6 +1619,12 @@ fn miter_cuts(
     let n = (da - db)
         .try_normalize(1e-9)
         .ok_or("the members run the same way")?;
+    // Full: the plane through the meeting points of the outer edges and of
+    // the inner edges (it is the bisector when both bands lie alike).
+    let (c, n) = match full.then(|| edge_to_edge(ma, mb, c, da, db)).flatten() {
+        Some((q, m)) => (q, if m.dot(&n) < 0.0 { -m } else { m }),
+        None => (c, n),
+    };
     let (ga, gb) = match offset {
         MiterOffset::Default => (*gap, 0.0),
         MiterOffset::Flipped => (0.0, *gap),
@@ -1518,6 +1632,51 @@ fn miter_cuts(
     };
     // A keeps the side n points to, B the other one.
     Ok([(ia, ea, c + n * ga, -n), (ib, eb, c - n * gb, n)])
+}
+
+/// Full Miter Cut's plane (point, unit normal) for members `ma` and `mb`
+/// meeting at `c`, running away from it along `da` / `db`: through the point
+/// where their outer edges meet and the one where their inner edges meet,
+/// square to the plane of the two runs. `None` for runs in one line.
+fn edge_to_edge(
+    ma: &Live,
+    mb: &Live,
+    c: Point3,
+    da: Vector3,
+    db: Vector3,
+) -> Option<(Point3, Vector3)> {
+    let k = da.cross(&db).try_normalize(1e-9)?;
+    let (pa, pb) = (k.cross(&da), k.cross(&db));
+    // Each member's band across its run in the runs' plane: the section's
+    // box corners as placed, measured from the corner point.
+    let band = |m: &Live, p: Vector3| {
+        let (w, h) = m.section.extent();
+        let (lo, hi) = [(-w, -h), (w, -h), (w, h), (-w, h)]
+            .iter()
+            .map(|(x, y)| {
+                let q = m.place.transform_point(&Point3::new(x / 2.0, y / 2.0, 0.0));
+                (q - c).dot(&p)
+            })
+            .fold((Real::MAX, Real::MIN), |(a, b), v| (a.min(v), b.max(v)));
+        (lo, hi)
+    };
+    let (a0, a1) = band(ma, pa);
+    let (b0, b1) = band(mb, pb);
+    // The point of line c + sa·pa + t·da on line c + sb·pb + u·db (2D in
+    // the plane, coordinates along da and pa).
+    let meet = |sa: Real, sb: Real| -> Option<Point3> {
+        // Along pa: sa = sb·(pb·pa) + u·(db·pa).
+        let y = db.dot(&pa);
+        if y.abs() < 1e-9 {
+            return None;
+        }
+        let u = (sa - sb * pb.dot(&pa)) / y;
+        Some(c + pb * sb + db * u)
+    };
+    let outer = meet(a0, b1)?;
+    let inner = meet(a1, b0)?;
+    let n = (inner - outer).cross(&k).try_normalize(1e-9)?;
+    Some((nalgebra::center(&outer, &inner), n))
 }
 
 /// The shape a live member's cuts give it (part coordinates), or why not.
@@ -1819,7 +1978,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                     outer_length(&part).unwrap_or(sh.length)
                 };
                 if let Some(d) = project.document_mut(doc) {
-                    d.data = DocumentData::Part(part);
+                    d.data = DocumentData::Part(keep_looks(&d.data, part));
                     for c in &mut d.properties.custom {
                         if c.name == LENGTH_PROPERTY {
                             c.value = PropValue::Number(stored_length(outer));
@@ -1881,7 +2040,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
         match cap_part(&sec, &opts, mat.as_deref()) {
             Ok((part, _)) => {
                 if let Some(d) = project.document_mut(doc) {
-                    d.data = DocumentData::Part(part);
+                    d.data = DocumentData::Part(keep_looks(&d.data, part));
                 }
                 let a = asm_mut(project, asm)?;
                 for c in a.frames.iter_mut().flat_map(|f| &mut f.caps) {
@@ -2020,6 +2179,23 @@ pub fn add_miter(
     gap: Real,
     offset: MiterOffset,
 ) -> Result<Solved, String> {
+    add_miter_typed(project, linked, asm, pairs, gap, offset, true, false)
+}
+
+/// [`add_miter`] of either type: `full` = Full Miter Cut (edge to edge),
+/// else Bisect Miter Cut; `delete_existing` also drops the pair's other
+/// joints (a Corner Joint, a Notch between them).
+#[allow(clippy::too_many_arguments)]
+pub fn add_miter_typed(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    pairs: &[(u32, u32)],
+    gap: Real,
+    offset: MiterOffset,
+    full: bool,
+    delete_existing: bool,
+) -> Result<Solved, String> {
     if pairs.is_empty() {
         return Err("select two frame members that meet".into());
     }
@@ -2041,13 +2217,15 @@ pub fn add_miter(
                 .ok_or("both members must be frame members")?;
             f.treatments.retain(|t| {
                 let m = t.members();
-                !(matches!(t, Treatment::Miter { .. }) && m.contains(&x) && m.contains(&y))
+                let pair = m.contains(&x) && m.contains(&y);
+                !(pair && (delete_existing || matches!(t, Treatment::Miter { .. })))
             });
             f.treatments.push(Treatment::Miter {
                 a: x,
                 b: y,
                 gap,
                 offset,
+                full,
             });
         }
         let s = solve(project, linked, asm)?;
@@ -2071,6 +2249,19 @@ pub fn add_treatments(
     linked: &Linked,
     asm: DocumentId,
     ts: Vec<Treatment>,
+) -> Result<Solved, String> {
+    add_treatments_replacing(project, linked, asm, ts, false)
+}
+
+/// [`add_treatments`]; with `delete_existing` (Advanced Settings › Delete
+/// existing end treatments) a joint of two members also replaces their
+/// earlier joint of another kind (a Miter replaces their Corner Joint).
+pub fn add_treatments_replacing(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    ts: Vec<Treatment>,
+    delete_existing: bool,
 ) -> Result<Solved, String> {
     if ts.is_empty() {
         return Err("select the frame members".into());
@@ -2098,7 +2289,8 @@ pub fn add_treatments(
                 })
                 .ok_or("the members must be frame members")?;
             f.treatments.retain(|x| {
-                !(std::mem::discriminant(x) == std::mem::discriminant(&t) && x.members() == ms)
+                let same = std::mem::discriminant(x) == std::mem::discriminant(&t);
+                !(same && x.members() == ms || delete_existing && same_joint(x, &ms))
             });
             touched.extend(ms);
             f.treatments.push(t);
@@ -2113,6 +2305,12 @@ pub fn add_treatments(
         *project = before;
     }
     result
+}
+
+/// Is `x` a joint of exactly the two members `ms` (either way round)?
+fn same_joint(x: &Treatment, ms: &[u32]) -> bool {
+    let m = x.members();
+    ms.len() == 2 && m.len() == 2 && m.contains(&ms[0]) && m.contains(&ms[1])
 }
 
 /// Members of different frames treated together (a Trim/Extend, a corner
@@ -2159,6 +2357,70 @@ pub fn change(
         })
         .collect();
     edit_members(project, linked, asm, &edits, o, lib)
+}
+
+/// Change of several members (spec 6.1 §3.3): only what the panel changed
+/// from `base` (the values it showed when it was filled) is given to every
+/// member; each member keeps its own section, material, appearance and each
+/// orientation value the user left as it was. On an error nothing changes.
+pub fn change_keeping(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    members: &[u32],
+    o: &InsertOptions,
+    base: &InsertOptions,
+    lib: &Library,
+) -> Result<Solved, String> {
+    let a = asm_of(project, asm)?;
+    let edits: Vec<MemberEdit> = members
+        .iter()
+        .map(|&occurrence| MemberEdit {
+            occurrence,
+            skeleton: None,
+            orientation: merge_orientation(
+                orientation_of(a, occurrence).unwrap_or(base.orientation),
+                &o.orientation,
+                &base.orientation,
+            ),
+        })
+        .collect();
+    edit_members_in(project, linked, asm, &edits, o, lib, Some(base))
+}
+
+/// `own` with every value of `new` that differs from `base`.
+pub fn merge_orientation(own: Orientation, new: &Orientation, base: &Orientation) -> Orientation {
+    let pick = |n: Real, b: Real, o: Real| if (n - b).abs() > 1e-9 { n } else { o };
+    Orientation {
+        anchor: if new.anchor != base.anchor {
+            new.anchor
+        } else {
+            own.anchor
+        },
+        h_offset: pick(new.h_offset, base.h_offset, own.h_offset),
+        v_offset: pick(new.v_offset, base.v_offset, own.v_offset),
+        angle: pick(new.angle, base.angle, own.angle),
+        about_anchor: if new.about_anchor != base.about_anchor {
+            new.about_anchor
+        } else {
+            own.about_anchor
+        },
+        mirror: if new.mirror != base.mirror {
+            new.mirror
+        } else {
+            own.mirror
+        },
+        flip: if new.flip != base.flip {
+            new.flip
+        } else {
+            own.flip
+        },
+        align: if new.align != base.align {
+            new.align
+        } else {
+            own.align
+        },
+    }
 }
 
 /// One member's new place for [`edit_members`].
@@ -2261,13 +2523,33 @@ pub fn edit_members(
     o: &InsertOptions,
     lib: &Library,
 ) -> Result<Solved, String> {
+    edit_members_in(project, linked, asm, edits, o, lib, None)
+}
+
+/// [`edit_members`]; with `keep`, a member keeps its own section when `o`'s
+/// is `keep`'s, its material and appearance likewise ([`change_keeping`]).
+fn edit_members_in(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    edits: &[MemberEdit],
+    o: &InsertOptions,
+    lib: &Library,
+    keep: Option<&InsertOptions>,
+) -> Result<Solved, String> {
     if edits.is_empty() {
         return Err("select the frame members".into());
     }
-    let section = lib
+    let chosen = lib
         .find(&o.family, &o.size)
         .ok_or_else(|| format!("{} {} is not in the library", o.family, o.size))?
         .clone();
+    let same_section = keep.is_some_and(|b| b.family == o.family && b.size == o.size);
+    let same_material = keep.is_some_and(|b| b.material == o.material);
+    let set_look = match keep {
+        Some(b) => b.appearance != o.appearance || b.appearance_to_part != o.appearance_to_part,
+        None => o.appearance.is_some(),
+    };
     let members: Vec<u32> = edits.iter().map(|e| e.occurrence).collect();
     let before = project.clone();
     let result = (|| {
@@ -2293,11 +2575,25 @@ pub fn edit_members(
                 .filter(|c| c.library.is_none())
                 .ok_or("the member's part is not in this file")?
                 .document;
+            let section = match same_section.then(|| m.section()).flatten() {
+                Some(s) => s,
+                None => chosen.clone(),
+            };
+            let material = if same_material {
+                part_material(project, doc)
+            } else {
+                o.material.clone()
+            };
             let skeleton = e.skeleton.clone().unwrap_or_else(|| m.skeleton.clone());
             let run = skeleton_run(project, linked, a, &skeleton)?;
             let (p, q) = run.chord();
+            // A panel without an Align pick keeps the member's.
+            let mut given = e.orientation;
+            if given.align.is_none() {
+                given.align = m.orientation.align;
+            }
             let orientation = if o.layout == Layout::default() || matches!(run, Run::Curve(_)) {
-                e.orientation
+                given
             } else {
                 let lines: Vec<(Point3, Point3)> = f
                     .members
@@ -2310,13 +2606,13 @@ pub fn edit_members(
                         }
                     })
                     .collect();
-                o.layout.orient(&e.orientation, p, q, centre_of(&lines))
+                o.layout.orient(&given, p, q, centre_of(&lines))
             };
             let length = run.length();
             let (part, path) = match &run {
                 Run::Line(..) => (
                     section
-                        .member_part(length, o.material.as_deref())
+                        .member_part(length, material.as_deref())
                         .map_err(|e| e.to_string())?,
                     None,
                 ),
@@ -2326,14 +2622,14 @@ pub fn edit_members(
                     let pieces = member_pieces(&r, &place.inverse());
                     (
                         section
-                            .member_part_path(&pieces, o.material.as_deref())
+                            .member_part_path(&pieces, material.as_deref())
                             .map_err(|e| e.to_string())?,
                         Some(pieces),
                     )
                 }
             };
             if let Some(d) = project.document_mut(doc) {
-                d.data = DocumentData::Part(part);
+                d.data = DocumentData::Part(keep_looks(&d.data, part));
                 d.properties = section.member_properties(length);
             }
             // A generated name follows the section (it kept saying the old size); a name the
@@ -2369,6 +2665,16 @@ pub fn edit_members(
                     path,
                     ..Default::default()
                 });
+            }
+            if set_look {
+                set_member_appearance(
+                    project,
+                    asm,
+                    occ,
+                    doc,
+                    o.appearance.as_deref(),
+                    o.appearance_to_part,
+                )?;
             }
         }
         let s = solve(project, linked, asm)?;
@@ -2627,6 +2933,147 @@ pub fn reuse(
     result
 }
 
+/// Change Reuse (spec 6.1 §3.5): reused members `members` move to `lines`
+/// (one line each, in order; empty keeps their lines) and run the source's
+/// way, or the other way with `flip`. Lines must be as long as the source's.
+/// On an error nothing changes (rule 5).
+pub fn change_reuse(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    members: &[u32],
+    lines: &[Skeleton],
+    flip: bool,
+) -> Result<Solved, String> {
+    if members.is_empty() {
+        return Err("select the reused members".into());
+    }
+    if !lines.is_empty() && lines.len() != members.len() {
+        return Err(format!(
+            "select one line for each reused member ({} members, {} lines)",
+            members.len(),
+            lines.len()
+        ));
+    }
+    let before = project.clone();
+    let result = (|| {
+        let mut moves = Vec::new();
+        {
+            let a = asm_of(project, asm)?;
+            let all: Vec<&FrameMember> = a.frames.iter().flat_map(|f| &f.members).collect();
+            for (k, &occ) in members.iter().enumerate() {
+                let m = all
+                    .iter()
+                    .find(|m| m.occurrence == occ)
+                    .ok_or("only frame members can be changed")?;
+                let src = m
+                    .reuse_of
+                    .ok_or("only reused members can be changed here")?;
+                let source = all
+                    .iter()
+                    .find(|m| m.occurrence == src)
+                    .ok_or("the source member no longer exists")?;
+                let skeleton = match lines.get(k) {
+                    Some(l) => {
+                        let (p, q) = skeleton_line(project, linked, a, &source.skeleton)?;
+                        let (r, s) = skeleton_line(project, linked, a, l)?;
+                        let (want, len) = ((q - p).norm(), (s - r).norm());
+                        if (len - want).abs() > REUSE_TOLERANCE {
+                            return Err(format!(
+                                "a line is {len:.3} mm long, the source's {want:.3} mm"
+                            ));
+                        }
+                        l.clone()
+                    }
+                    None => m.skeleton.clone(),
+                };
+                let mut orientation = source.orientation;
+                orientation.flip ^= flip;
+                moves.push((occ, skeleton, orientation));
+            }
+        }
+        let a = asm_mut(project, asm)?;
+        for (occ, skeleton, orientation) in moves {
+            if let Some(m) = a
+                .frames
+                .iter_mut()
+                .flat_map(|f| &mut f.members)
+                .find(|m| m.occurrence == occ)
+            {
+                m.skeleton = skeleton;
+                m.orientation = orientation;
+            }
+        }
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(o, _)| members.contains(o)) {
+            return Err(why.clone());
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// Refresh (spec 6.1 §3.5): members `members` (empty: every member of the
+/// assembly's frames) whose section numbers differ from the library's entry
+/// of their family and size get the library's and are rebuilt; everything
+/// else of them stays. A size no longer in the library keeps its data;
+/// reused members follow their source. Returns the members updated. On an
+/// error nothing changes.
+pub fn refresh(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    members: &[u32],
+    lib: &Library,
+) -> Result<Vec<u32>, String> {
+    let a = asm_of(project, asm)?;
+    let mut groups: Vec<((String, String), Vec<u32>)> = Vec::new();
+    for m in a.frames.iter().flat_map(|f| &f.members) {
+        if !members.is_empty() && !members.contains(&m.occurrence) || m.reuse_of.is_some() {
+            continue;
+        }
+        let Some(s) = lib.find(&m.family, &m.size) else {
+            continue;
+        };
+        if SectionData::of(s) == m.section {
+            continue;
+        }
+        let key = (m.family.clone(), m.size.clone());
+        match groups.iter_mut().find(|g| g.0 == key) {
+            Some(g) => g.1.push(m.occurrence),
+            None => groups.push((key, vec![m.occurrence])),
+        }
+    }
+    let before = project.clone();
+    let mut done = Vec::new();
+    for ((family, size), occs) in groups {
+        // The section counts as changed, the rest as kept (change_keeping).
+        let o = InsertOptions {
+            family,
+            size,
+            material: None,
+            orientation: Orientation::default(),
+            corners: Corners::default(),
+            layout: Layout::default(),
+            appearance: None,
+            appearance_to_part: false,
+        };
+        let base = InsertOptions {
+            family: String::new(),
+            ..o.clone()
+        };
+        if let Err(e) = change_keeping(project, linked, asm, &occs, &o, &base, lib) {
+            *project = before;
+            return Err(e);
+        }
+        done.extend(occs);
+    }
+    Ok(done)
+}
+
 fn part_material(project: &Project, doc: DocumentId) -> Option<String> {
     match project.document(doc).map(|d| &d.data) {
         Some(DocumentData::Part(p)) => p.material.clone(),
@@ -2736,6 +3183,233 @@ pub fn insert_caps(
             return Err(why.clone());
         }
         Ok(made)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// Edit of end caps (Edit with Frame Generator on a cap, spec 6.1 §3.2):
+/// caps `caps` (occurrences) are rebuilt with `o` and `material` on the
+/// ends they close. On an error nothing changes.
+pub fn edit_caps(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    caps: &[u32],
+    o: &CapOptions,
+    material: Option<&str>,
+) -> Result<Solved, String> {
+    if caps.is_empty() {
+        return Err("select the end caps".into());
+    }
+    let before = project.clone();
+    let result = (|| {
+        for &c in caps {
+            let a = asm_of(project, asm)?;
+            let (k, cap) = a
+                .frames
+                .iter()
+                .enumerate()
+                .find_map(|(k, f)| f.caps.iter().find(|x| x.occurrence == c).map(|x| (k, x)))
+                .ok_or("that is not an end cap")?;
+            let m = a.frames[k]
+                .members
+                .iter()
+                .find(|m| m.occurrence == cap.member)
+                .ok_or("the cap's member no longer exists")?;
+            let sec = m.section().ok_or("its section data is unreadable")?;
+            let built_for = format!("{} {}", m.family, m.size);
+            let doc = a
+                .find(c)
+                .map(|x| x.component)
+                .filter(|x| x.library.is_none())
+                .ok_or("the cap's part is not in this file")?
+                .document;
+            let (part, base) = cap_part(&sec, o, material)?;
+            if let Some(d) = project.document_mut(doc) {
+                d.data = DocumentData::Part(keep_looks(&d.data, part));
+                d.properties.set("stock_number", &base);
+            }
+            let a = asm_mut(project, asm)?;
+            if let Some(x) = a.frames[k].caps.iter_mut().find(|x| x.occurrence == c) {
+                x.options = *o;
+                x.built_for = built_for;
+            }
+        }
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(m, _)| caps.contains(m)) {
+            return Err(why.clone());
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// One row of the Frame Member Naming dialog (spec 6.1 §3.1): a member's
+/// occurrence, its Display Name (the occurrence's) and File Name (its part
+/// document's).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberName {
+    /// The member's occurrence.
+    pub occurrence: u32,
+    /// Display Name in the browser.
+    pub display: String,
+    /// File Name: the member part's document name in the design file.
+    pub file: String,
+}
+
+/// The names members `occs` have now (Frame Member Naming's rows).
+pub fn member_names(project: &Project, a: &AssemblyDocument, occs: &[u32]) -> Vec<MemberName> {
+    occs.iter()
+        .filter_map(|&o| {
+            let x = a.find(o)?;
+            let file = project.document(x.component.document)?.name.clone();
+            Some(MemberName {
+                occurrence: o,
+                display: x.name.clone(),
+                file,
+            })
+        })
+        .collect()
+}
+
+/// File Naming Defaults › Frame Generator: the default pattern of a new
+/// member's file name (Stock Number and a unique number).
+pub const DEFAULT_NAMING: &str = "{Stock Number}-{#}";
+
+/// The attributes a naming pattern can hold (the Options' **+** list).
+pub const NAMING_TOKENS: &[&str] = &[
+    "{Stock Number}",
+    "{Standard}",
+    "{Family}",
+    "{Size}",
+    "{Length}",
+    "{#}",
+];
+
+/// The names `pattern` gives members `occs` of `a` (Frame Member Naming's
+/// prefill): each attribute replaced by the member's, `{#}` by the smallest
+/// number that makes the file name unique in the project (a name without
+/// `{#}` that is taken gets `-<n>`). Display Name = File Name + `:1`.
+pub fn names_from_pattern(
+    project: &Project,
+    a: &AssemblyDocument,
+    occs: &[u32],
+    pattern: &str,
+) -> Vec<MemberName> {
+    let pattern = if pattern.trim().is_empty() {
+        DEFAULT_NAMING
+    } else {
+        pattern
+    };
+    let mut taken: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for &occ in occs {
+        let Some(m) = a
+            .frames
+            .iter()
+            .flat_map(|f| &f.members)
+            .find(|m| m.occurrence == occ)
+        else {
+            continue;
+        };
+        let Some(doc) = a.find(occ).map(|o| o.component.document) else {
+            continue;
+        };
+        let s = m.section();
+        let stock = s.as_ref().map(Section::stock_number).unwrap_or_default();
+        let length = m
+            .built
+            .as_ref()
+            .map(|b| format!("{:.0}", b.length))
+            .unwrap_or_default();
+        let base = pattern
+            .replace("{Stock Number}", &stock)
+            .replace("{Standard}", &m.section.standard)
+            .replace("{Family}", &m.family)
+            .replace("{Size}", &m.size)
+            .replace("{Length}", &length);
+        let free = |n: &str, taken: &[String]| {
+            !n.trim().is_empty()
+                && !project.name_taken(n, Some(doc))
+                && !taken.iter().any(|t| t.eq_ignore_ascii_case(n))
+        };
+        let file = if base.contains("{#}") {
+            (1..)
+                .map(|k| base.replace("{#}", &k.to_string()))
+                .find(|n| free(n, &taken))
+                .unwrap_or_default()
+        } else if free(&base, &taken) {
+            base
+        } else {
+            (2..)
+                .map(|k| format!("{base}-{k}"))
+                .find(|n| free(n, &taken))
+                .unwrap_or_default()
+        };
+        taken.push(file.clone());
+        out.push(MemberName {
+            occurrence: occ,
+            display: format!("{file}:1"),
+            file,
+        });
+    }
+    out
+}
+
+/// Frame Member Naming's OK: every row's occurrence and part take its names.
+/// An empty name, a file name used twice or by another document is refused
+/// and nothing changes (rule 5).
+pub fn rename_members(
+    project: &mut Project,
+    asm: DocumentId,
+    rows: &[MemberName],
+) -> Result<(), String> {
+    for (k, r) in rows.iter().enumerate() {
+        if r.display.trim().is_empty() || r.file.trim().is_empty() {
+            return Err("a name cannot be empty".into());
+        }
+        if rows[..k].iter().any(|x| {
+            x.file.trim().eq_ignore_ascii_case(r.file.trim()) && x.occurrence != r.occurrence
+        }) {
+            return Err(format!("\"{}\" is given twice", r.file.trim()));
+        }
+    }
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_of(project, asm)?;
+        let docs: Vec<DocumentId> = rows
+            .iter()
+            .map(|r| {
+                a.find(r.occurrence)
+                    .map(|o| o.component.document)
+                    .ok_or_else(|| "that member no longer exists".to_owned())
+            })
+            .collect::<Result<_, _>>()?;
+        // First out of the way, so two members can swap names.
+        for (k, d) in docs.iter().enumerate() {
+            let tmp = format!("~frame-member-naming~{k}");
+            project
+                .rename_document(*d, &tmp)
+                .map_err(|e| e.to_string())?;
+        }
+        for (r, d) in rows.iter().zip(&docs) {
+            project
+                .rename_document(*d, r.file.trim())
+                .map_err(|e| e.to_string())?;
+        }
+        let a = asm_mut(project, asm)?;
+        for r in rows {
+            if let Some(o) = a.find_mut(r.occurrence) {
+                o.name = r.display.trim().to_owned();
+            }
+        }
+        Ok(())
     })();
     if result.is_err() {
         *project = before;
@@ -3407,6 +4081,8 @@ mod tests {
             orientation: Orientation::default(),
             corners: Corners::default(),
             layout: Layout::default(),
+            appearance: None,
+            appearance_to_part: false,
         }
     }
 
@@ -4044,6 +4720,85 @@ mod tests {
         assert!((outer_length(&m).unwrap() - 400.0).abs() < 1e-6);
     }
 
+    /// Full Miter Cut of flats of different widths (40 and 60 across, in the
+    /// corner's plane) meets edge to edge: each runs on by half the other's
+    /// width (430 and 320 outside); Bisect Miter Cut cuts on the axes'
+    /// bisector (420 and 330).
+    #[test]
+    fn full_and_bisect_miters_of_different_widths() {
+        for (full, want) in [(true, [430.0, 320.0]), (false, [420.0, 330.0])] {
+            let (mut p, aid, _) = project();
+            let lk = Linked::new();
+            let lib = Library::builtin();
+            let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+            let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+            let mut o = opts();
+            o.family = "Flat bar (EN 10058)".into();
+            o.size = "40x5".into();
+            let (_, a) = insert(&mut p, &lk, aid, &[x], &o, lib, None).unwrap();
+            o.size = "60x10".into();
+            let (_, b) = insert(&mut p, &lk, aid, &[y], &o, lib, None).unwrap();
+            let s = add_miter_typed(
+                &mut p,
+                &lk,
+                aid,
+                &[(a[0], b[0])],
+                0.0,
+                MiterOffset::Default,
+                full,
+                false,
+            )
+            .unwrap();
+            assert!(s.sick.is_empty(), "{:?}", s.sick);
+            let d = asm(&p, aid);
+            for (occ, len) in [(a[0], want[0]), (b[0], want[1])] {
+                let outer = outer_length(&part(&p, d, occ)).unwrap();
+                assert!((outer - len).abs() < 1e-3, "full {full}: {outer} vs {len}");
+            }
+        }
+    }
+
+    /// Delete existing end treatments: on, a Miter replaces the pair's
+    /// Corner Joint; off, both stay (the mitre is applied after the joint).
+    #[test]
+    fn delete_existing_end_treatments_replaces_the_pairs_joint() {
+        for delete in [true, false] {
+            let (mut p, aid, _) = project();
+            let lk = Linked::new();
+            let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+            let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+            let (_, m) =
+                insert(&mut p, &lk, aid, &[x, y], &opts(), Library::builtin(), None).unwrap();
+            let t = Treatment::CornerJoint {
+                a: m[0],
+                b: m[1],
+                offsets: [0.0, 0.0],
+            };
+            add_treatments(&mut p, &lk, aid, vec![t]).unwrap();
+            add_miter_typed(
+                &mut p,
+                &lk,
+                aid,
+                &[(m[0], m[1])],
+                0.0,
+                MiterOffset::Default,
+                true,
+                delete,
+            )
+            .unwrap();
+            let labels: Vec<&str> = asm(&p, aid).frames[0]
+                .treatments
+                .iter()
+                .map(Treatment::label)
+                .collect();
+            if delete {
+                assert_eq!(labels, ["Miter"]);
+            } else {
+                assert_eq!(labels, ["Corner Joint", "Miter"]);
+            }
+        }
+    }
+
     /// Corner Joint of two flats at the top front corner: the first runs on
     /// to the far side of the second, which stops at the first's near side.
     #[test]
@@ -4214,6 +4969,89 @@ mod tests {
         // The skeleton is no member.
         assert!(delete_members(&mut p, &lk, aid, &[1]).is_err());
         assert!(change(&mut p, &lk, aid, &[1], &o, Library::builtin()).is_err());
+    }
+
+    /// Change of several members keeps what the panel did not change: each
+    /// member's own size and rotation, while a new material reaches all.
+    /// An appearance goes on the occurrence, or on the part with Apply
+    /// Appearance to Part, and a rebuild keeps it.
+    #[test]
+    fn change_of_several_members_keeps_their_own_values() {
+        let (mut p, aid, _) = project();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let lk = Linked::new();
+        let lib = Library::builtin();
+        let (_, a) = insert(&mut p, &lk, aid, &[x], &opts(), lib, None).unwrap();
+        let mut o = opts();
+        o.size = "50x50x4".into();
+        o.orientation.angle = 0.5;
+        let (_, b) = insert(&mut p, &lk, aid, &[y], &o, lib, None).unwrap();
+        let (a, b) = (a[0], b[0]);
+        // The panel filled from the first member; only the material changed.
+        let base = opts();
+        let mut new = opts();
+        new.material = Some("Aluminium 6061-T6".into());
+        change_keeping(&mut p, &lk, aid, &[a, b], &new, &base, lib).unwrap();
+        let d = asm(&p, aid);
+        let mb = d
+            .frames
+            .iter()
+            .flat_map(|f| &f.members)
+            .find(|m| m.occurrence == b)
+            .unwrap();
+        assert_eq!(mb.size, "50x50x4");
+        assert!((mb.orientation.angle - 0.5).abs() < 1e-12);
+        for m in [a, b] {
+            let pm = part(&p, d, m);
+            assert_eq!(pm.material.as_deref(), Some("Aluminium 6061-T6"));
+        }
+        // A new size and offset reach both; the rotation stays b's own.
+        let base = new.clone();
+        new.size = "30x30x3".into();
+        new.orientation.h_offset = 5.0;
+        change_keeping(&mut p, &lk, aid, &[a, b], &new, &base, lib).unwrap();
+        let d = asm(&p, aid);
+        for m in d.frames.iter().flat_map(|f| &f.members) {
+            assert_eq!(m.size, "30x30x3");
+            assert!((m.orientation.h_offset - 5.0).abs() < 1e-12);
+        }
+        let mb = d
+            .frames
+            .iter()
+            .flat_map(|f| &f.members)
+            .find(|m| m.occurrence == b)
+            .unwrap();
+        assert!((mb.orientation.angle - 0.5).abs() < 1e-12);
+        // Appearance: on the occurrence, then on the part.
+        let look = crate::materials::builtin().appearances[0].name.clone();
+        let base = new.clone();
+        new.appearance = Some(look.clone());
+        change_keeping(&mut p, &lk, aid, &[a], &new, &base, lib).unwrap();
+        assert_eq!(
+            member_appearance(&p, asm(&p, aid), a),
+            (Some(look.clone()), false)
+        );
+        assert_eq!(member_appearance(&p, asm(&p, aid), b), (None, false));
+        let base = new.clone();
+        new.appearance_to_part = true;
+        change_keeping(&mut p, &lk, aid, &[a], &new, &base, lib).unwrap();
+        assert_eq!(
+            member_appearance(&p, asm(&p, aid), a),
+            (Some(look.clone()), true)
+        );
+        // A Lengthen rebuilds the part: the colour stays.
+        let l = Treatment::Lengthen {
+            member: a,
+            offsets: [10.0, 0.0],
+        };
+        add_treatments(&mut p, &lk, aid, vec![l]).unwrap();
+        assert_eq!(member_appearance(&p, asm(&p, aid), a), (Some(look), true));
+        // The member carries its standard.
+        assert_eq!(
+            custom_text(&p, aid, a, crate::part::frame::STANDARD_PROPERTY).as_deref(),
+            Some("EN")
+        );
     }
 
     /// A T joint of sketch lines: a flat bar 40x5 up the Y axis ends on the
@@ -5200,6 +6038,201 @@ mod tests {
         );
         delete_members(&mut p, &linked, aid, &r).unwrap();
         assert_eq!(p.documents().len(), n - 1);
+    }
+
+    #[test]
+    fn change_reuse_moves_and_flips_a_reused_member() {
+        let (mut p, aid, _) = project();
+        let linked = Linked::new();
+        let (src, back, _) = front_and_back(&mut p, aid);
+        let r = reuse(&mut p, &linked, aid, src, &[back], false).unwrap()[0];
+        let left = edge("Left", "Bottom", [0.0, 150.0, 0.0]);
+        let side = edge("Right", "Bottom", [400.0, 150.0, 0.0]);
+        let bottom = edge("Front", "Bottom", [200.0, 0.0, 0.0]);
+        // Another length is refused and changes nothing.
+        let before = asm(&p, aid).frames.clone();
+        assert!(change_reuse(&mut p, &linked, aid, &[r], &[left], false).is_err());
+        assert_eq!(asm(&p, aid).frames, before);
+        // The source is no reused member; two lines for one member is wrong.
+        assert!(change_reuse(&mut p, &linked, aid, &[src], &[], true).is_err());
+        assert!(change_reuse(&mut p, &linked, aid, &[r], &[side.clone(), side], false).is_err());
+        change_reuse(
+            &mut p,
+            &linked,
+            aid,
+            &[r],
+            std::slice::from_ref(&bottom),
+            true,
+        )
+        .unwrap();
+        let a = asm(&p, aid);
+        let m = a.frames[0]
+            .members
+            .iter()
+            .find(|m| m.occurrence == r)
+            .unwrap();
+        assert_eq!(m.skeleton, bottom);
+        assert!(m.orientation.flip);
+        // It now lies along the bottom front edge (z near 0).
+        let (lo, hi) = member_box(&p, aid, r);
+        assert!(lo.z < 1.0 && hi.z < 41.0, "{lo:?} {hi:?}");
+        assert_eq!(component_of(&p, aid, r), component_of(&p, aid, src));
+    }
+
+    #[test]
+    fn refresh_takes_the_changed_table_and_keeps_the_rest() {
+        let (mut p, aid, _) = project();
+        let lk = Linked::new();
+        let lib = Library::builtin();
+        let m = one_member(&mut p, aid);
+        let before = volume_of(&p, aid, m);
+        // Nothing changed: nothing to do.
+        assert!(refresh(&mut p, &lk, aid, &[], lib).unwrap().is_empty());
+        // The table's 40x40x3 now has a 4 mm wall.
+        let mut changed = lib.clone();
+        for s in &mut changed.sections {
+            if s.size == "40x40x3" && s.family.starts_with("Square hollow") {
+                s.t = 4.0;
+            }
+        }
+        let rotated = Orientation {
+            angle: 0.3,
+            ..Default::default()
+        };
+        set_orientations(&mut p, &lk, aid, &[(m, rotated)]).unwrap();
+        assert_eq!(refresh(&mut p, &lk, aid, &[], &changed).unwrap(), vec![m]);
+        let a = asm(&p, aid);
+        assert!((a.frames[0].members[0].section.dims[2] - 4.0).abs() < 1e-12);
+        assert!((a.frames[0].members[0].orientation.angle - 0.3).abs() < 1e-12);
+        assert_eq!(
+            part(&p, a, m).material.as_deref(),
+            Some("Steel S235"),
+            "the material stays"
+        );
+        assert!(volume_of(&p, aid, m) > before * 1.2);
+    }
+
+    #[test]
+    fn an_edited_cap_takes_its_new_thickness_and_place() {
+        let (mut p, aid, _) = project();
+        let lk = Linked::new();
+        let m = one_member(&mut p, aid);
+        let c = insert_caps(&mut p, &lk, aid, &[(m, true)], &cap_opts(), None).unwrap()[0];
+        let thin = volume_of(&p, aid, c);
+        let mut o = cap_opts();
+        o.thickness *= 2.0;
+        edit_caps(&mut p, &lk, aid, &[c], &o, Some("Steel S235")).unwrap();
+        close_to(volume_of(&p, aid, c), 2.0 * thin, thin * 1e-3);
+        let a = asm(&p, aid);
+        assert_eq!(caps_of(&p, aid)[0].options, o);
+        assert_eq!(part(&p, a, c).material.as_deref(), Some("Steel S235"));
+        // A bad thickness changes nothing.
+        let mut bad = o;
+        bad.thickness = 0.0;
+        assert!(edit_caps(&mut p, &lk, aid, &[c], &bad, None).is_err());
+        assert_eq!(caps_of(&p, aid)[0].options, o);
+        // A member is no cap.
+        assert!(edit_caps(&mut p, &lk, aid, &[m], &o, None).is_err());
+    }
+
+    #[test]
+    fn members_take_the_names_given_and_refuse_clashes() {
+        let (mut p, aid, sk) = project();
+        let lk = Linked::new();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let (_, occs) =
+            insert(&mut p, &lk, aid, &[x, y], &opts(), Library::builtin(), None).unwrap();
+        let mut rows = member_names(&p, asm(&p, aid), &occs);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].file.starts_with("SHS 40x40x3-"), "{}", rows[0].file);
+        // Swapping the two file names works.
+        let (f0, f1) = (rows[0].file.clone(), rows[1].file.clone());
+        rows[0].file = f1.clone();
+        rows[1].file = f0.clone();
+        rows[0].display = "Front rail".into();
+        rename_members(&mut p, aid, &rows).unwrap();
+        let now = member_names(&p, asm(&p, aid), &occs);
+        assert_eq!(now[0].file, f1);
+        assert_eq!(now[1].file, f0);
+        assert_eq!(now[0].display, "Front rail");
+        // The skeleton's name, a doubled name and an empty one are refused.
+        let skel = p.document(sk).unwrap().name.clone();
+        for bad in [skel, f0.clone(), String::new()] {
+            let mut r = now.clone();
+            r[0].file = bad.clone();
+            assert!(rename_members(&mut p, aid, &r).is_err(), "{bad}");
+            assert_eq!(member_names(&p, asm(&p, aid), &occs), now);
+        }
+    }
+
+    /// Align: the section's horizontal axis follows the given direction
+    /// (square to the line); a direction along the line is ignored.
+    #[test]
+    fn align_turns_the_section_after_a_direction() {
+        let s = Library::builtin()
+            .find("Rectangular hollow section (EN 10219)", "100x50x4")
+            .unwrap()
+            .clone();
+        let (a, b) = (
+            Point3::origin(),
+            Point3::new(0.0, 0.0, 0.0) + Vector3::x() * 500.0,
+        );
+        let plain = placement(&s, a, b, &Orientation::default()).unwrap();
+        let tilted = Orientation {
+            align: Some([0.0, 0.0, 1.0]),
+            ..Default::default()
+        };
+        let t = placement(&s, a, b, &tilted).unwrap();
+        // Part X (the section's horizontal axis) now points up.
+        let x = t.transform_vector(&Vector3::x());
+        assert!((x - Vector3::z()).norm() < 1e-9, "{x:?}");
+        assert!((plain.transform_vector(&Vector3::x()) - Vector3::z()).norm() > 0.5);
+        // Along the line: the default.
+        let along = Orientation {
+            align: Some([1.0, 0.0, 0.0]),
+            ..Default::default()
+        };
+        let p = placement(&s, a, b, &along).unwrap();
+        assert!(
+            (p.transform_vector(&Vector3::x()) - plain.transform_vector(&Vector3::x())).norm()
+                < 1e-9
+        );
+    }
+
+    /// File Naming Defaults: a pattern of attributes and `{#}`; numbers skip
+    /// names taken in the file and by the other new members.
+    #[test]
+    fn member_names_follow_the_pattern() {
+        let (mut p, aid, _) = project();
+        let lk = Linked::new();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let (_, occs) =
+            insert(&mut p, &lk, aid, &[x, y], &opts(), Library::builtin(), None).unwrap();
+        let a = asm(&p, aid);
+        let n = names_from_pattern(&p, a, &occs, "{Standard} {Stock Number} {Length} #{#}");
+        assert_eq!(n[0].file, "EN SHS 40x40x3 400 #1");
+        assert_eq!(n[1].file, "EN SHS 40x40x3 300 #1");
+        let n = names_from_pattern(&p, a, &occs, "Rail");
+        assert_eq!(n[0].file, "Rail");
+        assert_eq!(n[1].file, "Rail-2");
+        assert_eq!(n[1].display, "Rail-2:1");
+        // The skeleton's name is taken.
+        let n = names_from_pattern(&p, a, &occs[..1], "Skeleton");
+        assert_eq!(n[0].file, "Skeleton-2");
+        // The default: what insert gave them already.
+        let n = names_from_pattern(&p, a, &occs, DEFAULT_NAMING);
+        assert_eq!(
+            n,
+            member_names(&p, a, &occs)
+                .into_iter()
+                .map(|r| MemberName {
+                    display: format!("{}:1", r.file),
+                    ..r
+                })
+                .collect::<Vec<_>>()
+        );
     }
 
     fn length_of_member(p: &Project, a: DocumentId, occ: u32) -> Real {

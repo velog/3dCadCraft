@@ -2722,6 +2722,8 @@ fn between_r58_project() -> Project {
         orientation: Default::default(),
         corners: Default::default(),
         layout: Default::default(),
+        appearance: None,
+        appearance_to_part: false,
     };
     insert(
         &mut p,
@@ -2795,6 +2797,8 @@ fn chain_r72_project() -> Project {
         orientation: Default::default(),
         corners: Default::default(),
         layout: Default::default(),
+        appearance: None,
+        appearance_to_part: false,
     };
     insert(
         &mut p,
@@ -3841,6 +3845,8 @@ fn notch_r49_project() -> (Project, u32) {
         orientation: Default::default(),
         corners: Default::default(),
         layout: Default::default(),
+        appearance: None,
+        appearance_to_part: false,
     };
     let linked = Linked::new();
     let (fid, bar) = insert(

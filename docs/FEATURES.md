@@ -1274,6 +1274,7 @@ Insert Frame on straight model edges (orientation, member parts, the members fol
 - Unit QTY = length, cut details from the final ends, Parts List › Cut List; Insert End Cap (Internal / External, Filleted / Chamfered / Sharp, Edge Offset, Rotate, Offset); Reuse of a member's part on lines of the same length (2026-11-09);
 - a frame from a solid (all its edges in one click), group Position Inside / Outside, corners by vertex kind, Edit Frame (2026-10-30);
 - owner's batch 2026-11-12 (spec 6.1 §3.1a): the picked lines as a list (icon + text, numbered in the view, hover / chosen row lit, remove, re-pick), an own placement per member (anchor, offsets, rotation, mirror, flip), Remove Overlapping Members and a browser warning on members lying on one another, a member's Position menu in the browser, Body Edges of one body of a multi-body part, members following the skeleton's variant (Model State);
+- 2026-11-19: Change of several members keeps each one's own values, Appearance (+ Apply Appearance to Part), Copy Properties, Apply, the View buttons, Align, offset arrows / rotation ring / anchor points in the view, Full vs Bisect Miter Cut, Delete existing end treatments, Change Reuse, Refresh, Frame Member Naming and File Naming Defaults, the Missing Member window, Edit of an end cap;
 - **Trim/Extend** to a face;
 - **Lengthen/Shorten.**
 

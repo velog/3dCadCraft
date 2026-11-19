@@ -468,6 +468,8 @@ mod tests {
             orientation: Orientation::default(),
             corners,
             layout: Layout::default(),
+            appearance: None,
+            appearance_to_part: false,
         }
     }
 

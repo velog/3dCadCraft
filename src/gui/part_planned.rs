@@ -1623,6 +1623,8 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::FrameChange
                     | super::asm_planned::AsmPlanned::EndCap
                     | super::asm_planned::AsmPlanned::Reuse
+                    | super::asm_planned::AsmPlanned::ChangeReuse
+                    | super::asm_planned::AsmPlanned::FrameRefresh
                     | super::asm_planned::AsmPlanned::CornerJoint
                     | super::asm_planned::AsmPlanned::TrimExtend
                     | super::asm_planned::AsmPlanned::LengthenShorten
@@ -1690,7 +1692,10 @@ impl Planned {
                 "Comes later: the cylinder stands on its plane, along its normal (spec 5.5 §3.1)",
             ),
             (
-                Planned::Asm(super::asm_planned::AsmPlanned::Reuse),
+                Planned::Asm(
+                    super::asm_planned::AsmPlanned::Reuse
+                    | super::asm_planned::AsmPlanned::ChangeReuse,
+                ),
                 "Apply Appearance to Part",
                 None,
             ) => Some("Comes later (spec 6.1 §3.5): the part is the source's"),
@@ -1776,21 +1781,6 @@ impl Planned {
             (k, "Placement", Some("Pick a point")) if k.is_import() => {
                 Some("Bodies come in at the file's origin (spec 7.7a 3.13)")
             }
-            (
-                Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame),
-                "Apply Appearance to Part",
-                None,
-            ) => Some("Comes with stage F3 (spec 6.1 Insert Frame)"),
-            (
-                Planned::Asm(super::asm_planned::AsmPlanned::FrameChange),
-                "Apply Appearance to Part",
-                None,
-            ) => Some("Comes with stage F3 (spec 6.1 Change)"),
-            (
-                Planned::Asm(super::asm_planned::AsmPlanned::Miter),
-                "Miter Type",
-                Some("Bisect Miter Cut"),
-            ) => Some("Comes with stage F2 (spec 6.1 Miter: to confirm against the help)"),
             (
                 Planned::Asm(super::asm_planned::AsmPlanned::TrimExtend),
                 "Trim Selected Part",
@@ -1937,6 +1927,21 @@ pub(super) struct PartDialog {
     pub element_edit: Vec<(u32, crate::document::DocumentId)>,
     /// Bearing: the library's bearings that fit (`gui/gear_key.rs`).
     pub bearing: super::gear_key::BearingList,
+    /// Insert Frame / Change: Copy Properties waits for a member to copy
+    /// its section, material, appearance and orientation from.
+    pub copy_props: bool,
+    /// Change: the values the panel showed when the first member filled it
+    /// (only what differs from them goes to every member, spec 6.1 §3.3).
+    pub change_base: Option<crate::assembly::frame::InsertOptions>,
+    /// Apply was pressed this frame: the command runs and the panel stays.
+    pub apply: bool,
+    /// Insert End Cap as the edit of placed caps (their occurrences): OK
+    /// rebuilds them with the panel's values.
+    pub caps_edit: Vec<u32>,
+    /// The view when a frame panel opened (its Initial View button).
+    pub start_view: Option<super::camera::OrbitCamera>,
+    /// The button whose result `note` is (shown under it only).
+    pub note_for: Option<&'static str>,
 }
 
 /// Insert Frame's list of picked lines (`PartDialog::skel`, spec 6.1 §3.1a).
@@ -2005,6 +2010,10 @@ const LIVE_BUTTONS: &[&str] = &[
     "Browse...",
     "Refresh Categories",
     "+ Add Set",
+    "Copy Properties",
+    "Look At Manipulator",
+    "Zoom to Manipulator",
+    "Initial View",
     "Compute Flow Area",
 ];
 
@@ -2107,6 +2116,12 @@ impl PartDialog {
             simplify_preset: None,
             element_edit: Vec::new(),
             bearing: Default::default(),
+            copy_props: false,
+            change_base: None,
+            apply: false,
+            caps_edit: Vec::new(),
+            start_view: None,
+            note_for: None,
         }
     }
 
@@ -2218,7 +2233,8 @@ impl PartDialog {
             (
                 Planned::Asm(
                     super::asm_planned::AsmPlanned::InsertFrame
-                    | super::asm_planned::AsmPlanned::Reuse,
+                    | super::asm_planned::AsmPlanned::Reuse
+                    | super::asm_planned::AsmPlanned::ChangeReuse,
                 ),
                 "edges",
             ) => {
@@ -2809,9 +2825,48 @@ impl PartDialog {
             if !logic {
                 ui.add_enabled(false, egui::Button::new("Apply"))
                     .on_disabled_hover_text(&tip);
+            } else if self.takes_apply()
+                && ui
+                    .button("Apply")
+                    .on_hover_text("Makes the members and keeps the panel open")
+                    .clicked()
+            {
+                self.apply = true;
             }
         });
         (cancel, ok)
+    }
+
+    /// Insert Frame (not as the edit of members) and Change have Apply.
+    fn takes_apply(&self) -> bool {
+        use super::asm_planned::AsmPlanned::{FrameChange, InsertFrame};
+        match self.kind {
+            Planned::Asm(InsertFrame) => self.members.list.is_empty(),
+            Planned::Asm(FrameChange) => true,
+            _ => false,
+        }
+    }
+
+    /// After a successful Apply: the picks go, the options stay for the
+    /// next members (Change keeps its members and shows their values).
+    pub(super) fn applied(&mut self) {
+        if self.kind == Planned::Asm(super::asm_planned::AsmPlanned::FrameChange) {
+            return;
+        }
+        for k in ["edges", "points", "align"] {
+            self.picks.remove(k);
+            self.refs.remove(k);
+        }
+        self.skeletons.clear();
+        self.skel = SkeletonList::default();
+        self.frame_sets.clear();
+        self.between_first = None;
+        self.clicks.clear();
+        self.active = Some(if self.index(0, "Placement") == 1 {
+            "points"
+        } else {
+            "edges"
+        });
     }
 
     fn row(
@@ -2878,9 +2933,14 @@ impl PartDialog {
                     .clicked()
                 {
                     self.pressed = Some(t);
+                    self.note_for = Some(t);
                 }
                 ui.end_row();
-                if live && let Some(n) = &self.note {
+                let mine = self.note_for.is_none_or(|b| b == t);
+                if live
+                    && mine
+                    && let Some(n) = &self.note
+                {
                     plabel(ui, "");
                     ui.label(RichText::new(n.as_str()).small());
                     ui.end_row();
@@ -3421,6 +3481,10 @@ impl CadCraftApp {
         } else {
             d.ui(ui)
         };
+        if d.start_view.is_none() {
+            d.start_view = Some(self.camera.clone());
+        }
+        let (cancel, ok) = d.ui(ui);
         self.simplify_preset_follow(&mut d);
         // A plastic command says why its definition cannot be built, before OK.
         if super::plastic::is_plastic(&d) {
@@ -3456,16 +3520,53 @@ impl CadCraftApp {
                 d.note = Some(super::frame::refresh_categories());
             } else if b == "+ Add Set" {
                 d.note = Some(super::frame::add_set(&mut d));
+            } else if matches!(
+                b,
+                "Look At Manipulator" | "Zoom to Manipulator" | "Initial View"
+            ) {
+                d.note = Some(self.frame_view_button(&d, b, ui.ctx()));
+            } else if b == "Copy Properties" {
+                d.copy_props = !d.copy_props;
+                d.note = Some(if d.copy_props {
+                    "Click a frame member to copy its section, material and orientation".into()
+                } else {
+                    "Copy Properties cancelled".into()
+                });
             } else {
                 d.note = self.surface_button(&d, b);
             }
         }
+        let apply = std::mem::take(&mut d.apply);
         self.part_planned = (!cancel).then_some(d);
         if let Some((c, k)) = moved {
             self.apply_member_anchor(c, k);
         }
         if ok {
             self.planned_ok();
+        } else if apply && !cancel {
+            self.planned_apply();
+        }
+    }
+
+    /// Apply of Insert Frame / Change: the command runs, the panel stays
+    /// open for the next members.
+    pub(super) fn planned_apply(&mut self) {
+        let Some(d) = self.part_planned.clone() else {
+            return;
+        };
+        let done = match d.kind {
+            Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) => self.frame_ok(&d),
+            Planned::Asm(super::asm_planned::AsmPlanned::FrameChange) => self.change_ok(&d),
+            _ => false,
+        };
+        if !done && let Some(n) = self.asm.frame_naming.as_mut() {
+            n.apply = true;
+        }
+        if done && let Some(p) = self.part_planned.as_mut() {
+            p.applied();
+            if p.kind == Planned::Asm(super::asm_planned::AsmPlanned::FrameChange) {
+                p.change_base = super::frame::insert_options(p);
+            }
         }
     }
 
@@ -3512,6 +3613,16 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) => {
                 if self.frame_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::FrameRefresh) => {
+                if self.frame_refresh_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::ChangeReuse) => {
+                if self.change_reuse_ok(&d) {
                     self.part_planned = None;
                 }
             }
