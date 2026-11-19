@@ -4061,6 +4061,47 @@ fn drawing_r76_project() -> Project {
     project
 }
 
+/// Revision 77: an Overlay View over the revision 76 drawing's base view.
+fn drawing_r77_project() -> Project {
+    let mut project = drawing_r76_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let base = d.sheets[0].views[0].id;
+        d.add_overlay_view(base, 1, None).unwrap();
+    }
+    project
+}
+
+/// The revision 77 drawing reads back with its overlay.
+#[test]
+fn drawing_r77_reads() {
+    use cadcraft3d::drawing::ViewKind;
+    let f = root().join("r77/drawing_r77.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(d) => Some(d.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        d.sheets[0]
+            .views
+            .iter()
+            .any(|v| matches!(v.kind, ViewKind::Overlay { position: 1, .. }))
+    );
+}
+
 /// The revision 76 drawing reads back with its three symbols.
 #[test]
 fn drawing_r76_reads() {
@@ -4805,6 +4846,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r76_project().save(&f).unwrap();
+        }
+        let f = root().join("r77/drawing_r77.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r77_project().save(&f).unwrap();
         }
         let f = root().join("r74/simplify_r74.3dcadcraft");
         if !f.exists() {

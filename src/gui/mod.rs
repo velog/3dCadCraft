@@ -71,6 +71,7 @@ mod drawing_dimset;
 mod drawing_gdt;
 mod drawing_holetable;
 mod drawing_orient;
+mod drawing_overlay;
 mod drawing_participation;
 mod drawing_planned;
 mod drawing_resources;

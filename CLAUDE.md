@@ -1315,6 +1315,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   the worker as `hlr::Aligned::uncut` (instance prefixes `o<id>/`, part of the lines cache key). `ViewModel::mesh_owner`
   chains cut faces per component (`ViewLines::section_owner`, alternate hatch via `render::hatch_groups`): a new
   `ViewLines` filter (breaks, fences) must carry `section_owner` with `section`.
+- **Overlay View and view representations** (`ViewKind::Overlay`, format revision 77; GUI `gui/drawing_overlay.rs`): an overlay
+  sits on its parent (`aligned_position`, `move_view`), `reps_of` gives the parent's representations with its own position;
+  its lines are turned phantom in `sheet_lines` (`overlay_lines`: visible → dashed, `effective` style HiddenShown). Parts
+  lists read BOM rows by `parts::ModelKey` = (model, `ViewReps`): a view in another variant has its own rows.
 - **Parts lists and balloons** (`drawing::parts`, GUI `gui/drawing_bom.rs`, spec 4.4, format revision 25): nothing
   of the BOM is stored — `Tables::build` (once per frame per sheet) reads the rows through a callback and the
   item numbers through the drawing's parts lists (sort / renumber / Item overrides), so balloons follow them.

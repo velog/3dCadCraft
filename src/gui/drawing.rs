@@ -34,6 +34,8 @@ const DEFAULT_SECTION_DEPTH: f64 = 10.0;
 /// Drawing commands of the ribbon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrwCmd {
+    /// Place Views › Overlay View.
+    Overlay,
     /// Symbols › Surface Texture / Feature Control Frame / Datum Identifier.
     Mark(super::drawing_gdt::MarkKind),
     /// Place Views › Base View.
@@ -208,6 +210,8 @@ pub(super) enum DrwTool {
     ChamferNote(super::drawing_chamfer::ChDraft),
     /// Surface Texture, Feature Control Frame, Datum Identifier.
     Mark(Box<super::drawing_gdt::MarkDraft>),
+    /// Overlay View: the parent, then the representation (window).
+    Overlay(super::drawing_overlay::OverlayDraft),
     /// Table: the general table follows the cursor.
     GeneralTable(crate::drawing::table::GeneralTable),
     /// Revision Table: the table follows the cursor; `true`: Revision Tag
@@ -312,6 +316,8 @@ pub(super) struct DrwUi {
     /// Section participation: each assembly model's parts with their own
     /// settings, by the assembly's signature (spec 4.15).
     pub(super) sec_leaves: HashMap<(DocRef, drw::ViewReps), SecLeaves>,
+    /// Overlay views' lines turned phantom, by view (from, to).
+    pub(super) phantom: HashMap<u32, (Arc<ViewLines>, Arc<ViewLines>)>,
     pub cam: SheetCam,
     /// Selected view.
     pub sel: Option<u32>,
@@ -680,6 +686,7 @@ impl CadCraftApp {
                 Some(view) => self.new_drawing_sketch(Some(view)),
                 None => self.start_annotation(DrwTool::StartSketch),
             },
+            DrwCmd::Overlay => self.start_overlay(),
             DrwCmd::DraftView => {
                 let draft = self.draft_view_defaults();
                 self.start_annotation(DrwTool::DraftView(draft));
@@ -977,6 +984,7 @@ impl CadCraftApp {
             Some(DrwTool::HoleTable(d)) => d.prompt(),
             Some(DrwTool::ChamferNote(d)) => d.prompt(),
             Some(DrwTool::Mark(d)) => d.prompt(),
+            Some(DrwTool::Overlay(d)) => d.prompt().into(),
             Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
             Some(DrwTool::Centerline(None)) => "Centerline: click the first circle".into(),
             Some(DrwTool::Centerline(Some(_))) => {
@@ -1178,6 +1186,14 @@ impl CadCraftApp {
             for (id, job) in jobs {
                 match self.job_lines(ctx, &job, &out) {
                     Some(l) => {
+                        let overlay = sheet
+                            .view(id)
+                            .is_some_and(|v| matches!(v.kind, ViewKind::Overlay { .. }));
+                        let l = if overlay {
+                            self.overlay_lines(id, l)
+                        } else {
+                            l
+                        };
                         out.insert(id, l);
                     }
                     None => left.push((id, job)),
@@ -1526,6 +1542,7 @@ impl CadCraftApp {
                 self.revision_cloud_tool(&painter, rect, &response, &views)
             }
             Some(DrwTool::Symbol(..)) => self.symbol_tool(&painter, rect, &response),
+            Some(DrwTool::Overlay(_)) => self.overlay_tool(&response),
             Some(DrwTool::Mark(_)) => self.mark_tool(&painter, rect, &response, &views),
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
@@ -2124,6 +2141,7 @@ impl CadCraftApp {
         self.hole_table_window(ctx);
         self.rev_windows(ctx);
         self.mark_window(ctx);
+        self.overlay_window(ctx);
         if self.drw.chamfer_edit.is_some() {
             let views = self.shown_views(ctx);
             self.chamfer_window(ctx, &views);
@@ -2955,6 +2973,7 @@ impl CadCraftApp {
             ViewKind::Auxiliary { .. } => "Auxiliary View".to_string(),
             ViewKind::Detail { .. } => "Detail View".to_string(),
             ViewKind::Draft => "Draft View".to_string(),
+            ViewKind::Overlay { .. } => "Overlay View".to_string(),
         };
         let model = d
             .model_of(sheet, v.id)
@@ -3157,6 +3176,7 @@ impl CadCraftApp {
                 ui.add(ExprValue::new(&mut nv.position[1]).suffix(" mm"));
                 ui.end_row();
             });
+        self.representation_rows(ui, part_src.map(|(m, _)| m), &mut nv);
         self.participation_rows(ui, part_src, &mut nv);
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -3292,6 +3312,10 @@ fn component_tab(
             row(ui, "Variant", &lists[2], &mut d.reps.variant);
             row(ui, "Design View", &lists[0], &mut d.reps.view);
             row(ui, "Position", &lists[1], &mut d.reps.position);
+            ui.add_enabled(false, egui::Checkbox::new(&mut true, "Associative"))
+                .on_disabled_hover_text(
+                    "The view always follows later changes of the design view (a snapshot is not kept yet)",
+                );
         })
         .response
         .on_disabled_hover_text(if d.projected {

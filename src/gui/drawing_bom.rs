@@ -423,13 +423,29 @@ impl CadCraftApp {
     pub(super) fn bom_rows(
         &self,
         model: DocRef,
+        reps: crate::drawing::ViewReps,
         kind: BomKind,
         merge: bool,
     ) -> Option<Vec<BomRow>> {
         match self.drawing_assembly(model) {
-            Some((asm, src)) => Some(bom::rows(&asm, kind.view(), merge, &|r| {
-                self.src_info(&src, r)
-            })),
+            Some((asm, src)) => {
+                // The view's Model State (variant) and representations: the
+                // quantities and the parts of that variant.
+                let asm = if reps.is_active() {
+                    asm
+                } else {
+                    let mut c = asm
+                        .reps
+                        .composed(&asm, reps.view, reps.position, reps.variant);
+                    if let Err(e) = self.place_patterns(&mut c) {
+                        log::warn!("{e}");
+                    }
+                    c
+                };
+                Some(bom::rows(&asm, kind.view(), merge, &|r| {
+                    self.src_info(&src, r)
+                }))
+            }
             None => {
                 self.with_part(model, |_| ())?;
                 let mut one = AssemblyDocument::default();
@@ -441,7 +457,9 @@ impl CadCraftApp {
 
     /// The BOM tables of sheet `i`.
     pub(super) fn bom_tables(&self, doc: &DrawingDocument, i: usize) -> Tables {
-        let mut t = Tables::build(doc, i, &|m, k, merge| self.bom_rows(m, k, merge));
+        let mut t = Tables::build(doc, i, &|m, reps, k, merge| {
+            self.bom_rows(m, reps, k, merge)
+        });
         let props = self.field_props(doc, i);
         t.add_symbols(doc, i, &|f| props.get(f));
         t
@@ -578,10 +596,14 @@ impl CadCraftApp {
                 let mut pl = dlg.pl.clone();
                 pl.at = q;
                 let Some(t) = self.drw.tables.table_of(&pl).or_else(|| {
-                    let m = self
-                        .drawing()
-                        .and_then(|d| d.model_of(d.sheet()?, pl.view))?;
-                    Some(parts::table(&pl, &self.bom_rows(m, pl.bom, pl.merge)?))
+                    let (m, reps) = self.drawing().and_then(|d| {
+                        let s = d.sheet()?;
+                        Some((d.model_of(s, pl.view)?, d.reps_of(s, pl.view)))
+                    })?;
+                    Some(parts::table(
+                        &pl,
+                        &self.bom_rows(m, reps, pl.bom, pl.merge)?,
+                    ))
                 }) else {
                     return;
                 };
@@ -1382,8 +1404,8 @@ impl CadCraftApp {
         };
         let rows = doc
             .sheet()
-            .and_then(|s| doc.model_of(s, ed.pl.view))
-            .and_then(|m| self.bom_rows(m, ed.pl.bom, ed.pl.merge))
+            .and_then(|s| Some((doc.model_of(s, ed.pl.view)?, doc.reps_of(s, ed.pl.view))))
+            .and_then(|(m, reps)| self.bom_rows(m, reps, ed.pl.bom, ed.pl.merge))
             .unwrap_or_default();
         let table = parts::table(&ed.pl, &rows);
         let available = parts::available_columns(&rows);

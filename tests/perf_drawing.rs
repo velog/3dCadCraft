@@ -439,7 +439,7 @@ fn drawing_views_of_large_models() {
         }
         let look = d.styles.look();
         let t = Instant::now();
-        let tables = Tables::build(&d, 0, &|_, _, _| None);
+        let tables = Tables::build(&d, 0, &|_, _, _, _| None);
         let prims: usize = d.sheets[0]
             .annotations
             .iter()

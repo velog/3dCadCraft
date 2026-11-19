@@ -1,7 +1,8 @@
 //! A plate with two tapped M8 holes, two Ø8 pins standing in them and a
 //! drawing of the assembly with a section through both pins, for trying
 //! section participation (spec 4.15), Thread Feature and the symbols of the
-//! Symbols panel. The first pin's occurrence is set not to be cut.
+//! Symbols panel. The first pin's occurrence is set not to be cut; the
+//! positional representation "Lifted" raises the second pin (Overlay View).
 //!
 //! ```sh
 //! cargo run --example section_demo -- /tmp/section.3dcadcraft
@@ -72,6 +73,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(o) = asm.find_mut(first) {
         o.section = SectionParticipation::None;
     }
+    // A positional representation "Lifted" with the second pin raised 15 mm
+    // (for Overlay View).
+    let second = asm.occurrences.last().map_or(0, |o| o.id);
+    let mut reps = std::mem::take(&mut asm.reps);
+    reps.new_position(&mut asm);
+    if let Some(p) = reps.positions.last_mut() {
+        p.name = "Lifted".into();
+        p.poses
+            .insert(second, Transform3::translation(60.0, 20.0, 5.0));
+    }
+    asm.reps = reps;
     let asm_id = project.add_document("Assembly", DocumentData::Assembly(asm));
     let mut d = DrawingDocument::default();
     let base = d

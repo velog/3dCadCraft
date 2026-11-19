@@ -48,7 +48,6 @@ use Row::{Button, Check, Combo, Head, Note, Num, Radio, Sel, Text};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Planned {
     // Place Views
-    Overlay,
     Slice,
     Crop,
     AlignHorizontal,
@@ -99,8 +98,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 29] = [
-        Self::Overlay,
+    pub const ALL: [Planned; 28] = [
         Self::Slice,
         Self::Crop,
         Self::AlignHorizontal,
@@ -134,7 +132,6 @@ impl Planned {
     /// The dialog's title (Inventor's command name).
     pub fn title(self) -> &'static str {
         match self {
-            Self::Overlay => "Overlay View",
             Self::Slice => "Slice",
             Self::Crop => "Crop",
             Self::AlignHorizontal => "Horizontally Align View",
@@ -169,29 +166,6 @@ impl Planned {
     /// The dialog's tabs and options.
     pub fn pages(self) -> &'static [Page] {
         match self {
-            Self::Overlay => &[Page(
-                "Overlay",
-                &[
-                    Sel(
-                        "parent",
-                        "Parent View",
-                        "select the parent view of an assembly",
-                    ),
-                    Combo("Positional Representation", &["Master"], 0),
-                    Combo("Design View Representation", &["Default"], 0),
-                    Text("View Identifier", "VIEW"),
-                    Check("Toggle Label Visibility", false),
-                    Radio(
-                        "Style",
-                        &["Hidden Line", "Hidden Line Removed", "Shaded"],
-                        1,
-                    ),
-                    Combo("Layer", &["Phantom (ISO)"], 0),
-                    Note(
-                        "Each positional representation is drawn over the parent in phantom lines",
-                    ),
-                ],
-            )],
             Self::Slice => &[Page(
                 "Slice",
                 &[
@@ -633,9 +607,6 @@ impl Planned {
     /// What the command does (Inventor's behaviour, our words).
     pub fn about(self) -> &'static str {
         match self {
-            Self::Overlay => {
-                "Positional representations of an assembly drawn over a view in phantom lines"
-            }
             Self::Slice => "A zero-depth section of a view along a sketch line",
             Self::Crop => "Clips a view to a rectangle or a closed sketch",
             Self::AlignHorizontal | Self::AlignVertical | Self::AlignInPosition => {

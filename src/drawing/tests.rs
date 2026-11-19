@@ -1748,7 +1748,7 @@ fn assembly_parts_list_and_balloons() {
         file_name: project.document(r.document).unwrap().name.clone(),
         ..Default::default()
     };
-    let rows = |_: DocRef, k: super::parts::BomKind, merge: bool| {
+    let rows = |_: DocRef, _: ViewReps, k: super::parts::BomKind, merge: bool| {
         Some(bom::rows(&asm, k.view(), merge, &info))
     };
     let texts = |prims: &[Prim]| -> Vec<String> {
@@ -3854,4 +3854,109 @@ fn cosmetic_thread_lines() {
         ..th
     };
     assert_eq!(slanted.curves(&front).len(), 2);
+}
+
+/// Overlay View: over its parent in the same frame and place, its own
+/// positional representation over the parent's representations, dashed,
+/// following the parent when it moves, saved.
+#[test]
+fn overlay_view_follows_its_parent() {
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    if let Some(v) = d.sheet_mut().and_then(|s| s.view_mut(b)) {
+        v.reps = ViewReps {
+            view: Some(4),
+            position: None,
+            variant: Some(2),
+        };
+    }
+    let o = d.add_overlay_view(b, 7, None).unwrap();
+    let s = d.sheet().unwrap().clone();
+    assert_eq!(d.frame_of(&s, o), d.frame_of(&s, b));
+    assert_eq!(
+        d.reps_of(&s, o),
+        ViewReps {
+            view: Some(4),
+            position: Some(7),
+            variant: Some(2),
+        },
+        "the parent's variant and design view, its own position"
+    );
+    assert_eq!(
+        d.effective(&s, o).map(|e| e.1),
+        Some(ViewStyle::HiddenShown)
+    );
+    assert!(!s.view(o).unwrap().label_visible);
+    // A design view of its own.
+    if let Some(ViewKind::Overlay { design, .. }) = d
+        .sheet_mut()
+        .and_then(|s| s.view_mut(o))
+        .map(|v| &mut v.kind)
+    {
+        *design = Some(9);
+    }
+    let s = d.sheet().unwrap().clone();
+    assert_eq!(d.reps_of(&s, o).view, Some(9));
+    // It moves with its parent and cannot be moved off it.
+    d.move_view(b, [200.0, 120.0]);
+    assert_eq!(d.sheet().unwrap().view(o).unwrap().position, [200.0, 120.0]);
+    d.move_view(o, [10.0, 10.0]);
+    assert_eq!(d.sheet().unwrap().view(o).unwrap().position, [200.0, 120.0]);
+    let json = serde_json::to_string(&d).unwrap();
+    let back: DrawingDocument = serde_json::from_str(&json).unwrap();
+    assert!(matches!(
+        back.sheet().unwrap().view(o).unwrap().kind,
+        ViewKind::Overlay { parent, position: 7, design: Some(9) } if parent == b
+    ));
+}
+
+/// Parts lists read the BOM of their view's representations: a view in
+/// another variant gets rows of its own.
+#[test]
+fn parts_list_rows_follow_the_view_variant() {
+    use super::parts::{BomKind, PartsList, Tables};
+    let mut d = DrawingDocument::default();
+    let m = model();
+    let a = d
+        .add_base_view(
+            m,
+            ViewOrientation::Front,
+            [100.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let b = d
+        .add_base_view(
+            m,
+            ViewOrientation::Top,
+            [300.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    if let Some(v) = d.sheet_mut().and_then(|s| s.view_mut(b)) {
+        v.reps.variant = Some(3);
+    }
+    d.add_annotation(AnnotationKind::PartsList(PartsList::new(a, [10.0, 10.0])));
+    d.add_annotation(AnnotationKind::PartsList(PartsList::new(b, [10.0, 60.0])));
+    let asked = std::cell::RefCell::new(Vec::new());
+    let rows = |_: DocRef, r: ViewReps, _: BomKind, _: bool| {
+        asked.borrow_mut().push(r.variant);
+        Some(Vec::new())
+    };
+    let t = Tables::build(&d, 0, &rows);
+    let mut seen = asked.borrow().clone();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen, [None, Some(3)], "one BOM per variant");
+    assert_ne!(t.view_model[&a], t.view_model[&b]);
 }

@@ -2703,10 +2703,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["DV"])
         .at(&[D_CREATE])
         .tip("Click the parent view, the circle's centre and size, then place the enlarged view"),
-    dp("drw.overlay", "Overlay View", "Изглед с наслагване", Icon::ProjectedView, Dp::Overlay)
+    d("drw.overlay", "Overlay View", "Изглед с наслагване", Icon::ProjectedView)
+        .run(Action::Drawing(DrwCmd::Overlay))
+        .spec("4-drawings.md")
         .alias(&["OV"])
         .at(&[D_CREATE])
-        .tip("Positional representations of an assembly in phantom lines"),
+        .tip("Click an assembly view, choose a positional representation: it is drawn over the view in phantom lines"),
     d("drw.draft_view", "Draft View", "Изглед-скица", Icon::DraftView)
         .run(Action::Drawing(DrwCmd::DraftView))
         .spec("4.12-drawing-sketches.md")
