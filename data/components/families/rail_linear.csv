@@ -1,10 +1,10 @@
-# Profile rail, mm: width and height from the Hiwin HGR table, the outline only. Lengths are common cuts of a rail sold up to 4 m.
-size,a,b,lengths
-15,15,15,160;220;280;340;460;640;1000
-20,20,17.5,220;280;340;460;640;1000;1500
-25,23,22,220;280;340;460;640;1000;1500
-30,28,26,280;340;460;640;1000;1500
-35,34,29,280;340;460;640;1000;1500
-45,45,38,280;340;460;640;1000;1500
-55,53,44,280;340;460;640;1000;1500
-65,63,53,280;340;460;640;1000;1500
+# Profile rail (HG pattern), mm: WR width, HR height, counterbored holes D x h with through hole d at pitch P, and the mass per metre, from the Hiwin HGR_R table (3.9). The ball grooves are drawn as one notch a side sized so the section with its holes weighs the published kg/m; holes at the Full level. Lengths are common cuts of a rail sold up to 4 m.
+size,a,b,D,h,d,P,kg,lengths
+15,15,15,7.5,5.3,4.5,60,1.45,160;220;280;340;460;640;1000
+20,20,17.5,9.5,8.5,6,60,2.21,220;280;340;460;640;1000;1500
+25,23,22,11,9,7,60,3.21,220;280;340;460;640;1000;1500
+30,28,26,14,12,9,80,4.47,280;340;460;640;1000;1500
+35,34,29,14,12,9,80,6.30,280;340;460;640;1000;1500
+45,45,38,20,17,14,105,10.41,280;340;460;640;1000;1500
+55,53,44,23,20,16,120,15.08,280;340;460;640;1000;1500
+65,63,53,26,22,18,150,21.18,280;340;460;640;1000;1500

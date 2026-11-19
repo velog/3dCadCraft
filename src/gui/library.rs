@@ -42,6 +42,37 @@ pub(super) struct LibraryUi {
     /// Opened by Bolted Connection's stack (Change, Library...): only its
     /// kinds are listed and Use puts the family into the stack.
     pub(super) bolt: Option<super::bolted::BoltPick>,
+    /// What the middle list shows: the picked category, the History or the Favorites.
+    list: ListKind,
+    /// Members placed last, newest first, and the favourites (`member_key`).
+    recent: Vec<String>,
+    favorites: Vec<String>,
+}
+
+/// What the window's middle list shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListKind {
+    Category,
+    History,
+    Favorites,
+}
+
+/// How many members History keeps.
+const HISTORY: usize = 20;
+
+/// A member's key in History and Favorites: its family's name and its size, which stay when the
+/// library is written again (indices do not).
+fn member_key(c: &Catalog, f: usize, m: usize) -> Option<String> {
+    let fam = c.families.get(f)?;
+    Some(format!("{}\t{}", fam.name, fam.members.get(m)?.size))
+}
+
+/// The member a key names, if the library still has it.
+fn member_of(c: &Catalog, key: &str) -> Option<(usize, usize)> {
+    let (family, size) = key.split_once('\t')?;
+    let f = c.families.iter().position(|x| x.name == family)?;
+    let m = c.families[f].members.iter().position(|x| x.size == size)?;
+    Some((f, m))
 }
 
 impl CadCraftApp {
@@ -91,6 +122,9 @@ impl CadCraftApp {
             shown: None,
             yaw: 0.6,
             bolt: None,
+            list: ListKind::Category,
+            recent: self.library_recent.clone(),
+            favorites: self.library_favorites.clone(),
         }
     }
 
@@ -156,6 +190,8 @@ impl CadCraftApp {
         let mut cancel = false;
         let mut picked: Option<(usize, usize)> = None;
         let mut redo = false;
+        let mut refresh = false;
+        let mut other_way = false;
         lib.take_thumbnails(ctx);
         let title = if lib.bolt.is_some() {
             "Bolted Connection: choose from the Library"
@@ -218,7 +254,7 @@ impl CadCraftApp {
                         let (label, tip) = if lib.bolt.is_some() {
                             ("Use", "Puts this family into the stack; its size follows the connection's diameter")
                         } else {
-                            ("Place", "Places the size picked")
+                            ("Place", "Places the size picked; Alt + Place uses the other way (Smart Drop or by hand) once")
                         };
                         if ui
                             .add_enabled(
@@ -229,6 +265,7 @@ impl CadCraftApp {
                             .clicked()
                         {
                             place = true;
+                            other_way = ui.input(|i| i.modifiers.alt);
                         }
                         if ui.button("Cancel").clicked() {
                             cancel = true;
@@ -267,6 +304,14 @@ impl CadCraftApp {
                         lib.family = None;
                     }
                 }
+                ui.add_space(16.0);
+                if ui
+                    .button("Refresh")
+                    .on_hover_text("Reads the library's folders again: families published or tables changed since the window opened")
+                    .clicked()
+                {
+                    refresh = true;
+                }
 
                 });
                 ui.separator();
@@ -280,12 +325,34 @@ impl CadCraftApp {
                         egui::ScrollArea::vertical()
                             .id_salt("library_tree")
                             .show(ui, |ui| {
+                                for (kind, name, tip) in [
+                                    (ListKind::History, "History", "The 20 members placed last"),
+                                    (ListKind::Favorites, "Favorites", "The members you marked with Add to Favorites"),
+                                ] {
+                                    let count = match kind {
+                                        ListKind::History => lib.recent.len(),
+                                        _ => lib.favorites.len(),
+                                    };
+                                    let text = format!("{name} ({count})");
+                                    if ui
+                                        .selectable_label(lib.list == kind, text)
+                                        .on_hover_text(tip)
+                                        .clicked()
+                                    {
+                                        lib.list = kind;
+                                    }
+                                }
+                                ui.separator();
                                 if ui
-                                    .selectable_label(lib.category.is_empty(), "All Categories")
+                                    .selectable_label(
+                                        lib.list == ListKind::Category && lib.category.is_empty(),
+                                        "All Categories",
+                                    )
                                     .clicked()
                                 {
                                     lib.category.clear();
                                     lib.family = None;
+                                    lib.list = ListKind::Category;
                                 }
                                                         for c in lib.catalog.categories_of(lib.standard.as_deref()) {
 
@@ -297,9 +364,11 @@ impl CadCraftApp {
                                     ui.allocate_exact_size(egui::vec2(16.0, 16.0), Sense::hover());
                                 super::icons::paint_category(ui.painter(), r, &c);
 
-                                        if ui.selectable_label(lib.category == c, name).clicked() {
+                                        let on = lib.list == ListKind::Category && lib.category == c;
+                                        if ui.selectable_label(on, name).clicked() {
                                             lib.category = c.clone();
                                             lib.family = None;
+                                            lib.list = ListKind::Category;
                                         }
                                     });
                                 }
@@ -312,7 +381,9 @@ impl CadCraftApp {
                         egui::ScrollArea::vertical()
                             .id_salt("library_list")
                             .show(ui, |ui| {
-                                if lib.search.trim().is_empty() {
+                                if lib.search.trim().is_empty() && lib.list != ListKind::Category {
+                                    kept_members(ui, &lib, &mut picked);
+                                } else if lib.search.trim().is_empty() {
                                     members_by_family(ui, &mut lib, &mut picked);
                                 } else {
                                                                 let standard = lib.standard.clone();
@@ -372,7 +443,21 @@ impl CadCraftApp {
                             && let Some(fam) = lib.catalog.families.get(f)
                             && let Some(e) = fam.members.get(m)
                         {
+                            let key = format!("{}\t{}", fam.name, e.size);
+                            let favourite = lib.favorites.contains(&key);
                             ui.label(RichText::new(format!("{} {}", fam.name, e.size)).strong());
+                            let (label, tip) = if favourite {
+                                ("Remove from Favorites", "Takes this size out of Favorites")
+                            } else {
+                                ("Add to Favorites", "Lists this size under Favorites, in every session")
+                            };
+                            if ui.small_button(label).on_hover_text(tip).clicked() {
+                                if favourite {
+                                    lib.favorites.retain(|k| k != &key);
+                                } else {
+                                    lib.favorites.push(key.clone());
+                                }
+                            }
                             ui.weak(fam.category.replace('/', " › "));
                             if fam.file.is_some() {
                                 ui.weak("Your published family: its member is made once and linked.");
@@ -391,9 +476,38 @@ impl CadCraftApp {
             lib.member = Some(m);
             redo = true;
         }
+        if refresh && let Some(root) = crate::components::root_dir() {
+            let keep = lib
+                .family
+                .zip(lib.member)
+                .and_then(|(f, m)| member_key(&lib.catalog, f, m));
+            lib.catalog = Catalog::load(&root);
+            lib.thumbnails.clear();
+            lib.thumbnail_rx = spawn_thumbnails(lib.catalog.clone());
+            lib.meshes.clear();
+            lib.error = lib.catalog.warnings.first().cloned();
+            let found = keep.and_then(|k| member_of(&lib.catalog, &k));
+            lib.family = found.map(|x| x.0);
+            lib.member = found.map(|x| x.1);
+            redo = true;
+        }
         if redo {
             self.library_select(&mut lib);
         }
+        // History: the member picked goes first, also when Smart Drop then follows the target's size.
+        if place
+            && lib.bolt.is_none()
+            && let Some(key) = lib
+                .family
+                .zip(lib.member)
+                .and_then(|(f, m)| member_key(&lib.catalog, f, m))
+        {
+            lib.recent.retain(|k| k != &key);
+            lib.recent.insert(0, key);
+            lib.recent.truncate(HISTORY);
+        }
+        self.library_recent = lib.recent.clone();
+        self.library_favorites = lib.favorites.clone();
         // Bolted Connection's Use: the family goes into the stack.
         if place && let Some(pick) = lib.bolt.clone() {
             if let Some(f) = lib.family.and_then(|f| lib.catalog.families.get(f)) {
@@ -406,7 +520,7 @@ impl CadCraftApp {
         self.library_detail = lib.detail.label().to_owned();
         self.library_manual = !lib.smart;
         if place
-            && lib.smart
+            && lib.smart != other_way
             && let Some(f) = lib.family
             && lib.catalog.fits(f).iter().any(|x| x.droppable())
         {
@@ -427,6 +541,48 @@ impl CadCraftApp {
         if !(cancel || !open) {
             self.asm.library = Some(lib);
         }
+    }
+}
+
+/// History or Favorites: each member that is still in the library, with its family's picture.
+fn kept_members(ui: &mut egui::Ui, lib: &LibraryUi, picked: &mut Option<(usize, usize)>) {
+    let keys = if lib.list == ListKind::History {
+        &lib.recent
+    } else {
+        &lib.favorites
+    };
+    let found: Vec<(usize, usize)> = keys
+        .iter()
+        .filter_map(|k| member_of(&lib.catalog, k))
+        .filter(|(f, _)| lib.catalog.in_standard(*f, lib.standard.as_deref()))
+        .filter(|(f, _)| bolt_kind_ok(lib, *f))
+        .collect();
+    if found.is_empty() {
+        ui.weak(if lib.list == ListKind::History {
+            "Nothing placed from the library yet"
+        } else {
+            "No favourites yet: pick a size and Add to Favorites"
+        });
+    }
+    let side = crate::components::catalog::THUMBNAIL as f32 / 2.0;
+    for (f, m) in found {
+        let fam = &lib.catalog.families[f];
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(side, side), Sense::hover());
+            if let Some(t) = lib.thumbnails.get(&f) {
+                ui.painter().image(
+                    t.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+            let on = lib.family == Some(f) && lib.member == Some(m);
+            let text = format!("{} {}", fam.name, fam.members[m].size);
+            if ui.selectable_label(on, text).clicked() {
+                *picked = Some((f, m));
+            }
+        });
     }
 }
 

@@ -51,6 +51,12 @@ typed, which a source contradicts, is simply corrected.
 | [Motedis](https://www.motedis.es/en/Aluminium-Profile-20x20-I-Typ-slot-5) I-type slot 5 page, [Alux](https://www.aluxprofile.com/aluminium-slot-profile-4040-3t-slots/a4250) | T-slot profiles: slot 5 groove depth 6.35; slot 8 core 6.8 |
 | [Metalwork ISO 15552 type A catalogue](https://docs.pneumatiek.nl/pdf/metalwork/cilinder/profielcilinder_type_a_iso15552.pdf), [Tameson ISO 15552 sheet](https://storage.tameson.com/asset/Products/Manuals/EN/cylinders-15552.pdf) | ISO 15552 cylinders: body across flats, body length, boss, rod, rod reach; rod threads |
 | [fasten.it DIN 69051-5](https://fasten.it/en/Norms/Norm/DIN%2069051%205), [Albeco catalogue](https://www.albeco.com.pl/data/catalogueb/su.pdf) | DIN 69051-5 form B ball nuts, lead 5 |
+| [TPI ball screw support unit catalogue](<https://bestbearings.az/uploads/products/pdf/%D0%9F%D0%BE%D0%B4%D1%88%D0%B8%D0%BF%D0%BD%D0%B8%D0%BA%D0%B8%20TPI%20%D0%B4%D0%BB%D1%8F%20%D0%BE%D0%BF%D0%BE%D1%80%20%D1%88%D0%B0%D1%80%D0%B8%D0%BA%D0%BE%D0%B2%D0%B8%D0%BD%D1%82%D0%BE%D0%B2%D1%8B%D1%85%20%D0%BF%D0%B0%D1%80%20(%D0%B0%D0%BD%D0%B3%D0%BB)%201723021511.pdf>) (via bestbearings.az), tables 3.2 (TBK) and 4.2 (TBF) | fixed and floating support units BK10 to BK25, BF10 to BF25 (its table 2-1 gives them as THK's BK / BF sizes) |
+| [KTR ROTEX GS operating instructions](https://www.almotion.nl/wp-content/uploads/2022/07/Rotex_Almotion.pdf) (via Almotion), tables 1 and 2 | curved-jaw couplings GS9 to GS38 with aluminium hubs: DH, dH, L, l1, s, finish bores |
+| [Hiwin HG / QH catalogue](https://almotion.nl/wp-content/uploads/2020/01/HG_QH_serie.pdf) (via Almotion), table 3.6 | HG carriages 15 to 65: W, H, H1, L (the Sorotec sheet's shorter L of 15, 20, 30 kept as rows of their own); with the HGR table's mass per metre for the rails |
+| Ruland MCL product pages and their listings (MCL-7 to MCL-60, black oxide), [RS PRO listings](https://uk.rs-online.com/web/p/shaft-collars/0145657) (16, 35) | one-piece clamp collars: bore, outside diameter, width |
+| [Bosch Rexroth Aluminum Framing catalogue 8981 500 201, section 4](https://files.valinonline.com/userfiles/documents/bosch-rexroth-fasteners-t-nuts.pdf) (via Valin) | T-nuts for slots 6, 8, 10: length, width, thickness and the threads offered |
+| PEM FH metric catalogue listing ([catalog.pemnet.com](https://catalog.pemnet.com/viewitems/flush-head-threaded-studs-types-fh-fha-fhs/lf-clinching-threaded-studs-type-fh-fhs-fha-metric)) | clinch studs: head diameters M3 to M6 |
 
 Corrected, a typed value against a source:
 
@@ -99,7 +105,9 @@ Makers' ranges standing in for a standard's table, which is sold: DIN 3760 (M Se
 
 Compared in part, each table's first line says which rows: DIN 5419 (five single sizes from product pages, six typed), Ring Magnet (five sizes from makers' pages, five typed, no standard), Threaded Coupling 3000 (not NPS 1/4, 3/8), Clinch Nut (not M6, M8), Hex Standoff (no standard, makers differ), Ball Valve (the body diameter is typed), V-Belt Pulley (the plain bore is typed; the catalogue's pulleys take taper bushes).
 
-**Not compared:** Metric O-Ring (common trade sizes beside ISO 3601), and, typed for trying out their shapes and placement: Clinch Stud, Cage Nut (only its 9.5 mm square hole was confirmed), Extension Spring, Tube Cap, Bridge Handle, Levelling Foot, Butt Hinge. None of these has one standard; a maker's table is what they need.
+Corrected 2026-11-19: Clinch Stud head diameters (M3 4.8 to 4.6, M4 6 to 5.9, M5 6.8 to 6.5, M6 8.1 to 8.2, PEM FH); its head heights and lengths stay typed. Profile carriages: the gap under the block (H1) and the rail's size are now in the table, so a carriage sits on its rail.
+
+**Not compared:** Metric O-Ring (common trade sizes beside ISO 3601), and, typed for trying out their shapes and placement: Cage Nut (only its 9.5 mm square hole was confirmed), Extension Spring, Tube Cap, Bridge Handle, Levelling Foot, Butt Hinge. None of these has one standard; a maker's table is what they need.
 
 Bearing boundary dimensions follow ISO 15, so makers agree on them.
 

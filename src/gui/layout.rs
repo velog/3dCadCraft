@@ -304,6 +304,10 @@ pub struct AppOptions {
     pub library_detail: String,
     /// Place from Library places by hand instead of Smart Drop.
     pub library_manual: bool,
+    /// Place from Library: the members placed last, newest first (`family	size`, at most 20).
+    pub library_recent: Vec<String>,
+    /// Place from Library: the user's favourite members (`family	size`).
+    pub library_favorites: Vec<String>,
     /// The assembly browser's view and filters (spec 3.0 §3.9).
     pub asm_browser: super::asm_browser::AsmBrowserOpts,
     /// Application Options › Display: a drawing's view sketch shows its
@@ -396,6 +400,8 @@ impl Default for AppOptions {
             library_standard: None,
             library_detail: String::new(),
             library_manual: false,
+            library_recent: Vec::new(),
+            library_favorites: Vec::new(),
             asm_browser: Default::default(),
             drawing_sketch_toolbar: true,
             in_place: InPlaceOptions::default(),
@@ -1047,6 +1053,8 @@ impl CadCraftApp {
             library_standard: self.library_standard.clone(),
             library_detail: self.library_detail.clone(),
             library_manual: self.library_manual,
+            library_recent: self.library_recent.clone(),
+            library_favorites: self.library_favorites.clone(),
             asm_browser: self.asm_browser,
             drawing_sketch_toolbar: self.sketch_toolbar,
             in_place: self.in_place_opts,
@@ -1116,6 +1124,8 @@ impl CadCraftApp {
         self.library_standard = o.library_standard;
         self.library_detail = o.library_detail;
         self.library_manual = o.library_manual;
+        self.library_recent = o.library_recent;
+        self.library_favorites = o.library_favorites;
         self.asm_browser = o.asm_browser;
         self.sketch_toolbar = o.drawing_sketch_toolbar;
         self.in_place_opts = o.in_place;

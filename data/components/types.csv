@@ -69,6 +69,7 @@ Shaft Parts/Sealing,O-Ring,o_ring,ready,size d1 d2,inner diameter and section
 Shaft Parts/Sealing,Radial Shaft Seal,shaft_seal,ready,size d D b,lip seal
 Shaft Parts/Sealing,Felt Ring,felt_ring,ready,size d D b,simple seal
 Shaft Parts/Collars,Set Collar,collar,ready,size d D b,fixed by a set screw
+Shaft Parts/Collars,Clamp Collar,clamp_collar,ready,size d D b,one-piece clamped by a screw across a slit
 Shaft Parts/Lock Nuts,Slotted Bearing Nut,round_nut,ready,size d P dk m n,for bearing seats
 Shaft Parts/Lock Nuts,Tab Washer,tab_washer,ready,size d1 d2 s,locks a bearing nut
 Shaft Parts/Shims,Shim,washer,ready,size d1 d2 h,thin ring
@@ -101,11 +102,14 @@ Machine Elements/Gears and Chains,Chain Sprocket,sprocket,ready,size p roller z 
 Machine Elements/Gears and Chains,Pulley,pulley,ready,size dp rise w depth b d,V-belt
 Machine Elements/Springs,Compression,compression_spring,ready,size De d L0 n,coil
 Machine Elements/Springs,Extension,extension_spring,ready,size De d L0 n,coil with hooks
-Machine Elements/Linear Motion,Rail,linear_rail,ready,size a b lengths,envelope
-Machine Elements/Linear Motion,Carriage,linear_carriage,ready,size a b c,envelope
+Machine Elements/Linear Motion,Rail,linear_rail,ready,size a b D h d P kg lengths,profile rail
+Machine Elements/Linear Motion,Carriage,linear_carriage,ready,size a b c H1 WR HR,block round its rail
 Machine Elements/Linear Motion,Ball Bushing,bush,ready,size d D lengths,for round shafts
 Machine Elements/Linear Motion,Ball Nut,ball_nut,ready,size d0 P D D1 D2 L L1 D3,flanged
 Machine Elements/Linear Motion,Ball Screw,ball_screw,ready,size d0 lengths,shaft
+Machine Elements/Linear Motion,Support Unit,support_unit,ready,size d1 L B H h B1 H1 P X,ball screw end support
+Aluminium Framing,Slot Nut,profile_tnut,ready,size d L W T,turned into a profile's slot
+Machine Elements/Couplings,Jaw Coupling,jaw_coupling,ready,size DH dH L l1 s bores,curved jaws and a spider
 Machine Elements/Pneumatics,Cylinder,pneumatic_cylinder,ready,size bore E L0 B VA MM WH KK lengths,ISO 15552 envelope
 Other Parts,Grease Fittings,grease_fitting,ready,size d L1 L SW,lubrication
 Other Parts,Plugs,plug,ready,size d c dk i l s,threaded closures

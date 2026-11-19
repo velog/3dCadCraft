@@ -832,6 +832,42 @@ fn automation_elements_weigh_their_envelopes() {
             Kind::BallNut(d0, d, _, fl, l, l1, hole) => {
                 PI / 4.0 * (fl * fl * l1 + d * d * (l - l1) - d0 * d0 * l + -6.0 * hole * hole * l1)
             }
+            Kind::Support(d1, l, b, h, _, b1, h1, _, _) => {
+                (b * h1 + b1 * (h - h1) - PI / 4.0 * d1 * d1) * l
+            }
+            Kind::JawCoupling(dh, di, l, l1, s, d) => {
+                let (r, ri, rb) = (dh / 2.0, di / 2.0, d / 2.0);
+                let rg = r - (r - ri) / 4.0;
+                PI * (r * r * l
+                    - 2.0 * (r * r - rg * rg) * s
+                    - 2.0 * rb * rb * l1
+                    - ri * ri * (l - 2.0 * l1))
+            }
+            Kind::Rail(a, b, cb, cbh, hole, pitch, kg, l) => {
+                let (e, g) =
+                    cadcraft3d::components::samples::rail_notch(a, b, cb, cbh, hole, pitch, kg);
+                (a * b - 2.0 * e * g) * l
+            }
+            Kind::Carriage(w, h, l, h1, wr, hr) => (w * (h - h1) - wr * (hr - h1)) * l,
+            Kind::ClampCollar(d, od, b) => {
+                // The ring less its 1 mm slit (a band 1 mm wide across the wall).
+                let (r0, r1) = (d / 2.0, od / 2.0);
+                let slit = (r1 * r1 - 0.25).sqrt() - (r0 * r0 - 0.25).sqrt();
+                (PI * (r1 * r1 - r0 * r0) - slit) * b
+            }
+            Kind::SlotNut(d, l, w, th) => {
+                use cadcraft3d::part::standards::{ISO_METRIC, Standards};
+                let minor = cadcraft3d::part::hole::ThreadSpec::from_table(
+                    Standards::global(),
+                    ISO_METRIC,
+                    &format!("M{d}"),
+                    true,
+                )
+                .map(|s| s.minor)
+                .unwrap_or(d);
+                let c = 0.35 * w;
+                (l * w - c * c - PI / 4.0 * minor * minor) * th
+            }
             Kind::BallScrew(d, l) => {
                 let (r, c) = (d / 2.0, d / 20.0);
                 let end = PI * c / 3.0 * (r * r + r * (r - c) + (r - c) * (r - c));
@@ -840,7 +876,9 @@ fn automation_elements_weigh_their_envelopes() {
             _ => continue,
         };
         // Only the first and last stroke of each cylinder bore: 77 members.
-        if matches!(s.kind, Kind::Cylinder(.., stroke) if stroke > 25.0 && stroke < 500.0) {
+        if matches!(s.kind, Kind::Cylinder(.., stroke) if stroke > 25.0 && stroke < 500.0)
+            || matches!(s.kind, Kind::Rail(.., l) if l > 300.0)
+        {
             continue;
         }
         let t = Instant::now();
@@ -876,5 +914,80 @@ fn automation_elements_weigh_their_envelopes() {
         );
     }
     println!("slowest: {} {:.0} ms", worst.1, worst.0);
-    assert_eq!(names.len(), 3);
+    assert_eq!(names.len(), 10);
+}
+
+/// A profile rail at the Full level weighs the maker's kg/m with its counterbored holes, and its
+/// carriage sits on it: the carriage's channel is the rail's width, its floor the rail's top.
+#[test]
+fn a_full_rail_weighs_its_catalogue_mass() {
+    use cadcraft3d::components::samples::rail_holes;
+    for s in all() {
+        let Kind::Rail(_, b, cb, cbh, hole, pitch, kg, l) = s.kind else {
+            continue;
+        };
+        if l != 1000.0 {
+            continue;
+        }
+        let t = Instant::now();
+        let p = s.part_at(Detail::Full).unwrap();
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        assert!(
+            p.exact && p.feature_health.is_empty(),
+            "{}",
+            s.designation()
+        );
+        let holes = rail_holes(l, cb, pitch).len() as f64;
+        let hole_volume = PI / 4.0 * (cb * cb * cbh + hole * hole * (b - cbh)) * holes;
+        let standard = volume(&s.part().unwrap());
+        let full = volume(&p);
+        assert!(
+            ((standard - full) - hole_volume).abs() < 0.01 * hole_volume,
+            "{}: holes {} vs {hole_volume}",
+            s.designation(),
+            standard - full
+        );
+        // Mass per metre: the holes are spread over their pitch in the table's figure.
+        let per_m = full / l * 7.85e-3;
+        assert!(
+            (per_m - kg).abs() < 0.03 * kg,
+            "{}: {per_m} kg/m vs {kg}",
+            s.designation()
+        );
+        println!(
+            "{} Full: {ms:.0} ms, {per_m:.2} kg/m (catalogue {kg})",
+            s.designation()
+        );
+    }
+}
+
+/// A support unit's Full level has its two mounting holes; every bore of a jaw coupling builds.
+#[test]
+fn support_units_and_couplings_build_at_every_level() {
+    for s in all() {
+        let (Kind::Support(_, _, _, _, _, _, h1, _, x) | Kind::JawCoupling(_, _, _, h1, x, _)) =
+            s.kind
+        else {
+            continue;
+        };
+        for level in Detail::ALL {
+            let p = s
+                .part_at(level)
+                .unwrap_or_else(|e| panic!("{} {level:?}: {e}", s.designation()));
+            assert!(
+                p.exact && p.feature_health.is_empty(),
+                "{} {level:?}",
+                s.designation()
+            );
+        }
+        if let Kind::Support(..) = s.kind {
+            let cut = volume(&s.part().unwrap()) - volume(&s.part_at(Detail::Full).unwrap());
+            let expected = 2.0 * PI / 4.0 * x * x * h1;
+            assert!(
+                (cut - expected).abs() < 0.02 * expected,
+                "{}: {cut} vs {expected}",
+                s.designation()
+            );
+        }
+    }
 }

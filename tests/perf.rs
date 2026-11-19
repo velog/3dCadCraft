@@ -6167,6 +6167,69 @@ fn library_t_slot_profiles_build_within_budget() {
     }
 }
 
+/// Spec 6.3 §6.5c, rule 20: the automation elements of 2026-11-19 (support units, jaw couplings,
+/// clamp collars, profile T-nuts, rails and carriages) build within 200 ms at Standard, the first
+/// and last size of each family; Full support units within 500 ms. A Full rail of 1 m or more is two
+/// Cuts of up to 17 holes (counterbores, then holes): 0.5-0.95 s measured on a loaded machine
+/// 2026-11-19, so 1 s until one Boolean of stepped tools replaces them.
+#[test]
+fn library_automation_elements_build_within_budget() {
+    use cadcraft3d::components::samples::{Detail, Kind};
+    let every = cadcraft3d::components::samples::all();
+    let ours = |k: &Kind| {
+        matches!(
+            k,
+            Kind::Support(..)
+                | Kind::JawCoupling(..)
+                | Kind::ClampCollar(..)
+                | Kind::SlotNut(..)
+                | Kind::Rail(..)
+                | Kind::Carriage(..)
+        )
+    };
+    let picked: Vec<_> = every
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| {
+            ours(&s.kind)
+                && (*i == 0
+                    || every[i - 1].family != s.family
+                    || every.get(i + 1).is_none_or(|n| n.family != s.family))
+        })
+        .map(|(_, s)| s)
+        .collect();
+    assert!(picked.len() >= 12, "{} members", picked.len());
+    for s in picked {
+        let ms = median_ms(3, || {
+            s.part().unwrap();
+        });
+        println!("library {}: {ms:.0} ms", s.designation());
+        assert!(
+            within(ms, 200.0),
+            "{}: {ms:.0} ms > 200 ms",
+            s.designation()
+        );
+        let full = matches!(s.kind, Kind::Support(..))
+            || matches!(s.kind, Kind::Rail(.., l) if l >= 1000.0);
+        if full {
+            let ms = median_ms(3, || {
+                s.part_at(Detail::Full).unwrap();
+            });
+            let budget = if matches!(s.kind, Kind::Rail(..)) {
+                1000.0
+            } else {
+                500.0
+            };
+            println!("library {} Full: {ms:.0} ms", s.designation());
+            assert!(
+                within(ms, budget),
+                "{} Full: {ms:.0} ms > {budget} ms",
+                s.designation()
+            );
+        }
+    }
+}
+
 /// A solve works out each component's free motions (View > Degrees of Freedom).
 #[test]
 fn free_motions_stay_small_in_a_solve() {

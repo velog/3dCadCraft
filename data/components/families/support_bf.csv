@@ -1,0 +1,8 @@
+# Floating-side ball screw support unit, square housing (BF pattern), mm: TPI ball screw support unit catalogue, TBF series table 4.2 (TBF10 to TBF25, as THK BF10 to BF25). Columns as the fixed side's; d1 is the bearing's bore.
+size,d1,L,B,H,h,B1,H1,P,X
+BF10,8,20,60,39,22,34,32.5,46,6.6
+BF12,10,20,60,43,25,34,32.5,46,6.6
+BF15,15,20,70,48,28,40,38,54,6.6
+BF17,17,23,86,64,39,50,55,68,9
+BF20,20,26,88,60,34,52,50,70,9
+BF25,25,30,106,80,48,64,70,85,11

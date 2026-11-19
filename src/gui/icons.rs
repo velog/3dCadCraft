@@ -1126,6 +1126,28 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
             ring(3.2, 6.3);
             p.rect(7.0, 1.2, 9.0, 3.6, acc);
         }
+        "Clamp Collar" => {
+            // The ring, its slit on the right and the clamp screw across it.
+            ring(3.2, 6.3);
+            p.line(&[(11.2, 7.4), (14.6, 7.4)], ink);
+            p.line(&[(11.2, 8.6), (14.6, 8.6)], ink);
+            p.line(&[(12.6, 3.0), (12.6, 13.0)], acc);
+        }
+        "Slot Nut" => {
+            // Seen from above: the block with two corners cut for turning in, its thread.
+            p.closed(
+                &[
+                    (4.0, 11.0),
+                    (14.5, 11.0),
+                    (14.5, 7.5),
+                    (12.0, 5.0),
+                    (1.5, 5.0),
+                    (1.5, 8.5),
+                ],
+                ink,
+            );
+            p.circle(8.0, 8.0, 1.8, acc);
+        }
         "Structural Shapes" | "I-Beams" => section(&[
             (3.0, 2.0),
             (13.0, 2.0),
@@ -1289,6 +1311,33 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
         "Linear Motion" | "Rail" => {
             p.rect(1.5, 6.0, 14.5, 10.0, ink);
             p.line(&[(1.5, 8.0), (14.5, 8.0)], acc);
+        }
+        "Support Unit" => {
+            // The housing seen along the screw: shoulders, the raised middle, the shaft.
+            p.closed(
+                &[
+                    (1.0, 14.5),
+                    (15.0, 14.5),
+                    (15.0, 9.5),
+                    (11.5, 9.5),
+                    (11.5, 2.5),
+                    (4.5, 2.5),
+                    (4.5, 9.5),
+                    (1.0, 9.5),
+                ],
+                ink,
+            );
+            p.circle(8.0, 8.0, 2.2, acc);
+            p.line(&[(2.8, 9.5), (2.8, 14.5)], acc);
+            p.line(&[(13.2, 9.5), (13.2, 14.5)], acc);
+        }
+        "Couplings" | "Jaw Coupling" => {
+            // Two hubs and the spider between them, seen from the side, the shafts in them.
+            p.rect(1.5, 3.5, 6.5, 12.5, ink);
+            p.rect(9.5, 3.5, 14.5, 12.5, ink);
+            p.rect(6.5, 4.5, 9.5, 11.5, acc);
+            p.line(&[(0.5, 8.0), (4.5, 8.0)], acc);
+            p.line(&[(11.5, 8.0), (15.5, 8.0)], acc);
         }
         "Pipe Parts" | "Fittings" | "Elbow" => {
             p.arc(13.0, 13.0, 9.5, 180.0, 270.0, ink);
