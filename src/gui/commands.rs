@@ -3653,8 +3653,14 @@ mod tests {
             let Some(c) = by_id(id) else {
                 panic!("ribbon button {id} ({tab} › {panel}) is not in the registry");
             };
+            // Return (Edit in place) stands at the end of every tab; the
+            // registry names its 3D Model place.
+            let every_tab = *panel == "Return"
+                && c.places
+                    .iter()
+                    .any(|p| matches!(p, Place::Ribbon(_, "Return")));
             assert!(
-                c.places.contains(&Place::Ribbon(tab, panel)),
+                every_tab || c.places.contains(&Place::Ribbon(tab, panel)),
                 "{id} is on the ribbon at {tab} › {panel}, the registry says {:?}",
                 c.places
             );
