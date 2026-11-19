@@ -71,6 +71,8 @@ Every feature is described with the same template:
 
 **Specification:** [spec/0.3-view.md](spec/0.3-view.md)
 
+**Large models** — ⬜ (plan, 2026-11-16): levels of detail and culling, one GPU mesh per repeated part (instancing), hover and pick at scale, Undo with shared snapshots, parallel regeneration, OK in the background; stages L0–L7. **Specification:** [spec/0.20-large-models.md](spec/0.20-large-models.md)
+
 **Controls (now):** the **Inventor** profile by default — Shift + middle button orbits, middle pans, the wheel zooms, F2/F3/F4 + left, double middle click = Fit, F6 = Home; the **Classic** profile — left orbits, right or middle pans (Tools → Application Options → Navigation). Orbit passes freely over the top and the bottom (🟡 waiting for a visual check). Since 2026-10-27: Default Orbit Type Free (relative to the screen) / Constrained, orbit about the model point under the cursor, zoom to the cursor, and the view zooms out by itself when the edited sketch or a placed component leaves it (spec 0.3 §3.1). All keys and mouse actions: **[REFERENCE.md](REFERENCE.md)** (§1 mouse, §5 keys); the gaps — [ROADMAP.md](ROADMAP.md#interface-gaps-and-next-steps).
 
 **ViewCube** (🟡 waiting for a visual check): 26 directions (faces, edges, corners) with highlight, arrows and 90° rotation when looking at a face, Home as a house icon, an N/E/S/W compass under the cube (drag = rotation about Z, click on a letter = view from that side), dragging the cube = Orbit, smooth transitions (~300 ms), semi-transparent when the mouse is far away, a context menu with the projections and Home.
@@ -100,7 +102,7 @@ Every feature is described with the same template:
 - An executed command returns an inverse operation or a model delta, which goes onto the Undo stack.
 - *Modelling* commands (sketch, extrude etc.) are also recorded in the part's **feature tree**. This is the parametric history, which regenerates when a dimension changes.
 
-**Settings.** Undo stack depth.
+**Settings.** Undo stack depth; an Undo memory limit is planned in [spec/0.20-large-models.md](spec/0.20-large-models.md) §3.3 (shared snapshots, then the `Command` enum with deltas).
 
 **Inventor equivalent.** Undo/Redo, Model Browser.
 
