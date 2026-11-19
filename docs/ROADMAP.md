@@ -402,6 +402,8 @@ curve divides regions; flat rings of a revolve as one face; Patch takes the whol
 | Motion links picked on faces | links take existing relationships only |
 | Transitional | only a follower on a Slider against a cam |
 | Surface Revolve preview | wires only, not shaded |
+| Shell of lofts through oval splines (bottle, hair dryer; spec 5.4a F20) | SMLib's offset refuses multi-span spline walls (status 1001) even one wall per quarter; circles and 4-point ovals shell; some 8 / 16-point circle shells hang > 90 s. Probe `tests/surface_goals.rs` `shell_of_lofts` |
+| Thicken of a trimmed Freeform skin (bumper; spec 5.4a F22) | the kernel's offset faces carry trim curves 0.1 mm off their edges, its mesher refuses them |
 | Spline touching a curve without crossing it | does not divide regions (a tangent touch is not found) |
 | A guide of Boundary Patch | a picked sketch guides with all its curves; Inventor picks single curves |
 | Part2 of the owner's Framing | rebuilds in 0.77 s (kernel Cut and Trim); no longer blocks the view, the operations are not faster |

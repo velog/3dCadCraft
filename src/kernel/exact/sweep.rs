@@ -287,7 +287,25 @@ pub fn loft_surface(
         .iter()
         .map(|s| (s.plane, s.outer.segs.clone()))
         .collect();
-    let body = guarded("surface loft", || sk::loft_sheet(&input))?;
+    let body = match guarded("surface loft", || sk::loft_sheet(&input)) {
+        Ok(b) => b,
+        // The kernel's sheet loft lofts each column of pieces on its own and stitches them; where
+        // its check refuses the stitch (an oval's 16 tangent walls), the solid loft's walls are
+        // the surface, its caps left out (same names).
+        Err(e) => {
+            let solid = loft_sections(&secs, prefix, true, true).map_err(|_| e.clone())?;
+            let walls: Vec<usize> = solid
+                .face_names
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.as_deref().is_none_or(|n| n.contains(":Side:")))
+                .map(|(i, _)| i)
+                .collect();
+            let mut sheet = super::face_sheet(&solid, &walls).map_err(|_| e)?;
+            sheet.name = Some(prefix.to_owned());
+            return Ok(sheet);
+        }
+    };
     let face_names = names_from(&body, &[], &side_names(&numbered, prefix));
     Ok(ExactSolid {
         prism: None,
@@ -678,7 +696,7 @@ pub fn loft_frames(
         .iter()
         .map(|f| placed_section(prof, f, similar))
         .collect::<Result<Vec<_>, _>>()?;
-    loft_sections(&secs, prefix, false)
+    loft_sections(&secs, prefix, false, false)
 }
 
 /// Lofts profiles on their own planes, in order (a hole needs a hole in
@@ -698,10 +716,31 @@ pub fn loft(sections: &[(Plane, &ExactProfile)], prefix: &str) -> Result<ExactSo
             placed_section(prof, &frame, true)
         })
         .collect::<Result<Vec<_>, String>>()?;
-    loft_sections(&secs, prefix, true)
+    loft_sections(&secs, prefix, true, false)
 }
 
-fn loft_sections(secs: &[Section], prefix: &str, rename_later: bool) -> Result<ExactSolid, String> {
+/// The loft with one wall over each run of a spline's pieces (four walls at least round a closed
+/// spline), else the plain loft (a wall per piece): the walls of a surface loft whose own sheet
+/// loft the kernel refused (spec 5.4a F21).
+fn smooth_loft(input: &[(sg::Plane, sg::Loop2)]) -> Result<sk::Body, String> {
+    guarded("loft", || sk::loft_smooth(input)).or_else(|_| guarded("loft", || sk::loft(input)))
+}
+
+/// `smooth`: one wall per run of a spline's pieces ([`smooth_loft`]); otherwise a wall per piece
+/// (the solid loft: an embossed drop on the joined walls of the bottle took the kernel > 90 s).
+fn loft_sections(
+    secs: &[Section],
+    prefix: &str,
+    rename_later: bool,
+    smooth: bool,
+) -> Result<ExactSolid, String> {
+    let loft = |input: &[(sg::Plane, sg::Loop2)]| {
+        if smooth {
+            smooth_loft(input)
+        } else {
+            guarded("loft", || sk::loft(input))
+        }
+    };
     let holes = secs.first().map_or(0, |s| s.holes.len());
     if secs.iter().any(|s| s.holes.len() != holes) {
         return Err("every section needs the same number of holes".into());
@@ -724,7 +763,7 @@ fn loft_sections(secs: &[Section], prefix: &str, rename_later: bool) -> Result<E
     let outer_names = numbered(&|s| &s.outer_names);
     let input: Vec<(sg::Plane, sg::Loop2)> =
         secs.iter().map(|s| (s.plane, s.outer.clone())).collect();
-    let body = guarded("loft", || sk::loft(&input))?;
+    let body = loft(&input)?;
     let face_names = names_from(&body, &[], &side_names(&outer_names, prefix));
     let mut cur = ExactSolid {
         prism: None,
@@ -762,7 +801,7 @@ fn loft_sections(secs: &[Section], prefix: &str, rename_later: bool) -> Result<E
                 }
             }));
         }
-        let tool = guarded("loft", || sk::loft(&input))?;
+        let tool = loft(&input)?;
         let face_names = names_from(&tool, &[], &side_names(&names, prefix));
         let tool = ExactSolid {
             prism: None,

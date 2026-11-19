@@ -920,6 +920,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   towards its next points: the kernel keeps that angle, so the volume is A·L·cos θ0 (not A·L).
   Fillet of the cap edge works through our `vendor/` patch of `curveblend` (curved seams at chain
   corners); Shell refuses (B-spline walls cannot be offset).
+- **A loft makes a wall per Bézier piece of a spline section** (`sk::loft`): 16 tangent walls round a 16-point oval. The kernel's sheet loft refuses to stitch such columns, so `loft_surface` falls back to the solid loft's walls (`loft_sections(.., smooth = true)` → vendor `loft_smooth`: one wall per run, four at least round a closed spline). The solid loft keeps a wall per piece: joined walls made the bottle's embossed drop take > 90 s, and they did not make an oval loft shellable (SMLib's offset still refuses; `tests/surface_goals.rs` `shell_of_lofts`, spec 5.4a F20).
 - **Guided lofts** (`kernel/exact/loft.rs`, `docs/spec/5.2-loft.md`): the kernel lofts only through
   planar sections, so rails / centre line / Area Loft / conditions become ≤ 48 *stations* (planar
   degree-7 Bézier loops) lofted by `sk::loft_matched` (our vendor addition: keeps the caller's
