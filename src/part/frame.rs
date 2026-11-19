@@ -28,6 +28,9 @@ const BUILTIN: &str = include_str!("../../data/profiles/profiles.csv");
 /// The custom property holding a member's length (Inventor's `G_L`).
 pub const LENGTH_PROPERTY: &str = "G_L";
 
+/// The custom property holding a member's section standard (`EN 10219`).
+pub const STANDARD_PROPERTY: &str = "Standard";
+
 /// A member length as it is stored in [`LENGTH_PROPERTY`]: to 0.001 mm. The
 /// value is read off a display mesh, so it carries noise (399.99999998).
 pub fn stored_length(l: Real) -> Real {
@@ -1689,6 +1692,12 @@ impl Section {
         let mut p = IProperties::default();
         p.set("stock_number", &self.stock_number());
         p.set("description", &format!("{} {}", self.family, self.size));
+        if !self.standard.is_empty() {
+            p.custom.push(CustomProperty {
+                name: STANDARD_PROPERTY.into(),
+                value: PropValue::Text(self.standard.clone()),
+            });
+        }
         p.custom.push(CustomProperty {
             name: LENGTH_PROPERTY.into(),
             value: PropValue::Number(stored_length(length)),

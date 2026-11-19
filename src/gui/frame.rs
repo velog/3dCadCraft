@@ -75,9 +75,25 @@ pub(super) fn frame_combo(d: &PartDialog, ti: usize, label: &str) -> Option<Vec<
             }
             Some(v)
         }
+        // As Material, then every appearance of the library.
+        "Appearance" => {
+            let mut v = vec![AS_MATERIAL.to_owned()];
+            for a in &crate::materials::with_user().appearances {
+                if !v.contains(&a.name) {
+                    v.push(a.name.clone());
+                }
+            }
+            Some(v)
+        }
         _ => None,
     }
 }
+
+/// Insert Frame's check box that asks for the new members' names.
+pub(super) const NAMING: &str = "Frame Member Naming dialog";
+
+/// The Appearance list's first entry: the member shows its material.
+const AS_MATERIAL: &str = "As Material";
 
 /// The chosen entry of list `label` (clamped to the list).
 pub(super) fn frame_choice(d: &PartDialog, ti: usize, label: &str) -> Option<String> {
@@ -100,6 +116,7 @@ pub(super) fn orientation(d: &PartDialog) -> Orientation {
         about_anchor: d.check(0, "Rotate Around Selected Point"),
         mirror: d.check(0, "Mirror"),
         flip: d.check(0, "Flip Direction"),
+        align: None,
     }
 }
 
@@ -233,6 +250,8 @@ pub(super) fn insert_options(d: &PartDialog) -> Option<InsertOptions> {
             },
         },
         layout: layout(d),
+        appearance: frame_choice(d, 0, "Appearance").filter(|a| a != AS_MATERIAL),
+        appearance_to_part: d.check(0, "Apply Appearance to Part"),
     })
 }
 
@@ -254,7 +273,7 @@ impl CadCraftApp {
             return false;
         }
         match self.frame_insert(d, None) {
-            Ok(()) => true,
+            Ok(done) => done,
             Err(e) => {
                 self.file_status = Some(Err(format!("Insert Frame: {e}")));
                 false
@@ -263,16 +282,15 @@ impl CadCraftApp {
     }
 
     /// Inserts the panel's members; `names` (frame, skeleton) make a new
-    /// frame assembly. On an error nothing changes.
+    /// frame assembly. On an error nothing changes. `Ok(false)`: the members
+    /// wait for the Frame Member Naming dialog.
     pub(super) fn frame_insert(
         &mut self,
         d: &PartDialog,
         names: Option<(&str, &str)>,
-    ) -> Result<(), String> {
-        if d.refs.get("align").is_some_and(|v| !v.is_empty()) {
-            return Err("Align comes with stage F2 (spec 6.1)".into());
-        }
-        let o = insert_options(d).ok_or("the section table is empty")?;
+    ) -> Result<bool, String> {
+        let mut o = insert_options(d).ok_or("the section table is empty")?;
+        o.orientation.align = self.frame_align(d)?;
         // The kept sets, then the lines picked now (with the panel's section),
         // each line with its own placement where the list gave it one.
         let mut sets: Vec<(Vec<Skeleton>, Vec<Option<Orientation>>, InsertOptions)> = d
@@ -414,12 +432,6 @@ impl CadCraftApp {
         {
             frame::add_corners(&mut trial, &linked, doc, fid, &occs, &corners)?;
         }
-        self.history.break_coalescing();
-        self.checkpoint("Insert Frame");
-        self.project = trial;
-        self.history.break_coalescing();
-        self.frame_set_selected(occs.clone());
-        self.scene_dirty = true;
         let overlaps = if left_out + removes.len() > 0 {
             format!(
                 ", {} overlapping line(s) left out, {} placed member(s) removed",
@@ -429,13 +441,31 @@ impl CadCraftApp {
         } else {
             String::new()
         };
-        self.file_status = Some(Ok(format!(
+        let msg = format!(
             "Insert Frame: {} member(s) of {} {}{overlaps}",
             occs.len(),
             o.family,
             o.size
-        )));
-        Ok(())
+        );
+        if d.check(0, NAMING) {
+            let rows = match trial.document(doc).map(|x| &x.data) {
+                Some(crate::document::DocumentData::Assembly(a)) => {
+                    frame::member_names(&trial, a, &occs)
+                }
+                _ => Vec::new(),
+            };
+            self.asm.frame_naming = Some(FrameNaming {
+                trial,
+                doc,
+                rows,
+                msg,
+                apply: false,
+                error: None,
+            });
+            return Ok(false);
+        }
+        self.frame_commit_insert(trial, occs, msg);
+        Ok(true)
     }
 
     /// Members follow their skeleton (after the skeleton part was edited);
@@ -449,6 +479,12 @@ impl CadCraftApp {
             Ok(s) => {
                 for (occ, why) in &s.sick {
                     log::warn!("frame member {occ}: {why}");
+                    // Its skeleton geometry is gone: the Missing Member window.
+                    if why.contains("no longer exists") && !self.asm.frame_missing_seen.contains(occ)
+                    {
+                        self.asm.frame_missing_seen.push(*occ);
+                        self.asm.frame_missing.push((*occ, why.clone()));
+                    }
                 }
                 if s.moved > 0 {
                     self.scene_dirty = true;
@@ -533,7 +569,7 @@ impl CadCraftApp {
         self.part_planned.as_ref().is_some_and(|d| {
             matches!(
                 d.kind,
-                Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::Reuse)
+                Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::Reuse | AsmPlanned::ChangeReuse)
             ) && d.active == Some("edges")
         })
     }
@@ -861,7 +897,7 @@ impl CadCraftApp {
         };
         if !matches!(
             d.kind,
-            Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::Reuse)
+            Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::Reuse | AsmPlanned::ChangeReuse)
         ) {
             return;
         }
@@ -1240,6 +1276,155 @@ impl CadCraftApp {
         }
     }
 
+    /// OK of Change Reuse: the picked reused members move to the picked
+    /// lines (one each, in order) or only turn round with Flip Direction.
+    pub(super) fn change_reuse_ok(&mut self, d: &PartDialog) -> bool {
+        let fail = |app: &mut Self, e: &str| {
+            app.file_status = Some(Err(format!("Change Reuse: {e}")));
+            false
+        };
+        let members = self.picked_members(d, "members");
+        if members.is_empty() {
+            return fail(self, "select the reused members");
+        }
+        let linked = self.frame_linked();
+        let mut trial = self.project.clone();
+        let doc = self.frame_doc();
+        let flip = d.check(0, "Flip Direction");
+        let result = d
+            .skeletons
+            .iter()
+            .map(|s| self.frame_skeleton_down(&mut trial, &linked, s))
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(|lines| {
+                frame::change_reuse(&mut trial, &linked, doc, &members, &lines, flip)
+            });
+        match result {
+            Ok(_) => {
+                self.frame_commit("Change Reuse", trial);
+                self.file_status = Some(Ok(format!(
+                    "Change Reuse: {} member(s)",
+                    members.len()
+                )));
+                true
+            }
+            Err(e) => fail(self, &e),
+        }
+    }
+
+    /// The Align pick of a frame panel as a direction in the frame's
+    /// coordinates (`None`: nothing picked). Edges and sketch lines give their
+    /// direction; faces are refused for now.
+    pub(super) fn frame_align(&self, d: &PartDialog) -> Result<Option<[f64; 3]>, String> {
+        let Some(g) = d.refs.get("align").and_then(|v| v.last()) else {
+            return Ok(None);
+        };
+        let a = self.assembly().ok_or("no assembly is open")?;
+        let linked = self.frame_linked();
+        let (p, q) = match g {
+            GeomRef::Edge { .. } => {
+                frame::skeleton_line(&self.project, &linked, a, &Skeleton::Edge(g.clone()))?
+            }
+            _ => return Err("Align takes a straight edge or a sketch line yet".into()),
+        };
+        let w = self.frame_place().inverse() * (q - p);
+        let w = w.try_normalize(1e-9).ok_or("the Align edge has no length")?;
+        Ok(Some([w.x, w.y, w.z]))
+    }
+
+    /// The View buttons of the frame panels (spec 6.1 §3.1): Look At
+    /// Manipulator looks square to the last picked line or member, Zoom to
+    /// Manipulator frames it, Initial View goes back to the view the panel
+    /// opened with. The line for the panel's note.
+    pub(super) fn frame_view_button(
+        &mut self,
+        d: &PartDialog,
+        b: &str,
+        ctx: &egui::Context,
+    ) -> String {
+        let before = self.camera.clone();
+        if b == "Initial View" {
+            let Some(v) = d.start_view.clone() else {
+                return "Initial View: no view kept".into();
+            };
+            self.camera = v;
+            self.view_cube.animate(before, &mut self.camera);
+            ctx.request_repaint();
+            return "Initial View".into();
+        }
+        let linked = self.frame_linked();
+        let line = d
+            .skeletons
+            .last()
+            .and_then(|s| {
+                let a = self.assembly()?;
+                frame::skeleton_run(&self.project, &linked, a, s)
+                    .ok()
+                    .map(|r| r.chord())
+            })
+            .or_else(|| {
+                let key = ["members", "member", "notched", "first", "source"]
+                    .into_iter()
+                    .find(|k| !d.picks_of(k).is_empty())?;
+                let occ = *self.picked_members(d, key).last()?;
+                let (p, q) = frame::member_run(&self.project, &linked, self.frame_asm()?, occ)?;
+                let place = self.frame_place();
+                Some((place * p, place * q))
+            });
+        let Some((p, q)) = line else {
+            return format!("{b}: pick a line or a member first");
+        };
+        let along = q - p;
+        let len = along.norm().max(1.0);
+        let mid = nalgebra::center(&p, &q);
+        if b == "Look At Manipulator" {
+            let z = crate::kernel::Vector3::z();
+            let dir = along / len;
+            // Square to the line, level with it (a vertical line: from -Y).
+            let side = dir
+                .cross(&z)
+                .try_normalize(1e-6)
+                .unwrap_or(-crate::kernel::Vector3::y());
+            let up = if dir.z.abs() > 0.99 {
+                dir
+            } else {
+                (z - side * side.dot(&z)).try_normalize(1e-9).unwrap_or(z)
+            };
+            self.camera.target = mid;
+            self.camera.set_frame(side, up);
+        } else {
+            let r = crate::kernel::Vector3::repeat(len * 0.15);
+            self.camera.fit(p.inf(&q) - r, p.sup(&q) + r);
+        }
+        self.view_cube.animate(before, &mut self.camera);
+        ctx.request_repaint();
+        b.to_owned()
+    }
+
+    /// OK of Refresh: the picked members (none: all) take their family's
+    /// numbers from the section table read again from the user's folder.
+    pub(super) fn frame_refresh_ok(&mut self, d: &PartDialog) -> bool {
+        let members = self.picked_members(d, "members");
+        let (lib, _) = Library::reload();
+        let linked = self.frame_linked();
+        let mut trial = self.project.clone();
+        match frame::refresh(&mut trial, &linked, self.frame_doc(), &members, &lib) {
+            Ok(done) if done.is_empty() => {
+                self.file_status = Some(Ok("Refresh: every member is up to date".into()));
+                true
+            }
+            Ok(done) => {
+                self.frame_commit("Refresh", trial);
+                self.file_status = Some(Ok(format!("Refresh: {} member(s) updated", done.len())));
+                true
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("Refresh: {e}")));
+                false
+            }
+        }
+    }
+
     /// OK of Insert End Cap: a plate on every picked end face.
     pub(super) fn end_cap_ok(&mut self, d: &PartDialog) -> bool {
         let fail = |app: &mut Self, e: &str| {
@@ -1247,7 +1432,7 @@ impl CadCraftApp {
             false
         };
         let refs: Vec<GeomRef> = d.refs.get("faces").cloned().unwrap_or_default();
-        if refs.is_empty() {
+        if refs.is_empty() && d.caps_edit.is_empty() {
             return fail(self, "select the end faces of the members");
         }
         let Some(a) = self.frame_asm() else {
@@ -1301,7 +1486,27 @@ impl CadCraftApp {
         let linked = self.frame_linked();
         let mut trial = self.project.clone();
         let doc = self.frame_doc();
-        match frame::insert_caps(&mut trial, &linked, doc, &ends, &o, material.as_deref()) {
+        let edited = if d.caps_edit.is_empty() {
+            Ok(())
+        } else {
+            frame::edit_caps(
+                &mut trial,
+                &linked,
+                doc,
+                &d.caps_edit,
+                &o,
+                material.as_deref(),
+            )
+            .map(|_| ())
+        };
+        let made = edited.and_then(|()| {
+            if ends.is_empty() {
+                Ok(d.caps_edit.clone())
+            } else {
+                frame::insert_caps(&mut trial, &linked, doc, &ends, &o, material.as_deref())
+            }
+        });
+        match made {
             Ok(made) => {
                 self.history.break_coalescing();
                 self.checkpoint("Insert End Cap");
@@ -1427,5 +1632,137 @@ impl CadCraftApp {
                 painter.line_segment([sa, sb], Stroke::new(3.0, HOVER));
             }
         }
+    }
+}
+
+/// The Frame Member Naming dialog (spec 6.1 §3.1): the inserted members wait
+/// in `trial` until OK gives them their names; Cancel drops them.
+pub(super) struct FrameNaming {
+    /// The project with the new members.
+    pub trial: crate::document::Project,
+    /// The frame document they are in.
+    pub doc: crate::document::DocumentId,
+    /// Their names, edited in the dialog.
+    pub rows: Vec<frame::MemberName>,
+    /// The status line once committed.
+    pub msg: String,
+    /// The insert was an Apply: the panel stays open.
+    pub apply: bool,
+    /// Why the last OK was refused.
+    pub error: Option<String>,
+}
+
+impl CadCraftApp {
+    /// The Frame Member Naming dialog: Display Name and File Name of each new
+    /// member; OK names them and commits the insert (one Undo step), Cancel
+    /// returns to the panel without them.
+    pub(super) fn frame_naming_window(&mut self, ctx: &egui::Context) {
+        let Some(mut st) = self.asm.frame_naming.take() else {
+            return;
+        };
+        let (mut ok, mut cancel) = (false, false);
+        let win = egui::Window::new("Frame Member Naming")
+            .collapsible(false)
+            .resizable(true)
+            .default_size([520.0, 300.0])
+            .default_pos(ctx.content_rect().center() - egui::vec2(260.0, 150.0));
+        self.layout
+            .place("frame_naming", ctx.content_rect(), true, win)
+            .show(ctx, |ui| {
+                ui.label(format!("{} new member(s)", st.rows.len()));
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        egui::Grid::new("frame_naming_grid")
+                            .num_columns(3)
+                            .striped(true)
+                            .spacing([8.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.label("");
+                                ui.strong("Display Name");
+                                ui.strong("File Name");
+                                ui.end_row();
+                                for r in &mut st.rows {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(16.0, 16.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    super::icons::paint(
+                                        ui.painter(),
+                                        rect,
+                                        super::icons::Icon::Part,
+                                        &super::icons::Palette::enabled(),
+                                    );
+                                    ui.add_sized(
+                                        [200.0, 20.0],
+                                        egui::TextEdit::singleline(&mut r.display),
+                                    );
+                                    ui.add_sized(
+                                        [200.0, 20.0],
+                                        egui::TextEdit::singleline(&mut r.file),
+                                    );
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                ui.label(
+                    egui::RichText::new(concat!(
+                        "File Location: in this design file ",
+                        "(Manage › Documents › Save to Separate File moves a part out)"
+                    ))
+                    .weak()
+                    .small(),
+                );
+                if let Some(e) = &st.error {
+                    ui.colored_label(super::theme::tokens().error, e);
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ok = ui.add(super::theme::ok_button("OK")).clicked();
+                    cancel = ui.button("Cancel").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                });
+            });
+        if cancel {
+            self.file_status = Some(Ok("Insert Frame: cancelled, no member made".into()));
+            return;
+        }
+        if !ok {
+            self.asm.frame_naming = Some(st);
+            return;
+        }
+        let mut trial = std::mem::replace(&mut st.trial, crate::document::Project::new(""));
+        if let Err(e) = frame::rename_members(&mut trial, st.doc, &st.rows) {
+            st.trial = trial;
+            st.error = Some(format!("Frame Member Naming: {e}"));
+            self.asm.frame_naming = Some(st);
+            return;
+        }
+        let occs: Vec<u32> = st.rows.iter().map(|r| r.occurrence).collect();
+        self.frame_commit_insert(trial, occs, st.msg);
+        if st.apply {
+            if let Some(d) = self.part_planned.as_mut() {
+                d.applied();
+            }
+        } else {
+            self.part_planned = None;
+        }
+    }
+
+    /// Commits an Insert Frame on `trial` (one Undo step) with the new
+    /// members selected.
+    pub(super) fn frame_commit_insert(
+        &mut self,
+        trial: crate::document::Project,
+        occs: Vec<u32>,
+        msg: String,
+    ) {
+        self.history.break_coalescing();
+        self.checkpoint("Insert Frame");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.frame_set_selected(occs);
+        self.scene_dirty = true;
+        self.file_status = Some(Ok(msg));
     }
 }

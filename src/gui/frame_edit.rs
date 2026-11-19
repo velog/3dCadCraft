@@ -20,6 +20,7 @@ pub(super) enum FrameCmd {
     DeleteTreatment(u32, usize),
     DeleteMembers(Vec<u32>),
     DeleteCap(u32),
+    EditCap(u32),
     Retype(u32, usize, frame::CornerType),
     EditMembers(Vec<u32>),
     Orient(Vec<u32>, OrientEdit),
@@ -234,7 +235,14 @@ impl CadCraftApp {
                                 ui.horizontal(|ui| {
                                     super::panels::tree_icon(ui, Icon::Part);
                                     let r = ui.selectable_label(false, n);
+                                    if r.double_clicked() {
+                                        cmds.push(FrameCmd::EditCap(*c));
+                                    }
                                     r.context_menu(|ui| {
+                                        if ui.button("Edit with Frame Generator").clicked() {
+                                            cmds.push(FrameCmd::EditCap(*c));
+                                            ui.close();
+                                        }
                                         if ui.button("Delete").clicked() {
                                             cmds.push(FrameCmd::DeleteCap(*c));
                                             ui.close();
@@ -348,6 +356,7 @@ impl CadCraftApp {
                     Err(e) => self.file_status = Some(Err(format!("Delete: {e}"))),
                 }
             }
+            FrameCmd::EditCap(c) => self.edit_cap_start(c),
             FrameCmd::EditMembers(ids) => self.edit_members_start(&ids),
             FrameCmd::Orient(ids, e) => self.frame_orient(&ids, e),
             FrameCmd::Retype(f, i, k) => {
@@ -394,7 +403,7 @@ impl CadCraftApp {
     }
 
     /// Takes a trial copy of the project into `self` as one Undo step.
-    fn frame_commit(&mut self, label: &str, trial: Project) {
+    pub(super) fn frame_commit(&mut self, label: &str, trial: Project) {
         self.history.break_coalescing();
         self.checkpoint(label);
         self.project = trial;
@@ -435,6 +444,48 @@ impl CadCraftApp {
             frame::take_treatment(a, f, i);
         }
         trial
+    }
+
+    /// Opens Insert End Cap on placed cap `c` with its values; OK rebuilds it.
+    fn edit_cap_start(&mut self, c: u32) {
+        let Some(cap) = self
+            .frame_asm()
+            .and_then(|a| a.frames.iter().flat_map(|f| &f.caps).find(|x| x.occurrence == c))
+            .cloned()
+        else {
+            return;
+        };
+        let mut d = PartDialog::new(AsmPlanned::EndCap);
+        let o = cap.options;
+        d.set_index(0, "Placement", if o.internal { 0 } else { 1 });
+        d.set_index(
+            0,
+            "Profile",
+            match o.corners {
+                crate::part::frame::CapCorners::Filleted => 0,
+                crate::part::frame::CapCorners::Chamfered => 1,
+                crate::part::frame::CapCorners::Sharp => 2,
+            },
+        );
+        d.set_num(0, "Thickness", o.thickness);
+        d.set_index(0, "Offset Type", usize::from(o.ratio));
+        d.set_num(0, "Edge Offset", o.edge_offset);
+        d.set_num(0, "Rotate", o.rotate.to_degrees());
+        d.set_num(0, "Offset", o.offset);
+        let material = self.frame_asm().and_then(|a| {
+            let doc = a.find(c)?.component;
+            self.with_part(doc, |p| p.material.clone()).flatten()
+        });
+        if let Some(k) = super::frame::frame_combo(&d, 0, "Material").and_then(|l| {
+            l.iter()
+                .position(|x| Some(x.as_str()) == material.as_deref())
+        }) {
+            d.set_index(0, "Material", k);
+        }
+        d.caps_edit = vec![c];
+        d.active = None;
+        self.asm.tool = None;
+        self.part_planned = Some(d);
     }
 
     /// Opens end treatment `i` of frame `f` in its panel with its members
@@ -571,6 +622,56 @@ impl CadCraftApp {
         d.set_check(0, "Rotate Around Selected Point", o.about_anchor);
         d.set_check(0, "Mirror", o.mirror);
         d.set_check(0, "Flip Direction", o.flip);
+        // Material and appearance of the member part / occurrence.
+        let (look, on_part) = match self.frame_asm() {
+            Some(a) => frame::member_appearance(&self.project, a, occ),
+            None => (None, false),
+        };
+        let material = self.frame_asm().and_then(|a| {
+            let doc = a.find(occ)?.component;
+            self.with_part(doc, |p| p.material.clone()).flatten()
+        });
+        let index_of = |d: &PartDialog, label: &str, name: &str| {
+            super::frame::frame_combo(d, 0, label)?
+                .iter()
+                .position(|x| x == name)
+        };
+        if let Some(k) = index_of(d, "Material", material.as_deref().unwrap_or("Generic")) {
+            d.set_index(0, "Material", k);
+        }
+        let k = look
+            .as_deref()
+            .and_then(|n| index_of(d, "Appearance", n))
+            .unwrap_or(0);
+        d.set_index(0, "Appearance", k);
+        d.set_check(0, "Apply Appearance to Part", on_part);
+    }
+
+    /// Copy Properties: the next click on a frame member copies its
+    /// section, material, appearance and orientation into the panel (spec
+    /// 6.1 §3.1). `false`: the panel is not waiting for one.
+    pub(super) fn frame_copy_click(&mut self, p: egui::Pos2, rect: egui::Rect) -> bool {
+        if !self.part_planned.as_ref().is_some_and(|d| d.copy_props) {
+            return false;
+        }
+        let hit = self.frame_member_under(p, rect);
+        let Some((occ, _)) = hit.filter(|(o, _)| self.is_frame_member(*o)) else {
+            self.file_status = Some(Err("Copy Properties: click a frame member".into()));
+            return true;
+        };
+        let name = self.frame_label(occ).unwrap_or_default();
+        let mut d = self.part_planned.take();
+        if let Some(d) = d.as_mut() {
+            self.frame_fill_change(d, occ);
+            d.copy_props = false;
+            d.note = Some(format!(
+                "Copied from {}",
+                super::frame_select::pick_name(&name)
+            ));
+        }
+        self.part_planned = d;
+        self.file_status = None;
+        true
     }
 
     /// Opens Insert Frame as the edit of members `ids` (Inventor: a member's
@@ -903,20 +1004,26 @@ impl CadCraftApp {
     /// OK of Change.
     pub(super) fn change_ok(&mut self, d: &PartDialog) -> bool {
         let members = self.picked_members(d, "members");
-        let Some(o) = super::frame::insert_options(d) else {
+        let Some(mut o) = super::frame::insert_options(d) else {
             self.file_status = Some(Err("Change: the section table is empty".into()));
             return false;
         };
+        match self.frame_align(d) {
+            Ok(a) => o.orientation.align = a,
+            Err(e) => {
+                self.file_status = Some(Err(format!("Change: {e}")));
+                return false;
+            }
+        }
         let linked = self.frame_linked();
         let mut trial = self.project.clone();
-        match frame::change(
-            &mut trial,
-            &linked,
-            self.frame_doc(),
-            &members,
-            &o,
-            &Library::current(),
-        ) {
+        let doc = self.frame_doc();
+        let lib = Library::current();
+        let r = match &d.change_base {
+            Some(base) => frame::change_keeping(&mut trial, &linked, doc, &members, &o, base, &lib),
+            None => frame::change(&mut trial, &linked, doc, &members, &o, &lib),
+        };
+        match r {
             Ok(_) => {
                 self.frame_commit("Change", trial);
                 true

@@ -383,7 +383,8 @@ impl CadCraftApp {
                 return;
             };
             match self.frame_insert(&d, Some((st.name.trim(), st.skeleton.trim()))) {
-                Ok(()) => self.part_planned = None,
+                Ok(true) => self.part_planned = None,
+                Ok(false) => {}
                 Err(e) => {
                     st.error = Some(e);
                     self.asm.frame_new = Some(st);
@@ -392,6 +393,83 @@ impl CadCraftApp {
             return;
         }
         self.asm.frame_new = Some(st);
+    }
+
+    /// Frame Generator Missing Member (spec 6.1 §3.5): the members whose
+    /// skeleton geometry is gone, each with Keep (it stays as it was built)
+    /// and Delete (the member, its part and its end treatments).
+    pub(super) fn frame_missing_window(&mut self, ctx: &egui::Context) {
+        if self.asm.frame_missing.is_empty() {
+            return;
+        }
+        // Members deleted meanwhile (Undo, another command) drop out.
+        let rows: Vec<(u32, String, String)> = self
+            .asm
+            .frame_missing
+            .iter()
+            .filter_map(|(o, why)| Some((*o, self.frame_label(*o)?, why.clone())))
+            .collect();
+        if rows.is_empty() {
+            self.asm.frame_missing.clear();
+            return;
+        }
+        let (mut keep, mut delete) = (Vec::new(), Vec::new());
+        let win = egui::Window::new("Frame Generator Missing Member")
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(ctx.content_rect().center() - egui::vec2(220.0, 90.0));
+        self.layout
+            .place("frame_missing", ctx.content_rect(), false, win)
+            .show(ctx, |ui| {
+                ui.label(
+                    "The skeleton geometry of these members is gone. A kept member stays as it                      was built until it is moved to another line (Edit Member).",
+                );
+                ui.separator();
+                egui::Grid::new("frame_missing_grid")
+                    .num_columns(3)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        for (o, name, why) in &rows {
+                            ui.horizontal(|ui| {
+                                let (r, _) = ui.allocate_exact_size(
+                                    egui::vec2(16.0, 16.0),
+                                    egui::Sense::hover(),
+                                );
+                                super::icons::paint(
+                                    ui.painter(),
+                                    r,
+                                    super::icons::Icon::InsertFrame,
+                                    &super::icons::Palette::enabled(),
+                                );
+                                ui.label(super::frame_select::pick_name(name));
+                            })
+                            .response
+                            .on_hover_text(why);
+                            if ui.button("Keep").clicked() {
+                                keep.push(*o);
+                            }
+                            if ui.button("Delete").clicked() {
+                                delete.push(*o);
+                            }
+                            ui.end_row();
+                        }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Keep All").clicked() {
+                        keep.extend(rows.iter().map(|r| r.0));
+                    }
+                    if ui.button("Delete All").clicked() {
+                        delete.extend(rows.iter().map(|r| r.0));
+                    }
+                });
+            });
+        self.asm
+            .frame_missing
+            .retain(|(o, _)| !keep.contains(o) && !delete.contains(o));
+        if !delete.is_empty() {
+            self.frame_delete_members(&delete);
+        }
     }
 
     /// Deletes a frame assembly left without members, on `trial`.

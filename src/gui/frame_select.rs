@@ -45,7 +45,7 @@ pub(super) fn member_colour(d: &PartDialog, key: &str) -> Option<[f32; 3]> {
         (Notch, "notched") => Some(BLUE),
         (
             FrameChange | Miter | TrimExtend | LengthenShorten | RemoveEndTreatments | ChangeReuse
-            | EditFrame,
+            | EditFrame | FrameRefresh,
             "members",
         )
         | (FrameMemberInfo, "member")
@@ -75,7 +75,7 @@ fn single(d: &PartDialog, key: &str) -> bool {
 }
 
 /// The occurrence name of a pick's label (`Name · component`).
-fn pick_name(w: &str) -> &str {
+pub(super) fn pick_name(w: &str) -> &str {
     w.split(" · ").next().unwrap_or(w)
 }
 
@@ -212,6 +212,7 @@ impl CadCraftApp {
             if let Some(d) = d.as_mut() {
                 if change {
                     self.frame_fill_change(d, occ);
+                    d.change_base = super::frame::insert_options(d);
                 } else {
                     self.fill_member_info(d, occ);
                 }
@@ -248,6 +249,7 @@ impl CadCraftApp {
         }
         if d.kind == Planned::Asm(AsmPlanned::FrameChange) {
             self.frame_fill_change(d, members[0]);
+            d.change_base = super::frame::insert_options(d);
         }
         if d.kind == Planned::Asm(AsmPlanned::FrameMemberInfo) {
             self.fill_member_info(d, members[0]);

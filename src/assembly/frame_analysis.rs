@@ -910,6 +910,8 @@ mod tests {
             orientation: Default::default(),
             corners: Default::default(),
             layout: Default::default(),
+            appearance: None,
+            appearance_to_part: false,
         }
     }
 

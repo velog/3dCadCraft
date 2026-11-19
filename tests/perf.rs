@@ -2006,6 +2006,8 @@ fn speed_budgets() {
             orientation: Default::default(),
             corners: Default::default(),
             layout: Default::default(),
+            appearance: None,
+            appearance_to_part: false,
         };
         let lib = cadcraft3d::part::frame::Library::builtin();
         // Miter of the four top edges' members: 8 end cuts (Trim Solid each), rebuilt in parallel.
@@ -2041,6 +2043,40 @@ fn speed_budgets() {
                     assert_eq!(s.moved, 0);
                 }),
             ));
+            // Refresh with an unchanged table: every member compared, nothing rebuilt.
+            rows.push((
+                "frame: Refresh of a 12-member frame, table unchanged",
+                5.0,
+                median_ms(5, || {
+                    let done = cadcraft3d::assembly::frame::refresh(&mut p, &linked, doc, &[], lib)
+                        .unwrap();
+                    assert!(done.is_empty());
+                }),
+            ));
+            // Change of all 12 members' material (spec 6.1 §3.3): every part rebuilt once.
+            {
+                let ids: Vec<u32> = match p.document(doc).map(|d| &d.data) {
+                    Some(DocumentData::Assembly(a)) => a.frames[0]
+                        .members
+                        .iter()
+                        .map(|m| m.occurrence)
+                        .collect(),
+                    _ => panic!("no frame assembly"),
+                };
+                let mut alu = o.clone();
+                alu.material = Some("Aluminium 6061-T6".into());
+                rows.push((
+                    "frame: Change of the material of 12 members",
+                    400.0,
+                    median_ms(3, || {
+                        let mut q = p.clone();
+                        cadcraft3d::assembly::frame::change_keeping(
+                            &mut q, &linked, doc, &ids, &alu, &o, lib,
+                        )
+                        .unwrap();
+                    }),
+                ));
+            }
             // The browser's overlap warning (spec 6.1 §3.1a): every member's line.
             rows.push((
                 "frame: overlapping members of a 12-member frame",

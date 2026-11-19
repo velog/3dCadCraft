@@ -89,6 +89,7 @@ mod frame_analysis;
 mod frame_ctx;
 mod frame_edit;
 mod frame_list;
+mod frame_manip;
 mod frame_select;
 mod frame_trace;
 mod freeform;

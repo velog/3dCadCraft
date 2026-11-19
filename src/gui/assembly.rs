@@ -97,6 +97,15 @@ pub(super) struct AsmUi {
     pub corner_menu: Option<(u32, usize, Pos2, bool)>,
     /// The open Create New Frame dialog (spec 6.1 §3.6a).
     pub frame_new: Option<super::frame_ctx::FrameNew>,
+    /// Frame Generator Missing Member: members whose skeleton geometry is
+    /// gone (member, reason), shown once each until kept or deleted.
+    pub frame_missing: Vec<(u32, String)>,
+    /// Members already reported missing (not shown again).
+    pub frame_missing_seen: Vec<u32>,
+    /// The open Frame Member Naming dialog with the members it names.
+    pub frame_naming: Option<super::frame::FrameNaming>,
+    /// The frame panel's manipulator being dragged (`gui/frame_manip.rs`).
+    pub frame_grip: Option<super::frame_manip::Held>,
     /// The occurrence under the cursor.
     pub hover: Option<u32>,
     /// The open command.
@@ -2407,7 +2416,9 @@ impl CadCraftApp {
         // --- drags: Free Rotate's circle, moving a component ---
         let circle = self.rotate_circle(rect);
         // Bolted Connection's length arrow takes its own drag.
-        let bolt_grip = !on_cube && !modal && self.bolt_grip(ui, response, rect);
+        let bolt_grip = !on_cube
+            && !modal
+            && (self.bolt_grip(ui, response, rect) || self.frame_grip(ui, response, rect));
         if response.drag_started_by(PointerButton::Primary)
             && !bolt_grip
             && !on_cube
@@ -2542,6 +2553,8 @@ impl CadCraftApp {
         self.render_view(ui, frame, rect, &painter);
         self.asm_sel_mode_window(ui.ctx(), rect);
         self.frame_new_window(ui.ctx());
+        self.frame_missing_window(ui.ctx());
+        self.frame_naming_window(ui.ctx());
         let cursor = ui
             .input(|i| i.pointer.hover_pos())
             .filter(|p| rect.contains(*p));
@@ -2585,6 +2598,7 @@ impl CadCraftApp {
         self.pattern_place_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.bolt_view_menu(&ctx);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
+        self.frame_manip_draw(&painter, rect, pointer.filter(|_| on_view));
         self.frame_select_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_corner_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_corner_menu(&ctx);
