@@ -693,6 +693,7 @@ pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
     let compression = d.kind == Planned::Asm(AsmPlanned::CompressionSpring);
     let n1 = |l: &str, def: f64| d.num(1, l).unwrap_or(def);
     let s = spring_of(d);
+    let model = model_of(d);
     let wire = s.wire;
     ui.vertical(|ui| {
         fit(ui);
@@ -702,10 +703,13 @@ pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             ui.label(RichText::new("The calculation covers compression springs yet").weak());
             return;
         }
-        if let Err(e) = s.validate() {
+        if let Err(e) = model.validate() {
             ui.colored_label(tok.error, format!("Compression Spring: {e}"));
             return;
         }
+        let pitch = model.pitch().unwrap_or(0.0);
+        let solid = model.solid_length();
+        let travel = model.free_length - solid;
         let p = n1("Working Load (N)", 100.0);
         let typed = n1("Allowed Stress (MPa)", 0.0);
         let allowed = if typed > 0.0 {
@@ -737,10 +741,15 @@ pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             (
                 "Solid Length",
                 format!(
-                    "Ls = d·(n + inactive) = {dd}·({} + {}) = {:.3} mm",
-                    s.active,
-                    s.ends.inactive(),
-                    s.solid_length()
+                    "Ls = d·(nt + 1 − ground ends / 2) = {dd}·({} + 1 − {}) = {solid:.3} mm",
+                    model.total_coils(),
+                    model.ends.iter().filter(|e| e.kind.ground()).count() as f64 / 2.0,
+                ),
+            ),
+            (
+                "Pitch",
+                format!(
+                    "L0 = z0 + Σ closed·d + Σ transition·(d + t)/2 + n·t + z1 → t = {pitch:.3} mm"
                 ),
             ),
         ];
@@ -754,7 +763,11 @@ pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                     "Working Length".into(),
                     format!("{:.3} mm", s.free_length - defl),
                 ),
-                ("Solid Length".into(), format!("{:.3} mm", s.solid_length())),
+                ("Solid Length".into(), format!("{solid:.3} mm")),
+                (
+                    "Pitch".into(),
+                    format!("{pitch:.3} mm, {} coils in all", model.total_coils()),
+                ),
                 ("Stress (eq. 4)".into(), format!("{stress:.1} MPa")),
                 (
                     "Deflection at the Allowed Stress (eq. 7)".into(),
@@ -763,9 +776,9 @@ pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             ],
             &nums,
         );
-        let ok = stress <= allowed && defl <= s.travel();
+        let ok = stress <= allowed && defl <= travel;
         let col = if ok { tok.ok } else { tok.error };
-        let why = if defl > s.travel() {
+        let why = if defl > travel {
             "the spring goes solid before the load".to_owned()
         } else {
             format!("stress {stress:.0} of {allowed:.0} MPa allowed")
@@ -1612,7 +1625,7 @@ impl super::CadCraftApp {
         Ok(format!("Bearing: {} placed", row.label))
     }
 
-    /// Compression Spring OK: the spring's part (one Coil, `spring_part`) on
+    /// Compression Spring OK: the spring's part (its wire as a mesh body, `spring_model`) on
     /// its axis from the start plane (Edit: rebuilt in place). One Undo step.
     pub(super) fn spring_ok(&mut self, d: &PartDialog) -> bool {
         match self.spring_make(d) {
@@ -1629,7 +1642,7 @@ impl super::CadCraftApp {
 
     fn spring_make(&mut self, d: &PartDialog) -> Result<String, String> {
         let s = spring_of(d);
-        let mut part = gear_parts::spring_part(&s)?;
+        let mut part = crate::design::spring_model::spring_part(&model_of(d))?;
         part.regenerate().map_err(|e| e.to_string())?;
         if let Some((_, msg)) = part.feature_health.iter().next() {
             return Err(msg.clone());
@@ -1676,6 +1689,35 @@ impl super::CadCraftApp {
     }
 }
 
+/// The spring's ends and coils from the panel (spec 6.2 §3.5a).
+fn model_of(d: &PartDialog) -> crate::design::spring_model::SpringModel {
+    use crate::design::spring_model::{End, EndType, SpringModel};
+    let n0 = |l: &str, def: f64| d.num(0, l).unwrap_or(def);
+    let wire = n0("Wire Diameter", 2.0);
+    let end = |kind: &str, closed: &str, transition: &str| End {
+        kind: EndType::ALL
+            .get(d.index(0, kind))
+            .copied()
+            .unwrap_or_default(),
+        closed_coils: n0(closed, 1.0),
+        transition: n0(transition, 0.5),
+    };
+    SpringModel {
+        wire,
+        mean_diameter: n0("Outer Diameter", 20.0) - wire,
+        active: n0("Active Coils", 6.0),
+        free_length: n0("Free Length", 50.0),
+        ends: [
+            end(
+                "Spring Start",
+                "Closed Coils Start",
+                "Transition Coils Start",
+            ),
+            end("Spring End", "Closed Coils End", "Transition Coils End"),
+        ],
+    }
+}
+
 /// The spring of the panel's Design and Calculation values.
 fn spring_of(d: &PartDialog) -> spring::Spring {
     let n0 = |l: &str, def: f64| d.num(0, l).unwrap_or(def);
@@ -1683,13 +1725,10 @@ fn spring_of(d: &PartDialog) -> spring::Spring {
     spring::Spring {
         wire,
         mean_diameter: n0("Outer Diameter", 20.0) - wire,
-        active: n0("Active Coils", 6.0),
+        // The rate counts the active coils and half of each transition.
+        active: model_of(d).springing_coils(),
         free_length: n0("Free Length", 50.0),
-        ends: match d.index(0, "Ends") {
-            1 => spring::Ends::Closed,
-            2 => spring::Ends::Open,
-            _ => spring::Ends::ClosedGround,
-        },
+        ends: spring::Ends::Open,
         g: d.num(1, "Shear Modulus G (MPa)")
             .unwrap_or(spring::G_SPRING_STEEL),
     }

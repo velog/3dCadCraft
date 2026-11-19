@@ -16,6 +16,7 @@ pub mod key;
 pub mod shaft;
 pub mod shaft_calc;
 pub mod spring;
+pub mod spring_model;
 
 /// Standard gravity, mm/s².
 pub const G_MM_S2: f64 = 9_806.65;

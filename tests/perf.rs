@@ -1282,6 +1282,24 @@ fn speed_budgets() {
             1500.0,
             timed(&spring),
         ));
+        // The generator's model: closed and ground ends, transitions, the wire's
+        // surface as a mesh body (Compression Spring OK).
+        let spring_ends = {
+            use cadcraft3d::design::spring_model::{End, SpringModel, spring_part};
+            spring_part(&SpringModel {
+                wire: 2.0,
+                mean_diameter: 18.0,
+                active: 6.0,
+                free_length: 50.0,
+                ends: [End::default(); 2],
+            })
+            .unwrap()
+        };
+        rows.push((
+            "Compression spring with ground ends: mesh body, regenerate",
+            200.0,
+            timed(&spring_ends),
+        ));
         // Teeth as deep as a revolved rim's chamfer, the first on the revolve's seam, and a
         // circular pattern of 24: the kernel made the tooth's Cut invalid and the part was
         // rebuilt faceted at every regeneration (owner, 2026-11-12).

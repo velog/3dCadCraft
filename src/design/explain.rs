@@ -1178,6 +1178,66 @@ pub const INPUTS: &[Entry] = &[
         "—",
         "—"
     ),
+    e!(
+        SPRING,
+        "Spring Start",
+        "",
+        "",
+        "How the start (the end on the start plane) is made; closed coils lie on each other, a ground end is flat square to the axis.",
+        "Closed and Ground for an even seat; Open ends are cheaper but stand badly.",
+        "—",
+        "—"
+    ),
+    e!(
+        SPRING,
+        "Closed Coils Start",
+        "z1",
+        "",
+        "Closed (end) coils at the start, lying on each other at the wire's pitch; they do not spring.",
+        "1 (0.75–1.5 usual).",
+        "Fewer: the spring stands less squarely.",
+        "More: a longer spring for the same rate."
+    ),
+    e!(
+        SPRING,
+        "Transition Coils Start",
+        "z2",
+        "",
+        "Coils over which the pitch rises from the closed coils to the active pitch; half of them springs.",
+        "0.5–1.",
+        "—",
+        "—"
+    ),
+    e!(
+        SPRING,
+        "Spring End",
+        "",
+        "",
+        "How the far end is made.",
+        "As the start.",
+        "—",
+        "—"
+    ),
+    e!(
+        SPRING,
+        "Closed Coils End",
+        "z1",
+        "",
+        "Closed coils at the far end.",
+        "As at the start.",
+        "—",
+        "—"
+    ),
+    e!(
+        SPRING,
+        "Transition Coils End",
+        "z2",
+        "",
+        "Transition coils at the far end.",
+        "As at the start.",
+        "—",
+        "—"
+    ),
 ];
 
 /// Every result.
@@ -1637,6 +1697,16 @@ pub const RESULTS: &[Entry] = &[
         "—",
         "—"
     ),
+    e!(
+        SPRING,
+        "Pitch",
+        "t",
+        "mm",
+        "The active coils' pitch that gives the free length, and the coils in all (active, transition and closed).",
+        "At least about 1.2 × the wire so the active coils do not touch before the working load.",
+        "—",
+        "—"
+    ),
 ];
 
 /// Every formula.
@@ -1888,6 +1958,14 @@ pub const FORMULAS: &[Formula] = &[
         "—",
         KB,
         "The book's H = d·n."
+    ),
+    f!(
+        SPRING,
+        "Pitch",
+        "L0 = z0 + Σ z1·d + Σ z2·(d + t)/2 + n·t + z1end; z0 = d/2 (plain end) or 0 (ground: the wire's centre on the plane)",
+        "z1 closed, z2 transition coils, n active, t pitch",
+        KB,
+        "The pitch changes linearly over a transition; closed coils rise one wire a turn."
     ),
 ];
 

@@ -1883,7 +1883,84 @@ impl AsmPlanned {
                     Num("Offset", 5.0, " mm"),
                 ],
             )],
-            CompressionSpring | ExtensionSpring | TorsionSpring | BellevilleSpring => &[
+            ExtensionSpring => &[
+                Page(
+                    "Design",
+                    &[
+                        Sel(
+                            "axis",
+                            "Axis",
+                            "select the spring's axis or cylindrical face",
+                            LINE,
+                        ),
+                        Sel("start", "Start Plane", "select the start plane", PLANE),
+                        Sel("end", "End Plane", "select the end plane", PLANE),
+                        Num("Wire Diameter", 2.0, " mm"),
+                        Num("Outer Diameter", 20.0, " mm"),
+                        Num("Free Length", 60.0, " mm"),
+                        Num("Active Coils", 12.0, ""),
+                        Head("Hook Start"),
+                        Combo(
+                            "Hook Start",
+                            &["Half Loop", "Full Loop", "Full Loop Raised", "Double Loop"],
+                            1,
+                        ),
+                        Num("Hook Length Start", 15.0, " mm"),
+                        Head("Hook End"),
+                        Combo(
+                            "Hook End",
+                            &["Half Loop", "Full Loop", "Full Loop Raised", "Double Loop"],
+                            1,
+                        ),
+                        Num("Hook Length End", 15.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[
+                        Num("Initial Tension (N)", 10.0, " N"),
+                        Num("Working Load (N)", 100.0, " N"),
+                        Num("Shear Modulus G (MPa)", 82_737.0, " MPa"),
+                        Num("Allowed Stress (MPa)", 0.0, " MPa"),
+                        Button("Calculate"),
+                    ],
+                ),
+            ],
+            TorsionSpring => &[
+                Page(
+                    "Design",
+                    &[
+                        Sel(
+                            "axis",
+                            "Axis",
+                            "select the spring's axis or cylindrical face",
+                            LINE,
+                        ),
+                        Sel("start", "Start Plane", "select the start plane", PLANE),
+                        Num("Wire Diameter", 2.0, " mm"),
+                        Num("Outer Diameter", 20.0, " mm"),
+                        Num("Active Coils", 6.0, ""),
+                        Combo("Winding Direction", &["Right", "Left"], 0),
+                        Head("Arm Start"),
+                        Combo("Arm Start", &["Tangent", "Radial", "Axial"], 0),
+                        Num("Arm Length Start", 20.0, " mm"),
+                        Head("Arm End"),
+                        Combo("Arm End", &["Tangent", "Radial", "Axial"], 0),
+                        Num("Arm Length End", 20.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[
+                        Num("Working Torque (N·mm)", 500.0, " N·mm"),
+                        Num("Working Angle (°)", 45.0, "°"),
+                        Num("Modulus of Elasticity E (MPa)", 206_000.0, " MPa"),
+                        Num("Allowed Bending Stress (MPa)", 0.0, " MPa"),
+                        Button("Calculate"),
+                    ],
+                ),
+            ],
+            CompressionSpring | BellevilleSpring => &[
                 Page(
                     "Design",
                     &[
@@ -1899,7 +1976,22 @@ impl AsmPlanned {
                         Num("Outer Diameter", 20.0, " mm"),
                         Num("Free Length", 50.0, " mm"),
                         Num("Active Coils", 6.0, ""),
-                        Combo("Ends", &["Closed and ground", "Closed", "Open"], 0),
+                        Head("Spring Start"),
+                        Combo(
+                            "Spring Start",
+                            &["Closed", "Closed and Ground", "Open", "Open and Ground"],
+                            1,
+                        ),
+                        Num("Closed Coils Start", 1.0, ""),
+                        Num("Transition Coils Start", 0.5, ""),
+                        Head("Spring End"),
+                        Combo(
+                            "Spring End",
+                            &["Closed", "Closed and Ground", "Open", "Open and Ground"],
+                            1,
+                        ),
+                        Num("Closed Coils End", 1.0, ""),
+                        Num("Transition Coils End", 0.5, ""),
                     ],
                 ),
                 Page(
