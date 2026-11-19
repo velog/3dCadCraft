@@ -89,7 +89,7 @@ pub const DEFAULT_KEYS: &[(&str, &str, &str)] = &[
     ("AssemblyPromoteCmd", "Shift+Tab", "asm.promote"),
     ("AssemblyDemoteCmd", "Tab", "asm.demote"),
     ("AppReturnParentCmd", "Ctrl+Equals", "asm.return_parent"),
-    ("AppReturnTopCmd", "Ctrl+Minus", "asm.return_parent"),
+    ("AppReturnTopCmd", "Ctrl+Minus", "asm.return_top"),
     ("DrawingLeaderTextCmd", "Ctrl+Shift+T", "drw.leader_text"),
     ("DrawingInsertSheetCmd", "Ctrl+Shift+N", "drw.new_sheet"),
 ];

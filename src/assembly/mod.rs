@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub mod adapt;
 pub mod bolted;
 pub mod bom;
+pub mod browser;
 pub mod context;
 pub mod copy;
 pub mod create;

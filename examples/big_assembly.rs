@@ -51,6 +51,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .next()
         .unwrap_or_else(|| "big_assembly.3dcadcraft".into());
     let n: usize = args.next().map_or(Ok(5000), |s| s.parse())?;
+    // `mates`: each bolt is Flush with its plate's XY plane (relationships
+    // for the browser tree: one per bolt, listed under both components).
+    let mates = args.next().as_deref() == Some("mates");
     let mut project = Project::new("BigAssembly");
     let plate = project.add_document(
         "Plate",
@@ -79,25 +82,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         o.grounded = true;
         occurrences.push(o);
     }
-    project.add_document(
-        "Assembly",
-        DocumentData::Assembly(AssemblyDocument {
-            bom: Default::default(),
-            reps: Default::default(),
-            folders: Vec::new(),
-            motion: Default::default(),
-            occurrences,
-            constraints: Vec::new(),
-            patterns: Vec::new(),
-            appearances: Vec::new(),
-            frames: Vec::new(),
-            frame_links: Vec::new(),
-            simulations: Vec::new(),
-            import: None,
-            features: None,
-            bolts: Vec::new(),
-        }),
-    );
+    let mut asm = AssemblyDocument {
+        bom: Default::default(),
+        reps: Default::default(),
+        folders: Vec::new(),
+        motion: Default::default(),
+        occurrences,
+        constraints: Vec::new(),
+        patterns: Vec::new(),
+        appearances: Vec::new(),
+        frames: Vec::new(),
+        frame_links: Vec::new(),
+        simulations: Vec::new(),
+        import: None,
+        features: None,
+        bolts: Vec::new(),
+    };
+    if mates {
+        use cadcraft3d::assembly::relation::{Constraint, ConstraintKind, GeomRef, OriginItem};
+        let plane = |occurrence: u32| GeomRef::Origin {
+            occurrence,
+            sub: Vec::new(),
+            item: OriginItem::XyPlane,
+        };
+        for k in 0..n as u32 {
+            if k % 20 != 0 {
+                let c =
+                    Constraint::new(ConstraintKind::Flush, plane(k + 1), plane(k / 20 * 20 + 1));
+                asm.add_constraint(c);
+            }
+        }
+    }
+    project.add_document("Assembly", DocumentData::Assembly(asm));
     project.save(std::path::Path::new(&path))?;
     println!("saved {path}: {n} components");
     Ok(())

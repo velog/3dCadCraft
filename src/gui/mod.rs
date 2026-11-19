@@ -4959,6 +4959,7 @@ impl CadCraftApp {
             }
             AppCmd::ZoomAll => self.fit_view(),
             AppCmd::Return => self.return_to_assembly(),
+            AppCmd::ReturnTop => self.return_to_top(),
             AppCmd::ContactSolver => self.toggle_contact_solver(),
             AppCmd::Motion(t) => self.open_motion(t),
             AppCmd::NewRep(k) => self.new_representation(k),
@@ -5840,6 +5841,12 @@ impl CadCraftApp {
             && self.editing.is_none()
             && self.open_state().command.is_none()
             && self.sel.is_empty()
+            // A subassembly in place: Esc first clears its selection and tool.
+            && self.asm.sel.is_empty()
+            && self.asm.sub.is_empty()
+            && self.asm.tool.is_none()
+            && self.cons.draft.is_none()
+            && self.part_planned.is_none()
             && self.sel_menu.is_none()
             && self.constraint_menu.is_none()
             && matches!(self.mode, Mode::Normal)
@@ -7078,11 +7085,8 @@ impl CadCraftApp {
                     self.plane_picked(plane.clone());
                     ui.close();
                 }
-                if self.in_place_now().is_some()
-                    && icons::menu_item(ui, Some(icons::Icon::ReturnUp), "Return", true).clicked()
-                {
-                    self.return_to_assembly();
-                    ui.close();
+                if self.return_menu_items(ui) {
+                    return;
                 }
                 if icons::menu_item(ui, Some(icons::Icon::Home), "Home View (F6)", true).clicked() {
                     self.set_view(StandardView::Home);

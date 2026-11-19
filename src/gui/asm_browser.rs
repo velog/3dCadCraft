@@ -116,6 +116,39 @@ enum TreeCmd {
     SuppressConstraint(u32),
     DeleteConstraint(u32),
     Drive(u32),
+    /// Drag and drop: components before another one (`None`: to the end).
+    Reorder(Vec<u32>, Option<u32>),
+    /// Drag and drop of a part inside a subassembly onto the assembly.
+    Promote(u32, u32),
+}
+
+/// What a browser row carries while it is dragged.
+#[derive(Clone, Debug)]
+enum TreeDrag {
+    /// First-level components.
+    Top(Vec<u32>),
+    /// A component inside the subassembly of top occurrence `.0`.
+    Nested(u32, u32),
+}
+
+/// A component row as a drop target: a line above it while a drag is over
+/// it, a drop puts the dragged components before it.
+fn drop_before(ui: &egui::Ui, r: &egui::Response, before: Option<u32>, cmds: &mut Vec<TreeCmd>) {
+    if let Some(d) = r.dnd_hover_payload::<TreeDrag>()
+        && let TreeDrag::Top(ids) = &*d
+        && before.is_none_or(|b| !ids.contains(&b))
+    {
+        let y = r.rect.top() - 1.0;
+        let x = ui.clip_rect().x_range();
+        ui.painter()
+            .hline(x, y, egui::Stroke::new(2.0, super::theme::tokens().accent));
+    }
+    if let Some(d) = r.dnd_release_payload::<TreeDrag>()
+        && let TreeDrag::Top(ids) = &*d
+        && before.is_none_or(|b| !ids.contains(&b))
+    {
+        cmds.push(TreeCmd::Reorder(ids.clone(), before));
+    }
 }
 
 impl CadCraftApp {
@@ -134,43 +167,40 @@ impl CadCraftApp {
         let patterns = a.patterns.clone();
         let folders = a.folders.clone();
         let mut folder_cmd: Option<FolderCmd> = None;
-        let occs: Vec<(u32, String, bool, bool, crate::document::DocRef)> = a
-            .occurrences
-            .iter()
-            .filter(|o| a.pattern_of(o.id).is_none())
-            // The hidden tools part (assembly features, sketches and work
-            // features) is no component: its contents have rows of their own.
-            .filter(|o| a.features.as_ref().is_none_or(|f| f.occurrence != o.id))
-            // Frame members are listed under their frame, and so is the
-            // frame assembly's own row.
-            .filter(|o| Some(o.id) != frame_occ)
-            .filter(|o| {
-                !a.frames
-                    .iter()
-                    .any(|f| f.caps.iter().any(|c| c.occurrence == o.id))
-            })
-            .filter(|o| {
-                !a.frames
-                    .iter()
-                    .any(|f| f.members.iter().any(|m| m.occurrence == o.id))
-            })
-            .map(|o| (o.id, o.name.clone(), o.grounded, o.visible, o.component))
-            .collect();
-        // Suppressed: struck through; Enabled off: italic (Inventor).
-        let looks: std::collections::HashMap<u32, (bool, bool)> = a
-            .occurrences
-            .iter()
-            .map(|o| (o.id, (o.suppressed, o.enabled)))
-            .collect();
-
+        let mut folder_drop: Option<(u32, Vec<u32>)> = None;
+        // The component rows, built once per assembly state (rule 20).
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            crate::assembly::browser::key(a, frame_occ).hash(&mut h);
+            (std::rc::Rc::as_ptr(&linked) as usize, self.part_id).hash(&mut h);
+            h.finish()
+        };
+        let rows = match &self.asm.tree_rows {
+            Some((k, r)) if *k == key => r.clone(),
+            _ => {
+                let r = std::rc::Rc::new(crate::assembly::browser::rows(a, frame_occ, |c| {
+                    crate::assembly::tree::assembly_of(&self.project, &linked, c).is_some()
+                }));
+                self.asm.tree_rows = Some((key, r.clone()));
+                r
+            }
+        };
+        let Some(a) = self.assembly() else {
+            return;
+        };
         let all: Vec<u32> = a.constraints.iter().map(|c| c.id).collect();
-        let constraint_names: std::collections::HashMap<u32, String> = a
-            .constraints
-            .iter()
-            .map(|c| (c.id, c.name.to_lowercase()))
-            .collect();
         let opts = self.asm_browser;
         let query = self.asm.search.trim().to_lowercase();
+        // Lower-case names only while searching.
+        let constraint_names: std::collections::HashMap<u32, String> = if query.is_empty() {
+            Default::default()
+        } else {
+            a.constraints
+                .iter()
+                .map(|c| (c.id, c.name.to_lowercase()))
+                .collect()
+        };
         let hit = |s: &str| query.is_empty() || s.to_lowercase().contains(&query);
         let named = |c: &u32| {
             query.is_empty() || constraint_names.get(c).is_some_and(|n| n.contains(&query))
@@ -188,7 +218,25 @@ impl CadCraftApp {
         let link = self.asm_import_link().map(|l| l.path.clone());
         ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Assembly);
-            let r = ui.label(RichText::new(name).strong());
+            let r = ui
+                .label(RichText::new(name).strong())
+                .interact(egui::Sense::hover());
+            // Dropped here: to the end, out of its folder; a part from
+            // inside a subassembly: Promote.
+            if r.dnd_hover_payload::<TreeDrag>().is_some() {
+                ui.painter().rect_stroke(
+                    r.rect,
+                    2.0,
+                    egui::Stroke::new(1.5, super::theme::tokens().accent),
+                    egui::StrokeKind::Outside,
+                );
+            }
+            if let Some(d) = r.dnd_release_payload::<TreeDrag>() {
+                cmds.push(match &*d {
+                    TreeDrag::Top(ids) => TreeCmd::Reorder(ids.clone(), None),
+                    TreeDrag::Nested(top, inner) => TreeCmd::Promote(*top, *inner),
+                });
+            }
             let r = match &link {
                 Some(p) => r.on_hover_text(format!("Follows {p} (Reference Model)")),
                 None => r,
@@ -244,29 +292,53 @@ impl CadCraftApp {
             if !opts.hide_work && query.is_empty() {
                 self.origin_folder(ui, ASSEMBLY, &mut cmds);
             }
-            type OccRow = (u32, String, bool, bool, crate::document::DocRef);
+            type OccRow = crate::assembly::browser::OccRow;
+            // Rows above or below the scrolled-to part of the tree, folded
+            // shut, only take their height (a large assembly drew every one).
+            let mut row_h: Option<f32> = None;
             let mut row = |this: &mut Self, ui: &mut egui::Ui, occ: &OccRow| {
-                let (id, label, grounded, visible, component) = occ.clone();
-                let (suppressed, enabled) = looks.get(&id).copied().unwrap_or((false, true));
-                let dof = this.occurrence_dof(id);
+                let id = occ.id;
+                let dof = if occ.grounded || occ.element {
+                    0
+                } else {
+                    this.cons.last.dof.get(&id).copied().unwrap_or(6)
+                };
                 if opts.hide_fully_constrained && dof == 0 {
                     return;
                 }
-                let features = if opts.modeling {
+                let skip_ok = query.is_empty() && find != Some(id);
+                if skip_ok && let Some(h) = row_h {
+                    let open = egui::collapsing_header::CollapsingState::load(
+                        ui.ctx(),
+                        ui.make_persistent_id(("asm_occ", id)),
+                    )
+                    .is_some_and(|s| s.is_open());
+                    if !open && offscreen(ui, h) {
+                        ui.allocate_space(egui::vec2(ui.available_width(), h));
+                        return;
+                    }
+                }
+                let OccRow {
+                    name: label,
+                    grounded,
+                    visible,
+                    component,
+                    suppressed,
+                    enabled,
+                    sub,
+                    flexible,
+                    ..
+                } = occ.clone();
+                // Features only when they are shown or searched (Modeling View).
+                let header_id = ui.make_persistent_id(("asm_occ", id));
+                let open_now = egui::collapsing_header::CollapsingState::load(ui.ctx(), header_id)
+                    .is_some_and(|s| s.is_open());
+                let features = if opts.modeling && (open_now || !query.is_empty()) {
                     this.with_part(component, feature_rows).unwrap_or_default()
                 } else {
                     Vec::new()
                 };
-                let uses: Vec<u32> = this
-                    .assembly()
-                    .map(|a| {
-                        a.constraints
-                            .iter()
-                            .filter(|c| c.uses(id))
-                            .map(|c| c.id)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let uses = occ.uses.clone();
                 // A search keeps a component that matches, or one with a
                 // feature (Modeling View) or relationship (Assembly View)
                 // that does; it opens to show them.
@@ -299,8 +371,6 @@ impl CadCraftApp {
                 if find == Some(id) {
                     cmds.push(TreeCmd::Select(id, false));
                 }
-                let sub =
-                    crate::assembly::tree::assembly_of(&this.project, &linked, component).is_some();
                 let header = fold(ui, ("asm_occ", id), false, |ui| {
                     if visibility_button(ui, visible) {
                         cmds.push(TreeCmd::ToggleVisible(id));
@@ -310,12 +380,7 @@ impl CadCraftApp {
                         super::panels::tree_icon(ui, Icon::Ground);
                     }
                     // Flexible subassembly (spec 3.1a S5).
-                    let flexible = sub
-                        && this
-                            .assembly()
-                            .and_then(|a| a.find(id))
-                            .is_some_and(|o| o.flexible);
-                    if flexible {
+                    if sub && flexible {
                         super::panels::tree_icon(ui, Icon::Flexible);
                     }
                     // A component in a file of its own says so in its tooltip.
@@ -334,9 +399,34 @@ impl CadCraftApp {
                     if this.occ_overridden(id) {
                         text = text.strong();
                     }
-                    let r = ui.selectable_label(this.asm.sel.contains(&id), text);
+                    let r = ui
+                        .selectable_label(this.asm.sel.contains(&id), text)
+                        .interact(egui::Sense::click_and_drag());
+                    // Drag and drop (Inventor): the selection, or this row.
+                    if r.drag_started() {
+                        let ids = if this.asm.sel.contains(&id) {
+                            this.asm.sel.clone()
+                        } else {
+                            vec![id]
+                        };
+                        r.dnd_set_drag_payload(TreeDrag::Top(ids));
+                    }
+                    drop_before(ui, &r, Some(id), &mut cmds);
                     if opts.constraint_state {
                         state_dot(ui, dof);
+                    }
+                    // Sick: one of its relationships cannot be met.
+                    if let Some(e) = occ
+                        .uses
+                        .iter()
+                        .find_map(|c| this.cons.last.sick.iter().find(|(i, _)| i == c))
+                    {
+                        ui.label(
+                            RichText::new("!")
+                                .strong()
+                                .color(super::theme::tokens().error),
+                        )
+                        .on_hover_text(format!("A relationship is sick: {}", e.1));
                     }
                     if find == Some(id) {
                         r.scroll_to_me(Some(egui::Align::Center));
@@ -374,7 +464,7 @@ impl CadCraftApp {
                         this.occurrence_menu(ui, &ids);
                     });
                 });
-                header.body(|ui| {
+                let (_, head, _) = header.body(|ui| {
                     if !opts.hide_work && query.is_empty() {
                         this.origin_folder(ui, id, &mut cmds);
                     }
@@ -430,15 +520,35 @@ impl CadCraftApp {
                         this.constraint_row(ui, *c, &mut cmds);
                     }
                 });
+                row_h.get_or_insert(head.response.rect.height());
             };
             // Folders first, each with its components; then the rest.
             let in_folder: Vec<u32> = folders.iter().flat_map(|f| f.items.clone()).collect();
             for f in &folders {
-                let items: Vec<&OccRow> = occs.iter().filter(|o| f.items.contains(&o.0)).collect();
+                let items: Vec<&OccRow> = rows
+                    .occs
+                    .iter()
+                    .filter(|o| f.items.contains(&o.id))
+                    .collect();
                 let key = ("asm_folder", f.id);
                 fold(ui, key, true, |ui| {
                     super::panels::tree_icon(ui, Icon::Project);
                     let r = ui.selectable_label(false, &f.name);
+                    if let Some(d) = r.dnd_hover_payload::<TreeDrag>()
+                        && matches!(*d, TreeDrag::Top(_))
+                    {
+                        ui.painter().rect_stroke(
+                            r.rect,
+                            2.0,
+                            egui::Stroke::new(1.5, super::theme::tokens().accent),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    if let Some(d) = r.dnd_release_payload::<TreeDrag>()
+                        && let TreeDrag::Top(ids) = &*d
+                    {
+                        folder_drop = Some((f.id, ids.clone()));
+                    }
                     r.context_menu(|ui| {
                         let mut name = f.name.clone();
                         ui.horizontal(|ui| {
@@ -463,7 +573,7 @@ impl CadCraftApp {
                     }
                 });
             }
-            for o in occs.iter().filter(|o| !in_folder.contains(&o.0)) {
+            for o in rows.occs.iter().filter(|o| !in_folder.contains(&o.id)) {
                 row(self, ui, o);
             }
             // Patterns after the components, their sources and copies
@@ -476,7 +586,7 @@ impl CadCraftApp {
         for c in cmds {
             match c {
                 TreeCmd::SelectRange(id) => {
-                    let order: Vec<u32> = occs.iter().map(|o| o.0).collect();
+                    let order: Vec<u32> = rows.occs.iter().map(|o| o.id).collect();
                     let at = |x: u32| order.iter().position(|&i| i == x);
                     self.asm.sel = match (self.asm.sel.last().copied().and_then(at), at(id)) {
                         (Some(a), Some(z)) => order[a.min(z)..=a.max(z)].to_vec(),
@@ -562,10 +672,27 @@ impl CadCraftApp {
                     }
                 }
                 TreeCmd::Drive(id) => self.open_drive(id),
+                TreeCmd::Reorder(ids, before) => {
+                    let mut done = false;
+                    self.edit_assembly("Reorder", |a| done = a.reorder(&ids, before));
+                    if !done {
+                        self.history.cancel();
+                    }
+                }
+                TreeCmd::Promote(top, inner) => {
+                    self.asm.sub = vec![super::asm_select::AsmSub::Part {
+                        occurrence: top,
+                        sub: vec![inner],
+                    }];
+                    self.promote_selected();
+                }
             }
         }
         if let Some(c) = folder_cmd {
             self.folder_cmd(c);
+        }
+        if let Some((f, ids)) = folder_drop {
+            self.edit_assembly("Add to Folder", |a| a.move_to_folder(Some(f), &ids));
         }
         for c in pcmds {
             self.pattern_cmd(c);
@@ -749,7 +876,13 @@ impl CadCraftApp {
                 if !o.shown() {
                     text = text.weak();
                 }
-                let mut r = ui.selectable_label(selected, text);
+                let mut r = ui
+                    .selectable_label(selected, text)
+                    .interact(egui::Sense::click_and_drag());
+                // Dragged onto the assembly's row: Promote (one level only).
+                if r.drag_started() && p.len() == 1 {
+                    r.dnd_set_drag_payload(TreeDrag::Nested(top, p[0]));
+                }
                 if linked_file {
                     r = r.on_hover_text(LINKED_FILE_TIP);
                 }
@@ -903,18 +1036,6 @@ impl CadCraftApp {
         });
     }
 
-    /// A component's degrees of freedom left (0: grounded, a pattern copy,
-    /// or fully constrained).
-    fn occurrence_dof(&self, id: u32) -> usize {
-        let Some(a) = self.assembly() else {
-            return 0;
-        };
-        if a.find(id).is_some_and(|o| o.grounded) || a.is_element(id) {
-            return 0;
-        }
-        self.cons.last.dof.get(&id).copied().unwrap_or(6)
-    }
-
     /// A feature of a component's part (Modeling View), with the sketches it
     /// consumed inside.
     fn feature_row(
@@ -1005,6 +1126,15 @@ impl CadCraftApp {
 
     /// One constraint (red when sick, grey when suppressed).
     fn constraint_row(&mut self, ui: &mut egui::Ui, id: u32, cmds: &mut Vec<TreeCmd>) {
+        // A row outside the scrolled-to part only takes its height: the
+        // names inside subassemblies are looked up per row (rule 20).
+        let h_id = egui::Id::new("asm_constraint_row_h");
+        if let Some(h) = ui.ctx().data(|d| d.get_temp::<f32>(h_id))
+            && offscreen(ui, h)
+        {
+            ui.allocate_space(egui::vec2(ui.available_width(), h));
+            return;
+        }
         let linked = self.linked();
         let Some(a) = self.assembly() else {
             return;
@@ -1035,7 +1165,7 @@ impl CadCraftApp {
             .iter()
             .find(|(i, _)| *i == id)
             .map(|(_, e)| e.clone());
-        ui.horizontal(|ui| {
+        let drawn = ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Coincident);
             let mut text = RichText::new(label);
             if overridden.is_some() {
@@ -1084,7 +1214,17 @@ impl CadCraftApp {
                 }
             });
         });
+        let h = drawn.response.rect.height();
+        ui.ctx().data_mut(|d| d.insert_temp(h_id, h));
     }
+}
+
+/// Whether a row of height `h` starting at the cursor lies wholly outside
+/// the visible part of the tree (with one row of margin).
+fn offscreen(ui: &egui::Ui, h: f32) -> bool {
+    let at = ui.cursor().min.y;
+    let clip = ui.clip_rect();
+    at > clip.max.y + h || at + h < clip.min.y - h
 }
 
 /// A node that folds open and shut (its state remembered by egui).
