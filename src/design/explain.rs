@@ -1027,7 +1027,7 @@ pub const RESULTS: &[Entry] = &[
         "Critical Speed",
         "nc",
         "rpm",
-        "The first whirling speed: the shaft's own bending frequency as a speed.",
+        "The first whirling speed; the shaft's own bending frequency as a speed.",
         "Run below about 0.7–0.8 × nc, or well above it after passing it quickly.",
         "—",
         "—"
@@ -1098,7 +1098,7 @@ pub const RESULTS: &[Entry] = &[
         "Base Circle Diameter",
         "db",
         "mm",
-        "The circle the involute unwinds from: d·cos α.",
+        "The circle the involute unwinds from; d·cos α.",
         "—",
         "—",
         "—"
@@ -1138,7 +1138,7 @@ pub const RESULTS: &[Entry] = &[
         "Overlap Ratio",
         "εβ",
         "",
-        "Helical gears: how far the face width overlaps a pitch (b·tan β / pt).",
+        "Helical gears; how far the face width overlaps a pitch (b·tan β / pt).",
         "Above 1 for smooth helical running.",
         "—",
         "—"
@@ -1158,7 +1158,7 @@ pub const RESULTS: &[Entry] = &[
         "Tangential Force",
         "Wt",
         "N",
-        "The tooth force along the pitch circle: also the shaft's load.",
+        "The tooth force along the pitch circle; also the shaft's load.",
         "—",
         "—",
         "—"

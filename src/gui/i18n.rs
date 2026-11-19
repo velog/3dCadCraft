@@ -64,6 +64,179 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
+    ("The shaft's overall length.", "Общата дължина на вала."),
+    (
+        "The shaft's mass from its sections and the density.",
+        "Масата на вала от сеченията му и плътността.",
+    ),
+    (
+        "The largest bending stress at the surface along the shaft.",
+        "Най-голямото огъващо напрежение по повърхността на вала.",
+    ),
+    (
+        "The largest shear stress from torsion at the surface.",
+        "Най-голямото тангенциално напрежение от усукване по повърхността.",
+    ),
+    (
+        "Bending and torsion combined into one stress (HMH or Tresca); compare it with the yield strength for a static check.",
+        "Огъването и усукването, събрани в едно напрежение (HMH или Треска); сравнява се с границата на провлачане за статична проверка.",
+    ),
+    (
+        "The largest bending moment along the shaft.",
+        "Най-големият огъващ момент по вала.",
+    ),
+    (
+        "The largest shear force along the shaft.",
+        "Най-голямата напречна сила по вала.",
+    ),
+    (
+        "The largest sag of the shaft's axis.",
+        "Най-голямото провисване на оста на вала.",
+    ),
+    (
+        "How far the shaft's ends turn against each other under the torque.",
+        "Колко се завъртат краищата на вала един спрямо друг под въртящия момент.",
+    ),
+    (
+        "The first whirling speed; the shaft's own bending frequency as a speed.",
+        "Първата критична скорост; собствената огъвна честота на вала като обороти.",
+    ),
+    (
+        "The force each support takes (radial in two directions, axial at the Fixed one): the bearing's load.",
+        "Силата, която поема всяка опора (радиална в две посоки, аксиална при Fixed): товарът на лагера.",
+    ),
+    (
+        "The smallest fatigue safety factor along the shaft (eq. 17) and where it is.",
+        "Най-малкият коефициент на сигурност на умора по вала (ур. 17) и къде е.",
+    ),
+    (
+        "The distance of the axes in mesh.",
+        "Разстоянието между осите в зацепване.",
+    ),
+    (
+        "m·z (transverse module for helical gears): the circles that roll on each other without shift.",
+        "m·z (челен модул при косозъби колела): окръжностите, които се търкалят една по друга без корекция.",
+    ),
+    (
+        "The tip circle's diameter (blank diameter).",
+        "Диаметърът на върховата окръжност (диаметър на заготовката).",
+    ),
+    (
+        "The root circle's diameter.",
+        "Диаметърът на петовата окръжност.",
+    ),
+    (
+        "The circle the involute unwinds from; d·cos α.",
+        "Окръжността, от която се развива еволвентата; d·cos α.",
+    ),
+    (
+        "The profile shifts used (given, or from the centre distance).",
+        "Използваните корекции на профила (зададени или от междуосието).",
+    ),
+    (
+        "The pressure angle at the operating centre distance.",
+        "Ъгълът на зацепване при работното междуосие.",
+    ),
+    (
+        "How many tooth pairs are in mesh on average.",
+        "Колко двойки зъби са средно в зацепване.",
+    ),
+    (
+        "Helical gears; how far the face width overlaps a pitch (b·tan β / pt).",
+        "Косозъби колела; колко ширината на венеца надвишава една стъпка (b·tan β / pt).",
+    ),
+    (
+        "The pinion's torque from power and speed.",
+        "Въртящият момент на малкото колело от мощността и скоростта.",
+    ),
+    (
+        "The tooth force along the pitch circle; also the shaft's load.",
+        "Силата на зъба по делителната окръжност: и товар на вала.",
+    ),
+    (
+        "The speed of the pitch circle, with the dynamic factor Kv it gives.",
+        "Скоростта на делителната окръжност и динамичният коефициент Kv, който дава.",
+    ),
+    (
+        "Each gear's tooth-root bending stress with its geometry factor J and the safety against the allowable stress.",
+        "Огъващото напрежение в основата на зъба на всяко колело с геометричния му коефициент J и сигурността спрямо допустимото напрежение.",
+    ),
+    (
+        "The surface (pitting) life of a single tooth at 90 % reliability.",
+        "Дълготрайността на повърхността (питинг) на един зъб при 90 % надеждност.",
+    ),
+    (
+        "Gear 1's surface life (all its teeth) at the reliability chosen.",
+        "Дълготрайността на повърхността на колело 1 (всичките му зъби) при избраната надеждност.",
+    ),
+    (
+        "Why the surface life cannot be computed.",
+        "Защо дълготрайността на повърхността не може да се изчисли.",
+    ),
+    (
+        "The key's width and height and the grooves' depths for the shaft diameter.",
+        "Ширината и височината на шпонката и дълбочините на каналите за диаметъра на вала.",
+    ),
+    (
+        "The torque as a force at the shaft's surface.",
+        "Въртящият момент като сила на повърхността на вала.",
+    ),
+    (
+        "The length the key bears on (l − b with rounded ends).",
+        "Дължината, по която шпонката носи (l − b при заоблени краища).",
+    ),
+    (
+        "The key's shear stress across its width.",
+        "Тангенциалното напрежение на шпонката по ширината ѝ.",
+    ),
+    (
+        "The pressure on the part of the key standing in the hub.",
+        "Налягането върху частта от шпонката в главината.",
+    ),
+    (
+        "The shortest length of the standard series whose pressure is allowed.",
+        "Най-късата дължина от стандартния ред, при която налягането е допустимо.",
+    ),
+    (
+        "The one radial load that gives the bearing the same life as its radial and axial loads together.",
+        "Единственият радиален товар, който дава на лагера същата дълготрайност като радиалния и аксиалния товар заедно.",
+    ),
+    (
+        "The life 90 % of bearings reach, in million revolutions and hours.",
+        "Дълготрайността, която достигат 90 % от лагерите, в милиони обороти и часове.",
+    ),
+    (
+        "The load rating needed for the required life and reliability.",
+        "Товароносимостта, нужна за изискваните дълготрайност и надеждност.",
+    ),
+    (
+        "The life at the required reliability with the adjustment factors.",
+        "Дълготрайността при изискваната надеждност с коригиращите коефициенти.",
+    ),
+    (
+        "The force per millimetre of deflection.",
+        "Силата на милиметър деформация.",
+    ),
+    (
+        "How far the working load compresses the spring.",
+        "Колко работният товар свива пружината.",
+    ),
+    (
+        "The length under the working load.",
+        "Дължината под работния товар.",
+    ),
+    (
+        "The length with every coil touching.",
+        "Дължината, когато всички навивки се допират.",
+    ),
+    (
+        "The wire's shear stress at the working load.",
+        "Тангенциалното напрежение в телта при работния товар.",
+    ),
+    (
+        "How far the spring may go before reaching the allowed stress.",
+        "Колко може да се свие пружината до допустимото напрежение.",
+    ),
     (
         "The tensile strength of the shaft's material, from a tensile test or the material's sheet. The surface factor charts are read with it.",
         "Якостта на опън на материала на вала, от опит на опън или от листа на материала. С нея се отчитат диаграмите на коефициента на повърхността.",
