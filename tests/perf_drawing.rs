@@ -238,6 +238,7 @@ fn drawing_views_of_large_models() {
             unfold: false,
             depth: None,
             outs: vec![OutCut::new(vec![ring], top - 2.0)],
+            uncut: Vec::new(),
         };
         let t = Instant::now();
         let l = view_lines_simplified(&model, &frame, Some(&aligned), Simplify::default());

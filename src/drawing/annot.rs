@@ -111,6 +111,9 @@ pub enum AnnotationKind {
     RevisionCloud(super::revision::RevisionCloud),
     /// A sketched symbol (`resources`, format revision 67).
     Symbol(super::resources::PlacedSymbol),
+    /// Surface Texture, Feature Control Frame or Datum Identifier (`gdt`,
+    /// format revision 76).
+    Mark(super::gdt::MarkSymbol),
     /// Text on the sheet.
     Text {
         /// Lower left of the first line (sheet mm).
@@ -382,6 +385,16 @@ pub fn resolve_in<'a>(
             };
             Ok(Shown {
                 prims: super::revision::tag_prims(t, origin, look),
+                value: None,
+            })
+        }
+        AnnotationKind::Mark(m) => {
+            let origin = match m.view {
+                Some(v) => view(v).ok_or(Orphan::NoView)?.0.position,
+                None => [0.0, 0.0],
+            };
+            Ok(Shown {
+                prims: super::gdt::prims(m, origin, look),
                 value: None,
             })
         }
@@ -1680,6 +1693,7 @@ impl Annotation {
             AnnotationKind::HoleTable(h) => Some(h.view),
             AnnotationKind::Balloon(b) => Some(b.view),
             AnnotationKind::RevisionTag(t) => t.view,
+            AnnotationKind::Mark(m) => m.view,
             AnnotationKind::RevisionCloud(c) => c.view,
             AnnotationKind::Text { .. }
             | AnnotationKind::LeaderText { .. }

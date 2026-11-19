@@ -21,8 +21,10 @@ pub mod dimset;
 pub mod dimtext;
 pub mod fields;
 pub mod fits;
+pub mod gdt;
 pub mod hlr;
 pub mod hole_table;
+pub mod participation;
 pub mod parts;
 pub mod pdf;
 pub mod render;
@@ -657,6 +659,9 @@ pub struct DisplayOptions {
     pub bend_centerlines: bool,
     /// Flat pattern views: the lines where each bend starts and ends.
     pub bend_extents: bool,
+    /// Section Standard Parts (spec 4.15).
+    #[serde(skip_serializing_if = "participation::StandardSection::is_default")]
+    pub standard_section: participation::StandardSection,
 }
 
 impl Default for DisplayOptions {
@@ -673,6 +678,7 @@ impl Default for DisplayOptions {
             center_justified: true,
             bend_centerlines: true,
             bend_extents: true,
+            standard_section: Default::default(),
         }
     }
 }
@@ -766,6 +772,10 @@ pub struct DrawingView {
     /// with it; spec 4.12; old builds leave them out).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sketches: Vec<view_sketch::DrawingSketch>,
+    /// Section views of assemblies: this view's own Section Participation
+    /// of components (spec 4.15; old builds cut every component).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub participation: Vec<participation::ParticipationOverride>,
 }
 
 /// A Break Out of a view (spec 4.11): inside a closed profile drawn on the
@@ -1202,6 +1212,7 @@ impl DrawingDocument {
             break_outs: Vec::new(),
             reps: ViewReps::default(),
             sketches: Vec::new(),
+            participation: Vec::new(),
         });
         Some(id)
     }
@@ -1234,6 +1245,7 @@ impl DrawingDocument {
             break_outs: Vec::new(),
             reps: ViewReps::default(),
             sketches: Vec::new(),
+            participation: Vec::new(),
         };
         align(&mut v.position, p.position, dir);
         self.sheet_mut()?.views.push(v);
@@ -1346,6 +1358,7 @@ impl DrawingDocument {
                         unfold: false,
                         depth: None,
                         outs,
+                        uncut: Vec::new(),
                     }))
                 }
             }
@@ -1389,6 +1402,7 @@ impl DrawingDocument {
                         unfold,
                         depth,
                         outs: Vec::new(),
+                        uncut: Vec::new(),
                     })),
                     flat,
                     reps,
@@ -1469,6 +1483,7 @@ impl DrawingDocument {
             break_outs: Vec::new(),
             reps: ViewReps::default(),
             sketches: Vec::new(),
+            participation: Vec::new(),
         };
         self.sheet_mut()?.views.push(v);
         // Positions are kept to 0.1 mm (readable in Properties).
@@ -2235,6 +2250,7 @@ impl DrawingDocument {
             break_outs: Vec::new(),
             reps: ViewReps::default(),
             sketches: Vec::new(),
+            participation: Vec::new(),
         });
         Some(id)
     }

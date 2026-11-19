@@ -1003,6 +1003,12 @@ bends and attachment to a view are missing. Definitions can be copied and rename
 
 ## 4.2 Views — 🟡 · XL
 
+🟡 2026-11-19: **section participation** ([spec/4.15-section-participation.md](spec/4.15-section-participation.md)):
+assembly section views leave library parts and generated shafts whole (ISO 128-50), overridable in the part's
+Properties, per assembly occurrence, per view (browser component list, right-click on the sheet, the view's
+Properties) and by the view's Section Standard Parts (Obey Browser / Never / Always); each component hatched on
+its own, neighbours in alternating directions.
+
 🟡 2026-11-06: **drawing sketches and Draft View** ([spec/4.12-drawing-sketches.md](spec/4.12-drawing-sketches.md),
 format revision 65): New Sketch (DS) on the sheet or owned by a view (moves and scales with it), the part sketch's
 tools and Project Geometry, drawn and printed on the Sketch Geometry layer (construction, points, constraints and

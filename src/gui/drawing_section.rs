@@ -400,9 +400,10 @@ impl CadCraftApp {
         let Some(v) = sheet.view(id).cloned() else {
             return;
         };
-        let Some(job) = doc.lines_job(sheet, id) else {
+        let Some(mut job) = doc.lines_job(sheet, id) else {
             return;
         };
+        self.fill_participation(sheet, id, &mut job);
         let (scale, style) = doc.effective(sheet, id).unwrap_or((v.scale, v.style));
         // A detail view needs its parent's lines first.
         let parents = match &job {

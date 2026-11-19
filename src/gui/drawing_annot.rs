@@ -1434,6 +1434,10 @@ impl CadCraftApp {
                                 t.at[0] += delta[0];
                                 t.at[1] += delta[1];
                             }
+                            AnnotationKind::Mark(m) => {
+                                m.at[0] += delta[0];
+                                m.at[1] += delta[1];
+                            }
                             AnnotationKind::RevisionCloud(c) => {
                                 for p in &mut c.pts {
                                     p[0] += delta[0];

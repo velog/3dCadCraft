@@ -224,16 +224,42 @@ pub fn view_extras<'a>(
                 .iter()
                 .map(|lp| lp.iter().map(|q| pl.to_sheet(*q)).collect())
                 .collect();
-            let angles: &[f64] = if hs.double {
-                &[hs.angle, hs.angle + 90.0]
-            } else {
-                &[hs.angle]
-            };
-            for ang in angles {
-                for (a, b) in hatch(&loops, ang.to_radians(), hs.spacing) {
+            // Assembly sections: each component hatched on its own, every
+            // other one turned a quarter (spec 4.15 §5); a part: all loops
+            // as one (holes by parity).
+            let groups = hatch_groups(&loops, &l.section_owner);
+            for (turn, group) in groups {
+                let base = hs.angle + if turn { 90.0 } else { 0.0 };
+                let angles: &[f64] = if hs.double {
+                    &[base, base + 90.0]
+                } else {
+                    &[base]
+                };
+                for ang in angles {
+                    for (a, b) in hatch(&group, ang.to_radians(), hs.spacing) {
+                        out.push(Prim::Path {
+                            pts: vec![a, b],
+                            width: hatch_layer.weight,
+                            dashed: false,
+                        });
+                    }
+                }
+            }
+        }
+        // Thread Feature: the cosmetic threads in narrow lines (ISO 6410).
+        if v.display.thread_feature && !l.threads.is_empty() {
+            let narrow = st
+                .layers
+                .iter()
+                .find(|x| x.name.starts_with("Visible Narrow"))
+                .cloned()
+                .unwrap_or_else(|| st.layer(&st.defaults.visible_layer));
+            if let Some(p) = pen(&narrow) {
+                out.push(p);
+                for t in &l.threads {
                     out.push(Prim::Path {
-                        pts: vec![a, b],
-                        width: hatch_layer.weight,
+                        pts: t.iter().map(|q| pl.to_sheet(*q)).collect(),
+                        width: narrow.weight.min(0.35),
                         dashed: false,
                     });
                 }
@@ -552,6 +578,23 @@ fn section_line(
             angle: 0.0,
         });
     }
+}
+
+/// The cut faces grouped per component (`owners` parallel to `loops`), each
+/// with whether its hatch is turned a quarter (every other component); no
+/// owners: one group, not turned.
+pub fn hatch_groups(loops: &[Vec<[f64; 2]>], owners: &[u32]) -> Vec<(bool, Vec<Vec<[f64; 2]>>)> {
+    if owners.len() != loops.len() || owners.is_empty() {
+        return vec![(false, loops.to_vec())];
+    }
+    let mut by: std::collections::BTreeMap<u32, Vec<Vec<[f64; 2]>>> = Default::default();
+    for (lp, o) in loops.iter().zip(owners) {
+        by.entry(*o).or_default().push(lp.clone());
+    }
+    by.into_values()
+        .enumerate()
+        .map(|(k, g)| (k % 2 == 1, g))
+        .collect()
 }
 
 /// Hatch lines (sheet mm) filling the even-odd region of `loops` at

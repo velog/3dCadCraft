@@ -3618,3 +3618,194 @@ fn silhouettes_of_a_revolved_part_take_dimensions() {
     let gone = dim(DimKind::Horizontal, &format!("{shaft}:SilU"), &sl);
     assert!(resolve(&gone, &view).is_err());
 }
+
+/// Section participation (spec 4.15): a pin through a plate's hole is cut
+/// in one section view and left whole in another of the same drawing, by
+/// that view's own override; the cut faces are hatched per component.
+#[test]
+fn a_pin_is_cut_in_one_section_and_whole_in_another() {
+    use super::participation::{self as dp, Leaf, StandardSection};
+    use crate::document::iprops::SectionParticipation as Sp;
+    use crate::kernel::Transform3;
+    // Plate 60 × 40 × 10 with a Ø10 hole at the origin; a Ø10 pin 20 long
+    // standing in it from z = -5.
+    let plate = Arc::new(part_model(&plate_with_hole()));
+    let pin = Arc::new(part_model(&primitive(
+        PrimitiveKind::Cylinder,
+        Point2::new(0.0, 0.0),
+        Point2::new(5.0, 0.0),
+        20.0,
+    )));
+    let instances = vec![
+        hlr::Instance {
+            id: 1,
+            sub: Vec::new(),
+            transform: Transform3::identity(),
+            model: plate,
+        },
+        hlr::Instance {
+            id: 2,
+            sub: Vec::new(),
+            transform: Transform3::translation(0.0, 0.0, -5.0),
+            model: pin,
+        },
+    ];
+    let vm = hlr::assembly_model(&instances, hlr::Simplify::default());
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let s1 = d
+        .add_section_view(b, [-40.0, 0.0], [40.0, 0.0], [150.0, 60.0])
+        .unwrap();
+    let s2 = d
+        .add_section_view(b, [-40.0, 0.0], [40.0, 0.0], [150.0, 260.0])
+        .unwrap();
+    if let Some(v) = d.sheet_mut().and_then(|sh| sh.view_mut(s2)) {
+        dp::set_override(&mut v.participation, 2, &[], Sp::None);
+    }
+    let leaves = [
+        Leaf {
+            occurrence: 1,
+            occurrences: vec![Sp::Default],
+            ..Default::default()
+        },
+        Leaf {
+            occurrence: 2,
+            occurrences: vec![Sp::Default],
+            ..Default::default()
+        },
+    ];
+    let sheet = d.sheet().unwrap().clone();
+    let lines_of = |id: u32| {
+        let LinesJob::Model {
+            frame, mut aligned, ..
+        } = d.lines_job(&sheet, id).unwrap()
+        else {
+            panic!("a model job");
+        };
+        let v = sheet.view(id).unwrap();
+        if let Some(a) = aligned.as_mut() {
+            a.uncut = dp::uncut(&v.participation, v.display.standard_section, &leaves);
+        }
+        hlr::view_lines_with(&vm, &frame, aligned.as_deref())
+    };
+    let cut = lines_of(s1);
+    let whole = lines_of(s2);
+    let sum = |l: &hlr::ViewLines| l.section.iter().map(|lp| area(lp)).sum::<f64>();
+    // Plate (60 − 10) × 10 + pin 10 × 20.
+    close(sum(&cut), 500.0 + 200.0, 2.0, "both cut");
+    close(sum(&whole), 500.0, 2.0, "the pin left whole");
+    // One hatch group per component, the second turned.
+    let groups = super::render::hatch_groups(&cut.section, &cut.section_owner);
+    assert_eq!(groups.len(), 2, "plate and pin hatched apart");
+    assert!(groups[0].0 != groups[1].0, "alternating directions");
+    assert_eq!(
+        super::render::hatch_groups(&whole.section, &whole.section_owner).len(),
+        1
+    );
+    // The whole pin keeps its outline on the viewer's side: its edges run
+    // up to y = ±5 (in front of the cut too).
+    let pin_lines = |l: &hlr::ViewLines| {
+        l.visible
+            .iter()
+            .zip(&l.visible_src)
+            .filter(|(_, s)| {
+                s.and_then(|k| l.edges.get(k as usize))
+                    .and_then(|e| e.name.as_deref())
+                    .is_some_and(|n| n.starts_with("o2/"))
+            })
+            .count()
+    };
+    assert!(pin_lines(&whole) > 0, "the whole pin is drawn");
+    // Standard parts: Always cuts a library pin that the view leaves alone.
+    let std_leaves = [
+        leaves[0].clone(),
+        Leaf {
+            standard: true,
+            ..leaves[1].clone()
+        },
+    ];
+    assert_eq!(
+        dp::uncut(&[], StandardSection::ObeyBrowser, &std_leaves),
+        vec!["o2/"]
+    );
+    assert!(dp::uncut(&[], StandardSection::Always, &std_leaves).is_empty());
+    // Saved with the drawing; Default removes the entry.
+    let json = serde_json::to_string(&d).unwrap();
+    let back: DrawingDocument = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        back.sheet().unwrap().view(s2).unwrap().participation.len(),
+        1
+    );
+    assert!(
+        !json.contains("standard_section"),
+        "the default is not written"
+    );
+}
+
+/// Thread Feature (ISO 6410): a thread across the view gives two lines at
+/// its other diameter (a shaft's on its front surface), one seen end-on
+/// three quarters of a circle on its nearer end, an inclined one nothing.
+#[test]
+fn cosmetic_thread_lines() {
+    use crate::kernel::{Point3, Vector3};
+    let th = hlr::ThreadMark {
+        start: Point3::new(0.0, 0.0, 0.0),
+        axis: Vector3::new(0.0, 0.0, 1.0),
+        radius: 3.3,
+        face_radius: 4.0,
+        length: 12.0,
+        internal: false,
+        owner: String::new(),
+    };
+    let front = ViewOrientation::Front.frame();
+    let side = th.curves(&front);
+    assert_eq!(side.len(), 2);
+    for c in &side {
+        let q = front.project(&c[0]);
+        close(q[0].abs(), 3.3, 1e-9, "minor radius across");
+        // On the shaft's front surface: √(4² − 3.3²) towards the viewer.
+        close(
+            front.depth(&c[0]),
+            (16.0f64 - 3.3 * 3.3).sqrt(),
+            1e-9,
+            "lifted",
+        );
+        close((c[1] - c[0]).norm(), 12.0, 1e-9, "the thread's length");
+    }
+    let top = ViewOrientation::Top.frame();
+    let end = th.curves(&top);
+    assert_eq!(end.len(), 1);
+    let arc = &end[0];
+    // Three quarters of the circle, open in the upper right quadrant.
+    let len: f64 = arc.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+    close(len, 1.5 * std::f64::consts::PI * 3.3, 0.02, "3/4 circle");
+    assert!(arc.iter().all(|p| {
+        let q = top.project(p);
+        !(q[0] > 0.1 && q[1] > 0.1)
+    }));
+    // On the end nearer the viewer.
+    assert!(arc.iter().all(
+        |p| (top.depth(p) - top.depth(&Point3::new(0.0, 0.0, 12.0))).abs() < 1e-9
+            || (top.depth(p) - top.depth(&Point3::new(0.0, 0.0, 0.0))).abs() < 1e-9
+    ));
+    // Inclined towards the viewer: nothing (a thread lying in the view
+    // plane at an angle still gives its two lines).
+    let tilted = hlr::ThreadMark {
+        axis: (Vector3::new(0.0, 1.0, 1.0)).normalize(),
+        ..th.clone()
+    };
+    assert!(tilted.curves(&front).is_empty());
+    let slanted = hlr::ThreadMark {
+        axis: Vector3::new(1.0, 0.0, 1.0).normalize(),
+        ..th
+    };
+    assert_eq!(slanted.curves(&front).len(), 2);
+}

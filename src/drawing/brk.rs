@@ -433,11 +433,16 @@ pub fn apply(lines: &ViewLines, breaks: &[ViewBreak], scale: f64) -> ViewLines {
     };
     let (visible, visible_src) = clip(&lines.visible, &lines.visible_src);
     let (hidden, hidden_src) = clip(&lines.hidden, &lines.hidden_src);
-    let section = lines
-        .section
-        .iter()
-        .flat_map(|lp| map.clip_loop(lp))
-        .collect();
+    let mut section = Vec::new();
+    let mut section_owner = Vec::new();
+    for (k, lp) in lines.section.iter().enumerate() {
+        for piece in map.clip_loop(lp) {
+            section.push(piece);
+            if let Some(o) = lines.section_owner.get(k) {
+                section_owner.push(*o);
+            }
+        }
+    }
     let bends = lines
         .bends
         .iter()
@@ -450,6 +455,12 @@ pub fn apply(lines: &ViewLines, breaks: &[ViewBreak], scale: f64) -> ViewLines {
         hidden,
         hidden_src,
         section,
+        section_owner,
+        threads: lines
+            .threads
+            .iter()
+            .flat_map(|pl| map.clip_polyline(pl))
+            .collect(),
         bends,
         breaks: map,
         ..lines.clone()

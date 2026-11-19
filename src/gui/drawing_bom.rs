@@ -302,6 +302,20 @@ impl CadCraftApp {
         model: DocRef,
         reps: crate::drawing::ViewReps,
     ) -> Option<Vec<ViewLeaf>> {
+        self.drawing_leaves_with(model, reps, |l, _| {
+            let (top, sub) = l.path.split_first()?;
+            Some((*top, sub.to_vec(), l.component, l.world))
+        })
+    }
+
+    /// [`Self::drawing_leaves`] read by `f`, which also sees the top
+    /// assembly (as the view's representations compose it).
+    pub(super) fn drawing_leaves_with<T>(
+        &self,
+        model: DocRef,
+        reps: crate::drawing::ViewReps,
+        f: impl Fn(&crate::assembly::tree::Leaf, &crate::document::AssemblyDocument) -> Option<T>,
+    ) -> Option<Vec<T>> {
         let linked = self.linked();
         let asm = crate::assembly::tree::assembly_of(&self.project, &linked, model)?;
         // Standing in the chosen representations (never solved: stored poses).
@@ -321,11 +335,8 @@ impl CadCraftApp {
         };
         Some(
             crate::assembly::tree::leaves(&self.project, &linked, model, asm)
-                .into_iter()
-                .filter_map(|l| {
-                    let (top, sub) = l.path.split_first()?;
-                    Some((*top, sub.to_vec(), l.component, l.world))
-                })
+                .iter()
+                .filter_map(|l| f(l, asm))
                 .collect(),
         )
     }

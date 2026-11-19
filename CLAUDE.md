@@ -1309,6 +1309,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`hlr::silhouette_chains`: `<face>:Sil<side>[.<k>]`, named from the face and the view only, never from mesh points;
   a cylinder's / cone's put on its exact surface — the mesh's silhouette lies up to r·(1 − cos(π/n)) inside, 0.03 mm on
   a Ø50): a new `ViewModel` builder must fill `faces` and each `SmoothEdge::face`, or its silhouettes cannot be dimensioned.
+- **Section participation** (`drawing::participation`, GUI `gui/drawing_participation.rs`, spec 4.15): which components a
+  section view cuts is decided in the GUI (part Properties `IProperties::section`, `Occurrence::section`, the view's
+  `participation` and `display.standard_section`; standard = a Component Library file or a generated shaft) and handed to
+  the worker as `hlr::Aligned::uncut` (instance prefixes `o<id>/`, part of the lines cache key). `ViewModel::mesh_owner`
+  chains cut faces per component (`ViewLines::section_owner`, alternate hatch via `render::hatch_groups`): a new
+  `ViewLines` filter (breaks, fences) must carry `section_owner` with `section`.
 - **Parts lists and balloons** (`drawing::parts`, GUI `gui/drawing_bom.rs`, spec 4.4, format revision 25): nothing
   of the BOM is stored — `Tables::build` (once per frame per sheet) reads the rows through a callback and the
   item numbers through the drawing's parts lists (sort / renumber / Item overrides), so balloons follow them.
