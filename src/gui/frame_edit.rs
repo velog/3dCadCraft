@@ -450,7 +450,12 @@ impl CadCraftApp {
     fn edit_cap_start(&mut self, c: u32) {
         let Some(cap) = self
             .frame_asm()
-            .and_then(|a| a.frames.iter().flat_map(|f| &f.caps).find(|x| x.occurrence == c))
+            .and_then(|a| {
+                a.frames
+                    .iter()
+                    .flat_map(|f| &f.caps)
+                    .find(|x| x.occurrence == c)
+            })
             .cloned()
         else {
             return;

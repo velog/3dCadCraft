@@ -121,7 +121,11 @@ impl CadCraftApp {
 
     /// Screen ends of the arrows and the ring (centre, radius) with the mm
     /// per pixel there.
-    fn manip_screen(&self, f: &Frame3, rect: Rect) -> Option<([(Grip, Pos2, Pos2); 2], Pos2, Real)> {
+    fn manip_screen(
+        &self,
+        f: &Frame3,
+        rect: Rect,
+    ) -> Option<([(Grip, Pos2, Pos2); 2], Pos2, Real)> {
         let b = self.camera.project(&f.base, rect)?;
         let probe = self.camera.project(&(f.base + f.u * 1.0), rect)?;
         let probe_v = self.camera.project(&(f.base + f.v * 1.0), rect)?;
@@ -173,7 +177,12 @@ impl CadCraftApp {
 
     /// Draws the manipulators of Insert Frame / Change (the held or hovered
     /// grip lit).
-    pub(super) fn frame_manip_draw(&self, painter: &egui::Painter, rect: Rect, pointer: Option<Pos2>) {
+    pub(super) fn frame_manip_draw(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        pointer: Option<Pos2>,
+    ) {
         let Some(d) = self.part_planned.as_ref() else {
             return;
         };
@@ -204,7 +213,10 @@ impl CadCraftApp {
             ));
         }
         let ring = self.ring_points(&f, rect, mm);
-        painter.add(egui::Shape::line(ring.clone(), Stroke::new(1.5, col(Grip::Rotation))));
+        painter.add(egui::Shape::line(
+            ring.clone(),
+            Stroke::new(1.5, col(Grip::Rotation)),
+        ));
         if let Some(g) = ring.first() {
             painter.circle_filled(*g, 5.0, col(Grip::Rotation));
         }
@@ -239,7 +251,12 @@ impl CadCraftApp {
     /// A drag on a manipulator (`true` while one is held: the view does not
     /// orbit or box-select). The panel's field follows the pointer: offsets
     /// to 1 mm (0.1 with Shift), the angle to 5° (1° with Shift).
-    pub(super) fn frame_grip(&mut self, ui: &egui::Ui, response: &egui::Response, rect: Rect) -> bool {
+    pub(super) fn frame_grip(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        rect: Rect,
+    ) -> bool {
         let Some(f) = self.part_planned.as_ref().and_then(|d| self.manip_frame(d)) else {
             self.asm.frame_grip = None;
             return false;

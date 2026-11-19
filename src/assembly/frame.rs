@@ -2861,7 +2861,9 @@ pub fn change_reuse(
                     .iter()
                     .find(|m| m.occurrence == occ)
                     .ok_or("only frame members can be changed")?;
-                let src = m.reuse_of.ok_or("only reused members can be changed here")?;
+                let src = m
+                    .reuse_of
+                    .ok_or("only reused members can be changed here")?;
                 let source = all
                     .iter()
                     .find(|m| m.occurrence == src)
@@ -4724,7 +4726,11 @@ mod tests {
         new.material = Some("Aluminium 6061-T6".into());
         change_keeping(&mut p, &lk, aid, &[a, b], &new, &base, lib).unwrap();
         let d = asm(&p, aid);
-        let mb = d.frames[0].members.iter().find(|m| m.occurrence == b).unwrap();
+        let mb = d.frames[0]
+            .members
+            .iter()
+            .find(|m| m.occurrence == b)
+            .unwrap();
         assert_eq!(mb.size, "50x50x4");
         assert!((mb.orientation.angle - 0.5).abs() < 1e-12);
         for m in [a, b] {
@@ -4741,19 +4747,29 @@ mod tests {
             assert_eq!(m.size, "30x30x3");
             assert!((m.orientation.h_offset - 5.0).abs() < 1e-12);
         }
-        let mb = d.frames[0].members.iter().find(|m| m.occurrence == b).unwrap();
+        let mb = d.frames[0]
+            .members
+            .iter()
+            .find(|m| m.occurrence == b)
+            .unwrap();
         assert!((mb.orientation.angle - 0.5).abs() < 1e-12);
         // Appearance: on the occurrence, then on the part.
         let look = crate::materials::builtin().appearances[0].name.clone();
         let base = new.clone();
         new.appearance = Some(look.clone());
         change_keeping(&mut p, &lk, aid, &[a], &new, &base, lib).unwrap();
-        assert_eq!(member_appearance(&p, asm(&p, aid), a), (Some(look.clone()), false));
+        assert_eq!(
+            member_appearance(&p, asm(&p, aid), a),
+            (Some(look.clone()), false)
+        );
         assert_eq!(member_appearance(&p, asm(&p, aid), b), (None, false));
         let base = new.clone();
         new.appearance_to_part = true;
         change_keeping(&mut p, &lk, aid, &[a], &new, &base, lib).unwrap();
-        assert_eq!(member_appearance(&p, asm(&p, aid), a), (Some(look.clone()), true));
+        assert_eq!(
+            member_appearance(&p, asm(&p, aid), a),
+            (Some(look.clone()), true)
+        );
         // A Lengthen rebuilds the part: the colour stays.
         let l = Treatment::Lengthen {
             member: a,
@@ -5769,12 +5785,14 @@ mod tests {
         assert_eq!(asm(&p, aid).frames, before);
         // The source is no reused member; two lines for one member is wrong.
         assert!(change_reuse(&mut p, &linked, aid, &[src], &[], true).is_err());
-        assert!(
-            change_reuse(&mut p, &linked, aid, &[r], &[side.clone(), side], false).is_err()
-        );
+        assert!(change_reuse(&mut p, &linked, aid, &[r], &[side.clone(), side], false).is_err());
         change_reuse(&mut p, &linked, aid, &[r], &[bottom.clone()], true).unwrap();
         let a = asm(&p, aid);
-        let m = a.frames[0].members.iter().find(|m| m.occurrence == r).unwrap();
+        let m = a.frames[0]
+            .members
+            .iter()
+            .find(|m| m.occurrence == r)
+            .unwrap();
         assert_eq!(m.skeleton, bottom);
         assert!(m.orientation.flip);
         // It now lies along the bottom front edge (z near 0).
@@ -5878,7 +5896,10 @@ mod tests {
             .find("Rectangular hollow section (EN 10219)", "100x50x4")
             .unwrap()
             .clone();
-        let (a, b) = (Point3::origin(), Point3::new(0.0, 0.0, 0.0) + Vector3::x() * 500.0);
+        let (a, b) = (
+            Point3::origin(),
+            Point3::new(0.0, 0.0, 0.0) + Vector3::x() * 500.0,
+        );
         let plain = placement(&s, a, b, &Orientation::default()).unwrap();
         let tilted = Orientation {
             align: Some([0.0, 0.0, 1.0]),
@@ -5895,7 +5916,10 @@ mod tests {
             ..Default::default()
         };
         let p = placement(&s, a, b, &along).unwrap();
-        assert!((p.transform_vector(&Vector3::x()) - plain.transform_vector(&Vector3::x())).norm() < 1e-9);
+        assert!(
+            (p.transform_vector(&Vector3::x()) - plain.transform_vector(&Vector3::x())).norm()
+                < 1e-9
+        );
     }
 
     fn length_of_member(p: &Project, a: DocumentId, occ: u32) -> Real {

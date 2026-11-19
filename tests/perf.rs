@@ -2056,11 +2056,9 @@ fn speed_budgets() {
             // Change of all 12 members' material (spec 6.1 §3.3): every part rebuilt once.
             {
                 let ids: Vec<u32> = match p.document(doc).map(|d| &d.data) {
-                    Some(DocumentData::Assembly(a)) => a.frames[0]
-                        .members
-                        .iter()
-                        .map(|m| m.occurrence)
-                        .collect(),
+                    Some(DocumentData::Assembly(a)) => {
+                        a.frames[0].members.iter().map(|m| m.occurrence).collect()
+                    }
                     _ => panic!("no frame assembly"),
                 };
                 let mut alu = o.clone();

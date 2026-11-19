@@ -2844,7 +2844,10 @@ impl PartDialog {
                 }
                 ui.end_row();
                 let mine = self.note_for.is_none_or(|b| b == t);
-                if live && mine && let Some(n) = &self.note {
+                if live
+                    && mine
+                    && let Some(n) = &self.note
+                {
                     plabel(ui, "");
                     ui.label(RichText::new(n.as_str()).small());
                     ui.end_row();

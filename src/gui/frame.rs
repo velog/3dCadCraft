@@ -480,7 +480,8 @@ impl CadCraftApp {
                 for (occ, why) in &s.sick {
                     log::warn!("frame member {occ}: {why}");
                     // Its skeleton geometry is gone: the Missing Member window.
-                    if why.contains("no longer exists") && !self.asm.frame_missing_seen.contains(occ)
+                    if why.contains("no longer exists")
+                        && !self.asm.frame_missing_seen.contains(occ)
                     {
                         self.asm.frame_missing_seen.push(*occ);
                         self.asm.frame_missing.push((*occ, why.clone()));
@@ -1302,10 +1303,7 @@ impl CadCraftApp {
         match result {
             Ok(_) => {
                 self.frame_commit("Change Reuse", trial);
-                self.file_status = Some(Ok(format!(
-                    "Change Reuse: {} member(s)",
-                    members.len()
-                )));
+                self.file_status = Some(Ok(format!("Change Reuse: {} member(s)", members.len())));
                 true
             }
             Err(e) => fail(self, &e),
@@ -1328,7 +1326,9 @@ impl CadCraftApp {
             _ => return Err("Align takes a straight edge or a sketch line yet".into()),
         };
         let w = self.frame_place().inverse() * (q - p);
-        let w = w.try_normalize(1e-9).ok_or("the Align edge has no length")?;
+        let w = w
+            .try_normalize(1e-9)
+            .ok_or("the Align edge has no length")?;
         Ok(Some([w.x, w.y, w.z]))
     }
 
