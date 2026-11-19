@@ -1001,7 +1001,8 @@ impl CadCraftApp {
         let full = d.index(0, "Miter Type") == 0;
         let mut trial = self.frame_trial(d);
         let doc = self.frame_doc();
-        match frame::add_miter_typed(&mut trial, &linked, doc, &pairs, gap, offset, full) {
+        let delete = d.check(0, "Delete existing end treatments");
+        match frame::add_miter_typed(&mut trial, &linked, doc, &pairs, gap, offset, full, delete) {
             Ok(_) => {
                 self.history.break_coalescing();
                 self.checkpoint("Miter");
@@ -1229,7 +1230,8 @@ impl CadCraftApp {
             Ok(v) => v,
             Err(e) => return fail(self, &e),
         };
-        match frame::add_treatments(&mut trial, &linked, self.frame_doc(), ts) {
+        let delete = d.check(0, "Delete existing end treatments");
+        match frame::add_treatments_replacing(&mut trial, &linked, self.frame_doc(), ts, delete) {
             Ok(_) => {
                 self.history.break_coalescing();
                 self.checkpoint(title);

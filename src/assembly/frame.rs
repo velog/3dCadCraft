@@ -2181,11 +2181,13 @@ pub fn add_miter(
     gap: Real,
     offset: MiterOffset,
 ) -> Result<Solved, String> {
-    add_miter_typed(project, linked, asm, pairs, gap, offset, true)
+    add_miter_typed(project, linked, asm, pairs, gap, offset, true, false)
 }
 
 /// [`add_miter`] of either type: `full` = Full Miter Cut (edge to edge),
-/// else Bisect Miter Cut.
+/// else Bisect Miter Cut; `delete_existing` also drops the pair's other
+/// joints (a Corner Joint, a Notch between them).
+#[allow(clippy::too_many_arguments)]
 pub fn add_miter_typed(
     project: &mut Project,
     linked: &Linked,
@@ -2194,6 +2196,7 @@ pub fn add_miter_typed(
     gap: Real,
     offset: MiterOffset,
     full: bool,
+    delete_existing: bool,
 ) -> Result<Solved, String> {
     if pairs.is_empty() {
         return Err("select two frame members that meet".into());
@@ -2216,7 +2219,8 @@ pub fn add_miter_typed(
                 .ok_or("both members must be frame members")?;
             f.treatments.retain(|t| {
                 let m = t.members();
-                !(matches!(t, Treatment::Miter { .. }) && m.contains(&x) && m.contains(&y))
+                let pair = m.contains(&x) && m.contains(&y);
+                !(pair && (delete_existing || matches!(t, Treatment::Miter { .. })))
             });
             f.treatments.push(Treatment::Miter {
                 a: x,
@@ -2248,6 +2252,19 @@ pub fn add_treatments(
     asm: DocumentId,
     ts: Vec<Treatment>,
 ) -> Result<Solved, String> {
+    add_treatments_replacing(project, linked, asm, ts, false)
+}
+
+/// [`add_treatments`]; with `delete_existing` (Advanced Settings › Delete
+/// existing end treatments) a joint of two members also replaces their
+/// earlier joint of another kind (a Miter replaces their Corner Joint).
+pub fn add_treatments_replacing(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    ts: Vec<Treatment>,
+    delete_existing: bool,
+) -> Result<Solved, String> {
     if ts.is_empty() {
         return Err("select the frame members".into());
     }
@@ -2274,7 +2291,8 @@ pub fn add_treatments(
                 })
                 .ok_or("the members must be frame members")?;
             f.treatments.retain(|x| {
-                !(std::mem::discriminant(x) == std::mem::discriminant(&t) && x.members() == ms)
+                let same = std::mem::discriminant(x) == std::mem::discriminant(&t);
+                !(same && x.members() == ms || delete_existing && same_joint(x, &ms))
             });
             touched.extend(ms);
             f.treatments.push(t);
@@ -2289,6 +2307,12 @@ pub fn add_treatments(
         *project = before;
     }
     result
+}
+
+/// Is `x` a joint of exactly the two members `ms` (either way round)?
+fn same_joint(x: &Treatment, ms: &[u32]) -> bool {
+    let m = x.members();
+    ms.len() == 2 && m.len() == 2 && m.contains(&ms[0]) && m.contains(&ms[1])
 }
 
 /// Members of different frames treated together (a Trim/Extend, a corner
@@ -4640,6 +4664,7 @@ mod tests {
                 0.0,
                 MiterOffset::Default,
                 full,
+                false,
             )
             .unwrap();
             assert!(s.sick.is_empty(), "{:?}", s.sick);
@@ -4647,6 +4672,47 @@ mod tests {
             for (occ, len) in [(a[0], want[0]), (b[0], want[1])] {
                 let outer = outer_length(&part(&p, d, occ)).unwrap();
                 assert!((outer - len).abs() < 1e-3, "full {full}: {outer} vs {len}");
+            }
+        }
+    }
+
+    /// Delete existing end treatments: on, a Miter replaces the pair's
+    /// Corner Joint; off, both stay (the mitre is applied after the joint).
+    #[test]
+    fn delete_existing_end_treatments_replaces_the_pairs_joint() {
+        for delete in [true, false] {
+            let (mut p, aid, _) = project();
+            let lk = Linked::new();
+            let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+            let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+            let (_, m) =
+                insert(&mut p, &lk, aid, &[x, y], &opts(), Library::builtin(), None).unwrap();
+            let t = Treatment::CornerJoint {
+                a: m[0],
+                b: m[1],
+                offsets: [0.0, 0.0],
+            };
+            add_treatments(&mut p, &lk, aid, vec![t]).unwrap();
+            add_miter_typed(
+                &mut p,
+                &lk,
+                aid,
+                &[(m[0], m[1])],
+                0.0,
+                MiterOffset::Default,
+                true,
+                delete,
+            )
+            .unwrap();
+            let labels: Vec<&str> = asm(&p, aid).frames[0]
+                .treatments
+                .iter()
+                .map(Treatment::label)
+                .collect();
+            if delete {
+                assert_eq!(labels, ["Miter"]);
+            } else {
+                assert_eq!(labels, ["Corner Joint", "Miter"]);
             }
         }
     }
