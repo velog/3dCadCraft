@@ -299,18 +299,19 @@ struct BrokenLines {
 type PhysicalCache =
     std::cell::RefCell<HashMap<(crate::document::DocRef, String), (f64, f64, f64)>>;
 
+/// An assembly's parts for section participation: the assembly's signature,
+/// when they were read, the parts.
+pub(super) type SecLeaves = (
+    u64,
+    std::time::Instant,
+    Arc<Vec<super::drawing_participation::SecLeaf>>,
+);
+
 #[derive(Default)]
 pub(super) struct DrwUi {
     /// Section participation: each assembly model's parts with their own
     /// settings, by the assembly's signature (spec 4.15).
-    pub(super) sec_leaves: HashMap<
-        (crate::document::DocRef, drw::ViewReps),
-        (
-            u64,
-            std::time::Instant,
-            Arc<Vec<super::drawing_participation::SecLeaf>>,
-        ),
-    >,
+    pub(super) sec_leaves: HashMap<(DocRef, drw::ViewReps), SecLeaves>,
     pub cam: SheetCam,
     /// Selected view.
     pub sel: Option<u32>,

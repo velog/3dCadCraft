@@ -1176,8 +1176,8 @@ pub fn view_lines_simplified(
     lap("grid");
     // The cut faces: the crossings chained into loops, component by
     // component (touching neighbours never share a loop).
-    let mut by_owner: std::collections::BTreeMap<u32, Vec<([f64; 2], [f64; 2])>> =
-        Default::default();
+    type Segs = Vec<([f64; 2], [f64; 2])>;
+    let mut by_owner: std::collections::BTreeMap<u32, Segs> = Default::default();
     for (k, seg) in crossings.iter().enumerate() {
         let o = crossing_owner.get(k).copied().unwrap_or(0);
         by_owner.entry(o).or_default().push(*seg);

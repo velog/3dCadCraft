@@ -258,10 +258,13 @@ impl CadCraftApp {
         };
         let title = mark_name(&d.mark);
         let mut m = d.mark.clone();
+        // Beside Properties, off the sheet's middle where the views are.
+        let r = ctx.content_rect();
         let win = egui::Window::new(title)
             .resizable(false)
             .collapsible(false)
-            .default_width(260.0);
+            .default_width(260.0)
+            .default_pos(egui::pos2(r.max.x - 600.0, r.min.y + 200.0));
         let mut close = false;
         self.layout
             .place("drawing_mark", ctx.content_rect(), false, win)
@@ -309,7 +312,7 @@ impl CadCraftApp {
                 let hit = self.geometry_under(views, rect, p);
                 if let Some(g) = &hit {
                     painter.circle_stroke(
-                        cam.to_screen(rect, g.at),
+                        cam.to_screen(rect, g.on_geometry(views)),
                         5.0,
                         egui::Stroke::new(2.0, HOVER),
                     );
@@ -318,7 +321,7 @@ impl CadCraftApp {
                     match hit {
                         Some(g) => {
                             if let Some(DrwTool::Mark(x)) = &mut self.drw.tool {
-                                x.tip = Some((g.view, g.at));
+                                x.tip = Some((g.view, g.on_geometry(views)));
                             }
                         }
                         // A datum needs its feature; the others stand free.

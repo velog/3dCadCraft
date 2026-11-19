@@ -57,6 +57,49 @@ impl GeoPick {
     }
 }
 
+impl GeoPick {
+    /// The point of the geometry nearest the pointer (sheet mm): a point
+    /// itself, the foot on a straight edge, the circle in the pointer's
+    /// direction (a symbol's leader ends there).
+    pub(super) fn on_geometry(&self, views: &[ShownView]) -> [f64; 2] {
+        match self.what {
+            PickWhat::Point(_) => self.at,
+            PickWhat::Circle(r, _) => {
+                let d = [self.hit[0] - self.at[0], self.hit[1] - self.at[1]];
+                let n = d[0].hypot(d[1]);
+                if n < 1e-12 {
+                    return self.at;
+                }
+                [self.at[0] + d[0] / n * r, self.at[1] + d[1] / n * r]
+            }
+            PickWhat::Line => {
+                let edge = views.iter().find(|v| v.id == self.view).and_then(|v| {
+                    let l = v.lines.as_deref()?;
+                    let e = l.edge(&self.edge)?;
+                    let pl = Placement {
+                        position: v.position,
+                        scale: v.scale,
+                        center: l.center(),
+                        breaks: l.breaks,
+                    };
+                    Some((pl.to_sheet(e.a), pl.to_sheet(e.b)))
+                });
+                let Some((a, b)) = edge else {
+                    return self.hit;
+                };
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let len2 = d[0] * d[0] + d[1] * d[1];
+                if len2 < 1e-18 {
+                    return a;
+                }
+                let t = (((self.hit[0] - a[0]) * d[0] + (self.hit[1] - a[1]) * d[1]) / len2)
+                    .clamp(0.0, 1.0);
+                [a[0] + d[0] * t, a[1] + d[1] * t]
+            }
+        }
+    }
+}
+
 /// Kind of geometry picked.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PickWhat {
