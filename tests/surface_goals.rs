@@ -1170,5 +1170,7 @@ fn save_bottle_surface() {
     p.add_loft(def).unwrap_or_else(|e| panic!("{e}"));
     let mut project = cadcraft3d::document::Project::new("Bottle");
     project.add_document("Bottle", cadcraft3d::document::DocumentData::Part(p));
-    project.save(std::path::Path::new(&out)).unwrap_or_else(|e| panic!("{e}"));
+    project
+        .save(std::path::Path::new(&out))
+        .unwrap_or_else(|e| panic!("{e}"));
 }
