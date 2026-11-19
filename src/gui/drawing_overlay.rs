@@ -36,8 +36,9 @@ impl OverlayDraft {
 
 /// `l` drawn as an overlay: its visible lines as the dashed ones, its own
 /// hidden lines left out.
-pub(super) fn phantom(l: &ViewLines) -> ViewLines {
+pub(super) fn phantom(l: &ViewLines, center: [f64; 2]) -> ViewLines {
     ViewLines {
+        anchor: Some(center),
         hidden: l.visible.clone(),
         hidden_src: l.visible_src.clone(),
         visible: Vec::new(),
@@ -232,13 +233,19 @@ impl CadCraftApp {
     }
 
     /// Lines of overlay views turned phantom (cached per computed lines).
-    pub(super) fn overlay_lines(&mut self, id: u32, l: Arc<ViewLines>) -> Arc<ViewLines> {
+    pub(super) fn overlay_lines(
+        &mut self,
+        id: u32,
+        l: Arc<ViewLines>,
+        center: [f64; 2],
+    ) -> Arc<ViewLines> {
         if let Some((from, to)) = self.drw.phantom.get(&id)
             && Arc::ptr_eq(from, &l)
+            && to.anchor == Some(center)
         {
             return to.clone();
         }
-        let to = Arc::new(phantom(&l));
+        let to = Arc::new(phantom(&l, center));
         self.drw.phantom.insert(id, (l, to.clone()));
         to
     }

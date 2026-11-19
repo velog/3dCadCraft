@@ -1186,15 +1186,24 @@ impl CadCraftApp {
             for (id, job) in jobs {
                 match self.job_lines(ctx, &job, &out) {
                     Some(l) => {
-                        let overlay = sheet
-                            .view(id)
-                            .is_some_and(|v| matches!(v.kind, ViewKind::Overlay { .. }));
-                        let l = if overlay {
-                            self.overlay_lines(id, l)
-                        } else {
-                            l
-                        };
-                        out.insert(id, l);
+                        // An overlay is centred where its parent is (its own
+                        // extent differs: the parts stand elsewhere).
+                        let parent = sheet.view(id).and_then(|v| match v.kind {
+                            ViewKind::Overlay { parent, .. } => Some(parent),
+                            _ => None,
+                        });
+                        match parent {
+                            None => {
+                                out.insert(id, l);
+                            }
+                            Some(p) => match out.get(&p).map(|pl| pl.center()) {
+                                Some(c) => {
+                                    let l = self.overlay_lines(id, l, c);
+                                    out.insert(id, l);
+                                }
+                                None => left.push((id, job)),
+                            },
+                        }
                     }
                     None => left.push((id, job)),
                 }

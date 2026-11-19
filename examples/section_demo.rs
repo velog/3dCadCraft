@@ -83,6 +83,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         p.poses
             .insert(second, Transform3::translation(60.0, 20.0, 5.0));
     }
+    // The assembly itself stands in [Primary] (its occurrences hold the
+    // active representation's places).
+    reps.active_position = cadcraft3d::assembly::reps::PRIMARY;
     asm.reps = reps;
     let asm_id = project.add_document("Assembly", DocumentData::Assembly(asm));
     let mut d = DrawingDocument::default();
