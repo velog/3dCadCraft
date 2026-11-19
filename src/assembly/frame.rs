@@ -574,14 +574,14 @@ pub fn set_member_appearance(
     let lib = crate::materials::with_user();
     let part_look = if to_part { name } else { None };
     if let Some(DocumentData::Part(p)) = project.document_mut(doc).map(|d| &mut d.data) {
-        p.set_appearance(&crate::part::appearance::LookTarget::Part, part_look, &lib)?;
+        p.set_appearance(&crate::part::appearance::LookTarget::Part, part_look, lib)?;
     }
     let occ_look = if to_part { None } else { name };
     let a = asm_mut(project, asm)?;
     a.set_look(
         &super::looks::AsmLookTarget::Occurrence(occ),
         occ_look,
-        &lib,
+        lib,
         &[],
     )?;
     Ok(())
@@ -6056,7 +6056,15 @@ mod tests {
         // The source is no reused member; two lines for one member is wrong.
         assert!(change_reuse(&mut p, &linked, aid, &[src], &[], true).is_err());
         assert!(change_reuse(&mut p, &linked, aid, &[r], &[side.clone(), side], false).is_err());
-        change_reuse(&mut p, &linked, aid, &[r], &[bottom.clone()], true).unwrap();
+        change_reuse(
+            &mut p,
+            &linked,
+            aid,
+            &[r],
+            std::slice::from_ref(&bottom),
+            true,
+        )
+        .unwrap();
         let a = asm(&p, aid);
         let m = a.frames[0]
             .members
