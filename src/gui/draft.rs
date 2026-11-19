@@ -455,41 +455,38 @@ impl CadCraftApp {
             "Face Draft"
         };
         self.preset_stamp("Face Draft", &mut d.def);
-        self.checkpoint(cmd);
-        let built = match d.edit {
-            Some(k) => self
-                .part_mut()
-                .replace_feature(k, Feature::Draft(d.def.clone())),
-            None => self.part_mut().add_draft(d.def.clone()),
-        };
-        if built.is_err()
-            && let Some(k) = d.edit
-        {
-            self.part_mut().rollback = Some(k);
-            let _ = self.part_mut().regenerate();
-        }
-        match built {
-            Ok(_) => {
-                self.file_status = None;
-                self.scene_dirty = true;
-                self.preset_used("Face Draft", &d.def, d.edit.is_none());
-                if keep_open && d.edit.is_none() {
-                    // Apply: the same pull / plane and angle, new faces.
-                    let mut next = d;
-                    next.def.faces.clear();
-                    next.def.static_edges.clear();
-                    next.input = DraftInput::Faces;
-                    self.draft_draft = Some(next);
-                } else {
-                    self.draft_draft = None;
-                    self.selection = super::Selection::Body;
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3).
+        let (edit, def) = (d.edit, d.def.clone());
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, Feature::Draft(def)),
+                    None => part.add_draft(def),
                 }
-            }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
-        }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| match built {
+                Ok(_) => {
+                    app.file_status = None;
+                    app.scene_dirty = true;
+                    app.preset_used("Face Draft", &d.def, d.edit.is_none());
+                    if keep_open && d.edit.is_none() {
+                        // Apply: the same pull / plane and angle, new faces.
+                        let mut next = d;
+                        next.def.faces.clear();
+                        next.def.static_edges.clear();
+                        next.input = DraftInput::Faces;
+                        app.draft_draft = Some(next);
+                    } else {
+                        app.draft_draft = None;
+                        app.selection = super::Selection::Body;
+                    }
+                }
+                Err(e) => app.file_status = Some(Err(super::background::with_cmd(cmd, e))),
+            },
+        );
     }
 }
 

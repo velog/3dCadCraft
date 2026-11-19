@@ -663,13 +663,29 @@ impl CadCraftApp {
         } else {
             "Combine"
         };
-        self.checkpoint(cmd);
-        let built = match d.edit {
-            Some(k) => self
-                .part_mut()
-                .replace_feature(k, Feature::Combine(d.def.clone())),
-            None => self.part_mut().add_combine(d.def.clone()),
-        };
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3).
+        let (edit, def) = (d.edit, d.def.clone());
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, Feature::Combine(def)),
+                    None => part.add_combine(def),
+                }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| app.combine_done(d, keep_open, cmd, built),
+        );
+    }
+
+    fn combine_done(
+        &mut self,
+        d: CombineDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
         self.after_body_cmd(cmd, d.edit, d.name.clone(), built, |app| {
             if d.tools_visible {
                 app.part_mut()
@@ -698,13 +714,29 @@ impl CadCraftApp {
         } else {
             "Split"
         };
-        self.checkpoint(cmd);
-        let built = match d.edit {
-            Some(k) => self
-                .part_mut()
-                .replace_feature(k, Feature::Split(d.def.clone())),
-            None => self.part_mut().add_split(d.def.clone()),
-        };
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3).
+        let (edit, def) = (d.edit, d.def.clone());
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, Feature::Split(def)),
+                    None => part.add_split(def),
+                }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| app.split_done(d, keep_open, cmd, built),
+        );
+    }
+
+    fn split_done(
+        &mut self,
+        d: SplitDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
         self.after_body_cmd(cmd, d.edit, d.name.clone(), built, |app| {
             if keep_open && d.edit.is_none() {
                 let mut next = SplitDraft::new();
@@ -723,15 +755,10 @@ impl CadCraftApp {
         cmd: &str,
         edit: Option<usize>,
         name: Option<String>,
-        built: Result<String, crate::part::PartError>,
+        built: Result<String, String>,
         next: impl FnOnce(&mut Self),
     ) {
-        if built.is_err()
-            && let Some(k) = edit
-        {
-            self.part_mut().rollback = Some(k);
-            let _ = self.part_mut().regenerate();
-        }
+        // A failed OK left the part as it was (built on a copy, spec 0.19 §3.3).
         match built {
             Ok(_) => {
                 let k = edit.unwrap_or(self.part().last_inserted());
@@ -746,10 +773,7 @@ impl CadCraftApp {
                     self.selection = super::Selection::Body;
                 }
             }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
+            Err(e) => self.file_status = Some(Err(super::background::with_cmd(cmd, e))),
         }
     }
 

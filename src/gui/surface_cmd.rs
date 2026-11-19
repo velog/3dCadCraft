@@ -749,35 +749,36 @@ impl CadCraftApp {
         };
         let fit = matches!(op, BodyOp::Import(_));
         let cmd = if old.is_some() { "Edit Feature" } else { title };
-        self.checkpoint(cmd);
-        let r = match (d.feature, old) {
-            (Some(k), Some(mut b)) => {
-                b.op = op;
-                self.part_mut()
-                    .replace_feature(k, Feature::BodyOp(b))
-                    .map(|_| ())
-            }
-            _ => self
-                .part_mut()
-                .add_body_op(BodyOpFeature::new(op))
-                .map(|_| ()),
-        };
-        match r {
-            Ok(()) => {
-                self.file_status = None;
-                self.scene_dirty = true;
-                if fit {
-                    // A new file is anywhere and any size.
-                    self.fit_view();
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3): the panel closes
+        // when the part is taken (`false` here keeps it open until then).
+        let feature = d.feature;
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match (feature, old) {
+                    (Some(k), Some(mut b)) => {
+                        b.op = op;
+                        part.replace_feature(k, Feature::BodyOp(b))
+                    }
+                    _ => part.add_body_op(BodyOpFeature::new(op)),
                 }
-                true
-            }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{title}: {e}")));
-                false
-            }
-        }
+                .map_err(|e| e.to_string())
+            },
+            move |app, r| match r {
+                Ok(_) => {
+                    app.file_status = None;
+                    app.scene_dirty = true;
+                    app.part_planned = None;
+                    if fit {
+                        // A new file is anywhere and any size.
+                        app.fit_view();
+                    }
+                }
+                Err(e) => app.file_status = Some(Err(super::background::with_cmd(title, e))),
+            },
+        );
+        false
     }
 
     /// A live button of a surface command's panel: the line it shows.

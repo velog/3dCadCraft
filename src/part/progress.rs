@@ -5,8 +5,13 @@
 //! [`stage`] write into the reporter of the calling thread and do nothing on a thread without
 //! one (tests, the main thread, the API). [`running`] lists the jobs whose reporter is still
 //! installed, longest-running first.
+//!
+//! A job can be cancelled (spec 0.19 §3.3): [`Reporter::install_cancellable`] ties it to a flag the
+//! GUI sets on Esc, and [`cancelled`] tells the work on that thread to stop where it can (between
+//! features). A cancelled job's result is thrown away, so stopping early never needs to be exact.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -21,6 +26,8 @@ pub struct Snapshot {
     pub stage: Option<String>,
     /// How long the job has run.
     pub elapsed: Duration,
+    /// Cancelled: its result will be thrown away once the running step ends.
+    pub cancelled: bool,
 }
 
 impl Snapshot {
@@ -45,6 +52,9 @@ impl Snapshot {
             s.push_str(", ");
             s.push_str(stage);
         }
+        if self.cancelled {
+            s.push_str(" (cancelled, finishing the current step)");
+        }
         s
     }
 }
@@ -55,6 +65,7 @@ struct State {
     started: Instant,
     feature: Option<(String, usize, usize)>,
     stage: Option<String>,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -75,11 +86,22 @@ pub struct Reporter {
 impl Reporter {
     /// Starts reporting the job `job` from this thread (until the reporter is dropped).
     pub fn install(job: &str) -> Self {
+        Self::install_with(job, None)
+    }
+
+    /// As [`Reporter::install`], and the job stops where it can once `cancel` is set
+    /// ([`cancelled`]).
+    pub fn install_cancellable(job: &str, cancel: Arc<AtomicBool>) -> Self {
+        Self::install_with(job, Some(cancel))
+    }
+
+    fn install_with(job: &str, cancel: Option<Arc<AtomicBool>>) -> Self {
         let state = Arc::new(Mutex::new(State {
             job: job.to_owned(),
             started: Instant::now(),
             feature: None,
             stage: None,
+            cancel,
         }));
         if let Ok(mut all) = RUNNING.lock() {
             all.retain(|w| w.strong_count() > 0);
@@ -124,6 +146,19 @@ pub fn stage(stage: &str) {
     with_current(|s| s.stage = Some(stage.to_owned()));
 }
 
+/// Whether the calling thread's job was cancelled (false on a thread without a cancellable
+/// reporter: the main thread, tests, the API).
+pub fn cancelled() -> bool {
+    CURRENT.with(|c| {
+        c.borrow().as_ref().is_some_and(|s| {
+            s.lock()
+                .ok()
+                .and_then(|st| st.cancel.as_ref().map(|f| f.load(Ordering::Relaxed)))
+                .unwrap_or(false)
+        })
+    })
+}
+
 /// The jobs whose reporter is installed, the longest-running first.
 pub fn running() -> Vec<Snapshot> {
     let Ok(all) = RUNNING.lock() else {
@@ -139,6 +174,10 @@ pub fn running() -> Vec<Snapshot> {
                 feature: st.feature.clone(),
                 stage: st.stage.clone(),
                 elapsed: st.started.elapsed(),
+                cancelled: st
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|f| f.load(Ordering::Relaxed)),
             })
         })
         .collect();
@@ -181,6 +220,23 @@ mod tests {
         assert_eq!(mine(job).unwrap().feature, Some(("Pattern1".into(), 2, 2)));
         drop(r);
         assert!(mine(job).is_none());
+    }
+
+    #[test]
+    fn a_cancelled_job_sees_its_flag_only_on_its_thread() {
+        assert!(!cancelled());
+        let flag = Arc::new(AtomicBool::new(false));
+        let f = flag.clone();
+        let t = std::thread::spawn(move || {
+            let _r = Reporter::install_cancellable("progress test C", f.clone());
+            let before = cancelled();
+            f.store(true, Ordering::Relaxed);
+            (before, cancelled())
+        });
+        assert_eq!(t.join().unwrap(), (false, true));
+        // the flag of another thread's job does not reach this one
+        assert!(!cancelled());
+        assert!(flag.load(Ordering::Relaxed));
     }
 
     #[test]

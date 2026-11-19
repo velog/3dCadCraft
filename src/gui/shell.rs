@@ -136,20 +136,30 @@ impl CadCraftApp {
             "Shell"
         };
         self.preset_stamp("Shell", &mut d.def);
-        self.checkpoint(cmd);
-        let built = match d.edit {
-            Some(k) => self
-                .part_mut()
-                .replace_feature(k, Feature::Shell(d.def.clone())),
-            None => self.part_mut().add_shell(d.def.clone()),
-        };
-        if built.is_err()
-            && let Some(k) = d.edit
-        {
-            // Stay in the edit: rolled back again.
-            self.part_mut().rollback = Some(k);
-            let _ = self.part_mut().regenerate();
-        }
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3).
+        let (edit, def) = (d.edit, d.def.clone());
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, Feature::Shell(def)),
+                    None => part.add_shell(def),
+                }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| app.shell_done(d, keep_open, cmd, built),
+        );
+    }
+
+    /// Shell's OK once the part is built (or not).
+    fn shell_done(
+        &mut self,
+        d: ShellDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
         match built {
             Ok(id) => {
                 // A rename in the breadcrumb (the id stays).
@@ -173,10 +183,7 @@ impl CadCraftApp {
                     self.selection = super::Selection::Body;
                 }
             }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
+            Err(e) => self.file_status = Some(Err(super::background::with_cmd(cmd, e))),
         }
     }
 }

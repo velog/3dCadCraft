@@ -1659,26 +1659,6 @@ impl CadCraftApp {
             self.delete_feature(k);
         }
     }
-
-    /// Field edits of an existing feature: one Undo step each, a failure
-    /// cancels it.
-    fn commit_feature_fields(&mut self, k: usize, commits: Vec<(&'static str, String)>) {
-        for (field, text) in commits {
-            self.checkpoint("Edit Feature");
-            match self.part_mut().set_feature_field(k, field, &text) {
-                Ok(()) => {
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
-                    self.scene_dirty = true;
-                }
-                Err(e) => {
-                    self.history.cancel();
-                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                }
-            }
-        }
-    }
 }
 
 /// Which command's buttons.

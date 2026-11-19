@@ -583,30 +583,45 @@ impl CadCraftApp {
             d.def.command()
         };
         let key = format!("pattern|{:?}|{:?}", d.edit, d.def);
-        let ready = self.take_preview_part(&key);
-        self.checkpoint(cmd);
-        let built = match (ready, d.edit) {
-            // The preview built exactly this from the part as it is: take it.
-            (Some(p), _) => {
-                let id = p
-                    .features
-                    .get(d.edit.unwrap_or(p.last_inserted()))
-                    .map(|f| f.id().to_owned())
-                    .unwrap_or_default();
-                *self.part_mut() = p;
-                Ok(id)
-            }
-            (None, Some(k)) => self
-                .part_mut()
-                .replace_feature(k, Feature::Pattern(d.def.clone())),
-            (None, None) => self.part_mut().add_pattern(d.def.clone()),
-        };
-        if built.is_err()
-            && let Some(k) = d.edit
-        {
-            self.part_mut().rollback = Some(k);
-            let _ = self.part_mut().regenerate();
+        if self.refuse_while_building(cmd) {
+            return;
         }
+        // The preview built exactly this from the part as it is: take it at once.
+        if let Some(p) = self.take_preview_part(&key) {
+            self.checkpoint(cmd);
+            let id = p
+                .features
+                .get(d.edit.unwrap_or(p.last_inserted()))
+                .map(|f| f.id().to_owned())
+                .unwrap_or_default();
+            *self.part_mut() = p;
+            self.pattern_done(d, keep_open, cmd, Ok(id));
+            return;
+        }
+        // Else built on a copy, on a worker when the option is on (spec 0.19 §3.3).
+        let (edit, def) = (d.edit, d.def.clone());
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, Feature::Pattern(def)),
+                    None => part.add_pattern(def),
+                }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| app.pattern_done(d, keep_open, cmd, built),
+        );
+    }
+
+    /// Pattern's OK once the part is built (or not).
+    fn pattern_done(
+        &mut self,
+        d: PatternDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
         match built {
             Ok(_) => {
                 self.file_status = None;
@@ -623,10 +638,7 @@ impl CadCraftApp {
                     self.selection = super::Selection::Body;
                 }
             }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
+            Err(e) => self.file_status = Some(Err(super::background::with_cmd(cmd, e))),
         }
     }
 }

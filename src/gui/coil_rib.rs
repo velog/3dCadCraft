@@ -609,19 +609,32 @@ impl CadCraftApp {
         } else {
             "Coil"
         };
-        self.checkpoint(cmd);
-        let built = match d.edit {
-            Some(k) => self
-                .part_mut()
-                .replace_feature(k, Feature::Coil(d.def.clone())),
-            None => self.part_mut().add_coil(sketch, d.def.clone()),
-        };
-        if built.is_err()
-            && let Some(k) = d.edit
-        {
-            self.part_mut().rollback = Some(k);
-            let _ = self.part_mut().regenerate();
-        }
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3): a failed edit
+        // leaves the part as it is, still rolled back to the edited feature.
+        let (edit, def) = (d.edit, d.def.clone());
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, Feature::Coil(def)),
+                    None => part.add_coil(sketch, def),
+                }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| app.coil_done(d, keep_open, cmd, built),
+        );
+    }
+
+    /// `commit_coil` once the part is built (or not).
+    fn coil_done(
+        &mut self,
+        d: CoilDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
+        let sketch = d.sketch.unwrap_or(usize::MAX);
         match built {
             Ok(_) => {
                 self.file_status = None;
@@ -642,10 +655,7 @@ impl CadCraftApp {
                     self.selection = super::Selection::Body;
                 }
             }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
+            Err(e) => self.file_status = Some(Err(super::background::with_cmd(cmd, e))),
         }
     }
 
@@ -663,19 +673,31 @@ impl CadCraftApp {
         } else {
             "Rib"
         };
-        self.checkpoint(cmd);
-        let built = match d.edit {
-            Some(k) => self
-                .part_mut()
-                .replace_feature(k, Feature::Rib(d.def.clone())),
-            None => self.part_mut().add_rib(sketch, d.def.clone()),
-        };
-        if built.is_err()
-            && let Some(k) = d.edit
-        {
-            self.part_mut().rollback = Some(k);
-            let _ = self.part_mut().regenerate();
-        }
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3): a failed edit
+        // leaves the part as it is, still rolled back to the edited feature.
+        let (edit, def) = (d.edit, d.def.clone());
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, Feature::Rib(def)),
+                    None => part.add_rib(sketch, def),
+                }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| app.rib_done(d, keep_open, cmd, built),
+        );
+    }
+
+    /// `commit_rib` once the part is built (or not).
+    fn rib_done(
+        &mut self,
+        d: RibDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
         match built {
             Ok(_) => {
                 self.file_status = None;
@@ -692,10 +714,7 @@ impl CadCraftApp {
                     self.selection = super::Selection::Body;
                 }
             }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
+            Err(e) => self.file_status = Some(Err(super::background::with_cmd(cmd, e))),
         }
     }
 

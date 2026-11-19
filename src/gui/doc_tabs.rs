@@ -273,6 +273,10 @@ impl CadCraftApp {
         if k == self.active_tab || k >= self.tabs.len() {
             return;
         }
+        // The part being built stays in front (spec 0.19 §3.3).
+        if self.refuse_while_building("Switch tab") {
+            return;
+        }
         let Some(group) = self.tabs[k].as_ref().map(|t| t.group) else {
             return;
         };

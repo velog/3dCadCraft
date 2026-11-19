@@ -504,6 +504,10 @@ impl CadCraftApp {
         if id == self.part_id || self.project.document(id).is_none() {
             return;
         }
+        // The part being built stays the active document (spec 0.19 §3.3).
+        if self.refuse_while_building("Open document") {
+            return;
+        }
         self.leave_document();
         self.asm.tool = None;
         self.asm.drag = None;

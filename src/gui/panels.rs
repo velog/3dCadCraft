@@ -1634,21 +1634,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             });
             let commits = std::mem::take(&mut fx.commits);
             drop(fx);
-            for (field, text) in commits {
-                self.checkpoint("Edit Feature");
-                match self.part_mut().set_feature_field(k, field, &text) {
-                    Ok(()) => {
-                        if let Err(e) = self.part_mut().regenerate() {
-                            self.file_status = Some(Err(e.to_string()));
-                        }
-                        self.scene_dirty = true;
-                    }
-                    Err(e) => {
-                        self.history.cancel();
-                        self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                    }
-                }
-            }
+            self.commit_feature_fields(k, commits);
             ui.label(
                 RichText::new("Sketches on its faces follow the change.")
                     .small()
@@ -2955,21 +2941,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
-        for (field, text) in commits {
-            self.checkpoint("Edit Feature");
-            match self.part_mut().set_feature_field(k, field, &text) {
-                Ok(()) => {
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
-                    self.scene_dirty = true;
-                }
-                Err(e) => {
-                    self.history.cancel();
-                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                }
-            }
-        }
+        self.commit_feature_fields(k, commits);
         ui.add_space(4.0);
         if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
@@ -4469,21 +4441,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
-        for (field, text) in commits {
-            self.checkpoint("Edit Feature");
-            match self.part_mut().set_feature_field(k, field, &text) {
-                Ok(()) => {
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
-                    self.scene_dirty = true;
-                }
-                Err(e) => {
-                    self.history.cancel();
-                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                }
-            }
-        }
+        self.commit_feature_fields(k, commits);
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
@@ -4532,21 +4490,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         });
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
-        for (field, text) in commits {
-            self.checkpoint("Edit Feature");
-            match self.part_mut().set_feature_field(k, field, &text) {
-                Ok(()) => {
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
-                    self.scene_dirty = true;
-                }
-                Err(e) => {
-                    self.history.cancel();
-                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                }
-            }
-        }
+        self.commit_feature_fields(k, commits);
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
@@ -4608,21 +4552,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         });
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
-        for (field, text) in commits {
-            self.checkpoint("Edit Feature");
-            match self.part_mut().set_feature_field(k, field, &text) {
-                Ok(()) => {
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
-                    self.scene_dirty = true;
-                }
-                Err(e) => {
-                    self.history.cancel();
-                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                }
-            }
-        }
+        self.commit_feature_fields(k, commits);
         if ui.button("Edit Feature").clicked() {
             self.edit_feature_dialog(k);
         }
@@ -4742,21 +4672,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         });
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
-        for (field, text) in commits {
-            self.checkpoint("Edit Feature");
-            match self.part_mut().set_feature_field(k, field, &text) {
-                Ok(()) => {
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
-                    self.scene_dirty = true;
-                }
-                Err(e) => {
-                    self.history.cancel();
-                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                }
-            }
-        }
+        self.commit_feature_fields(k, commits);
         if ui.add(super::theme::danger_button("Delete")).clicked() {
             self.delete_feature(k);
         }
@@ -5816,6 +5732,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 {
                     crate::kernel::exact::set_fast_cuts(self.fast_cuts);
                 }
+                ui.checkbox(&mut self.background_ok, "Build in the background")
+                    .on_hover_text(
+                        "OK, Rebuild All and edits build the part on a worker thread: the view stays usable, the status bar shows the progress and Esc cancels; off: the window waits until the part is built (spec 0.19 §3.3)",
+                    );
                 }
                 if tab == "Prompts" {
                 ui.label(RichText::new("Prompted Interaction").strong());

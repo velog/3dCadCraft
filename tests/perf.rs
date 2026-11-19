@@ -6355,3 +6355,43 @@ fn bolted_connection_within_budget() {
     assert!(within(ok, 200.0), "OK {ok:.1} ms > 200 ms");
     assert!(within(cut, 200.0), "cut of a plate {cut:.1} ms > 200 ms");
 }
+
+/// Spec 0.19 §3.3: a background OK costs the main thread only the copy of the part and its
+/// signature, and each frame while the worker builds only a look at the progress. The case is
+/// the 32 × 32 hole plate: built once, then rebuilt from scratch on a worker while this thread
+/// measures what a frame does.
+#[test]
+fn background_ok_leaves_the_frame_free() {
+    use cadcraft3d::part::progress;
+    let mut part = box_with_circle([170.0, 170.0, 5.0], 5.0, 5.0, 1.5, true, 5.0);
+    part.add_pattern(pattern_grid(32, 32, 5.0)).unwrap();
+    // What the OK does on the main thread: copy the part, sign it (features, sketches).
+    let start_ms = median_ms(5, || {
+        let copy = part.clone();
+        let sig = serde_json::to_vec(&copy.features).unwrap().len()
+            + serde_json::to_vec(&copy.sketches).unwrap().len();
+        assert!(sig > 0);
+    });
+    println!("background OK start, 1024 holes: {start_ms:.2} ms");
+    // A frame while the worker rebuilds: the progress of the running jobs.
+    let mut trial = part.clone();
+    trial.build_cache = Default::default();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = cancel.clone();
+    let worker = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || {
+            let _r = progress::Reporter::install_cancellable("perf rebuild", flag);
+            let _ = trial.regenerate();
+        })
+        .unwrap();
+    let frame_ms = median_ms(9, || {
+        let jobs = progress::running();
+        assert!(jobs.iter().all(|j| !j.text().is_empty()));
+    });
+    cancel.store(true, Ordering::Relaxed);
+    let _ = worker.join();
+    println!("frame while a background job builds: {frame_ms:.3} ms");
+    assert!(within(start_ms, 5.0), "{start_ms:.2} ms > 5 ms");
+    assert!(within(frame_ms, 1.0), "{frame_ms:.3} ms > 1 ms");
+}
