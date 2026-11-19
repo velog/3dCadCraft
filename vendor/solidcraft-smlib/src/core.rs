@@ -65,116 +65,11 @@ impl Body {
 }
 
 /// The fixes this backend runs with: every one of solidcore's opt-in fixes of upstream SMLib
-/// defects (`UpstreamFixes`, each naming its record and issue), whether or not the C++ fork has it,
-/// unless it appears broken. A test checks none is left off but those in `HELD_BACK`, so moving the
-/// solidcore pin to a rev with a new flag fails until it is added here.
+/// defects (`UpstreamFixes`, each naming its record and issue), as SolidCraft runs them since
+/// solidcore removed its held-back flags (`50b557f`).
 pub(crate) fn fixes() -> UpstreamFixes {
-    let mut f = UpstreamFixes::default();
-    f.fillet_refuse_face_consuming_blends = true;
-    f.fillet_chamfer_cone_on_arc = true;
-    f.keep_operand_uv_trims = true;
-    f.proto_vertex_miss_is_false = true;
-    f.revolve_analytic_profile_faces = true;
-    f.revolve_holed_profile_void = true;
-    f.join_touching_loops = true;
-    f.offset_analytic_mate_edges = true;
-    f.local_operation_refuses_loose_tangent_edges = true;
-    f.transform_scales_each_tolerance = true;
-    f.transform_model_size_from_body_box = true;
-    f.uv_trim_corner_end_points_only = true;
-    f.bspline_trim_preserves_uv_spans = true;
-    f.proto_edge_self_loop_on_vertex_degenerate = true;
-    f.boolean_vertex_by_best_crossing = true;
-    f.classify_edge_interval = true;
-    f.degenerate_proto_edge_in_one_vertex = true;
-    f.new_edge_vertex_tolerance_covers_gap = true;
-    f.point_solve_keeps_triangle_guess = true;
-    f.imprint_extends_edge_to_proto_vertex = true;
-    f.fillet_point_step_per_point = true;
-    f.analytic_copy_keeps_parameterization = true;
-    f.offset_extension_from_base = true;
-    f.fillet_cleanup_keeps_target_faces = true;
-    f.curve_contacts_at_curve_ends = true;
-    f.ssi_tangent_contact_points = true;
-    f.ssi_trace_tangent_curves_once = true;
-    f.found_torus_sphere_keep_tested_nurb = true;
-    f.linear_sweep_caps_one_face = true;
-    f.local_operation_box_holds_new_surfaces = true;
-    f.shell_edges_on_analytics_exact = true;
-    f.ssi_pole_point_keeps_its_tangent = true;
-    f.fillet_patch_keeps_fillet_edges = true;
-    f.fillet_refuse_overlapping_bands = true;
-    f.ssi_tangent_curve_tracer = true;
-    f.local_operation_step_walls = true;
-    f.fillet_knife_edge_rounds = true;
-    f.revolution_round_offset_collapses = true;
-    f.proto_edge_splits_at_captured_vertices = true;
-    f.imprint_reuses_coincident_face_edge = true;
-    f.linear_sweep_arc_is_cylinder = true;
-    f.fillet_trace_reaches_rails = true;
-    f.box_face_failures_propagate = true;
-    f.fillet_removal_takes_ring_fillets = true;
-    // The fork's commits that reached `SMLIB_REV` at eaa998a (tangency-labs/smlib#68, #69, #70).
-    f.curve_loop_normal_from_area = true;
-    // The fork's commits in `SMLIB_REV` 2fc375f, ported to solidcore since.
-    f.offset_extension_as_itself = true;
-    f.fillet_mitre_concave_face_corners = true;
-    f.good_drop_result_distances_in_order = true;
-    f.face_tight_box_searches_trim = true;
-    f.ssi_low_angle_start_on_probation = true;
-    f.fillet_variable_span_follows_fillet = true;
-    f.simple_coincidence_crossing_is_point = true;
-    f.fillet_trim_status = true;
-    f.brep_edit_statuses_pass_on = true;
-    f.sweep_statuses_pass_on = true;
-    f.ssi_proto_topology_statuses_pass_on = true;
-    f.analytic_inversion_answers_apart = true;
-    f.fillet_statuses_pass_on = true;
-    f.fillet_rail_trim_at_near_knot = true;
-    f.offset_keep_cavity_regions = true;
-    f.corner_patch_face_side_twist = true;
-    f.boolean_union_refuses_solid_leak = true;
-    f.validation_does_not_make_uv_trims = true;
-    f.proto_edge_split_upper_keeps_the_old_max = true;
-    f.fillet_exact_round_classes = true;
-    f.offset_edges_keep_source_tolerance = true;
-    f.surface_continuity_checks_last_v_knot = true;
-    f.offset_open_edge_second_trim_point = true;
-    f.ssi_split_curves_at_singular_points = true;
-    f.surface_parallel_to_vector_checks = true;
-    f.geometric_g2_continuity = true;
-    f.degen_param_tiebreak_uses_actual_param = true;
-    f.local_surface_intersect_guards_max_boundary_retry = true;
-    f.edgeuse_convexity_propagates_step_off_failure = true;
-    f.cone_create_canonical_preserves_inside_out_and_checks_height = true;
-    f.point_class_gap_3d_propagates_no_drop_error = true;
-    f.cone_iso_circle_at_axial_height = true;
-    f.fillet_overflow_trim_at_creases = true;
-    // Held back: see `HELD_BACK`.
-    f.fillet_refuse_rounds_breaking_through = false;
-    f.cone_unbounded_parameterized_as_nurb = true;
-    f.fillet_round_as_definition = true;
-    f.fillet_overflow_crease_along_edge = true;
-    f.keep_exact_pcurves = true;
-    f
+    UpstreamFixes::all()
 }
-
-/// The fixes held off, each with the case and the numbers that show it broken: a volume or topology
-/// wrong against the analytic value, a check failure, a crash, sound geometry refused that builds
-/// without the flag, or a large slowdown. Differing from the C++ kernel is no such evidence: a fix
-/// the fork doesn't have stays on, and where solidcore builds what SMLib refuses, a result right
-/// against its closed form is a win.
-///
-/// `fillet_refuse_rounds_breaking_through` (WR-707, solidcore#2311): sound geometry refused. With it
-/// on, 11 rig cases that pass with it off, each graded against its closed form or invariants, are
-/// refused as breaking through the part (190-fillet-disc-rim-past-its-2mm-wall fails status 1001
-/// instead): every-hole-top-rim-r12-past-plate-bottom, 1080-chamfer-runs-into-openings-cut-by-them
-/// (3350, its closed form), 1080-fillet-notched-block-top-outline-r8,
-/// 324-fillet-over-hole-cut-by-overlong-cylinder, 324-fillet-over-hole-overlap,
-/// 5158-fillet-adjacent-plate-edges-as-thick-as-plate and the sloped and equal-slope basin rims of
-/// #1080 and #5835. A fix under the same flag is in progress on solidcore.
-#[cfg(test)]
-const HELD_BACK: &[&str] = &["fillet_refuse_rounds_breaking_through"];
 
 /// How far apart two kernels' procedural blend serials start. A body keeps the serials of the
 /// kernel that made it and may be used on any other, whose memo of solved stations is keyed by
@@ -457,14 +352,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_upstream_fix_is_on_unless_shown_broken() {
-        let f = fixes();
-        let flags: Vec<(&str, bool)> = f.flags().collect();
-        let off: Vec<&str> = flags.iter().filter(|(name, on)| !on && !HELD_BACK.contains(name)).map(|(name, _)| *name).collect();
+    fn every_upstream_fix_is_on() {
+        let off: Vec<&str> = fixes().flags().filter(|(_, on)| !on).map(|(name, _)| name).collect();
         assert!(off.is_empty(), "UpstreamFixes flags are off: {off:?}");
-        for name in HELD_BACK {
-            assert!(flags.contains(&(*name, false)), "{name} is on or gone: drop it from HELD_BACK");
-        }
     }
 
     #[test]
