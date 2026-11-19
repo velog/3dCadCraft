@@ -794,8 +794,9 @@ pub struct Layout {
 }
 
 /// The seats of a stack: `head` and `nut` are the thicknesses of each
-/// fastener along the axis in stack order (the bolt's own entry is ignored;
-/// `sink` is how far its seat sinks below the next one, a countersunk head).
+/// fastener along the axis in stack order (the bolt's own entry is ignored:
+/// a bolt's origin is its seat, the top of a countersunk head, flush with
+/// the face).
 /// `grip` is the stack of plates (Through All) or the plates above the blind
 /// one; `last` that one's thickness; `major` the thread's diameter.
 pub fn layout(
@@ -804,7 +805,6 @@ pub fn layout(
     last: Real,
     major: Real,
     head: &[Real],
-    sink: Real,
     nut: &[Real],
 ) -> Layout {
     // Head side: the last row sits on the plate, the ones above on it.
@@ -815,7 +815,7 @@ pub fn layout(
         h += head[k];
     }
     if let Some(b) = heights.first_mut() {
-        *b = h - sink;
+        *b = h;
     }
     let mut depths = Vec::with_capacity(nut.len());
     let mut t = 0.0;
@@ -823,7 +823,7 @@ pub fn layout(
         depths.push(t);
         t += x;
     }
-    let under_head = h - sink + grip;
+    let under_head = h + grip;
     match kind {
         // Some thread past the nut (as Smart Drop's stack).
         BoltKind::ThroughAll => Layout {
@@ -965,6 +965,62 @@ pub fn clearance_spec(diameter: Real) -> crate::part::hole::HoleSpec {
     s.hole_type = crate::part::hole::HoleType::Clearance;
     s.termination = crate::part::hole::Termination::ThroughAll;
     s
+}
+
+/// The countersunk seat of a countersunk screw (spec 6.2 §3.1, owner
+/// 2026-11-16: seats follow the standard, not the library model): the
+/// countersinks table's diameter and angle for the screw's standard
+/// (`family`: `ISO 10642`, `DIN 7991`, `ASME B18.3 Flat`) and `size`; a
+/// screw the table does not know gets its head diameter `head` at the
+/// standard's angle (90 degrees metric, 82 degrees inch). The hole is the
+/// connection's own clearance hole `clearance`.
+pub fn countersunk_spec(
+    tables: &Standards,
+    family: &str,
+    size: &str,
+    clearance: Real,
+    head: Real,
+) -> crate::part::hole::HoleSpec {
+    let mut s = clearance_spec(clearance);
+    s.seat = crate::part::hole::SeatType::Countersink;
+    let row = countersink_row(tables, family, size);
+    let inch = !size.starts_with('M');
+    s.csink_diameter = row.map_or(head, |r| r.diameter);
+    let degrees = row.map_or(if inch { 82.0 } else { 90.0 }, |r| r.value);
+    // Exactly 90 degrees is cut as a chamfer of the rim (much faster).
+    s.csink_angle = if (degrees - 90.0).abs() < 1e-9 {
+        std::f64::consts::FRAC_PI_2
+    } else {
+        degrees.to_radians()
+    };
+    s
+}
+
+/// The countersinks table's row for a screw of `family` (its designation,
+/// `DIN 7991` or `ASME B18.3 Flat`) and `size` (`M8`, `1/4-20`, `No.10-24`).
+pub fn countersink_row<'a>(
+    tables: &'a Standards,
+    family: &str,
+    size: &str,
+) -> Option<&'a crate::part::standards::SeatRow> {
+    // `ISO 10642`, `ASME B18.3`: the designation without its suffix.
+    let code: String = family
+        .split_whitespace()
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Inch sizes are listed by their diameter (`1/4`, `#10`).
+    let base = size.split('-').next().unwrap_or(size);
+    let base = base.replace("No.", "#");
+    tables
+        .countersinks
+        .iter()
+        .find(|r| r.fastener.ends_with(&code) && (r.size == size || r.size == base))
+}
+
+/// How deep the countersink of `s` reaches into the plate.
+pub fn countersink_depth(s: &crate::part::hole::HoleSpec) -> Real {
+    (s.csink_diameter - s.diameter) / 2.0 / (s.csink_angle / 2.0).tan()
 }
 
 /// A tapped hole of size `size` of thread type `thread`, `depth` deep (a
@@ -1825,15 +1881,7 @@ mod tests {
         let (washer, wk) = member(&mut p, "ISO 7089", "8");
         let (nut, nk) = member(&mut p, "ISO 4032", "M8");
         let (wt, nt) = (thick(wk), thick(nk));
-        let lay = layout(
-            BoltKind::ThroughAll,
-            20.0,
-            0.0,
-            8.0,
-            &[0.0, wt],
-            0.0,
-            &[wt, nt],
-        );
+        let lay = layout(BoltKind::ThroughAll, 20.0, 0.0, 8.0, &[0.0, wt], &[wt, nt]);
         let lengths = [16.0, 20.0, 25.0, 30.0, 35.0, 40.0, 50.0];
         let k = choose_length(&lengths, lay.min_length, lay.max_length).unwrap();
         assert_eq!(
@@ -2034,6 +2082,76 @@ mod tests {
         assert!(plate.holes().is_empty());
     }
 
+    #[test]
+    fn a_countersunk_seat_follows_the_standard() {
+        use crate::part::hole::SeatType;
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let t = Standards::global();
+        // ISO 10642 M8: the table's countersink, 17.92 at 90 degrees.
+        let iso = countersunk_spec(t, "ISO 10642", "M8", 9.0, 17.92);
+        assert_eq!(iso.seat, SeatType::Countersink);
+        assert!((iso.csink_angle - FRAC_PI_2).abs() < 1e-12);
+        assert!((iso.csink_diameter - 17.92).abs() < 1e-12);
+        assert!((countersink_depth(&iso) - 4.46).abs() < 1e-9);
+        // DIN 7991 M8: the head model's cone is 84.5 degrees (dk 16, k 4.4),
+        // the seat is the standard's 90 degrees and 16 wide: 3.5 deep.
+        let din = countersunk_spec(t, "DIN 7991", "M8", 9.0, 16.0);
+        assert!((din.csink_angle - FRAC_PI_2).abs() < 1e-12);
+        assert!((din.csink_diameter - 16.0).abs() < 1e-12);
+        assert!((countersink_depth(&din) - 3.5).abs() < 1e-9);
+        // Every DIN 7991 size the library has is in the table at 90 degrees.
+        for (size, dk) in [
+            ("M3", 6.0),
+            ("M4", 8.0),
+            ("M5", 10.0),
+            ("M6", 12.0),
+            ("M8", 16.0),
+            ("M10", 20.0),
+            ("M12", 24.0),
+            ("M16", 30.0),
+        ] {
+            let r = countersink_row(t, "DIN 7991", size).unwrap_or_else(|| panic!("{size}"));
+            assert_eq!((r.diameter, r.value), (dk, 90.0), "{size}");
+        }
+        // ASME B18.3 flat 1/4-20: 82 degrees, 13.487 wide.
+        let inch = countersunk_spec(t, "ASME B18.3 Flat", "1/4-20", 7.137, 13.0);
+        assert!((inch.csink_angle - 82f64.to_radians()).abs() < 1e-12);
+        assert!((inch.csink_diameter - 13.487).abs() < 1e-12);
+        // A screw the table does not know: its head at the standard's angle.
+        let other = countersunk_spec(t, "ISO 2009", "M5", 5.5, 9.3);
+        assert!((other.csink_angle - FRAC_PI_2).abs() < 1e-12);
+        assert!((other.csink_diameter - 9.3).abs() < 1e-12);
+
+        // The screw's origin is the top of its head: flush with the face,
+        // and its whole length counts from there.
+        let lay = layout(BoltKind::ThroughAll, 50.0, 0.0, 8.0, &[0.0], &[6.8]);
+        assert_eq!(lay.head[0], 0.0);
+        assert!((lay.min_length - (50.0 + 6.8 + 2.4)).abs() < 1e-9);
+
+        let vol = |p: &PartDocument| -> Real {
+            p.exact_bodies
+                .0
+                .iter()
+                .filter_map(|s| s.volume_at(1e-3))
+                .sum()
+        };
+        let mut plate = PartDocument::with_box("Box1", [40.0, 40.0, 10.0]).unwrap();
+        let v0 = vol(&plate);
+        let d = Drill {
+            component: DocRef::local(DocumentId::new_random()),
+            face: "Box1:Top".into(),
+            centers: vec![Point3::new(20.0, 20.0, 10.0)],
+            spec: iso,
+        };
+        drill(&mut plate, &d).unwrap();
+        // The bore, and the cone's frustum beyond it.
+        let (big, r, h) = (8.96, 4.5, 4.46);
+        let want =
+            PI * r * r * 10.0 + PI * h / 3.0 * (big * big + big * r + r * r) - PI * r * r * h;
+        let cut = v0 - vol(&plate);
+        assert!((cut - want).abs() < 0.01 * want, "{cut} vs {want}");
+    }
+
     fn spec_radius(s: &crate::part::hole::HoleSpec) -> Real {
         s.diameter / 2.0
     }
@@ -2048,15 +2166,7 @@ mod tests {
         let h = hole_sizes(Standards::global(), ISO_METRIC, "M8", FastenerFit::Normal).unwrap();
         let (bolt, _) = member(&mut p, "ISO 4017", "M8 x 30");
         let (nut, nk) = member(&mut p, "ISO 4032", "M8");
-        let lay = layout(
-            BoltKind::ThroughAll,
-            20.0,
-            0.0,
-            8.0,
-            &[0.0],
-            0.0,
-            &[thick(nk)],
-        );
+        let lay = layout(BoltKind::ThroughAll, 20.0, 0.0, 8.0, &[0.0], &[thick(nk)]);
         let start = face(upper, "Box1:Top", [30.0, 40.0, 10.0]);
         let end = face(lower, "Box1:Bottom", [30.0, 40.0, 0.0]);
         let at = |x: Real| Axis {
@@ -2150,7 +2260,7 @@ mod tests {
         let h = hole_sizes(Standards::global(), ISO_METRIC, "M8", FastenerFit::Normal).unwrap();
         let (washer, wk) = member(&mut project, "ISO 7089", "8");
         let wt = thick(wk);
-        let lay = layout(BoltKind::Blind, 10.0, 40.0, 8.0, &[0.0, wt], 0.0, &[]);
+        let lay = layout(BoltKind::Blind, 10.0, 40.0, 8.0, &[0.0, wt], &[]);
         assert!((lay.min_length - 19.6).abs() < 1e-9);
         assert_eq!(lay.max_length, Some(51.6));
         let lengths = [16.0, 20.0, 25.0, 60.0, 80.0];

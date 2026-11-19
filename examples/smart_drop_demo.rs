@@ -1,6 +1,6 @@
 //! Writes an assembly for trying Smart Drop (spec 6.3 §3.5): a plate with four
-//! clearance holes of one feature, two tapped holes and a counterbore, and a
-//! shaft beside it. `cargo run --example smart_drop_demo -- out.3dcadcraft`
+//! clearance holes of one feature, two tapped holes, a housing, an M8
+//! countersink and a bore, and a shaft beside it. `cargo run --example smart_drop_demo -- out.3dcadcraft`
 
 use cadcraft3d::components::samples::{Detail, Kind, Sample};
 use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData, Project};
@@ -55,6 +55,15 @@ fn main() -> Result<(), String> {
     let mut housing = HoleSpec::simple(47.0, 12.0);
     housing.termination = cadcraft3d::part::hole::Termination::ThroughAll;
     holes(&mut plate, housing, &[(90.0, 25.0)])?;
+
+    // An ISO 10642 M8 countersink (Ø17.92 at 90°): its top rim sizes by
+    // the Ø9 bore, so Smart Drop offers an M8 there.
+    let mut sunk = HoleSpec::simple(9.0, 12.0);
+    sunk.termination = cadcraft3d::part::hole::Termination::ThroughAll;
+    sunk.seat = cadcraft3d::part::hole::SeatType::Countersink;
+    sunk.csink_diameter = 17.92;
+    sunk.csink_angle = std::f64::consts::FRAC_PI_2;
+    holes(&mut plate, sunk, &[(30.0, 40.0)])?;
 
     // A hole a 20 mm shaft fits, for a part with its own connection.
     let mut bore = HoleSpec::simple(20.0, 12.0);

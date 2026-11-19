@@ -69,6 +69,8 @@ struct Item {
 /// A hole of a Hole feature on an axis.
 #[derive(Clone, Default)]
 struct HoleData {
+    /// How the hole was made (its seat sizes Smart Drop by its bore).
+    spec: Option<crate::part::hole::HoleSpec>,
     thread: Option<Real>,
     blind: bool,
     feature: Option<String>,
@@ -292,7 +294,11 @@ impl CadCraftApp {
                     radius: r,
                     target: Target {
                         hole: wall.as_ref().is_none_or(|w| w.internal),
-                        diameter: 2.0 * r,
+                        // A seat's rim stands for its hole (spec 6.3).
+                        diameter: h
+                            .spec
+                            .as_ref()
+                            .map_or(2.0 * r, |s| fit::sizing_diameter(2.0 * r, s)),
                         thread: h.thread,
                         depth: wall.as_ref().map_or(0.0, |w| w.length),
                         blind: h.blind,
@@ -399,6 +405,7 @@ impl CadCraftApp {
                     h.direction.cross(&dir).norm() < 1e-6 && h.direction.cross(&w).norm() < 1e-3
                 })
                 .map(|(k, h)| HoleData {
+                    spec: Some(h.spec.clone()),
                     thread: h.spec.thread.as_ref().map(|t| t.major),
                     blind: matches!(h.spec.termination, Termination::Distance),
                     feature: Some(h.feature.clone()),

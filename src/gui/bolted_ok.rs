@@ -97,17 +97,15 @@ fn over_member(c: &Catalog, f: usize, major: Real) -> Option<usize> {
     fit::choose(&c.fits(f), &t)
 }
 
-/// A bolt family's members of diameter `major`: (member, length, sink).
-fn bolt_members(c: &Catalog, f: usize, major: Real) -> Vec<(usize, Real, Real)> {
+/// A bolt family's members of diameter `major`: (member, length).
+pub(super) fn bolt_members(c: &Catalog, f: usize, major: Real) -> Vec<(usize, Real)> {
     c.fits(f)
         .iter()
         .enumerate()
         .filter_map(|(k, fit)| match *fit {
             Fit::Into {
-                d,
-                length: Some(l),
-                sink,
-            } if (d - major).abs() < 0.01 => Some((k, l, sink)),
+                d, length: Some(l), ..
+            } if (d - major).abs() < 0.01 => Some((k, l)),
             _ => None,
         })
         .collect()
@@ -455,8 +453,7 @@ impl CadCraftApp {
             .collect();
         let nut_t: Vec<Real> = over.iter().filter(|o| o.0).map(|o| o.3).collect();
         let bolts = bolt_members(&catalog, bolt.family, h.major);
-        let sink = bolts.first().map_or(0.0, |b| b.2);
-        let lay = bolted::layout(kind, axis.length, last_t, h.major, &head_t, sink, &nut_t);
+        let lay = bolted::layout(kind, axis.length, last_t, h.major, &head_t, &nut_t);
         let lengths: Vec<Real> = bolts.iter().map(|b| b.1).collect();
         let mut fitting: Vec<Real> = lengths
             .iter()
@@ -490,7 +487,7 @@ impl CadCraftApp {
                 ),
             });
         };
-        let (bolt_member, bolt_length, _) = bolts[k];
+        let (bolt_member, bolt_length) = bolts[k];
         let file = catalog.member_file_at(bolt.family, bolt_member, Detail::Standard)?;
         let (doc, _) = self.bolt_member_doc(&file)?;
         let mut pieces = vec![Piece {
@@ -532,6 +529,8 @@ impl CadCraftApp {
             })
             .collect();
         let tapped = bolted::tapped_spec(Standards::global(), &thread, &size, depth);
+        // A countersunk head alone on the head side sinks into the first plate.
+        let seated = panel::seat_spec(d);
         let mut drills: Vec<bolted::Drill> = Vec::new();
         let mut add = |r: &panel::PlateRow, tap: bool| -> Result<(), String> {
             let face = r
@@ -542,6 +541,15 @@ impl CadCraftApp {
                 tapped
                     .clone()
                     .ok_or_else(|| format!("no tapped hole for {size}"))?
+            } else if let Some(s) = seated.as_ref().filter(|_| r.from <= ON) {
+                let depth = bolted::countersink_depth(s);
+                if depth >= r.thickness {
+                    return Err(format!(
+                        "{}: {:.2} mm is too thin for the countersunk seat ({depth:.2} mm deep)",
+                        r.name, r.thickness
+                    ));
+                }
+                s.clone()
             } else {
                 bolted::clearance_spec(h.clearance)
             };
@@ -733,10 +741,15 @@ impl CadCraftApp {
         if let Some(cur) = self.assembly_mut() {
             *cur = a;
         }
+        self.cons.last = s;
         if !plan.record.free_turn {
             self.bolt_lock_turns(&placed);
+            // The locked turns take the last degree of freedom: solve once
+            // more, or Properties read "1 of 6" until the next solve.
+            if let Some(a) = self.assembly().cloned() {
+                self.cons.last = self.solve_copy(&a, None);
+            }
         }
-        self.cons.last = s;
         self.asm.sel = placed;
         self.context_follow();
         Ok(format!(
@@ -870,6 +883,7 @@ impl CadCraftApp {
             } => {
                 d.set_num(0, "Count", f64::from(count));
                 d.set_num(0, "Radius", radius);
+                d.bolt.keep_radius = true;
                 d.set_num(0, "Angle", angle.to_degrees());
                 d.set_num(0, "Span", span.to_degrees());
             }

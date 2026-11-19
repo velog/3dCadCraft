@@ -8,6 +8,7 @@ use super::samples::Detail;
 use super::{samples, write_part};
 use crate::document::iprops::IProperties;
 use crate::document::{DocumentData, Project};
+use crate::kernel::Real;
 use crate::part::PartDocument;
 
 /// Raised when a builder's shapes change without their table's numbers changing: the members written
@@ -307,6 +308,20 @@ impl Catalog {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// The head of a countersunk screw: its diameter and height. Only for
+    /// members whose origin is the top of the head, as a seat cut under the
+    /// origin needs (a countersunk rivet's origin is under its head).
+    pub fn countersunk_head(&self, family: usize, member: usize) -> Option<(Real, Real)> {
+        let m = self.families.get(family)?.members.get(member)?;
+        match &m.source {
+            Source::Sample(s) => match s.kind {
+                super::samples::Kind::Countersunk(_, _, dk, k, _) => Some((dk, k)),
+                _ => None,
+            },
+            Source::Row(_) => None,
+        }
     }
 
     /// The family and member a built-in member's file belongs to, at any

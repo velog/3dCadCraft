@@ -73,7 +73,10 @@ impl Fit {
             | Kind::SquareHead(d, l, ..) => into(d, l),
             // Its shoulder fills the hole, the thread runs on below it.
             Kind::Shoulder(_, l, ds, ..) => into(ds, l),
-            Kind::Countersunk(d, l, _, k, _) | Kind::ConeRivet(d, l, _, k) => Fit::Into {
+            // Its origin is the top of the head, which ends flush by itself.
+            Kind::Countersunk(d, l, ..) => into(d, l),
+            // Its origin is under the head.
+            Kind::ConeRivet(d, l, _, k) => Fit::Into {
                 d,
                 length: Some(l),
                 sink: k,
@@ -144,6 +147,25 @@ pub struct Target {
     pub depth: Real,
     /// The hole ends inside the material.
     pub blind: bool,
+}
+
+/// The diameter Smart Drop sizes a fastener by when the picked circle is
+/// `picked` wide on a hole made as `spec`: the rim of its countersink,
+/// counterbore or spotface stands for the hole itself (its bore), so a
+/// screw is chosen for the hole, not for the seat (an M8 countersink's top
+/// is 17.92 wide: that once chose an M16).
+pub fn sizing_diameter(picked: Real, spec: &crate::part::hole::HoleSpec) -> Real {
+    use crate::part::hole::SeatType;
+    let seat = match spec.seat {
+        SeatType::Countersink => spec.csink_diameter,
+        SeatType::Counterbore | SeatType::Spotface => spec.seat_diameter,
+        SeatType::None => return picked,
+    };
+    if (picked - seat).abs() <= SAME.max(seat * 1e-3) {
+        2.0 * spec.bore_radius()
+    } else {
+        picked
+    }
 }
 
 /// A clearance hole is at most this much wider than its screw (a coarse
@@ -466,4 +488,27 @@ pub fn seat_transform(center: Point3, normal: Vector3, sink: Real, flip: bool) -
         nalgebra::Translation3::new(at.x, at.y, at.z),
         nalgebra::UnitQuaternion::from_rotation_matrix(&turn),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A countersink's or a counterbore's top rim sizes by the bore under
+    /// it; the bore's own rim and a plain hole by themselves.
+    #[test]
+    fn a_seat_rim_sizes_by_its_bore() {
+        use crate::part::hole::{HoleSpec, SeatType};
+        let mut s = HoleSpec::simple(9.0, 10.0);
+        assert_eq!(sizing_diameter(9.0, &s), 9.0);
+        s.seat = SeatType::Countersink;
+        s.csink_diameter = 17.92;
+        assert_eq!(sizing_diameter(17.92, &s), 9.0);
+        assert_eq!(sizing_diameter(9.0, &s), 9.0);
+        s.seat = SeatType::Counterbore;
+        s.seat_diameter = 15.0;
+        assert_eq!(sizing_diameter(15.0, &s), 9.0);
+        // Some other circle on the part keeps its own size.
+        assert_eq!(sizing_diameter(12.0, &s), 12.0);
+    }
 }
