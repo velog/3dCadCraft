@@ -998,8 +998,10 @@ impl CadCraftApp {
             _ => frame::MiterOffset::Default,
         };
         let gap = d.num(0, "Distance").unwrap_or(0.0);
+        let full = d.index(0, "Miter Type") == 0;
         let mut trial = self.frame_trial(d);
-        match frame::add_miter(&mut trial, &linked, self.frame_doc(), &pairs, gap, offset) {
+        let doc = self.frame_doc();
+        match frame::add_miter_typed(&mut trial, &linked, doc, &pairs, gap, offset, full) {
             Ok(_) => {
                 self.history.break_coalescing();
                 self.checkpoint("Miter");

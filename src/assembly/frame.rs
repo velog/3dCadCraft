@@ -308,8 +308,11 @@ pub enum MiterOffset {
 /// An end treatment between members (by occurrence id).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Treatment {
-    /// Full Miter Cut where `a` and `b` meet: both cut on the bisector
-    /// plane, `gap` between the cut faces.
+    /// A mitre where `a` and `b` meet, `gap` between the cut faces: Full
+    /// Miter Cut (`full`) cuts both on the plane through the meeting points
+    /// of their outer and of their inner edges (edge to edge, also for
+    /// sections of different sizes); Bisect Miter Cut on the bisector plane
+    /// of their axes (every mitre saved before 2026-11-19).
     Miter {
         /// First member.
         a: u32,
@@ -321,6 +324,10 @@ pub enum Treatment {
         /// Which member gives the gap.
         #[serde(default)]
         offset: MiterOffset,
+        /// Full Miter Cut (edge to edge); off = Bisect Miter Cut. Older
+        /// builds read it as a bisect cut.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        full: bool,
     },
     /// Corner Joint: `a` (the first pick) runs on to the far side of `b`;
     /// `b` stops at `a`'s near side. `offsets` pull each end back.
@@ -768,6 +775,7 @@ impl Corners {
                 b: second,
                 gap: self.gap,
                 offset: MiterOffset::Symmetric,
+                full: true,
             }),
             CornerType::ButtFirst => Some(joint(first, second)),
             CornerType::ButtSecond => Some(joint(second, first)),
@@ -1588,7 +1596,14 @@ fn miter_cuts(
     live: &[Live],
     find: &dyn Fn(u32) -> Result<usize, String>,
 ) -> Result<[Cut; 2], String> {
-    let Treatment::Miter { a, b, gap, offset } = t else {
+    let Treatment::Miter {
+        a,
+        b,
+        gap,
+        offset,
+        full,
+    } = t
+    else {
         return Err("not a mitre".into());
     };
     let (ia, ib) = (find(*a)?, find(*b)?);
@@ -1604,6 +1619,12 @@ fn miter_cuts(
     let n = (da - db)
         .try_normalize(1e-9)
         .ok_or("the members run the same way")?;
+    // Full: the plane through the meeting points of the outer edges and of
+    // the inner edges (it is the bisector when both bands lie alike).
+    let (c, n) = match full.then(|| edge_to_edge(ma, mb, c, da, db)).flatten() {
+        Some((q, m)) => (q, if m.dot(&n) < 0.0 { -m } else { m }),
+        None => (c, n),
+    };
     let (ga, gb) = match offset {
         MiterOffset::Default => (*gap, 0.0),
         MiterOffset::Flipped => (0.0, *gap),
@@ -1611,6 +1632,53 @@ fn miter_cuts(
     };
     // A keeps the side n points to, B the other one.
     Ok([(ia, ea, c + n * ga, -n), (ib, eb, c - n * gb, n)])
+}
+
+/// Full Miter Cut's plane (point, unit normal) for members `ma` and `mb`
+/// meeting at `c`, running away from it along `da` / `db`: through the point
+/// where their outer edges meet and the one where their inner edges meet,
+/// square to the plane of the two runs. `None` for runs in one line.
+fn edge_to_edge(
+    ma: &Live,
+    mb: &Live,
+    c: Point3,
+    da: Vector3,
+    db: Vector3,
+) -> Option<(Point3, Vector3)> {
+    let k = da.cross(&db).try_normalize(1e-9)?;
+    let (pa, pb) = (k.cross(&da), k.cross(&db));
+    // Each member's band across its run in the runs' plane: the section's
+    // box corners as placed, measured from the corner point.
+    let band = |m: &Live, p: Vector3| {
+        let (w, h) = m.section.extent();
+        let (lo, hi) = [(-w, -h), (w, -h), (w, h), (-w, h)]
+            .iter()
+            .map(|(x, y)| {
+                let q = m.place.transform_point(&Point3::new(x / 2.0, y / 2.0, 0.0));
+                (q - c).dot(&p)
+            })
+            .fold((Real::MAX, Real::MIN), |(a, b), v| (a.min(v), b.max(v)));
+        (lo, hi)
+    };
+    let (a0, a1) = band(ma, pa);
+    let (b0, b1) = band(mb, pb);
+    // The point of line c + sa·pa + t·da on line c + sb·pb + u·db (2D in
+    // the plane, coordinates along da and pa).
+    let meet = |sa: Real, sb: Real| -> Option<Point3> {
+        let (x, y) = (db.dot(&da), db.dot(&pa));
+        let (px, py) = (pb.dot(&da), pb.dot(&pa));
+        // t·(1, 0) + sa·(0, 1) = sb·(px, py) + u·(x, y)
+        // => t − u·x = sb·px,  −u·y = sb·py − sa
+        if y.abs() < 1e-9 {
+            return None;
+        }
+        let u = (sa - sb * py) / y;
+        Some(c + pb * sb + db * u)
+    };
+    let outer = meet(a0, b1)?;
+    let inner = meet(a1, b0)?;
+    let n = (inner - outer).cross(&k).try_normalize(1e-9)?;
+    Some((nalgebra::center(&outer, &inner), n))
 }
 
 /// The shape a live member's cuts give it (part coordinates), or why not.
@@ -2113,6 +2181,20 @@ pub fn add_miter(
     gap: Real,
     offset: MiterOffset,
 ) -> Result<Solved, String> {
+    add_miter_typed(project, linked, asm, pairs, gap, offset, true)
+}
+
+/// [`add_miter`] of either type: `full` = Full Miter Cut (edge to edge),
+/// else Bisect Miter Cut.
+pub fn add_miter_typed(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    pairs: &[(u32, u32)],
+    gap: Real,
+    offset: MiterOffset,
+    full: bool,
+) -> Result<Solved, String> {
     if pairs.is_empty() {
         return Err("select two frame members that meet".into());
     }
@@ -2141,6 +2223,7 @@ pub fn add_miter(
                 b: y,
                 gap,
                 offset,
+                full,
             });
         }
         let s = solve(project, linked, asm)?;
@@ -4529,6 +4612,43 @@ mod tests {
         assert!(a.frames[0].treatments.is_empty());
         let m = part(&p, a, occs[0]);
         assert!((outer_length(&m).unwrap() - 400.0).abs() < 1e-6);
+    }
+
+    /// Full Miter Cut of flats of different widths (40 and 60 across, in the
+    /// corner's plane) meets edge to edge: each runs on by half the other's
+    /// width (430 and 320 outside); Bisect Miter Cut cuts on the axes'
+    /// bisector (420 and 330).
+    #[test]
+    fn full_and_bisect_miters_of_different_widths() {
+        for (full, want) in [(true, [430.0, 320.0]), (false, [420.0, 330.0])] {
+            let (mut p, aid, _) = project();
+            let lk = Linked::new();
+            let lib = Library::builtin();
+            let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+            let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+            let mut o = opts();
+            o.family = "Flat bar (EN 10058)".into();
+            o.size = "40x5".into();
+            let (_, a) = insert(&mut p, &lk, aid, &[x], &o, lib, None).unwrap();
+            o.size = "60x10".into();
+            let (_, b) = insert(&mut p, &lk, aid, &[y], &o, lib, None).unwrap();
+            let s = add_miter_typed(
+                &mut p,
+                &lk,
+                aid,
+                &[(a[0], b[0])],
+                0.0,
+                MiterOffset::Default,
+                full,
+            )
+            .unwrap();
+            assert!(s.sick.is_empty(), "{:?}", s.sick);
+            let d = asm(&p, aid);
+            for (occ, len) in [(a[0], want[0]), (b[0], want[1])] {
+                let outer = outer_length(&part(&p, d, occ)).unwrap();
+                assert!((outer - len).abs() < 1e-3, "full {full}: {outer} vs {len}");
+            }
+        }
     }
 
     /// Corner Joint of two flats at the top front corner: the first runs on

@@ -1780,11 +1780,6 @@ impl Planned {
                 Some("Bodies come in at the file's origin (spec 7.7a 3.13)")
             }
             (
-                Planned::Asm(super::asm_planned::AsmPlanned::Miter),
-                "Miter Type",
-                Some("Bisect Miter Cut"),
-            ) => Some("Comes with stage F2 (spec 6.1 Miter: to confirm against the help)"),
-            (
                 Planned::Asm(super::asm_planned::AsmPlanned::TrimExtend),
                 "Trim Selected Part",
                 None,

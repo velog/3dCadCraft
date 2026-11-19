@@ -514,10 +514,17 @@ impl CadCraftApp {
         };
         let mut d = PartDialog::new(kind);
         match &t {
-            Treatment::Miter { a, b, gap, offset } => {
+            Treatment::Miter {
+                a,
+                b,
+                gap,
+                offset,
+                full,
+            } => {
                 d.picks
                     .insert("members", vec![label(self, *a), label(self, *b)]);
                 d.set_num(0, "Distance", *gap);
+                d.set_index(0, "Miter Type", if *full { 0 } else { 1 });
                 let k = match offset {
                     frame::MiterOffset::Default => 0,
                     frame::MiterOffset::Flipped => 1,
