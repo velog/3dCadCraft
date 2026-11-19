@@ -2657,7 +2657,7 @@ impl CadCraftApp {
                                                     let icon =
                                                         if r.cut { Icon::Part } else { Icon::Bolt };
                                                     super::panels::tree_icon(ui, icon);
-                                                    ui.selectable_label(false, text)
+                                                    ui.selectable_label(false, text).on_hover_text(&r.text)
                                                 })
                                                 .inner;
                                             resp.context_menu(|ui| {

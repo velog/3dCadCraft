@@ -461,6 +461,11 @@ pub fn apply(lines: &ViewLines, breaks: &[ViewBreak], scale: f64) -> ViewLines {
             .iter()
             .flat_map(|pl| map.clip_polyline(pl))
             .collect(),
+        section_cover: lines
+            .section_cover
+            .iter()
+            .flat_map(|lp| map.clip_loop(lp))
+            .collect(),
         bends,
         breaks: map,
         ..lines.clone()

@@ -39,6 +39,11 @@ pub struct ViewLines {
     /// threads (the other diameter along the thread, three quarters of a
     /// circle seen end-on).
     pub threads: Vec<Vec<[f64; 2]>>,
+    /// Section views of assemblies: where the cutting plane meets the
+    /// components left whole (closed loops). They stand in front of the cut
+    /// faces, so no hatching is drawn there (a bolt in a tapped hole covers
+    /// the thread's material, ISO 6410).
+    pub section_cover: Vec<Vec<[f64; 2]>>,
     /// The view-plane point placed at the view's position when it is not
     /// the extent's middle (section and auxiliary views stay aligned with
     /// their parent; detail views centre on their fence).
@@ -1034,6 +1039,7 @@ pub fn view_lines_simplified(
     // The component of each crossing and of each offset-section chord.
     let mut crossing_owner: Vec<u32> = Vec::new();
     let mut chord_owner: Vec<u32> = Vec::new();
+    let mut cover_cross: Vec<([f64; 2], [f64; 2])> = Vec::new();
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
     // No cut of any kind: mesh by mesh on every core, in the same order (a tenth of a view of
     // 20 000 components).
@@ -1079,6 +1085,11 @@ pub fn view_lines_simplified(
             let [a, b, c] = tri.map(|i| pos[i as usize]);
             let nrm = (b - a).cross(&(c - a));
             let polys: Vec<Vec<Point3>> = if whole {
+                if cut.is_some()
+                    && let (_, Some((x, y))) = clip_polygon(&[a, b, c], &side)
+                {
+                    cover_cross.push((p2(&x), p2(&y)));
+                }
                 vec![vec![a, b, c]]
             } else if let Some((cs, pf)) = &cells {
                 let mut pieces = vec![vec![a, b, c]];
@@ -1528,6 +1539,10 @@ pub fn view_lines_simplified(
             e
         }));
     out.section = closed.into_iter().cloned().collect();
+    out.section_cover = chain_loops(&cover_cross, diag * 1e-7)
+        .into_iter()
+        .filter(|l| l.len() > 3 && l.first() == l.last())
+        .collect();
     if !model.mesh_owner.is_empty() {
         out.section_owner = closed_at.iter().map(|&i| section_owner[i]).collect();
     }
@@ -2824,6 +2839,7 @@ pub fn clip_fence(lines: &ViewLines, fence: &Fence) -> ViewLines {
         },
         section: closed.iter().map(|&i| section[i].clone()).collect(),
         threads: clip(&lines.threads, &[]).0,
+        section_cover: lines.section_cover.clone(),
         min: [c[0] - half[0] * reach, c[1] - half[1] * reach],
         max: [c[0] + half[0] * reach, c[1] + half[1] * reach],
         anchor: None,

@@ -3724,6 +3724,26 @@ fn a_pin_is_cut_in_one_section_and_whole_in_another() {
             .count()
     };
     assert!(pin_lines(&whole) > 0, "the whole pin is drawn");
+    // Where the plane meets the whole pin no hatching is drawn: its section
+    // is a cover over the plate's cut face.
+    assert!(cut.section_cover.is_empty());
+    close(
+        whole.section_cover.iter().map(|lp| area(lp)).sum::<f64>(),
+        200.0,
+        2.0,
+        "the pin's cover",
+    );
+    let square = vec![
+        [0.0, 0.0],
+        [10.0, 0.0],
+        [10.0, 10.0],
+        [0.0, 10.0],
+        [0.0, 0.0],
+    ];
+    let kept = super::render::uncovered(vec![([-5.0, 5.0], [15.0, 5.0])], &[square]);
+    assert_eq!(kept.len(), 2, "the hatch line cut out under the cover");
+    close(kept[0].1[0], 0.0, 1e-9, "stops at the cover");
+    close(kept[1].0[0], 10.0, 1e-9, "starts after it");
     // Standard parts: Always cuts a library pin that the view leaves alone.
     let std_leaves = [
         leaves[0].clone(),
