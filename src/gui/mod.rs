@@ -81,6 +81,7 @@ mod drawing_styles;
 mod drawing_symbols;
 mod drawing_text;
 mod drive;
+mod explain;
 mod feature_cmd;
 mod file_explorer;
 mod files;
@@ -9198,6 +9199,7 @@ impl eframe::App for CadCraftApp {
         self.alias_window(&ctx);
         self.place_window(&ctx);
         self.library_window(&ctx);
+        self.calc_report_window(&ctx);
         self.smart_drop_window(&ctx);
         self.change_size_window(&ctx);
         self.connections_window(&ctx);

@@ -2790,6 +2790,7 @@ impl CadCraftApp {
         self.asm_sketch_overlay(&painter, rect);
         self.bolt_follow();
         self.shaft_follow(&ctx);
+        self.design_follow();
         self.bolt_preview(&painter, rect, pointer.filter(|_| on_view));
         self.pattern_place_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.bolt_view_menu(&ctx);
@@ -3379,6 +3380,20 @@ impl CadCraftApp {
         if ids.len() == 1 && self.shaft_of(ids[0]).is_some() && ui.button("Edit Shaft...").clicked()
         {
             self.shaft_edit(ids[0]);
+            ui.close();
+        }
+        if ids.len() == 1
+            && let Some(label) = self.element_menu_label(ids[0])
+            && ui.button(label).clicked()
+        {
+            self.element_edit(ids[0]);
+            ui.close();
+        }
+        if ids.len() == 1
+            && self.element_of(ids[0]).is_some()
+            && ui.button("Calculation Report...").clicked()
+        {
+            self.element_report(ids[0]);
             ui.close();
         }
         if self.change_size_offered(ids) && ui.button("Change Size...").clicked() {

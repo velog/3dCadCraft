@@ -199,6 +199,34 @@ impl GearPair {
         })
     }
 
+    /// Design Guide *Module* (Inventor's default): the module whose centre
+    /// distance without profile shift is `a` for these teeth,
+    /// m = 2·a·cos β / (z1 + z2) (RP-1152 eq. 1 and 6 solved for m).
+    pub fn module_for(&self, a: f64) -> Result<f64, String> {
+        let z = f64::from(self.teeth[0] + self.teeth[1]);
+        if a.is_nan() || a <= 0.0 || z < 1.0 {
+            return Err(format!("no module gives a centre distance of {a:.3} mm"));
+        }
+        Ok(2.0 * a * self.helix.cos() / z)
+    }
+
+    /// Design Guide *Number of Teeth*: the teeth that come nearest `ratio`
+    /// at centre distance `a` with this module — as many as fit without
+    /// profile shift (z1 + z2 ≤ 2·a·cos β / m); the rest of the distance is
+    /// left to the unit correction (`shift_sum_for`).
+    pub fn teeth_for(&self, a: f64, ratio: f64) -> Result<[u32; 2], String> {
+        let zs = (2.0 * a * self.helix.cos() / self.module).floor();
+        if zs.is_nan() || zs < 10.0 || ratio.is_nan() || ratio <= 0.0 {
+            return Err(format!(
+                "a centre distance of {a:.3} mm holds no pair of module {}",
+                self.module
+            ));
+        }
+        let z1 = (zs / (1.0 + ratio)).round().max(5.0);
+        let z2 = (zs - z1).max(5.0);
+        Ok([z1 as u32, z2 as u32])
+    }
+
     /// The total unit correction x1 + x2 that gives centre distance `a`
     /// (Inventor's design guide *Total Unit Correction*).
     pub fn shift_sum_for(&self, a: f64) -> Result<f64, String> {
@@ -667,6 +695,36 @@ pub fn system_life(parts: &[(f64, f64)], s: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// Design Guide Module and Number of Teeth: a 60 mm centre distance with
+    /// 20 + 40 teeth is module 2; at 61.5 mm and module 2 the teeth nearest 1 : 2
+    /// are 20 + 41 and the unit correction takes the remaining half millimetre.
+    #[test]
+    fn design_guides_module_and_teeth() {
+        let p = GearPair {
+            teeth: [20, 40],
+            ..GearPair::default()
+        };
+        assert!((p.module_for(60.0).unwrap() - 2.0).abs() < 1e-12);
+        let p = GearPair {
+            module: 2.0,
+            ..GearPair::default()
+        };
+        let t = p.teeth_for(61.5, 2.0).unwrap();
+        assert_eq!(t, [20, 41]);
+        let mut q = GearPair { teeth: t, ..p };
+        let sum = q.shift_sum_for(61.5).unwrap();
+        assert!(sum > 0.0, "{sum}");
+        q.shift = [sum / 2.0, sum / 2.0];
+        let g = q.geometry().unwrap();
+        assert!(
+            (g.center_distance - 61.5).abs() < 1e-6,
+            "{}",
+            g.center_distance
+        );
+        assert!(p.teeth_for(5.0, 2.0).is_err());
+    }
+
     use super::*;
 
     fn close(a: f64, b: f64, rel: f64) -> bool {

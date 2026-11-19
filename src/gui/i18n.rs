@@ -64,6 +64,486 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
+    ("The shaft's overall length.", "Общата дължина на вала."),
+    (
+        "The shaft's mass from its sections and the density.",
+        "Масата на вала от сеченията му и плътността.",
+    ),
+    (
+        "The largest bending stress at the surface along the shaft.",
+        "Най-голямото огъващо напрежение по повърхността на вала.",
+    ),
+    (
+        "The largest shear stress from torsion at the surface.",
+        "Най-голямото тангенциално напрежение от усукване по повърхността.",
+    ),
+    (
+        "Bending and torsion combined into one stress (HMH or Tresca); compare it with the yield strength for a static check.",
+        "Огъването и усукването, събрани в едно напрежение (HMH или Треска); сравнява се с границата на провлачане за статична проверка.",
+    ),
+    (
+        "The largest bending moment along the shaft.",
+        "Най-големият огъващ момент по вала.",
+    ),
+    (
+        "The largest shear force along the shaft.",
+        "Най-голямата напречна сила по вала.",
+    ),
+    (
+        "The largest sag of the shaft's axis.",
+        "Най-голямото провисване на оста на вала.",
+    ),
+    (
+        "How far the shaft's ends turn against each other under the torque.",
+        "Колко се завъртат краищата на вала един спрямо друг под въртящия момент.",
+    ),
+    (
+        "The first whirling speed; the shaft's own bending frequency as a speed.",
+        "Първата критична скорост; собствената огъвна честота на вала като обороти.",
+    ),
+    (
+        "The force each support takes (radial in two directions, axial at the Fixed one): the bearing's load.",
+        "Силата, която поема всяка опора (радиална в две посоки, аксиална при Fixed): товарът на лагера.",
+    ),
+    (
+        "The smallest fatigue safety factor along the shaft (eq. 17) and where it is.",
+        "Най-малкият коефициент на сигурност на умора по вала (ур. 17) и къде е.",
+    ),
+    (
+        "The distance of the axes in mesh.",
+        "Разстоянието между осите в зацепване.",
+    ),
+    (
+        "m·z (transverse module for helical gears): the circles that roll on each other without shift.",
+        "m·z (челен модул при косозъби колела): окръжностите, които се търкалят една по друга без корекция.",
+    ),
+    (
+        "The tip circle's diameter (blank diameter).",
+        "Диаметърът на върховата окръжност (диаметър на заготовката).",
+    ),
+    (
+        "The root circle's diameter.",
+        "Диаметърът на петовата окръжност.",
+    ),
+    (
+        "The circle the involute unwinds from; d·cos α.",
+        "Окръжността, от която се развива еволвентата; d·cos α.",
+    ),
+    (
+        "The profile shifts used (given, or from the centre distance).",
+        "Използваните корекции на профила (зададени или от междуосието).",
+    ),
+    (
+        "The pressure angle at the operating centre distance.",
+        "Ъгълът на зацепване при работното междуосие.",
+    ),
+    (
+        "How many tooth pairs are in mesh on average.",
+        "Колко двойки зъби са средно в зацепване.",
+    ),
+    (
+        "Helical gears; how far the face width overlaps a pitch (b·tan β / pt).",
+        "Косозъби колела; колко ширината на венеца надвишава една стъпка (b·tan β / pt).",
+    ),
+    (
+        "The pinion's torque from power and speed.",
+        "Въртящият момент на малкото колело от мощността и скоростта.",
+    ),
+    (
+        "The tooth force along the pitch circle; also the shaft's load.",
+        "Силата на зъба по делителната окръжност: и товар на вала.",
+    ),
+    (
+        "The speed of the pitch circle, with the dynamic factor Kv it gives.",
+        "Скоростта на делителната окръжност и динамичният коефициент Kv, който дава.",
+    ),
+    (
+        "Each gear's tooth-root bending stress with its geometry factor J and the safety against the allowable stress.",
+        "Огъващото напрежение в основата на зъба на всяко колело с геометричния му коефициент J и сигурността спрямо допустимото напрежение.",
+    ),
+    (
+        "The surface (pitting) life of a single tooth at 90 % reliability.",
+        "Дълготрайността на повърхността (питинг) на един зъб при 90 % надеждност.",
+    ),
+    (
+        "Gear 1's surface life (all its teeth) at the reliability chosen.",
+        "Дълготрайността на повърхността на колело 1 (всичките му зъби) при избраната надеждност.",
+    ),
+    (
+        "Why the surface life cannot be computed.",
+        "Защо дълготрайността на повърхността не може да се изчисли.",
+    ),
+    (
+        "The key's width and height and the grooves' depths for the shaft diameter.",
+        "Ширината и височината на шпонката и дълбочините на каналите за диаметъра на вала.",
+    ),
+    (
+        "The torque as a force at the shaft's surface.",
+        "Въртящият момент като сила на повърхността на вала.",
+    ),
+    (
+        "The length the key bears on (l − b with rounded ends).",
+        "Дължината, по която шпонката носи (l − b при заоблени краища).",
+    ),
+    (
+        "The key's shear stress across its width.",
+        "Тангенциалното напрежение на шпонката по ширината ѝ.",
+    ),
+    (
+        "The pressure on the part of the key standing in the hub.",
+        "Налягането върху частта от шпонката в главината.",
+    ),
+    (
+        "The shortest length of the standard series whose pressure is allowed.",
+        "Най-късата дължина от стандартния ред, при която налягането е допустимо.",
+    ),
+    (
+        "The one radial load that gives the bearing the same life as its radial and axial loads together.",
+        "Единственият радиален товар, който дава на лагера същата дълготрайност като радиалния и аксиалния товар заедно.",
+    ),
+    (
+        "The life 90 % of bearings reach, in million revolutions and hours.",
+        "Дълготрайността, която достигат 90 % от лагерите, в милиони обороти и часове.",
+    ),
+    (
+        "The load rating needed for the required life and reliability.",
+        "Товароносимостта, нужна за изискваните дълготрайност и надеждност.",
+    ),
+    (
+        "The life at the required reliability with the adjustment factors.",
+        "Дълготрайността при изискваната надеждност с коригиращите коефициенти.",
+    ),
+    (
+        "The force per millimetre of deflection.",
+        "Силата на милиметър деформация.",
+    ),
+    (
+        "How far the working load compresses the spring.",
+        "Колко работният товар свива пружината.",
+    ),
+    (
+        "The length under the working load.",
+        "Дължината под работния товар.",
+    ),
+    (
+        "The length with every coil touching.",
+        "Дължината, когато всички навивки се допират.",
+    ),
+    (
+        "The wire's shear stress at the working load.",
+        "Тангенциалното напрежение в телта при работния товар.",
+    ),
+    (
+        "How far the spring may go before reaching the allowed stress.",
+        "Колко може да се свие пружината до допустимото напрежение.",
+    ),
+    (
+        "The tensile strength of the shaft's material, from a tensile test or the material's sheet. The surface factor charts are read with it.",
+        "Якостта на опън на материала на вала, от опит на опън или от листа на материала. С нея се отчитат диаграмите на коефициента на повърхността.",
+    ),
+    (
+        "The stress where the material starts to yield. The steady torque term of the fatigue equation divides by it.",
+        "Напрежението, при което материалът започва да тече. Членът на постоянния въртящ момент в уравнението на умора се дели на него.",
+    ),
+    (
+        "The endurance limit of a small polished specimen in rotating bending; the factors ka … ki reduce it to the real shaft's limit σf.",
+        "Границата на умора на малък полиран образец при въртящо огъване; коефициентите ka … ki я намаляват до границата σf на истинския вал.",
+    ),
+    (
+        "The material's stiffness in tension and bending; only the deflections, slopes and the critical speed depend on it, not the stresses.",
+        "Коравината на материала на опън и огъване; от нея зависят само провисванията, наклоните и критичната скорост, не напреженията.",
+    ),
+    (
+        "The shear modulus; the angle of twist depends on it.",
+        "Модулът на хлъзгане; от него зависи ъгълът на усукване.",
+    ),
+    (
+        "The material's density: the mass, the own weight as a load and the critical speed.",
+        "Плътността на материала: масата, собственото тегло като товар и критичната скорост.",
+    ),
+    (
+        "Whether the steel is hardened above 200 Brinell; the keyway's fatigue factor (RP-1123 Table V) is lower for hardened steels, whose notch sensitivity is higher.",
+        "Дали стоманата е закалена над 200 по Бринел; коефициентът на умора на шпонковия канал (RP-1123, табл. V) е по-нисък за закалени стомани, които са по-чувствителни към концентратори.",
+    ),
+    (
+        "Adds the shaft's own weight as a load spread along it (gravity along the load angle 0).",
+        "Добавя собственото тегло на вала като товар, разпределен по него (гравитацията по ъгъл на товара 0).",
+    ),
+    (
+        "How many pieces the beam calculation cuts the shaft into; the curves and maxima are read at their ends.",
+        "На колко части изчислението на гредата разделя вала; кривите и максимумите се отчитат в краищата им.",
+    ),
+    (
+        "How bending and torsional stress are combined into one; HMH (distortion energy, von Mises) or Tresca–Guest (maximum shear).",
+        "Как огъващото и усукващото напрежение се събират в едно: HMH (енергия на формоизменението, фон Мизес) или Треска–Гест (максимално тангенциално).",
+    ),
+    (
+        "Reduces the fatigue limit for the surface finish; rough surfaces start cracks earlier. Read it from RP-1123 Fig. 3 for the finish and σu.",
+        "Намалява границата на умора според обработката на повърхността: грапавите повърхности пукат по-рано. Отчита се от RP-1123, фиг. 3, за обработката и σu.",
+    ),
+    (
+        "The share of shafts that must survive; the fatigue limit scatters about 8 % (one standard deviation), so higher reliability takes a lower limit.",
+        "Делът валове, които трябва да издържат; границата на умора се разсейва с около 8 % (едно стандартно отклонение), затова по-висока надеждност изисква по-ниска граница.",
+    ),
+    (
+        "Reduces the fatigue limit for a hot shaft.",
+        "Намалява границата на умора за горещ вал.",
+    ),
+    (
+        "The product of the remaining factors of eq. 19: press fit (fretting under a hub), residual stresses, corrosion and others.",
+        "Произведението на останалите коефициенти на уравнение 19: пресова сглобка (фретинг под главината), остатъчни напрежения, корозия и други.",
+    ),
+    (
+        "The theoretical stress concentration of the worst notch (shoulder fillet, groove, cross hole); ke follows from it and q.",
+        "Теоретичният коефициент на концентрация на най-лошия концентратор (радиус на рамото, канал, напречен отвор); ke следва от него и q.",
+    ),
+    (
+        "How much of Kt the material feels; 0 none, 1 all of it. Read it from RP-1123 Fig. 5 for the notch radius and the steel.",
+        "Каква част от Kt усеща материалът: 0 никаква, 1 цялата. Отчита се от RP-1123, фиг. 5, за радиуса на концентратора и стоманата.",
+    ),
+    (
+        "The fatigue safety factor the shaft must reach at its weakest place.",
+        "Коефициентът на сигурност на умора, който валът трябва да достигне в най-слабото си място.",
+    ),
+    (
+        "A radial support (a bearing) at a place along the shaft. Fixed also takes the axial load, Free only radial load. Put it at the bearing's middle.",
+        "Радиална опора (лагер) на място по вала. Fixed поема и аксиалния товар, Free само радиален. Поставя се в средата на лагера.",
+    ),
+    (
+        "A radial force at a place, its direction in the cross-section by the angle: a gear's tooth force, a belt's pull, a weight.",
+        "Радиална сила на място по вала, посоката ѝ в сечението е дадена с ъгъла: сила от зъбно колело, опън на ремък, тежест.",
+    ),
+    (
+        "A force along the axis (a helical gear's thrust, a preload), taken by the Fixed support.",
+        "Сила по оста (аксиалната сила на косозъбо колело, предварително натягане), поемана от опората Fixed.",
+    ),
+    (
+        "A load spread over a length of the shaft, its direction by the angle.",
+        "Товар, разпределен по дължина на вала, посоката му е дадена с ъгъла.",
+    ),
+    (
+        "A torque entering the shaft at one place and leaving at another (the pair sums to zero): the transmitted power.",
+        "Въртящ момент, който влиза във вала на едно място и излиза на друго (двата се уравновесяват): предаваната мощност.",
+    ),
+    (
+        "A moment at a place, bending the shaft in the plane of its angle: a helical gear's thrust acting at its pitch radius.",
+        "Момент на място по вала, огъващ го в равнината на ъгъла си: аксиалната сила на косозъбо колело на делителния му радиус.",
+    ),
+    (
+        "Which value follows from the others; Center Distance from module and teeth, or the unit corrections from a given centre distance.",
+        "Коя стойност следва от другите: Center Distance от модула и зъбите, или корекциите от зададено междуосие.",
+    ),
+    (
+        "The angle of the rack's flank (the line of action): it sets the tooth's shape for both gears.",
+        "Ъгълът на профила на рейката (линията на зацепване): определя формата на зъба и на двете колела.",
+    ),
+    (
+        "The teeth's angle to the axis; 0 for spur gears. The transverse module grows to mn / cos β.",
+        "Ъгълът на зъбите спрямо оста; 0 за правозъби колела. Челният модул нараства до mn / cos β.",
+    ),
+    (
+        "The tooth size; the pitch diameter is m·z, the tooth height about 2.25·m.",
+        "Размерът на зъба; делителният диаметър е m·z, височината на зъба около 2.25·m.",
+    ),
+    (
+        "The ratio z2 / z1 you aim at.",
+        "Предавателното число z2 / z1, към което се стремите.",
+    ),
+    (
+        "The distance between the shafts; with Design Guide Total Unit Correction the shifts follow from it.",
+        "Разстоянието между валовете; с Design Guide Total Unit Correction корекциите следват от него.",
+    ),
+    (
+        "What is made for the first gear; Component (a part placed in the assembly), Feature or No Model.",
+        "Какво се създава за първото колело: Component (детайл в сглобката), Feature или No Model.",
+    ),
+    (
+        "What is made for the second gear.",
+        "Какво се създава за второто колело.",
+    ),
+    ("The pinion's teeth.", "Зъбите на малкото колело."),
+    (
+        "The wheel's teeth; z2 / z1 is the ratio.",
+        "Зъбите на голямото колело; z2 / z1 е предавателното число.",
+    ),
+    (
+        "Profile shift of gear 1 in modules; the rack is moved out (+) or in (−) while generating the teeth.",
+        "Корекция (изместване) на профила на колело 1 в модули; рейката се отдалечава (+) или приближава (−) при нарязването на зъбите.",
+    ),
+    (
+        "Profile shift of gear 2 in modules.",
+        "Корекция на профила на колело 2 в модули.",
+    ),
+    (
+        "The width of gear 1's teeth.",
+        "Ширината на зъбите на колело 1.",
+    ),
+    (
+        "The width of gear 2's teeth.",
+        "Ширината на зъбите на колело 2.",
+    ),
+    (
+        "The power the pair transmits.",
+        "Мощността, която предава двойката.",
+    ),
+    (
+        "The pinion's (gear 1's) speed.",
+        "Скоростта на малкото колело (колело 1).",
+    ),
+    (
+        "The gears' manufacturing quality; the dynamic factor Kv of RP-1152 Fig. 25 follows from it and the pitch-line velocity.",
+        "Качеството на изработка на колелата; динамичният коефициент Kv от RP-1152, фиг. 25, следва от него и от периферната скорост.",
+    ),
+    (
+        "Takes the tooth load at the tip instead of at the highest point of single-tooth contact (where it really acts on accurate gears).",
+        "Прилага товара на зъба във върха му вместо в най-високата точка на еднозъбото зацепване (където действа при точни колела).",
+    ),
+    (
+        "The bending geometry factor of a helical gear; for spur gears J is laid out from the tooth and this value is not used.",
+        "Геометричният коефициент на огъване на косозъбо колело; за правозъби J се получава от самия зъб и тази стойност не се използва.",
+    ),
+    (
+        "Raises the nominal load for shocks from the driving and the driven machine (RP-1152 Table 8).",
+        "Увеличава номиналния товар заради ударите от задвижващата и задвижваната машина (RP-1152, табл. 8).",
+    ),
+    (
+        "Raises the load for its uneven spread across the face (shaft deflection, misalignment), RP-1152 Table 9.",
+        "Увеличава товара заради неравномерното му разпределение по ширината (провисване на валовете, несъосност), RP-1152, табл. 9.",
+    ),
+    (
+        "The bending stress the gear's material may take for the life required.",
+        "Огъващото напрежение, което материалът на колелото може да поеме за изискваната дълготрайност.",
+    ),
+    (
+        "Scales the NASA surface life for the material; 1 for the vacuum-melted AISI 9310 steel of the NASA tests.",
+        "Мащабира дълготрайността на повърхността по NASA според материала: 1 за вакуумно претопената стомана AISI 9310 от изпитванията на NASA.",
+    ),
+    (
+        "The share of gears that must reach the life shown.",
+        "Делът колела, които трябва да достигнат показаната дълготрайност.",
+    ),
+    (
+        "The standard of the key's sizes.",
+        "Стандартът на размерите на шпонката.",
+    ),
+    (
+        "The shaft groove's ends: rounded (form A, end-milled) or square (form B, side-milled). A rounded key bears only over l − b.",
+        "Краищата на канала във вала: заоблени (форма A, челна фреза) или прави (форма B, дискова фреза). Заоблена шпонка носи само по l − b.",
+    ),
+    (
+        "One key, or two opposite each other (each carries less than half: 0.75 of twice one key is counted).",
+        "Една шпонка или две една срещу друга (всяка носи по-малко от половината: отчита се 0.75 от двойния товар на една).",
+    ),
+    (
+        "The torque the key carries.",
+        "Въртящият момент, който носи шпонката.",
+    ),
+    (
+        "The shaft's diameter at the key; it decides the key's size b × h from the standard (taken from the picked cylinder).",
+        "Диаметърът на вала при шпонката; от него стандартът дава размера b × h (взема се от избрания цилиндър).",
+    ),
+    ("The key's overall length.", "Общата дължина на шпонката."),
+    (
+        "The shear stress the key's steel may take.",
+        "Тангенциалното напрежение, което стоманата на шпонката може да поеме.",
+    ),
+    (
+        "The pressure the weakest of key, shaft and hub may take on the key's side.",
+        "Налягането, което най-слабото от шпонка, вал и главина може да поеме по страната на шпонката.",
+    ),
+    (
+        "The bearing's bore = the shaft's diameter there (taken from the picked cylinder).",
+        "Отворът на лагера = диаметърът на вала там (взема се от избрания цилиндър).",
+    ),
+    (
+        "The bearing's outside diameter (the housing's bore).",
+        "Външният диаметър на лагера (отворът на корпуса).",
+    ),
+    ("The bearing's width.", "Ширината на лагера."),
+    (
+        "Which bearings the library lists; radial ball, radial roller or thrust bearings.",
+        "Кои лагери показва библиотеката: радиални сачмени, радиални ролкови или аксиални.",
+    ),
+    (
+        "Ball (life exponent 3) or roller (10/3) for the life calculation.",
+        "Сачмен (показател 3) или ролков (10/3) за изчислението на дълготрайността.",
+    ),
+    (
+        "The radial load on the bearing; the shaft's support reaction there.",
+        "Радиалният товар на лагера: реакцията на опората на вала там.",
+    ),
+    (
+        "The axial load on the bearing.",
+        "Аксиалният товар на лагера.",
+    ),
+    (
+        "The speed of the bearing's rotating ring.",
+        "Скоростта на въртящия се пръстен на лагера.",
+    ),
+    (
+        "The load at which 90 % of bearings reach one million revolutions: the bearing's capacity, from its maker's catalogue.",
+        "Товарът, при който 90 % от лагерите достигат един милион оборота: товароносимостта на лагера, от каталога на производителя.",
+    ),
+    (
+        "Weights the radial load in the equivalent load Fe = X·Fr + Y·Fa.",
+        "Тежестта на радиалния товар в еквивалентния товар Fe = X·Fr + Y·Fa.",
+    ),
+    (
+        "Weights the axial load in Fe.",
+        "Тежестта на аксиалния товар във Fe.",
+    ),
+    (
+        "RP-1105 §12.5: material, processing, lubrication, speed and misalignment factors multiplying L10.",
+        "RP-1105 §12.5: коефициенти за материал, обработка, мазане, скорост и несъосност, умножаващи L10.",
+    ),
+    (
+        "The share of bearings that must reach the life.",
+        "Делът лагери, които трябва да достигнат дълготрайността.",
+    ),
+    (
+        "The hours the bearing must run.",
+        "Часовете, които лагерът трябва да работи.",
+    ),
+    (
+        "The wire's diameter: rate and stress depend on it strongly (rate ∝ d⁴, stress ∝ 1 / d³).",
+        "Диаметърът на телта: коравината и напрежението силно зависят от него (коравина ∝ d⁴, напрежение ∝ 1 / d³).",
+    ),
+    (
+        "The coil's outside diameter; the mean diameter D = Do − d.",
+        "Външният диаметър на навивката; средният диаметър е D = Do − d.",
+    ),
+    (
+        "The spring's length without load.",
+        "Дължината на пружината без товар.",
+    ),
+    (
+        "The coils that spring (the inactive end coils are added by the Ends).",
+        "Работните навивки (неработните крайни навивки се добавят според Ends).",
+    ),
+    (
+        "How the ends are made; closed and ground, closed, or open. Closed ends add one inactive coil each.",
+        "Как са направени краищата: затворени и шлифовани, затворени или отворени. Затворените краища добавят по една неработна навивка.",
+    ),
+    (
+        "The load the spring carries in its working position.",
+        "Товарът, който пружината носи в работното си положение.",
+    ),
+    (
+        "The wire's shear modulus; the rate is proportional to it.",
+        "Модулът на хлъзгане на телта; коравината е пропорционална на него.",
+    ),
+    (
+        "The shear stress the wire may take; 0 takes the source's safe stress for steel wire, eq. 12 (275.8 + 2627 / d).",
+        "Тангенциалното напрежение, което телта може да поеме; 0 взема безопасното напрежение на източника за стоманена тел, ур. 12 (275.8 + 2627 / d).",
+    ),
+    ("Explanations", "Обяснения"),
+    ("Method", "Метод"),
+    ("Formulas", "Формули"),
+    ("Typical", "Обичайно"),
+    (
+        "Click a ? beside a field, or a result, to read about it here",
+        "Щракнете ? до поле или резултат, за да прочетете за него тук",
+    ),
     (
         "Place: click in the view to place an occurrence (on a component or the XY plane); right-click for OK, Place Grounded at Origin or a 90° turn; Esc ends",
         "Place: щракнете в изгледа, за да поставите екземпляр (върху компонент или в равнината XY); десен бутон за OK, Place Grounded at Origin или завъртане на 90°; Esc приключва",

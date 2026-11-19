@@ -1227,6 +1227,79 @@ fn speed_budgets() {
             cadcraft3d::design::gear_model::gear_part(&pair, &g, 1, 20.0).unwrap()
         };
         rows.push(("Spur gear: 40 teeth, regenerate", 1500.0, timed(&gear)));
+        // A gear with a hub groove in its bore (Key's hub, no Boolean) and the
+        // same groove cut into a plain gear through a UCS (Extrude Cut).
+        let (keyed_gear, cut_gear) = {
+            use cadcraft3d::design::gear::GearPair;
+            let pair = GearPair::default();
+            let g = pair.geometry().unwrap();
+            let k = cadcraft3d::design::key::size_for(20.0).unwrap();
+            let a = cadcraft3d::design::gear_model::gear_part_keyed(
+                &pair,
+                &g,
+                1,
+                20.0,
+                Some((k.b, k.t2)),
+            )
+            .unwrap();
+            let mut b = cadcraft3d::design::gear_model::gear_part(&pair, &g, 1, 20.0).unwrap();
+            b.regenerate().unwrap();
+            cadcraft3d::design::gear_model::cut_hub_groove(
+                &mut b,
+                &cadcraft3d::kernel::Transform3::identity(),
+                10.0,
+                k.b,
+                k.t2,
+            )
+            .unwrap();
+            (a, b)
+        };
+        rows.push((
+            "Spur gear: 40 teeth with a hub groove, regenerate",
+            1500.0,
+            timed(&keyed_gear),
+        ));
+        rows.push((
+            "Spur gear: hub groove cut through a UCS, regenerate",
+            2500.0,
+            timed(&cut_gear),
+        ));
+        // A compression spring: 8 coils of Ø2 wire, one Coil (Key / spring generators).
+        let spring = {
+            use cadcraft3d::design::spring::{Ends, G_SPRING_STEEL, Spring};
+            cadcraft3d::design::gear_model::spring_part(&Spring {
+                wire: 2.0,
+                mean_diameter: 18.0,
+                active: 6.0,
+                free_length: 50.0,
+                ends: Ends::Closed,
+                g: G_SPRING_STEEL,
+            })
+            .unwrap()
+        };
+        rows.push((
+            "Compression spring: 8 coils, regenerate",
+            1500.0,
+            timed(&spring),
+        ));
+        // The generator's model: closed and ground ends, transitions, the wire's
+        // surface as a mesh body (Compression Spring OK).
+        let spring_ends = {
+            use cadcraft3d::design::spring_model::{End, SpringModel, spring_part};
+            spring_part(&SpringModel {
+                wire: 2.0,
+                mean_diameter: 18.0,
+                active: 6.0,
+                free_length: 50.0,
+                ends: [End::default(); 2],
+            })
+            .unwrap()
+        };
+        rows.push((
+            "Compression spring with ground ends: mesh body, regenerate",
+            200.0,
+            timed(&spring_ends),
+        ));
         // Teeth as deep as a revolved rim's chamfer, the first on the revolve's seam, and a
         // circular pattern of 24: the kernel made the tooth's Cut invalid and the part was
         // rebuilt faceted at every regeneration (owner, 2026-11-12).

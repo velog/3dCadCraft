@@ -1634,6 +1634,8 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::Shaft
                     | super::asm_planned::AsmPlanned::SpurGear
                     | super::asm_planned::AsmPlanned::Key
+                    | super::asm_planned::AsmPlanned::Bearing
+                    | super::asm_planned::AsmPlanned::CompressionSpring
                     | super::asm_planned::AsmPlanned::Simplify
             ) | Planned::Part(
                 PartPlanned::Emboss
@@ -1930,6 +1932,11 @@ pub(super) struct PartDialog {
     pub shaft: super::shaft::ShaftPanel,
     /// Simplify: the preset the fields were last filled from (`gui/simplify.rs`).
     pub simplify_preset: Option<usize>,
+    /// Edit of generated machine elements (gears, key, bearing, spring): the
+    /// occurrences and their part documents OK rebuilds (`gui/gear_key.rs`).
+    pub element_edit: Vec<(u32, crate::document::DocumentId)>,
+    /// Bearing: the library's bearings that fit (`gui/gear_key.rs`).
+    pub bearing: super::gear_key::BearingList,
 }
 
 /// Insert Frame's list of picked lines (`PartDialog::skel`, spec 6.1 §3.1a).
@@ -2098,6 +2105,84 @@ impl PartDialog {
             bolt: Default::default(),
             shaft: Default::default(),
             simplify_preset: None,
+            element_edit: Vec::new(),
+            bearing: Default::default(),
+        }
+    }
+
+    /// Every value of the panel's rows (numbers, choices, check boxes), to
+    /// store with a generated element (`design::Element`).
+    pub(super) fn values(&self) -> Vec<crate::design::ElementValue> {
+        let mut out = Vec::new();
+        for (ti, page) in self.kind.pages().iter().enumerate() {
+            for (ri, r) in page.1.iter().enumerate() {
+                let mut v = crate::design::ElementValue {
+                    tab: ti,
+                    label: String::new(),
+                    num: None,
+                    index: None,
+                    check: None,
+                };
+                match *r {
+                    Num(l, def, _) => {
+                        v.label = l.into();
+                        v.num = Some(self.nums.get(&(ti, ri)).copied().unwrap_or(def));
+                    }
+                    Radio(l, _, def) | Combo(l, _, def) => {
+                        v.label = l.into();
+                        v.index = Some(self.indices.get(&(ti, ri)).copied().unwrap_or(def));
+                    }
+                    Check(l, def) => {
+                        v.label = l.into();
+                        v.check = Some(self.bools.get(&(ti, ri)).copied().unwrap_or(def));
+                    }
+                    _ => continue,
+                }
+                out.push(v);
+            }
+        }
+        out
+    }
+
+    /// The text of choice `i` of drop-down / radio row `label` of tab `ti`.
+    pub(super) fn choice_text(&self, ti: usize, label: &str, i: usize) -> String {
+        self.kind
+            .pages()
+            .get(ti)
+            .and_then(|p| {
+                p.1.iter().find_map(|r| match *r {
+                    Radio(l, opts, _) | Combo(l, opts, _) if l == label => {
+                        opts.get(i).map(|o| (*o).to_owned())
+                    }
+                    _ => None,
+                })
+            })
+            .unwrap_or_else(|| i.to_string())
+    }
+
+    /// A panel of `kind` filled from stored values.
+    pub(super) fn from_values(
+        kind: impl Into<Planned>,
+        values: &[crate::design::ElementValue],
+    ) -> Self {
+        let mut d = Self::new(kind);
+        d.set_values(values);
+        d
+    }
+
+    /// Fills the panel's rows from stored values (rows no longer there are
+    /// left out).
+    pub(super) fn set_values(&mut self, values: &[crate::design::ElementValue]) {
+        for v in values {
+            if let Some(n) = v.num {
+                self.set_num(v.tab, &v.label, n);
+            }
+            if let Some(i) = v.index {
+                self.set_index(v.tab, &v.label, i);
+            }
+            if let Some(c) = v.check {
+                self.set_check(v.tab, &v.label, c);
+            }
         }
     }
 
@@ -2699,6 +2784,12 @@ impl PartDialog {
             self.items.remove(k);
             self.active = Some(k);
         }
+        if let Some(g) = super::explain::generator_of(self)
+            && !super::gear_key::in_window(self)
+        {
+            ui.separator();
+            super::explain::pane(ui, g);
+        }
         ui.separator();
         ui.label(RichText::new(self.kind.about()).weak());
         let tip = format!(
@@ -2736,6 +2827,11 @@ impl PartDialog {
                 ui.label(RichText::new(t).strong());
                 ui.end_row();
             }
+            Note(t)
+                if super::gear_key::is_bearing(self) && t.starts_with("The fitting bearings") =>
+            {
+                super::gear_key::bearing_list_ui(self, ui);
+            }
             Note(t) => {
                 plabel(ui, "");
                 ui.label(RichText::new(t).weak().italics());
@@ -2759,6 +2855,8 @@ impl PartDialog {
             Button("Insert Cylinder") if super::shaft::is_shaft(self) => {
                 super::shaft::sections_ui(self, ui);
             }
+            // In the generator's window the results have their own pane.
+            Button("Calculate") if super::gear_key::in_window(self) => {}
             Button("Calculate") if super::gear_key::is_spur(self) => {
                 super::gear_key::gear_ui(self, ui);
             }
@@ -2822,17 +2920,26 @@ impl PartDialog {
                 let off = self
                     .kind
                     .option_off(label, None)
-                    .or_else(|| super::bolted::row_off(self, at.0, label));
+                    .or_else(|| super::bolted::row_off(self, at.0, label))
+                    .or_else(|| super::gear_key::row_later(self, label));
+                let g = super::explain::generator_of(self);
                 let v = self.bools.entry(at).or_insert(on);
                 plabel(ui, "");
-                let r = ui.add_enabled(off.is_none(), egui::Checkbox::new(v, label));
-                if let Some(t) = off {
-                    r.on_disabled_hover_text(t);
-                }
+                ui.horizontal(|ui| {
+                    let r = ui.add_enabled(off.is_none(), egui::Checkbox::new(v, label));
+                    if let Some(t) = off {
+                        r.on_disabled_hover_text(t);
+                    }
+                    if let Some((g, e)) =
+                        g.and_then(|g| Some((g, crate::design::explain::input(g, label)?)))
+                    {
+                        super::explain::help_button(ui, g, e);
+                    }
+                });
                 ui.end_row();
             }
             Radio(label, opts, def) => {
-                plabel(ui, label);
+                super::explain::plabel_help(ui, label, super::explain::generator_of(self));
                 let kind = self.kind;
                 let v = self.indices.entry(at).or_insert(def);
                 let before = *v;
@@ -2865,11 +2972,12 @@ impl PartDialog {
                 ui.end_row();
             }
             Combo(label, opts, def) => {
-                plabel(ui, label);
+                super::explain::plabel_help(ui, label, super::explain::generator_of(self));
                 let off = self
                     .kind
                     .option_off(label, None)
-                    .or_else(|| super::bolted::row_off(self, at.0, label));
+                    .or_else(|| super::bolted::row_off(self, at.0, label))
+                    .or_else(|| super::gear_key::row_later(self, label));
                 // Frame panels: the section table's lists (gui/frame.rs); Bolted
                 // Connection: the thread and library lists (gui/bolted.rs).
                 let list: Vec<String> = super::frame::frame_combo(self, at.0, label)
@@ -2892,14 +3000,16 @@ impl PartDialog {
                 ui.end_row();
             }
             Num(label, def, unit) => {
-                plabel(ui, label);
+                super::explain::plabel_help(ui, label, super::explain::generator_of(self));
                 // Emboss: From Plane has a taper and no depth, the face types the other way round.
                 let plane = self.index(at.0, "Type") == 2;
                 let off = (self.kind == Planned::Part(PartPlanned::Emboss)
                     && ((label == "Depth" && plane) || (label == "Taper" && !plane)))
                     || matches!(self.kind, Planned::Part(k)
-                        if super::plastic::row_off(self, k, at.0, label));
-                let why = super::bolted::row_off(self, at.0, label);
+                        if super::plastic::row_off(self, k, at.0, label))
+                    || super::gear_key::guide_computes(self, at.0, label);
+                let why = super::bolted::row_off(self, at.0, label)
+                    .or_else(|| super::gear_key::row_later(self, label));
                 let v = self.nums.entry(at).or_insert(def);
                 let on = !off && why.is_none();
                 let r = ui.add_enabled_ui(on, |ui| {
@@ -3264,7 +3374,53 @@ impl CadCraftApp {
         if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) {
             d.skel.notes = self.frame_list_notes(&d);
         }
-        let (cancel, ok) = d.ui(ui);
+        let (cancel, ok) = if super::gear_key::in_window(&d) {
+            // The machine-element generators work in a window of their own,
+            // as Inventor's Design Accelerator dialogs (spec 6.2 §3.7).
+            ui.label(
+                RichText::new("The generator is open in its window")
+                    .weak()
+                    .italics(),
+            );
+            let status = match &self.file_status {
+                Some(Err(e)) => Some(e.clone()),
+                _ => None,
+            };
+            let ctx = ui.ctx().clone();
+            let mut open = true;
+            let mut res = (false, false);
+            let w = egui::Window::new(title)
+                .id(egui::Id::new("design_generator_window"))
+                .open(&mut open)
+                .resizable(true)
+                .collapsible(false)
+                .default_size([900.0, 600.0]);
+            self.layout
+                .place("design_generator", ctx.content_rect(), true, w)
+                .show(&ctx, |ui| {
+                    egui::Panel::bottom("design_generator_messages").show(ui, |ui| {
+                        super::gear_key::messages_strip(ui, status.as_deref());
+                    });
+                    ui.columns(2, |c| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("design_generator_inputs")
+                            .show(&mut c[0], |ui| {
+                                res = d.ui(ui);
+                            });
+                        egui::ScrollArea::vertical()
+                            .id_salt("design_generator_results")
+                            .show(&mut c[1], |ui| {
+                                super::gear_key::results_pane(&mut d, ui);
+                            });
+                    });
+                });
+            if !open {
+                res.0 = true;
+            }
+            res
+        } else {
+            d.ui(ui)
+        };
         self.simplify_preset_follow(&mut d);
         // A plastic command says why its definition cannot be built, before OK.
         if super::plastic::is_plastic(&d) {
@@ -3425,6 +3581,16 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::Key) => {
                 if self.key_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Bearing) => {
+                if self.bearing_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::CompressionSpring) => {
+                if self.spring_ok(&d) {
                     self.part_planned = None;
                 }
             }

@@ -1,7 +1,8 @@
 //! The parts the gear and key generators place (spec 6.2-design-calculators
 //! §3.3–3.4): a spur gear's teeth as one extrusion of its exact tooth outline
 //! (the same layout the geometry factor reads, `gear::tooth_side`), and a
-//! parallel key. No Boolean: each part is one sketch and one Extrude.
+//! parallel key; a compression spring as one Coil of its wire. No Boolean:
+//! each part is one sketch and one Extrude or Coil.
 
 use std::f64::consts::PI;
 
@@ -35,6 +36,18 @@ pub fn gear_part(
     g: &Geometry,
     i: usize,
     bore: f64,
+) -> Result<PartDocument, String> {
+    gear_part_keyed(pair, g, i, bore, None)
+}
+
+/// [`gear_part`] with a hub groove for a parallel key in the bore: `hub` =
+/// (groove width b, depth t2 from the bore's surface), centred on +X.
+pub fn gear_part_keyed(
+    pair: &GearPair,
+    g: &Geometry,
+    i: usize,
+    bore: f64,
+    hub: Option<(f64, f64)>,
 ) -> Result<PartDocument, String> {
     if pair.helix.abs() > 1e-9 {
         return Err("only spur gears are modelled yet".into());
@@ -96,12 +109,42 @@ pub fn gear_part(
     if let (Some(a), Some(b)) = (last_root, first_root) {
         root_arc(sk, a, b)?;
     }
-    if bore > 0.0 {
-        sk.add_circle(Point2::origin(), bore / 2.0).map_err(err)?;
+    match hub {
+        Some((b, t2)) if bore > 0.0 => {
+            let r = bore / 2.0;
+            if b <= 0.0 || b >= bore || t2 <= 0.0 {
+                return Err(format!(
+                    "the hub groove {b} × {t2} does not fit a Ø{bore:.2} bore"
+                ));
+            }
+            if r + t2 >= r_root - 1e-6 {
+                return Err(format!(
+                    "the hub groove (to Ø{:.2}) reaches the root circle (Ø{:.2})",
+                    2.0 * (r + t2),
+                    2.0 * r_root
+                ));
+            }
+            // The bore round the long way from the groove's one side to the
+            // other, then the groove's walls and floor.
+            let a = (b / 2.0 / r).asin();
+            let o = sk.add_point(Point2::origin());
+            let p0 = sk.add_point(at(r, a));
+            let p1 = sk.add_point(at(r, -a));
+            sk.add_arc(o, p0, p1).map_err(err)?;
+            let q1 = sk.add_point(Point2::new(r + t2, -b / 2.0));
+            let q0 = sk.add_point(Point2::new(r + t2, b / 2.0));
+            sk.add_line_between(p1, q1).map_err(err)?;
+            sk.add_line_between(q1, q0).map_err(err)?;
+            sk.add_line_between(q0, p0).map_err(err)?;
+        }
+        _ if bore > 0.0 => {
+            sk.add_circle(Point2::origin(), bore / 2.0).map_err(err)?;
+        }
+        _ => {}
     }
     let _ = (r_tip, psi_root);
-    // Inside the material: on a tooth's centre line between bore and root.
-    let seed = at((r_root + bore / 2.0) / 2.0, 0.0);
+    // Inside the material: between bore and root, opposite the hub groove.
+    let seed = at((r_root + bore / 2.0) / 2.0, PI);
     let regions = part.sketches[k].sketch.regions();
     let r = regions
         .iter()
@@ -266,6 +309,127 @@ pub fn key_part(k: &KeySize, l: f64, ends: Ends) -> Result<PartDocument, String>
     Ok(part)
 }
 
+/// A compression spring as a part: the wire's section on the XZ plane coiled
+/// about Z, its lowest point on z = 0 and its highest at the free length.
+/// Every coil (active + inactive, Kimball and Barr §43) at one pitch from the
+/// free length: a coil whose pitch runs down to zero at closed ends is swept
+/// along its centre line, which took the kernel about 15 s, so the model's
+/// ends stay open (the calculation counts the closed ends' coils).
+pub fn spring_part(s: &super::spring::Spring) -> Result<PartDocument, String> {
+    use crate::part::{CoilAxis, CoilFeature, CoilMethod, LineRef};
+    s.validate()?;
+    let d = s.wire;
+    let mut part = PartDocument {
+        exact_only: true,
+        ..Default::default()
+    };
+    let k = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts())
+        .map_err(|e| e.to_string())?;
+    let c = Point2::new(s.mean_diameter / 2.0, d / 2.0);
+    part.sketches[k]
+        .sketch
+        .add_circle(c, d / 2.0)
+        .map_err(|e| e.to_string())?;
+    let regions = part.sketches[k].sketch.regions();
+    let r = regions
+        .iter()
+        .find(|r| r.contains(c))
+        .ok_or("the wire's section is not closed")?;
+    let mut coil = CoilFeature::new(
+        vec![ProfileRef::of(r, c)],
+        CoilAxis::Line(LineRef::Origin(2)),
+    );
+    coil.method = CoilMethod::PitchAndRevolution;
+    coil.revolutions = s.active + s.ends.inactive();
+    coil.pitch = 1.0;
+    let (_, _, per_pitch) = coil.sizes()?;
+    if per_pitch <= 0.0 {
+        return Err("the spring has no coils that rise".into());
+    }
+    coil.pitch = (s.free_length - d) / per_pitch;
+    if coil.pitch <= 1.05 * d {
+        return Err(format!(
+            "the coils touch at a free length of {:.2} mm (pitch {:.2} mm, wire Ø{d})",
+            s.free_length, coil.pitch
+        ));
+    }
+    part.add_coil(k, coil).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Cuts a parallel key's hub groove into any part with a bore: `at` is a
+/// frame in the part's coordinates on the bore's axis (Z along it, X towards
+/// the groove), `r` the bore's radius, `b` × `t2` the groove (DIN 6885 width
+/// and depth from the bore's surface). A hidden UCS, a sketch on its XY plane
+/// (the groove's section, from inside the bore out to r + t2) and an Extrude
+/// Cut through all both ways: the groove runs through the hub. Returns the
+/// feature id; on failure the part is unchanged.
+pub fn cut_hub_groove(
+    part: &mut PartDocument,
+    at: &crate::kernel::Transform3,
+    r: f64,
+    b: f64,
+    t2: f64,
+) -> Result<String, String> {
+    use crate::kernel::Point3;
+    use crate::part::work::WorkFeature;
+    if !(r > 0.0 && b > 0.0 && b < 2.0 * r && t2 > 0.0) {
+        return Err(format!(
+            "a {b} × {t2} groove does not fit a Ø{} bore",
+            2.0 * r
+        ));
+    }
+    let mut trial = part.clone();
+    let mut w = WorkFeature::new(crate::assembly::elements::ucs_def_of(at));
+    w.visible = false;
+    let ucs = trial.add_work(w).map_err(|e| e.to_string())?;
+    trial.regenerate().map_err(|e| e.to_string())?;
+    let placement = SketchPlacement {
+        plane: crate::part::PlaneRef::Work(format!("{ucs}:XY")),
+        ..Default::default()
+    };
+    let k = trial
+        .create_sketch(placement, &opts())
+        .map_err(|e| e.to_string())?;
+    let pl = trial.sketches[k].sketch.plane.clone();
+    let p = |x: f64, y: f64| {
+        let q = pl.project(&(at * Point3::new(x, y, 0.0)));
+        Point2::new(q.x, q.y)
+    };
+    // From half the radius (in the bore's air) out to the groove's floor.
+    let x0 = r * 0.5;
+    let corners = [
+        p(x0, -b / 2.0),
+        p(r + t2, -b / 2.0),
+        p(r + t2, b / 2.0),
+        p(x0, b / 2.0),
+    ];
+    let sk = &mut trial.sketches[k].sketch;
+    let ids: Vec<PointId> = corners.iter().map(|&c| sk.add_point(c)).collect();
+    for i in 0..4 {
+        sk.add_line_between(ids[i], ids[(i + 1) % 4])
+            .map_err(|e| e.to_string())?;
+    }
+    let seed = p((x0 + r + t2) / 2.0, 0.0);
+    let regions = trial.sketches[k].sketch.regions();
+    let reg = regions
+        .iter()
+        .find(|g| g.contains(seed))
+        .ok_or("the groove's section is not closed")?;
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(reg, seed)], 1.0);
+    e.extent = crate::part::extrude::Extent::ThroughAll;
+    e.direction = crate::part::ExtentDirection::Symmetric;
+    e.operation = crate::part::Operation::Cut;
+    let id = trial.add_extrude(k, e).map_err(|e| e.to_string())?;
+    trial.regenerate().map_err(|e| e.to_string())?;
+    if let Some((_, msg)) = trial.feature_health.iter().next() {
+        return Err(msg.clone());
+    }
+    *part = trial;
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +479,52 @@ mod tests {
         assert!(gear_part(&pair, &g, 0, 40.0).is_err());
     }
 
+    /// A hub groove for a DIN 6885 key in the bore: the volume drops by the
+    /// groove's section (b × t2 plus the sliver of bore it opens) times the
+    /// face width; a groove reaching the root circle is refused.
+    #[test]
+    fn gear_with_a_hub_groove() {
+        let pair = GearPair {
+            module: 2.0,
+            teeth: [30, 40],
+            face: [12.0, 10.0],
+            ..GearPair::default()
+        };
+        let g = pair.geometry().unwrap();
+        let k = size_for(20.0).unwrap();
+        let mut plain = gear_part(&pair, &g, 0, 20.0).unwrap();
+        let mut keyed = gear_part_keyed(&pair, &g, 0, 20.0, Some((k.b, k.t2))).unwrap();
+        let (v0, v1) = (volume(&mut plain), volume(&mut keyed));
+        let r: f64 = 10.0;
+        let a = (k.b / 2.0 / r).asin();
+        // The groove's section: the rectangle out to r + t2 less the bore's
+        // circular segment inside it.
+        let segment = r * r * (a - a.sin() * a.cos());
+        let rect = k.b * (r + k.t2 - r * a.cos());
+        let want = (rect - segment) * 12.0;
+        assert!(
+            ((v0 - v1) - want).abs() / want < 5e-3,
+            "{} vs {want}",
+            v0 - v1
+        );
+        // The same groove cut into a plain gear part through a UCS on its
+        // bore (what Key does to a hub it did not make): the same volume.
+        let mut cut = gear_part(&pair, &g, 0, 20.0).unwrap();
+        cut.regenerate().unwrap();
+        cut_hub_groove(
+            &mut cut,
+            &crate::kernel::Transform3::identity(),
+            10.0,
+            k.b,
+            k.t2,
+        )
+        .unwrap();
+        let v2 = volume(&mut cut);
+        assert!((v2 - v1).abs() / v1 < 2e-3, "{v2} vs {v1}");
+        // Deeper than the tooth root: refused.
+        assert!(gear_part_keyed(&pair, &g, 0, 20.0, Some((k.b, 20.0))).is_err());
+    }
+
     /// The four arcs of a side stay within 0.5 % of the module of the
     /// exact side (sampled densely); undercut teeth within 1 %.
     #[test]
@@ -346,6 +556,43 @@ mod tests {
             }
             assert!(worst < tol * pair.module, "{teeth:?}: {worst}");
         }
+    }
+
+    /// A spring's model: the wire's volume (section × the coil's length,
+    /// Pappus), its height the free length, both ends' sections named; coils
+    /// that touch are refused.
+    #[test]
+    fn compression_spring_part() {
+        use crate::design::spring::{Ends as SE, G_SPRING_STEEL, Spring};
+        for ends in [SE::Open, SE::Closed] {
+            let s = Spring {
+                wire: 2.0,
+                mean_diameter: 18.0,
+                active: 6.0,
+                free_length: 50.0,
+                ends,
+                g: G_SPRING_STEEL,
+            };
+            let mut p = spring_part(&s).unwrap();
+            let v = volume(&mut p);
+            let turns = s.active + ends.inactive();
+            let want = PI * 1.0 * 2.0 * PI * 9.0 * turns;
+            assert!((v - want).abs() / want < 0.02, "{ends:?}: {v} vs {want}");
+            let (lo, hi) = p.body.bounding_box().unwrap();
+            assert!(
+                lo.z.abs() < 0.05 && (hi.z - 50.0).abs() < 0.05,
+                "{ends:?}: {lo:?} {hi:?}"
+            );
+        }
+        let solid = Spring {
+            wire: 3.0,
+            mean_diameter: 18.0,
+            active: 10.0,
+            free_length: 30.0,
+            ends: SE::Closed,
+            g: G_SPRING_STEEL,
+        };
+        assert!(spring_part(&solid).is_err());
     }
 
     /// A DIN 6885 A key for a Ø40 shaft: 12 × 8, rounded ends: (l − b) b h

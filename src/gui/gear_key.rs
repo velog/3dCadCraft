@@ -9,12 +9,16 @@ use eframe::egui::{self, RichText};
 use super::asm_planned::AsmPlanned;
 use super::panels::plabel;
 use super::part_planned::{PartDialog, Planned};
+use crate::assembly::elements;
+use crate::assembly::relation::ASSEMBLY;
 use crate::design::gear::{
     self, BendingFactors, GEAR_WEIBULL, GearPair, bending_stress, life_at, tooth_life,
 };
 use crate::design::gear_model as gear_parts;
 use crate::design::key::{self, Ends};
 use crate::design::{bearing, spring};
+use crate::document::{AssemblyDocument, DocumentData, DocumentId};
+use crate::kernel::{Point3, Transform3, Vector3};
 
 /// Whether `d` is the Spur Gears panel.
 pub(super) fn is_spur(d: &PartDialog) -> bool {
@@ -44,13 +48,250 @@ pub(super) fn is_spring(d: &PartDialog) -> bool {
     )
 }
 
-fn rows(ui: &mut egui::Ui, id: &str, rows: &[(String, String)]) {
+/// Result rows `label: value`, each with its explanation on hover (formula,
+/// and `nums`' entry for it: the formula with the numbers).
+fn rows(ui: &mut egui::Ui, generator: &str, rows: &[(String, String)], nums: &[(&str, String)]) {
     ui.vertical(|ui| {
-        let _ = id;
         for (a, b) in rows {
-            ui.label(format!("{a}: {b}"));
+            result_row(
+                ui,
+                generator,
+                a,
+                egui::RichText::new(format!("{a}: {b}")),
+                nums,
+            );
         }
     });
+}
+
+/// One result line `text` whose label is `label`, explained on hover.
+fn result_row(
+    ui: &mut egui::Ui,
+    generator: &str,
+    label: &str,
+    text: RichText,
+    nums: &[(&str, String)],
+) {
+    let key = result_key(generator, label);
+    let n = nums
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| v.as_str());
+    record(text.text(), n);
+    let r = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+    super::explain::result_hover(r, generator, key, n);
+}
+
+/// One result line of a report: its text and the formula with the numbers.
+type ReportLine = (String, Option<String>);
+
+thread_local! {
+    /// The result lines drawn while a Calculation Report records (text,
+    /// formula with the numbers).
+    static RECORD: std::cell::RefCell<Option<Vec<ReportLine>>> =
+        const { std::cell::RefCell::new(None) };
+    /// The open Calculation Report: its title and the generator's panel
+    /// filled from the component's stored input.
+    static REPORT: std::cell::RefCell<Option<(String, PartDialog)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn record(text: &str, numbers: Option<&str>) {
+    RECORD.with(|r| {
+        if let Some(v) = r.borrow_mut().as_mut() {
+            v.push((text.to_owned(), numbers.map(str::to_owned)));
+        }
+    });
+}
+
+/// A warning line of the results (recorded for the report too).
+fn warning(ui: &mut egui::Ui, text: String) {
+    record(&text, None);
+    ui.colored_label(super::theme::tokens().warning, text);
+}
+
+fn html_escape(t: &str) -> String {
+    t.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// A stored value as text.
+fn value_text(d: &PartDialog, v: &crate::design::ElementValue) -> String {
+    match (v.num, v.index, v.check) {
+        (Some(n), ..) => format!("{n}"),
+        (_, Some(i), _) => d.choice_text(v.tab, &v.label, i),
+        (.., Some(c)) => {
+            if c {
+                "on".into()
+            } else {
+                "off".into()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// The Calculation Report as an HTML page: the inputs with their symbols and
+/// units, the results with each formula and its numbers, the method, the
+/// formulas and their sources (`design::explain`).
+fn report_html(title: &str, d: &PartDialog, lines: &[(String, Option<String>)]) -> String {
+    use crate::design::explain;
+    let g = super::explain::generator_of(d).unwrap_or("");
+    let mut h = String::new();
+    h.push_str("<!doctype html><html><head><meta charset=\"utf-8\"><title>");
+    h.push_str(&html_escape(title));
+    h.push_str("</title><style>body{font-family:sans-serif;margin:2em;max-width:60em}td,th{padding:2px 8px;text-align:left;vertical-align:top}code{white-space:pre-wrap}</style></head><body>");
+    h.push_str(&format!(
+        "<h1>{}</h1><p>{}</p>",
+        html_escape(title),
+        html_escape(explain::method(g))
+    ));
+    h.push_str("<h2>Inputs</h2><table><tr><th>Value</th><th>Symbol</th><th></th></tr>");
+    for v in d.values() {
+        let e = explain::input(g, &v.label);
+        h.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{} {}</td></tr>",
+            html_escape(&v.label),
+            html_escape(e.map_or("", |e| e.symbol)),
+            html_escape(&value_text(d, &v)),
+            html_escape(e.map_or("", |e| e.unit)),
+        ));
+    }
+    h.push_str("</table><h2>Results</h2><table>");
+    for (t, n) in lines {
+        h.push_str(&format!(
+            "<tr><td>{}</td><td><code>{}</code></td></tr>",
+            html_escape(t),
+            html_escape(n.as_deref().unwrap_or(""))
+        ));
+    }
+    h.push_str("</table><h2>Formulas and sources</h2><ul>");
+    for f in explain::formulas(g) {
+        h.push_str(&format!(
+            "<li><b>{}</b>: <code>{}</code><br>{}<br><i>{}</i> {}</li>",
+            html_escape(f.id),
+            html_escape(f.formula),
+            html_escape(f.symbols),
+            html_escape(f.source),
+            html_escape(f.limits)
+        ));
+    }
+    h.push_str("</ul><p><small>Made by 3DCadCraft from the component's stored input; the results are computed again from it.</small></p></body></html>");
+    h
+}
+
+/// The explanation's key of a result label: as it is, else without its
+/// "(eq. …)" and without "Gear 1 " / "Gear 2 ".
+fn result_key<'a>(generator: &str, label: &'a str) -> &'a str {
+    if crate::design::explain::result(generator, label).is_some() {
+        return label;
+    }
+    let a = label.split(" (").next().unwrap_or(label);
+    a.strip_prefix("Gear 1 ")
+        .or_else(|| a.strip_prefix("Gear 2 "))
+        .unwrap_or(a)
+}
+
+/// Whether panel `d` is drawn in the generator's own window (Spur Gears,
+/// Key, Bearing, Compression Spring; spec 6.2 §3.7).
+pub(super) fn in_window(d: &PartDialog) -> bool {
+    super::explain::generator_of(d).is_some()
+}
+
+/// The generator window's Results pane: the results of the panel's values
+/// (recomputed live), their explanations on hover, then the Explanations.
+pub(super) fn results_pane(d: &mut PartDialog, ui: &mut egui::Ui) {
+    ui.label(RichText::new("Results").strong());
+    egui::Grid::new("design_generator_results_grid")
+        .num_columns(2)
+        .show(ui, |ui| {
+            if is_spur(d) {
+                gear_ui(d, ui);
+            } else if is_key(d) {
+                key_ui(d, ui);
+            } else if is_bearing(d) {
+                bearing_ui(d, ui);
+            } else if is_spring(d) {
+                spring_ui(d, ui);
+            }
+        });
+    if let Some(g) = super::explain::generator_of(d) {
+        ui.separator();
+        super::explain::pane(ui, g);
+    }
+}
+
+/// The strip along the window's bottom (Inventor's Summary of Messages): the
+/// last error of an OK, else a hint.
+pub(super) fn messages_strip(ui: &mut egui::Ui, error: Option<&str>) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Messages").strong());
+        match error {
+            Some(e) => {
+                ui.colored_label(super::theme::tokens().error, e);
+            }
+            None => {
+                ui.label(
+                    RichText::new(
+                        "The results follow the values as you type; hover a result for its formula",
+                    )
+                    .weak(),
+                );
+            }
+        }
+    });
+}
+
+/// Why an option of Inventor's generator dialog is shown but off: its
+/// logic comes later (rule 15, spec 6.2-design-calculators §3.7).
+pub(super) fn row_later(d: &PartDialog, label: &str) -> Option<&'static str> {
+    let later: &[&str] = match d.kind {
+        Planned::Asm(AsmPlanned::SpurGear) => &[
+            "Internal",
+            "Size Type",
+            "Helix Angle Flip",
+            "Unit Correction Distribution",
+            "Input Type",
+            "Method of Strength Calculation",
+            "Type of Strength Calculation",
+            "Type of Load Calculation",
+            "Efficiency",
+            "Allowable Contact Stress (MPa)",
+            "Modulus of Elasticity (MPa)",
+            "Poisson's Ratio",
+        ],
+        Planned::Asm(AsmPlanned::Key) => &[
+            "Flip Key",
+            "Type of Strength Calculation",
+            "Allowed Pressure Hub (MPa)",
+        ],
+        Planned::Asm(AsmPlanned::Bearing) => {
+            &["Method of Calculation", "Operating Temperature (°C)"]
+        }
+        Planned::Asm(AsmPlanned::CompressionSpring) => &[
+            "Type of Strength Calculation",
+            "Minimum Load (N)",
+            "Installed Length (mm)",
+        ],
+        _ => &[],
+    };
+    later
+        .contains(&label)
+        .then_some("Interface only: the logic comes later (spec 6.2-design-calculators §3.7)")
+}
+
+/// Whether Spur Gears' Design Guide computes row `label` of tab `ti` (the
+/// field is shown, greyed: the result is in the Results).
+pub(super) fn guide_computes(d: &PartDialog, ti: usize, label: &str) -> bool {
+    is_spur(d)
+        && ti == 0
+        && match d.index(0, "Design Guide") {
+            0 => label == "Module",
+            1 => label.starts_with("Number of Teeth"),
+            2 => label == "Center Distance",
+            _ => label.starts_with("Unit Correction"),
+        }
 }
 
 /// The pair from the Design page.
@@ -69,13 +310,31 @@ pub(super) fn pair_of(d: &PartDialog) -> GearPair {
         face: [n("Facewidth 1", 20.0), n("Facewidth 2", 20.0)],
         ..GearPair::default()
     };
-    // Design Guide "Total Unit Correction": the shifts follow from the centre
-    // distance, shared in proportion to the teeth.
-    if d.index(0, "Design Guide") == 3
-        && let Ok(sum) = p.shift_sum_for(n("Center Distance", 60.0))
-    {
-        let [z1, z2] = p.teeth.map(f64::from);
-        p.shift = [sum * z2 / (z1 + z2), sum * z1 / (z1 + z2)];
+    // The Design Guide: which value follows from the others (the centre
+    // distance is the input of Module, Number of Teeth and Total Unit
+    // Correction; Center Distance follows from module and teeth).
+    let a = n("Center Distance", 60.0);
+    let share = |p: &mut GearPair| {
+        if let Ok(sum) = p.shift_sum_for(a) {
+            // Shared in proportion to the teeth.
+            let [z1, z2] = p.teeth.map(f64::from);
+            p.shift = [sum * z2 / (z1 + z2), sum * z1 / (z1 + z2)];
+        }
+    };
+    match d.index(0, "Design Guide") {
+        0 => {
+            if let Ok(m) = p.module_for(a) {
+                p.module = m;
+            }
+        }
+        1 => {
+            if let Ok(t) = p.teeth_for(a, n("Desired Gear Ratio", 2.0)) {
+                p.teeth = t;
+                share(&mut p);
+            }
+        }
+        3 => share(&mut p),
+        _ => {}
     }
     p
 }
@@ -96,7 +355,24 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             }
         };
         let f2 = |a: [f64; 2]| format!("{:.3} / {:.3} mm", a[0], a[1]);
+        let mut nums: Vec<(&str, String)> = vec![(
+            "Pitch Diameter",
+            format!(
+                "d = m·z / cos β = {}·{} / cos {:.1}° = {:.3} mm",
+                pair.module,
+                pair.teeth[0],
+                pair.helix.to_degrees(),
+                g.pitch[0]
+            ),
+        )];
         let mut r = vec![
+            (
+                "Module".to_owned(),
+                format!(
+                    "{:.4} mm, teeth {} / {}",
+                    pair.module, pair.teeth[0], pair.teeth[1]
+                ),
+            ),
             (
                 "Center Distance".to_owned(),
                 format!("{:.3} mm", g.center_distance),
@@ -129,6 +405,14 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             let (wt, wn) = gear::tooth_loads(&g, t);
             r.push(("Torque (gear 1)".into(), format!("{:.2} N·m", t / 1000.0)));
             r.push(("Tangential Force".into(), format!("{wt:.1} N")));
+            nums.push((
+                "Torque (gear 1)",
+                format!("T = 9549·P / n = 9549·{:.3} / {rpm:.0} = {:.2} N·m", power / 1000.0, t / 1000.0),
+            ));
+            nums.push((
+                "Tangential Force",
+                format!("Wt = 2·T / d1 = 2·{:.0} / {:.3} = {wt:.1} N", t, g.pitch[0]),
+            ));
             // Kv from the pitch-line speed and the accuracy level (Fig. 25).
             let level = n("Accuracy Level (AGMA)", 8.0).round().clamp(3.0, 11.0) as u32;
             let v = gear::pitch_line_velocity(g.pitch[0], rpm);
@@ -152,9 +436,27 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                     kv,
                 };
                 let sb = bending_stress(wt, pair.face[k], pair.module, &f);
+                if k == 0 {
+                    nums.push((
+                        "Bending Stress",
+                        format!(
+                            "σb = Wt·Ka·Ks·Km / (Kv·b·m·J) = {wt:.1}·{}·{:.3}·{} / ({kv:.3}·{}·{}·{j:.3}) = {sb:.1} MPa (gear 1)",
+                            f.ka,
+                            gear::size_factor(pair.module),
+                            f.km,
+                            pair.face[k],
+                            pair.module
+                        ),
+                    ));
+                }
+                let need = n("Minimal Safety Factor (bending)", 1.5);
+                let fs = allowed / sb;
                 r.push((
                     format!("Gear {} Bending Stress (eq. 53)", k + 1),
-                    format!("J {j:.3}, {sb:.1} MPa, safety {:.2}", allowed / sb),
+                    format!(
+                        "J {j:.3}, {sb:.1} MPa, safety {fs:.2} {} {need:.2}",
+                        if fs >= need { "≥" } else { "< (too weak)" }
+                    ),
                 ));
             }
             let helical = pair.helix.abs() > 1e-9 && g.overlap_ratio > 2.0;
@@ -167,20 +469,26 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                     let g10 = gear::gear_life(t10, pair.teeth[0]);
                     let hours = |cycles_m: f64| cycles_m * 1e6 / rpm / 60.0;
                     r.push((
-                        "Tooth Life L10 (eq. 68)".into(),
+                        "Tooth Life L10".into(),
                         format!("{t10:.4e} million cycles, {:.0} h", hours(t10)),
                     ));
+                    let life_h = hours(life_at(g10, rel, GEAR_WEIBULL));
+                    let need_h = n("Required Life (h)", 10000.0);
                     r.push((
-                        format!("Gear 1 Life at {:.2} % (eq. 67, 70)", rel * 100.0),
-                        format!("{:.0} h", hours(life_at(g10, rel, GEAR_WEIBULL))),
+                        "Gear 1 Life (eq. 67, 70)".into(),
+                        format!(
+                            "{life_h:.0} h at {:.2} % {} {need_h:.0} h required",
+                            rel * 100.0,
+                            if life_h >= need_h { "≥" } else { "< (too short)" }
+                        ),
                     ));
                 }
                 Err(e) => r.push(("Surface Life".into(), e)),
             }
         }
-        rows(ui, "gear_results", &r);
+        rows(ui, crate::design::explain::GEARS, &r, &nums);
         for w in &g.warnings {
-            ui.colored_label(super::theme::tokens().warning, format!("Warning: {w}"));
+            warning(ui, format!("Warning: {w}"));
         }
         ui.label(
             RichText::new(
@@ -235,22 +543,49 @@ pub(super) fn key_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                     "Bearing length".into(),
                     format!("{:.1} mm", c.bearing_length),
                 ));
-                rows(ui, "key_results", &r);
+                let g = crate::design::explain::KEY;
+                let lt = c.bearing_length;
+                let nums = [
+                    (
+                        "Force at the shaft",
+                        format!("F = 2·T / d = 2·{t:.0} / {dia} = {:.0} N", c.force),
+                    ),
+                    (
+                        "Shear",
+                        format!(
+                            "τ = F / (b·lt) = {:.0} / ({}·{lt:.1}) = {:.1} MPa (per key share)",
+                            c.force, k.b, c.shear
+                        ),
+                    ),
+                    (
+                        "Pressure",
+                        format!(
+                            "p = F / ((h − t1)·lt) = {:.0} / (({} − {})·{lt:.1}) = {:.1} MPa (per key share)",
+                            c.force, k.h, k.t1, c.pressure
+                        ),
+                    ),
+                ];
+                rows(ui, g, &r, &nums);
                 for (what, v, s) in [
                     ("Shear (eq. 1)", c.shear, c.shear_safety),
                     ("Pressure (eq. 3)", c.pressure, c.pressure_safety),
                 ] {
                     let col = if s >= 1.0 { tok.ok } else { tok.error };
-                    ui.colored_label(col, format!("{what}: {v:.1} MPa, safety {s:.2}"));
+                    let text = RichText::new(format!("{what}: {v:.1} MPa, safety {s:.2}")).color(col);
+                    result_row(ui, g, what, text, &nums);
                 }
                 if let Some(min) = key::shortest_length(&k, dia, ends, keys, t, tp) {
-                    ui.label(format!(
-                        "Shortest standard length for the pressure: {min} mm"
-                    ));
+                    result_row(
+                        ui,
+                        g,
+                        "Shortest standard length",
+                        RichText::new(format!("Shortest standard length for the pressure: {min} mm")),
+                        &nums,
+                    );
                 }
             }
             Err(e) => {
-                rows(ui, "key_results", &r);
+                rows(ui, crate::design::explain::KEY, &r, &[]);
                 ui.colored_label(super::theme::tokens().error, format!("Key: {e}"));
             }
         }
@@ -273,9 +608,10 @@ pub(super) fn bearing_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
         wrap(ui);
         let tok = super::theme::tokens();
         let need = n("Required Life (h)", 10000.0);
+        let extra = n("Factor of Additional Forces", 1.0);
         match bearing::check(
-            n("Radial Load (N)", 2000.0),
-            n("Axial Load (N)", 0.0),
+            n("Radial Load (N)", 2000.0) * extra,
+            n("Axial Load (N)", 0.0) * extra,
             n("Radial Factor X", 1.0),
             n("Axial Factor Y", 0.0),
             n("Basic Dynamic Load Rating C (N)", 14000.0),
@@ -286,29 +622,57 @@ pub(super) fn bearing_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             need,
         ) {
             Ok(b) => {
+                let m = kind.exponent();
+                let nums = [
+                    (
+                        "Equivalent Load Fe",
+                        format!(
+                            "Fe = X·Fr + Y·Fa = {}·{} + {}·{} = {:.1} N (loads × {extra})",
+                            n("Radial Factor X", 1.0),
+                            n("Radial Load (N)", 2000.0) * extra,
+                            n("Axial Factor Y", 0.0),
+                            n("Axial Load (N)", 0.0) * extra,
+                            b.fe
+                        ),
+                    ),
+                    (
+                        "Basic Life L10",
+                        format!(
+                            "L10 = (C / Fe)^m = ({} / {:.1})^{m:.3} = {:.2} million revolutions",
+                            n("Basic Dynamic Load Rating C (N)", 14000.0),
+                            b.fe,
+                            b.l10
+                        ),
+                    ),
+                ];
                 rows(
                     ui,
-                    "bearing_results",
+                    crate::design::explain::BEARING,
                     &[
                         ("Equivalent Load Fe".into(), format!("{:.1} N", b.fe)),
                         (
-                            "Basic Life L10 = (C/Fe)^m".into(),
+                            "Basic Life L10".into(),
                             format!("{:.2} million revolutions, {:.0} h", b.l10, b.l10_hours),
                         ),
                         ("Required C".into(), format!("{:.0} N", b.required_c)),
                     ],
+                    &nums,
                 );
                 let col = if b.adjusted_hours >= need {
                     tok.ok
                 } else {
                     tok.error
                 };
-                ui.colored_label(
-                    col,
-                    format!(
+                result_row(
+                    ui,
+                    crate::design::explain::BEARING,
+                    "Adjusted life",
+                    RichText::new(format!(
                         "Adjusted life at the reliability: {:.0} h (required {need:.0} h)",
                         b.adjusted_hours
-                    ),
+                    ))
+                    .color(col),
+                    &nums,
                 );
             }
             Err(e) => {
@@ -327,21 +691,10 @@ pub(super) fn bearing_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
 pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
     plabel(ui, "Results");
     let compression = d.kind == Planned::Asm(AsmPlanned::CompressionSpring);
-    let n0 = |l: &str, def: f64| d.num(0, l).unwrap_or(def);
     let n1 = |l: &str, def: f64| d.num(1, l).unwrap_or(def);
-    let wire = n0("Wire Diameter", 2.0);
-    let s = spring::Spring {
-        wire,
-        mean_diameter: n0("Outer Diameter", 20.0) - wire,
-        active: n0("Active Coils", 6.0),
-        free_length: n0("Free Length", 50.0),
-        ends: match d.index(0, "Ends") {
-            1 => spring::Ends::Closed,
-            2 => spring::Ends::Open,
-            _ => spring::Ends::ClosedGround,
-        },
-        g: n1("Shear Modulus G (MPa)", spring::G_SPRING_STEEL),
-    };
+    let s = spring_of(d);
+    let model = model_of(d);
+    let wire = s.wire;
     ui.vertical(|ui| {
         fit(ui);
         wrap(ui);
@@ -350,10 +703,13 @@ pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             ui.label(RichText::new("The calculation covers compression springs yet").weak());
             return;
         }
-        if let Err(e) = s.validate() {
+        if let Err(e) = model.validate() {
             ui.colored_label(tok.error, format!("Compression Spring: {e}"));
             return;
         }
+        let pitch = model.pitch().unwrap_or(0.0);
+        let solid = model.solid_length();
+        let travel = model.free_length - solid;
         let p = n1("Working Load (N)", 100.0);
         let typed = n1("Allowed Stress (MPa)", 0.0);
         let allowed = if typed > 0.0 {
@@ -363,9 +719,43 @@ pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
         };
         let defl = s.deflection(p);
         let stress = s.stress(p);
+        let (dd, dm) = (s.wire, s.mean_diameter);
+        let nums = [
+            (
+                "Rate",
+                format!(
+                    "k = d⁴·G / (8·D³·n) = {dd}⁴·{} / (8·{dm}³·{}) = {:.3} N/mm",
+                    s.g,
+                    s.active,
+                    s.rate()
+                ),
+            ),
+            (
+                "Deflection",
+                format!("δ = P / k = {p} / {:.3} = {defl:.3} mm", s.rate()),
+            ),
+            (
+                "Stress",
+                format!("p = 8·P·D / (π·d³) = 8·{p}·{dm} / (π·{dd}³) = {stress:.1} MPa"),
+            ),
+            (
+                "Solid Length",
+                format!(
+                    "Ls = d·(nt + 1 − ground ends / 2) = {dd}·({} + 1 − {}) = {solid:.3} mm",
+                    model.total_coils(),
+                    model.ends.iter().filter(|e| e.kind.ground()).count() as f64 / 2.0,
+                ),
+            ),
+            (
+                "Pitch",
+                format!(
+                    "L0 = z0 + Σ closed·d + Σ transition·(d + t)/2 + n·t + z1 → t = {pitch:.3} mm"
+                ),
+            ),
+        ];
         rows(
             ui,
-            "spring_results",
+            crate::design::explain::SPRING,
             &[
                 ("Rate".into(), format!("{:.3} N/mm", s.rate())),
                 ("Deflection (eq. 2)".into(), format!("{defl:.3} mm")),
@@ -373,17 +763,22 @@ pub(super) fn spring_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                     "Working Length".into(),
                     format!("{:.3} mm", s.free_length - defl),
                 ),
-                ("Solid Length".into(), format!("{:.3} mm", s.solid_length())),
+                ("Solid Length".into(), format!("{solid:.3} mm")),
+                (
+                    "Pitch".into(),
+                    format!("{pitch:.3} mm, {} coils in all", model.total_coils()),
+                ),
                 ("Stress (eq. 4)".into(), format!("{stress:.1} MPa")),
                 (
                     "Deflection at the Allowed Stress (eq. 7)".into(),
                     format!("{:.3} mm", s.deflection_at_stress(allowed)),
                 ),
             ],
+            &nums,
         );
-        let ok = stress <= allowed && defl <= s.travel();
+        let ok = stress <= allowed && defl <= travel;
         let col = if ok { tok.ok } else { tok.error };
-        let why = if defl > s.travel() {
+        let why = if defl > travel {
             "the spring goes solid before the load".to_owned()
         } else {
             format!("stress {stress:.0} of {allowed:.0} MPa allowed")
@@ -430,46 +825,75 @@ impl super::CadCraftApp {
     }
 
     fn gear_make(&mut self, d: &PartDialog) -> Result<String, String> {
+        if !d.element_edit.is_empty() {
+            return self.gear_rebuild(d);
+        }
         let pair = pair_of(d);
         let g = pair.geometry()?;
+        let asm_id = self.part_id;
         let mut parts = Vec::new();
-        for k in 0..2 {
+        for (k, &keys) in GEAR_KEYS.iter().enumerate() {
             if d.index(0, if k == 0 { "Gear 1" } else { "Gear 2" }) != 0 {
                 continue;
             }
-            let keys = [("cyl1", "start1"), ("cyl2", "start2")][k];
             let picked = d.refs.get(keys.0).is_some_and(|v| !v.is_empty());
-            let (mut place, radius) = self.axis_placement(d, keys.0, keys.1, false)?;
+            let flip = d.check(0, if k == 0 { "Flip 1" } else { "Flip 2" });
+            let (mut place, radius) = self.axis_placement(d, keys.0, keys.1, flip)?;
             let bore = radius.map_or(0.0, |r| 2.0 * r);
             let mut part = gear_parts::gear_part(&pair, &g, k, bore)?;
             part.regenerate().map_err(|e| e.to_string())?;
             if let Some((_, msg)) = part.feature_health.iter().next() {
                 return Err(msg.clone());
             }
+            let mut element = crate::design::Element {
+                command: GEAR_ID.into(),
+                index: k,
+                values: d.values(),
+                ..Default::default()
+            };
+            element.extra.insert("bore".into(), bore);
+            part.element = Some(element);
             if k == 1 && !picked {
-                // Beside gear 1, a space facing its tooth.
-                let (base, _) = self.axis_placement(d, "cyl1", "start1", false)?;
-                let turn = std::f64::consts::PI + std::f64::consts::PI / f64::from(pair.teeth[1]);
-                let local = crate::kernel::Transform3::new(
-                    crate::kernel::Vector3::new(g.center_distance, 0.0, 0.0),
-                    crate::kernel::Vector3::z() * turn,
-                );
-                place = base * local;
+                // Beside gear 1 at the centre distance.
+                let (base, _) = self.axis_placement(d, "cyl1", "start1", d.check(0, "Flip 1"))?;
+                place = base
+                    * Transform3::new(Vector3::new(g.center_distance, 0.0, 0.0), Vector3::zeros());
             }
             parts.push((part, place, k));
         }
         if parts.is_empty() {
             return Err("both gears are set to No Model or Feature".into());
         }
+        let mut warn = None;
+        if parts.len() == 2 {
+            // Gear 2 turned so a space faces gear 1's tooth.
+            parts[1].1 = elements::mesh_turn(&parts[0].1, &parts[1].1, pair.teeth);
+            let (c1, c2) = (parts[0].1 * Point3::origin(), parts[1].1 * Point3::origin());
+            let n = parts[0].1 * Vector3::z();
+            let v = c2 - c1;
+            let apart = (v - n * n.dot(&v)).norm();
+            if (apart - g.center_distance).abs() > 1e-3 {
+                warn = Some(format!(
+                    "the axes stand {apart:.3} mm apart, the gears need {:.3} mm",
+                    g.center_distance
+                ));
+            }
+        }
         let mut trial = self.project.clone();
         let mut occs = Vec::new();
+        let mut mates = Vec::new();
         for (part, place, k) in parts {
-            occs.push(self.place_generated(
-                &mut trial,
-                part,
-                &format!("Spur Gear {}", k + 1),
-                place,
-            )?);
+            let occ =
+                self.place_generated(&mut trial, part, &format!("Spur Gear {}", k + 1), place)?;
+            let keys = GEAR_KEYS[k];
+            let seat = seat_on(&mut trial, asm_id, d, occ, keys.0, keys.1, &place)?;
+            occs.push(occ);
+            mates.push(seat.axis);
+        }
+        if let [m1, m2] = mates[..] {
+            let mut a = asm_copy(&trial, asm_id)?;
+            elements::gear_link(&trial, &mut a, m1, m2, pair.teeth)?;
+            put_asm(&mut trial, asm_id, a);
         }
         self.history.break_coalescing();
         self.checkpoint("Spur Gears");
@@ -479,11 +903,172 @@ impl super::CadCraftApp {
         self.asm.sel = occs.clone();
         self.asm.sub.clear();
         self.scene_dirty = true;
-        Ok(format!(
+        let mut text = format!(
             "Spur Gears: {} placed, centre distance {:.3} mm",
             occs.len(),
             g.center_distance
+        );
+        if occs.len() == 2 {
+            text.push_str(&format!(", ratio {} : {}", pair.teeth[0], pair.teeth[1]));
+        }
+        if let Some(w) = warn {
+            text.push_str(&format!(" (Warning: {w})"));
+        }
+        Ok(text)
+    }
+
+    /// Edit Spur Gears' OK: each edited gear's part rebuilt from the panel
+    /// (its document, name and occurrences stay); a gear seated on a
+    /// coordinate system of the assembly moves to the new centre distance,
+    /// turned to mesh, and the pair's motion link takes the new ratio. One
+    /// Undo step.
+    fn gear_rebuild(&mut self, d: &PartDialog) -> Result<String, String> {
+        let pair = pair_of(d);
+        let g = pair.geometry()?;
+        let asm_id = self.part_id;
+        let mut trial = self.project.clone();
+        let mut by_index: [Option<u32>; 2] = [None, None];
+        for &(occ, doc) in &d.element_edit {
+            let old = element_in(&trial, doc).ok_or("the gear's part no longer exists")?;
+            let k = old.index.min(1);
+            let bore = old.extra.get("bore").copied().unwrap_or(0.0);
+            let hub = match (old.extra.get("hub_b"), old.extra.get("hub_t2")) {
+                (Some(&b), Some(&t)) => Some((b, t)),
+                _ => None,
+            };
+            let mut part = gear_parts::gear_part_keyed(&pair, &g, k, bore, hub)?;
+            part.regenerate().map_err(|e| e.to_string())?;
+            if let Some((_, msg)) = part.feature_health.iter().next() {
+                return Err(msg.clone());
+            }
+            part.element = Some(crate::design::Element {
+                values: d.values(),
+                ..old
+            });
+            if let Some(x) = trial.document_mut(doc) {
+                x.data = DocumentData::Part(part);
+            }
+            by_index[k] = Some(occ);
+        }
+        if let [Some(o1), Some(o2)] = by_index {
+            let a = asm_copy(&trial, asm_id)?;
+            let t1 = a.find(o1).ok_or("gear 1 is gone")?.transform;
+            let t2 = a.find(o2).ok_or("gear 2 is gone")?.transform;
+            let m2 = elements::axis_mate(&a, o2);
+            if let Some(ucs) = m2.and_then(|m| elements::ucs_of(&a, m)) {
+                // Along the old centre line, at the new distance.
+                let (c1, c2) = (t1 * Point3::origin(), t2 * Point3::origin());
+                let dir = (c2 - c1)
+                    .try_normalize(1e-12)
+                    .unwrap_or_else(|| t1 * Vector3::x());
+                let mut t = t2;
+                t.translation.vector = (c1 + dir * g.center_distance).coords;
+                let t = elements::mesh_turn(&t1, &t, pair.teeth);
+                elements::move_ucs(&mut trial, asm_id, &ucs, &t)?;
+                let mut a = asm_copy(&trial, asm_id)?;
+                if let Some(o) = a.find_mut(o2) {
+                    o.transform = t;
+                }
+                put_asm(&mut trial, asm_id, a);
+            }
+            // The link takes the new ratio, meshing where the gears stand.
+            let mut a = asm_copy(&trial, asm_id)?;
+            let (m1, m2) = (elements::axis_mate(&a, o1), elements::axis_mate(&a, o2));
+            if let (Some(m1), Some(m2)) = (m1, m2) {
+                a.motion
+                    .links
+                    .retain(|l| !(l.driver == m1 && l.driven == m2));
+                for c in [m1, m2] {
+                    if let Some(c) = a.constraint_mut(c) {
+                        c.locked = false;
+                    }
+                }
+                elements::gear_link(&trial, &mut a, m1, m2, pair.teeth)?;
+            }
+            put_asm(&mut trial, asm_id, a);
+        }
+        self.history.break_coalescing();
+        self.checkpoint("Edit Spur Gears");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.asm_solve(None);
+        self.asm.sel = d.element_edit.iter().map(|e| e.0).collect();
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        Ok(format!(
+            "Spur Gears: rebuilt, centre distance {:.3} mm",
+            g.center_distance
         ))
+    }
+
+    /// The generated element occurrence `occ` of the active assembly places
+    /// (a part of this file made by a planned-panel generator): its document
+    /// and stored input.
+    pub(super) fn element_of(&self, occ: u32) -> Option<(DocumentId, crate::design::Element)> {
+        let a = self.assembly()?;
+        let o = a.find(occ)?;
+        if o.component.library.is_some() {
+            return None;
+        }
+        let doc = o.component.base().document;
+        Some((doc, element_in(&self.project, doc)?))
+    }
+
+    /// The right-click menu's label to edit a generated element.
+    pub(super) fn element_menu_label(&self, occ: u32) -> Option<&'static str> {
+        let (_, e) = self.element_of(occ)?;
+        Some(match e.command.as_str() {
+            GEAR_ID => "Edit Spur Gears...",
+            KEY_ID => "Edit Key...",
+            BEARING_ID => "Edit Bearing...",
+            SPRING_ID => "Edit Compression Spring...",
+            _ => return None,
+        })
+    }
+
+    /// Edit using the generator (Inventor: Edit using Design Accelerator): the
+    /// generator's panel opens on the element's stored values; a gear brings
+    /// its partner (the other gear of its motion link) along.
+    pub(super) fn element_edit(&mut self, occ: u32) {
+        let Some((doc, e)) = self.element_of(occ) else {
+            return;
+        };
+        let kind = match e.command.as_str() {
+            GEAR_ID => AsmPlanned::SpurGear,
+            KEY_ID => AsmPlanned::Key,
+            BEARING_ID => AsmPlanned::Bearing,
+            SPRING_ID => AsmPlanned::CompressionSpring,
+            _ => return,
+        };
+        let mut d = PartDialog::new(kind);
+        d.set_values(&e.values);
+        d.element_edit.push((occ, doc));
+        if kind == AsmPlanned::SpurGear
+            && let Some(a) = self.assembly()
+            && let Some(m) = elements::axis_mate(a, occ)
+        {
+            let other = a.motion.links.iter().find_map(|l| {
+                if l.driver == m {
+                    Some(l.driven)
+                } else if l.driven == m {
+                    Some(l.driver)
+                } else {
+                    None
+                }
+            });
+            let partner = other
+                .and_then(|c| a.constraint(c))
+                .map(|c| c.a.occurrence())
+                .filter(|&o| o != occ);
+            if let Some(o) = partner
+                && let Some((pdoc, pe)) = self.element_of(o)
+                && pe.command == GEAR_ID
+            {
+                d.element_edit.push((o, pdoc));
+            }
+        }
+        d.active = None;
+        self.part_planned = Some(d);
     }
 
     /// Key OK: the DIN 6885 key for the shaft (the picked cylinder, else the
@@ -503,43 +1088,96 @@ impl super::CadCraftApp {
     }
 
     fn key_make(&mut self, d: &PartDialog) -> Result<String, String> {
-        let (place, radius) = self.axis_placement(d, "shaft", "start", false)?;
+        if !d.element_edit.is_empty() {
+            return self.key_rebuild(d);
+        }
+        let asm_id = self.part_id;
+        let (mut place, radius) = self.axis_placement(d, "shaft", "start", false)?;
         let dia = radius.map_or_else(|| d.num(1, "Shaft Diameter").unwrap_or(40.0), |r| 2.0 * r);
         let k = key::size_for(dia)?;
         let l = d.num(1, "Key Length").unwrap_or(50.0);
-        let ends = if d.index(0, "Groove") == 1 {
-            Ends::Square
-        } else {
-            Ends::Rounded
-        };
+        let ends = key_ends(d);
         let mut part = crate::design::gear_model::key_part(&k, l, ends)?;
         part.regenerate().map_err(|e| e.to_string())?;
         if let Some((_, msg)) = part.feature_health.iter().next() {
             return Err(msg.clone());
         }
+        let mut element = crate::design::Element {
+            command: KEY_ID.into(),
+            values: d.values(),
+            ..Default::default()
+        };
+        element.extra.insert("dia".into(), dia);
+        part.element = Some(element);
         let keys = d
             .num(0, "Number of Keys")
             .unwrap_or(1.0)
             .round()
             .clamp(1.0, 2.0) as u32;
+        let shaft_ref = d.refs.get("shaft").and_then(|v| v.first()).cloned();
+        let start_ref = d.refs.get("start").and_then(|v| v.first()).cloned();
+        let shaft_occ = shaft_ref
+            .as_ref()
+            .map(|r| r.occurrence())
+            .filter(|&o| o != ASSEMBLY);
+        // The key's X along the shaft part's X: a generated shaft's keyway
+        // lies on its +X side.
+        if let Some(o) = shaft_occ.and_then(|o| self.assembly()?.find(o)) {
+            let n = place * Vector3::z();
+            let sx = o.transform * Vector3::x();
+            if let Some(x) = (sx - n * n.dot(&sx)).try_normalize(1e-9) {
+                place = frame_zx(place * Point3::origin(), n, x);
+            }
+        }
         let mut trial = self.project.clone();
         let mut occs = Vec::new();
         for n in 0..keys {
             // A second key opposite the first.
-            let turn = crate::kernel::Transform3::new(
-                crate::kernel::Vector3::zeros(),
-                crate::kernel::Vector3::z() * (std::f64::consts::PI * f64::from(n)),
+            let turn = Transform3::new(
+                Vector3::zeros(),
+                Vector3::z() * (std::f64::consts::PI * f64::from(n)),
             );
-            let floor = crate::kernel::Transform3::new(
-                crate::kernel::Vector3::new(dia / 2.0 - k.t1, 0.0, 0.0),
-                crate::kernel::Vector3::zeros(),
-            );
+            let floor = Transform3::new(Vector3::new(dia / 2.0 - k.t1, 0.0, 0.0), Vector3::zeros());
             occs.push(self.place_generated(
                 &mut trial,
                 part.clone(),
                 "Key",
                 place * turn * floor,
             )?);
+        }
+        // Held in the shaft's frame, its start on the start plane.
+        let mut notes = Vec::new();
+        if let Some(shaft) = shaft_occ {
+            let start = match start_ref {
+                Some(s) => s,
+                None => elements::ucs_seat(&mut trial, asm_id, &place)?.1,
+            };
+            let mut a = asm_copy(&trial, asm_id)?;
+            for &o in &occs {
+                if elements::hold_key(&trial, &mut a, o, shaft, start.clone())?.is_none() {
+                    notes.push("the shaft's axis is not its own Z: the key is placed without relationships");
+                    break;
+                }
+            }
+            put_asm(&mut trial, asm_id, a);
+        }
+        // The hub's groove: a gear made by Spur Gears gets it in its bore and
+        // turns with the shaft.
+        let hub_ref = d.refs.get("hub").and_then(|v| v.first()).cloned();
+        if let Some(h) = hub_ref {
+            let hub_radius = self.axis_placement(d, "hub", "", false)?.1;
+            match self.groove_hub(&mut trial, h.occurrence(), shaft_occ, &k, place, hub_radius)? {
+                Some(note) => notes.push(note),
+                None => {
+                    if let Some(DocumentData::Part(p)) = trial
+                        .document_mut(part_doc_of(&trial, asm_id, occs[0])?)
+                        .map(|x| &mut x.data)
+                        && let Some(e) = &mut p.element
+                    {
+                        e.extra.insert("hub".into(), f64::from(h.occurrence()));
+                    }
+                }
+            }
         }
         self.history.break_coalescing();
         self.checkpoint("Parallel Key");
@@ -549,9 +1187,641 @@ impl super::CadCraftApp {
         self.asm.sel = occs;
         self.asm.sub.clear();
         self.scene_dirty = true;
-        Ok(format!(
+        let mut text = format!(
             "Key: DIN 6885 A {} × {} × {l} placed for a Ø{dia:.1} shaft",
             k.b, k.h
+        );
+        for n in notes {
+            text.push_str(&format!(" (Note: {n})"));
+        }
+        Ok(text)
+    }
+
+    /// Cuts the hub groove of key `k` into the hub occurrence `hub` when its
+    /// part was made by Spur Gears (rebuilt with the groove in its bore,
+    /// turned so the groove sits on the key at `key_place`, its turn on the
+    /// shaft held, a motion link on its turn moved to the shaft's own axis
+    /// Mate). A note when the hub is another part (left as it is).
+    fn groove_hub(
+        &self,
+        trial: &mut crate::document::Project,
+        hub: u32,
+        shaft: Option<u32>,
+        k: &key::KeySize,
+        key_place: Transform3,
+        hub_radius: Option<f64>,
+    ) -> Result<Option<&'static str>, String> {
+        let asm_id = self.part_id;
+        let doc = part_doc_of(trial, asm_id, hub)?;
+        let Some(old) = element_in(trial, doc).filter(|e| e.command == GEAR_ID) else {
+            // Any other hub: the groove cut into its part through all, on a
+            // UCS at the key's place in the hub's coordinates.
+            let a = asm_copy(trial, asm_id)?;
+            let t = a.find(hub).ok_or("the hub is gone")?.transform;
+            let r = hub_radius.ok_or("pick the hub's bore (a cylindrical face)")?;
+            let at = t.inverse() * key_place;
+            let Some(DocumentData::Part(p)) = trial.document_mut(doc).map(|x| &mut x.data) else {
+                return Err("the hub is not a part".into());
+            };
+            gear_parts::cut_hub_groove(p, &at, r, k.b, k.t2)?;
+            return Ok(None);
+        };
+        let bore = old.extra.get("bore").copied().unwrap_or(0.0);
+        if bore <= 0.0 {
+            return Err(
+                "the gear has no bore for the key (place it on the shaft's cylinder)".into(),
+            );
+        }
+        let probe = PartDialog::from_values(AsmPlanned::SpurGear, &old.values);
+        let pair = pair_of(&probe);
+        let g = pair.geometry()?;
+        let mut part =
+            gear_parts::gear_part_keyed(&pair, &g, old.index.min(1), bore, Some((k.b, k.t2)))?;
+        part.regenerate().map_err(|e| e.to_string())?;
+        if let Some((_, msg)) = part.feature_health.iter().next() {
+            return Err(msg.clone());
+        }
+        let mut e = old;
+        e.extra.insert("hub_b".into(), k.b);
+        e.extra.insert("hub_t2".into(), k.t2);
+        part.element = Some(e);
+        if let Some(x) = trial.document_mut(doc) {
+            x.data = DocumentData::Part(part);
+        }
+        let mut a = asm_copy(trial, asm_id)?;
+        // The groove (+X of the gear) onto the key's side.
+        if let Some(o) = a.find_mut(hub) {
+            let t = o.transform;
+            let n = t * Vector3::z();
+            let (gx, kx) = (t * Vector3::x(), key_place * Vector3::x());
+            let turn = n.cross(&gx).dot(&kx).atan2(gx.dot(&kx));
+            o.transform = t * Transform3::new(Vector3::zeros(), Vector3::z() * turn);
+        }
+        if let Some(m) = elements::axis_mate(&a, hub) {
+            let v = a.constraint(m).and_then(|c| elements::value(trial, &a, c));
+            if let (Some(v), Some(c)) = (v, a.constraint_mut(m)) {
+                c.locked = true;
+                c.value = v;
+            }
+            if let Some(s) = shaft.and_then(|s| elements::axis_mate(&a, s)) {
+                elements::move_links(trial, &mut a, m, s)?;
+            }
+        }
+        put_asm(trial, asm_id, a);
+        Ok(None)
+    }
+
+    /// Edit Key's OK: the key's part rebuilt for the new size and length (its
+    /// occurrences stay, their floor moved to the new groove depth); a gear
+    /// it grooved gets the new groove.
+    fn key_rebuild(&mut self, d: &PartDialog) -> Result<String, String> {
+        let &(_, doc) = d.element_edit.first().ok_or("nothing to edit")?;
+        let old = element_in(&self.project, doc).ok_or("the key's part no longer exists")?;
+        let dia = old.extra.get("dia").copied().unwrap_or(40.0);
+        let k = key::size_for(dia)?;
+        let l = d.num(1, "Key Length").unwrap_or(50.0);
+        let mut part = crate::design::gear_model::key_part(&k, l, key_ends(d))?;
+        part.regenerate().map_err(|e| e.to_string())?;
+        if let Some((_, msg)) = part.feature_health.iter().next() {
+            return Err(msg.clone());
+        }
+        part.element = Some(crate::design::Element {
+            values: d.values(),
+            ..old.clone()
+        });
+        let mut trial = self.project.clone();
+        if let Some(x) = trial.document_mut(doc) {
+            x.data = DocumentData::Part(part);
+        }
+        self.history.break_coalescing();
+        self.checkpoint("Edit Key");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.asm_solve(None);
+        self.asm.sel = d.element_edit.iter().map(|e| e.0).collect();
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        Ok(format!("Key: rebuilt, {} × {} × {l}", k.b, k.h))
+    }
+}
+
+/// The groove ends chosen on the panel.
+fn key_ends(d: &PartDialog) -> Ends {
+    if d.index(0, "Groove") == 1 {
+        Ends::Square
+    } else {
+        Ends::Rounded
+    }
+}
+
+/// The command ids of the planned-panel generators (`design::Element::command`).
+pub(super) const GEAR_ID: &str = "design.spur_gear";
+pub(super) const KEY_ID: &str = "design.key";
+pub(super) const BEARING_ID: &str = "design.bearing";
+pub(super) const SPRING_ID: &str = "design.compression_spring";
+
+/// The Spur Gears panel's selectors of each gear: axis, start plane.
+const GEAR_KEYS: [(&str, &str); 2] = [("cyl1", "start1"), ("cyl2", "start2")];
+
+/// The stored input of part document `doc`, when a generator made it.
+fn element_in(p: &crate::document::Project, doc: DocumentId) -> Option<crate::design::Element> {
+    match &p.document(doc)?.data {
+        DocumentData::Part(part) => part.element.clone(),
+        _ => None,
+    }
+}
+
+/// A copy of assembly `id` of `p`.
+fn asm_copy(p: &crate::document::Project, id: DocumentId) -> Result<AssemblyDocument, String> {
+    match p.document(id).map(|x| &x.data) {
+        Some(DocumentData::Assembly(a)) => Ok(a.clone()),
+        _ => Err("no assembly is open".into()),
+    }
+}
+
+/// Puts assembly `a` back as document `id` of `p`.
+fn put_asm(p: &mut crate::document::Project, id: DocumentId, a: AssemblyDocument) {
+    if let Some(x) = p.document_mut(id) {
+        x.data = DocumentData::Assembly(a);
+    }
+}
+
+/// The part document occurrence `occ` of assembly `asm` places (this file's).
+fn part_doc_of(
+    p: &crate::document::Project,
+    asm: DocumentId,
+    occ: u32,
+) -> Result<DocumentId, String> {
+    let a = match p.document(asm).map(|x| &x.data) {
+        Some(DocumentData::Assembly(a)) => a,
+        _ => return Err("no assembly is open".into()),
+    };
+    let o = a.find(occ).ok_or("the component no longer exists")?;
+    if o.component.library.is_some() {
+        return Err("the component is a library part".into());
+    }
+    Ok(o.component.base().document)
+}
+
+/// A frame at `p` whose Z is `z` and X is `x` (square to each other).
+fn frame_zx(p: Point3, z: Vector3, x: Vector3) -> Transform3 {
+    let z = z.normalize();
+    let x = (x - z * z.dot(&x)).normalize();
+    let y = z.cross(&x);
+    let r = nalgebra::Rotation3::from_basis_unchecked(&[x, y, z]);
+    Transform3::from_parts(
+        p.coords.into(),
+        nalgebra::UnitQuaternion::from_rotation_matrix(&r),
+    )
+}
+
+/// Seats occurrence `occ` of assembly `asm` on the picks of selectors
+/// `axis_key` / `start_key` (relationships held as it stands at `place`); a
+/// selector left empty takes a coordinate system of the assembly at `place`.
+pub(super) fn seat_on(
+    trial: &mut crate::document::Project,
+    asm: DocumentId,
+    d: &PartDialog,
+    occ: u32,
+    axis_key: &str,
+    start_key: &str,
+    place: &Transform3,
+) -> Result<elements::Seated, String> {
+    let axis = d.refs.get(axis_key).and_then(|v| v.first()).cloned();
+    let start = d.refs.get(start_key).and_then(|v| v.first()).cloned();
+    let (ax, st) = match (axis, start) {
+        (Some(a), Some(s)) => (a, s),
+        (a, s) => {
+            let (ua, us) = elements::ucs_seat(trial, asm, place)?;
+            (a.unwrap_or(ua), s.unwrap_or(us))
+        }
+    };
+    let mut a = asm_copy(trial, asm)?;
+    let s = elements::seat(trial, &mut a, occ, ax, st)?;
+    put_asm(trial, asm, a);
+    Ok(s)
+}
+
+/// The Bearing panel's list of the library's bearings that fit the shaft
+/// (`Catalog::bearings_for`), found again when the diameter or the category
+/// changes.
+#[derive(Clone, Debug, Default)]
+pub struct BearingList {
+    /// What the rows were found for: (diameter in µm, category).
+    key: Option<(i64, usize)>,
+    /// The library they come from.
+    catalog: Option<std::sync::Arc<crate::components::catalog::Catalog>>,
+    /// (family, member, d, D, B, label, category).
+    rows: Vec<BearingRow>,
+    /// The row chosen.
+    pub chosen: usize,
+}
+
+/// One bearing of [`BearingList`].
+#[derive(Clone, Debug)]
+struct BearingRow {
+    family: usize,
+    member: usize,
+    /// Outside diameter and width.
+    size: (f64, f64),
+    label: String,
+    category: String,
+}
+
+/// The fitting bearings with their icon (rule 23) under the Note row; a click
+/// chooses one.
+pub(super) fn bearing_list_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
+    plabel(ui, "Bearing");
+    ui.vertical(|ui| {
+        fit(ui);
+        if d.bearing.rows.is_empty() {
+            ui.label(
+                RichText::new(format!(
+                    "No bearing of the library has a Ø{} bore in this category",
+                    d.num(0, "Diameter").unwrap_or(0.0)
+                ))
+                .weak()
+                .italics(),
+            );
+            return;
+        }
+        let side = 18.0;
+        for (i, r) in d.bearing.rows.iter().enumerate() {
+            let on = i == d.bearing.chosen;
+            let resp = ui
+                .horizontal(|ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+                    super::icons::paint_category(ui.painter(), rect, &r.category);
+                    ui.selectable_label(on, &r.label)
+                })
+                .inner;
+            if resp.clicked() {
+                d.bearing.chosen = i;
+            }
+        }
+    });
+    ui.end_row();
+}
+
+impl super::CadCraftApp {
+    /// Once a frame while a generator's panel is open: a picked cylinder gives
+    /// the diameter its calculation and its list read (Bearing: Diameter and
+    /// the library's fitting bearings; Key: Shaft Diameter).
+    pub(super) fn design_follow(&mut self) {
+        let Some(d) = self.part_planned.as_ref() else {
+            return;
+        };
+        let (sel, row, tab) = match d.kind {
+            Planned::Asm(AsmPlanned::Bearing) => ("cyl", "Diameter", 0),
+            Planned::Asm(AsmPlanned::Key) if d.element_edit.is_empty() => {
+                ("shaft", "Shaft Diameter", 1)
+            }
+            _ => return,
+        };
+        let radius = if d.refs.get(sel).is_some_and(|v| !v.is_empty()) {
+            self.axis_placement(d, sel, "", false)
+                .ok()
+                .and_then(|(_, r)| r)
+        } else {
+            None
+        };
+        let Some(d) = self.part_planned.as_mut() else {
+            return;
+        };
+        if let Some(r) = radius
+            && d.num(tab, row).is_some_and(|v| (v - 2.0 * r).abs() > 1e-6)
+        {
+            d.set_num(tab, row, 2.0 * r);
+        }
+        if d.kind != Planned::Asm(AsmPlanned::Bearing) {
+            return;
+        }
+        let dia = d.num(0, "Diameter").unwrap_or(0.0);
+        let category = d.index(0, "Category");
+        let key = ((dia * 1000.0).round() as i64, category);
+        // The chosen bearing's sizes on show.
+        if let Some(&BearingRow { size: (od, w), .. }) = d.bearing.rows.get(d.bearing.chosen) {
+            for (row, v) in [("Outside Diameter", od), ("Width", w)] {
+                if d.num(0, row).is_some_and(|x| (x - v).abs() > 1e-9) {
+                    d.set_num(0, row, v);
+                }
+            }
+        }
+        if d.bearing.key == Some(key) {
+            return;
+        }
+        let catalog = match &d.bearing.catalog {
+            Some(c) => c.clone(),
+            None => {
+                let Some(root) = crate::components::root_dir() else {
+                    return;
+                };
+                std::sync::Arc::new(crate::components::catalog::Catalog::load(&root))
+            }
+        };
+        let rows = catalog
+            .bearings_for(dia, category)
+            .into_iter()
+            .map(|(f, m, b, od, w)| {
+                let fam = &catalog.families[f];
+                BearingRow {
+                    family: f,
+                    member: m,
+                    size: (od, w),
+                    label: format!(
+                        "{} ({}): {} × {} × {}",
+                        fam.members[m].size,
+                        fam.name,
+                        num(b),
+                        num(od),
+                        num(w)
+                    ),
+                    category: fam.category.clone(),
+                }
+            })
+            .collect();
+        d.bearing = BearingList {
+            key: Some(key),
+            catalog: Some(catalog),
+            rows,
+            chosen: 0,
+        };
+    }
+
+    /// Bearing OK: the bearing chosen from the library (linked, so the
+    /// assembly must be saved) placed on the shaft's cylinder from the start
+    /// plane, held there by an axis Mate and its start plane. One Undo step.
+    pub(super) fn bearing_ok(&mut self, d: &PartDialog) -> bool {
+        match self.bearing_make(d) {
+            Ok(text) => {
+                self.file_status = Some(Ok(text));
+                true
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("Bearing: {e}")));
+                false
+            }
+        }
+    }
+
+    fn bearing_make(&mut self, d: &PartDialog) -> Result<String, String> {
+        if self.file_path.trim().is_empty() {
+            return Err(
+                "save the assembly first (the bearing is linked from the library by a path relative to it)"
+                    .into(),
+            );
+        }
+        let row = d.bearing.rows.get(d.bearing.chosen).ok_or(
+            "no bearing of the library fits; pick the shaft's cylinder or change the Diameter",
+        )?;
+        let catalog = d
+            .bearing
+            .catalog
+            .as_ref()
+            .ok_or("the library is not loaded")?;
+        let path = catalog.member_file_at(
+            row.family,
+            row.member,
+            crate::components::samples::Detail::Standard,
+        )?;
+        let file = self.part_file_pub(&path).map_err(|e| e.to_string())?;
+        let doc = file
+            .documents()
+            .iter()
+            .find(|x| matches!(x.data, DocumentData::Part(_)))
+            .map(|x| x.id)
+            .ok_or("the bearing's file holds no part")?;
+        let (place, _) = self.axis_placement(d, "cyl", "start", false)?;
+        let asm_id = self.part_id;
+        let owner = std::path::PathBuf::from(self.file_path.trim());
+        let mut trial = self.project.clone();
+        let mut resolver = crate::document::Resolver::new();
+        let r = resolver
+            .link(&mut trial, &owner, &path, doc)
+            .map_err(|e| e.to_string())?;
+        let name = catalog.families[row.family].members[row.member]
+            .size
+            .clone();
+        let mut a = asm_copy(&trial, asm_id)?;
+        let first = a.occurrences.is_empty();
+        let picked = ["cyl", "start"]
+            .iter()
+            .any(|k| d.refs.get(k).is_some_and(|v| !v.is_empty()));
+        let occ = a.place(r, &name, place, first && !picked);
+        put_asm(&mut trial, asm_id, a);
+        if picked {
+            // The linked part's origin is read through the app's cache.
+            seat_on(&mut trial, asm_id, d, occ, "cyl", "start", &place)?;
+        }
+        self.history.break_coalescing();
+        self.checkpoint("Bearing");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.asm_solve(None);
+        self.asm.sel = vec![occ];
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        Ok(format!("Bearing: {} placed", row.label))
+    }
+
+    /// Compression Spring OK: the spring's part (its wire as a mesh body, `spring_model`) on
+    /// its axis from the start plane (Edit: rebuilt in place). One Undo step.
+    pub(super) fn spring_ok(&mut self, d: &PartDialog) -> bool {
+        match self.spring_make(d) {
+            Ok(text) => {
+                self.file_status = Some(Ok(text));
+                true
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("Compression Spring: {e}")));
+                false
+            }
+        }
+    }
+
+    fn spring_make(&mut self, d: &PartDialog) -> Result<String, String> {
+        let s = spring_of(d);
+        let mut part = crate::design::spring_model::spring_part(&model_of(d))?;
+        part.regenerate().map_err(|e| e.to_string())?;
+        if let Some((_, msg)) = part.feature_health.iter().next() {
+            return Err(msg.clone());
+        }
+        part.element = Some(crate::design::Element {
+            command: SPRING_ID.into(),
+            values: d.values(),
+            ..Default::default()
+        });
+        let asm_id = self.part_id;
+        let mut trial = self.project.clone();
+        let occs: Vec<u32> = if d.element_edit.is_empty() {
+            let (place, _) = self.axis_placement(d, "axis", "start", false)?;
+            let occ = self.place_generated(&mut trial, part, "Compression Spring", place)?;
+            if ["axis", "start"]
+                .iter()
+                .any(|k| d.refs.get(k).is_some_and(|v| !v.is_empty()))
+            {
+                seat_on(&mut trial, asm_id, d, occ, "axis", "start", &place)?;
+            }
+            vec![occ]
+        } else {
+            for &(_, doc) in &d.element_edit {
+                if let Some(x) = trial.document_mut(doc) {
+                    x.data = DocumentData::Part(part.clone());
+                }
+            }
+            d.element_edit.iter().map(|e| e.0).collect()
+        };
+        self.history.break_coalescing();
+        self.checkpoint("Compression Spring");
+        self.project = trial;
+        self.history.break_coalescing();
+        self.asm_solve(None);
+        self.asm.sel = occs;
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        Ok(format!(
+            "Compression Spring: Ø{} wire, {} active coils, {} mm free length",
+            num(s.wire),
+            num(s.active),
+            num(s.free_length)
         ))
+    }
+}
+
+/// The spring's ends and coils from the panel (spec 6.2 §3.5a).
+fn model_of(d: &PartDialog) -> crate::design::spring_model::SpringModel {
+    use crate::design::spring_model::{End, EndType, SpringModel};
+    let n0 = |l: &str, def: f64| d.num(0, l).unwrap_or(def);
+    let wire = n0("Wire Diameter", 2.0);
+    let end = |kind: &str, closed: &str, transition: &str| End {
+        kind: EndType::ALL
+            .get(d.index(0, kind))
+            .copied()
+            .unwrap_or_default(),
+        closed_coils: n0(closed, 1.0),
+        transition: n0(transition, 0.5),
+    };
+    SpringModel {
+        wire,
+        mean_diameter: n0("Outer Diameter", 20.0) - wire,
+        active: n0("Active Coils", 6.0),
+        free_length: n0("Free Length", 50.0),
+        ends: [
+            end(
+                "Spring Start",
+                "Closed Coils Start",
+                "Transition Coils Start",
+            ),
+            end("Spring End", "Closed Coils End", "Transition Coils End"),
+        ],
+    }
+}
+
+/// The spring of the panel's Design and Calculation values.
+fn spring_of(d: &PartDialog) -> spring::Spring {
+    let n0 = |l: &str, def: f64| d.num(0, l).unwrap_or(def);
+    let wire = n0("Wire Diameter", 2.0);
+    spring::Spring {
+        wire,
+        mean_diameter: n0("Outer Diameter", 20.0) - wire,
+        // The rate counts the active coils and half of each transition.
+        active: model_of(d).springing_coils(),
+        free_length: n0("Free Length", 50.0),
+        ends: spring::Ends::Open,
+        g: d.num(1, "Shear Modulus G (MPa)")
+            .unwrap_or(spring::G_SPRING_STEEL),
+    }
+}
+
+/// A number without trailing zeros.
+fn num(v: f64) -> String {
+    let s = format!("{v:.3}");
+    s.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+impl super::CadCraftApp {
+    /// Calculation Report... of a generated element (component menu): the
+    /// generator's results computed again from the input the part keeps,
+    /// read-only, with Export HTML.
+    pub(super) fn element_report(&mut self, occ: u32) {
+        let Some((_, e)) = self.element_of(occ) else {
+            return;
+        };
+        let kind = match e.command.as_str() {
+            GEAR_ID => AsmPlanned::SpurGear,
+            KEY_ID => AsmPlanned::Key,
+            BEARING_ID => AsmPlanned::Bearing,
+            SPRING_ID => AsmPlanned::CompressionSpring,
+            _ => return,
+        };
+        let name = self
+            .assembly()
+            .and_then(|a| a.find(occ))
+            .map_or_else(String::new, |o| o.name.clone());
+        let d = PartDialog::from_values(kind, &e.values);
+        let title = format!("Calculation Report: {name} ({})", d.kind.title());
+        REPORT.with(|r| *r.borrow_mut() = Some((title, d)));
+    }
+
+    /// The Calculation Report window.
+    pub(super) fn calc_report_window(&mut self, ctx: &egui::Context) {
+        let Some((title, mut d)) = REPORT.with(|r| r.borrow().clone()) else {
+            return;
+        };
+        let mut open = true;
+        let mut export = false;
+        let w = egui::Window::new(title.as_str())
+            .id(egui::Id::new("calc_report_window"))
+            .open(&mut open)
+            .resizable(true)
+            .collapsible(false)
+            .default_size([620.0, 560.0]);
+        RECORD.with(|r| *r.borrow_mut() = Some(Vec::new()));
+        self.layout
+            .place("calc_report", ctx.content_rect(), true, w)
+            .show(ctx, |ui| {
+                egui::Panel::bottom("calc_report_buttons").show(ui, |ui| {
+                    export = ui
+                        .button("Export HTML...")
+                        .on_hover_text("Writes the report next to the assembly's file")
+                        .clicked();
+                });
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(RichText::new("Inputs").strong());
+                    egui::Grid::new("calc_report_inputs")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            for v in d.values() {
+                                ui.label(&v.label);
+                                ui.label(value_text(&d, &v));
+                                ui.end_row();
+                            }
+                        });
+                    ui.separator();
+                    results_pane(&mut d, ui);
+                });
+            });
+        let lines = RECORD.with(|r| r.borrow_mut().take()).unwrap_or_default();
+        if export {
+            let html = report_html(&title, &d, &lines);
+            let dir = std::path::Path::new(self.file_path.trim())
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map_or_else(std::env::temp_dir, std::path::Path::to_path_buf);
+            let stem: String = title
+                .trim_start_matches("Calculation Report: ")
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .collect();
+            let path = dir.join(format!("{stem}-calculation.html"));
+            self.file_status = Some(match std::fs::write(&path, html) {
+                Ok(()) => Ok(format!("Calculation Report: written to {}", path.display())),
+                Err(e) => Err(format!("Calculation Report: {e}")),
+            });
+        }
+        if !open {
+            REPORT.with(|r| *r.borrow_mut() = None);
+        }
     }
 }
