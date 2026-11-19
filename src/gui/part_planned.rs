@@ -2984,7 +2984,8 @@ impl PartDialog {
                 let off = (self.kind == Planned::Part(PartPlanned::Emboss)
                     && ((label == "Depth" && plane) || (label == "Taper" && !plane)))
                     || matches!(self.kind, Planned::Part(k)
-                        if super::plastic::row_off(self, k, at.0, label));
+                        if super::plastic::row_off(self, k, at.0, label))
+                    || super::gear_key::guide_computes(self, at.0, label);
                 let why = super::bolted::row_off(self, at.0, label);
                 let v = self.nums.entry(at).or_insert(def);
                 let on = !off && why.is_none();

@@ -1055,6 +1055,16 @@ pub const RESULTS: &[Entry] = &[
     // ------------------------------------------------------- Spur Gears
     e!(
         GEARS,
+        "Module",
+        "m",
+        "mm",
+        "The module and the teeth used, after the Design Guide (Module: from the centre distance; Number of Teeth: the teeth nearest the ratio).",
+        "Round a computed module to the preferred series and use Total Unit Correction for the exact distance.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
         "Center Distance",
         "a",
         "mm",
@@ -1443,6 +1453,14 @@ pub const FORMULAS: &[Formula] = &[
         "A section area, L section length",
         RP1123,
         "—"
+    ),
+    f!(
+        GEARS,
+        "Module",
+        "m = 2·a·cos β / (z1 + z2) (guide Module); z1 + z2 = ⌊2·a·cos β / m⌋, z1 ≈ (z1 + z2) / (1 + i) (guide Number of Teeth)",
+        "a centre distance, β helix angle, i ratio",
+        RP1152,
+        "eq. 1 and 6 solved for the unknown; no shift."
     ),
     f!(
         GEARS,

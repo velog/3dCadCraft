@@ -93,6 +93,19 @@ fn result_key<'a>(generator: &str, label: &'a str) -> &'a str {
         .unwrap_or(a)
 }
 
+/// Whether Spur Gears' Design Guide computes row `label` of tab `ti` (the
+/// field is shown, greyed: the result is in the Results).
+pub(super) fn guide_computes(d: &PartDialog, ti: usize, label: &str) -> bool {
+    is_spur(d)
+        && ti == 0
+        && match d.index(0, "Design Guide") {
+            0 => label == "Module",
+            1 => label.starts_with("Number of Teeth"),
+            2 => label == "Center Distance",
+            _ => label.starts_with("Unit Correction"),
+        }
+}
+
 /// The pair from the Design page.
 pub(super) fn pair_of(d: &PartDialog) -> GearPair {
     let n = |l: &str, def: f64| d.num(0, l).unwrap_or(def);
@@ -109,13 +122,31 @@ pub(super) fn pair_of(d: &PartDialog) -> GearPair {
         face: [n("Facewidth 1", 20.0), n("Facewidth 2", 20.0)],
         ..GearPair::default()
     };
-    // Design Guide "Total Unit Correction": the shifts follow from the centre
-    // distance, shared in proportion to the teeth.
-    if d.index(0, "Design Guide") == 3
-        && let Ok(sum) = p.shift_sum_for(n("Center Distance", 60.0))
-    {
-        let [z1, z2] = p.teeth.map(f64::from);
-        p.shift = [sum * z2 / (z1 + z2), sum * z1 / (z1 + z2)];
+    // The Design Guide: which value follows from the others (the centre
+    // distance is the input of Module, Number of Teeth and Total Unit
+    // Correction; Center Distance follows from module and teeth).
+    let a = n("Center Distance", 60.0);
+    let share = |p: &mut GearPair| {
+        if let Ok(sum) = p.shift_sum_for(a) {
+            // Shared in proportion to the teeth.
+            let [z1, z2] = p.teeth.map(f64::from);
+            p.shift = [sum * z2 / (z1 + z2), sum * z1 / (z1 + z2)];
+        }
+    };
+    match d.index(0, "Design Guide") {
+        0 => {
+            if let Ok(m) = p.module_for(a) {
+                p.module = m;
+            }
+        }
+        1 => {
+            if let Ok(t) = p.teeth_for(a, n("Desired Gear Ratio", 2.0)) {
+                p.teeth = t;
+                share(&mut p);
+            }
+        }
+        3 => share(&mut p),
+        _ => {}
     }
     p
 }
@@ -147,6 +178,13 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
             ),
         )];
         let mut r = vec![
+            (
+                "Module".to_owned(),
+                format!(
+                    "{:.4} mm, teeth {} / {}",
+                    pair.module, pair.teeth[0], pair.teeth[1]
+                ),
+            ),
             (
                 "Center Distance".to_owned(),
                 format!("{:.3} mm", g.center_distance),
