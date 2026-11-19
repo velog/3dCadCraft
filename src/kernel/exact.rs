@@ -795,7 +795,7 @@ pub fn box_named(a: Point3, b: Point3, prefix: &str) -> Result<ExactSolid, Strin
     let (lo, hi) = (a.inf(&b), a.sup(&b));
     let mid = nalgebra::center(&lo, &hi);
     let faces = guarded("faces", || body.faces(1e-3))?;
-    let face_names = faces
+    let face_names: Vec<Option<String>> = faces
         .iter()
         .map(|f| {
             let c = f.centroid;
@@ -816,14 +816,64 @@ pub fn box_named(a: Point3, b: Point3, prefix: &str) -> Result<ExactSolid, Strin
             Some(format!("{prefix}:{role}"))
         })
         .collect();
+    let prism = box_prism(&face_names, lo, hi, prefix);
     Ok(ExactSolid {
-        prism: None,
+        prism,
         sheet: false,
         name: Some(prefix.to_owned()),
         body,
         face_names,
         profiles: Vec::new(),
     })
+}
+
+/// A box is the extrusion of its bottom rectangle along +Z: its [`through_cut::Prism`], so a
+/// Cut straight through it takes the fast path (spec 0.19 §3.2; 1024 holes through a Box
+/// took the general Boolean 9.6 s). The walls by name: Front (y = lo), Right, Back, Left,
+/// counter-clockwise about +Z; `None` when a role is not exactly one face.
+fn box_prism(
+    face_names: &[Option<String>],
+    lo: Point3,
+    hi: Point3,
+    prefix: &str,
+) -> Option<Arc<through_cut::Prism>> {
+    let at = |role: &str| {
+        let name = format!("{prefix}:{role}");
+        let mut it = face_names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.as_deref() == Some(name.as_str()))
+            .map(|(i, _)| i);
+        let i = it.next()?;
+        it.next().is_none().then_some(i)
+    };
+    let corners = [
+        sg::Vec2::new(lo.x, lo.y),
+        sg::Vec2::new(hi.x, lo.y),
+        sg::Vec2::new(hi.x, hi.y),
+        sg::Vec2::new(lo.x, hi.y),
+    ];
+    let segs = (0..4)
+        .map(|k| sg::Seg2::Line {
+            a: corners[k],
+            b: corners[(k + 1) % 4],
+        })
+        .collect();
+    let sides = ["Front", "Right", "Back", "Left"]
+        .iter()
+        .map(|r| at(r).map(Some))
+        .collect::<Option<Vec<_>>>()?;
+    Some(Arc::new(through_cut::Prism {
+        plane: Plane::xy(),
+        lo: lo.z,
+        hi: hi.z,
+        region: sg::Region2 {
+            outer: sg::Loop2 { segs },
+            holes: Vec::new(),
+        },
+        sides,
+        caps: [Some(at("Bottom")?), Some(at("Top")?)],
+    }))
 }
 
 /// A profile region in the exact kernel's form, with its segments' names

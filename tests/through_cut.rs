@@ -202,3 +202,47 @@ fn many_holes_are_fast() {
     assert_eq!(p.body.faces().count(), 6 + 1024, "faces");
     println!("1024 holes: {took:?}");
 }
+
+/// A Box feature is a prism too: Cuts straight through it take the fast path with the general
+/// Boolean's shape and names (its walls Front / Right / Back / Left, its caps). Before, every
+/// pattern of holes through a Box took the general Boolean: 1024 holes 9.6 s, and the 2 500-hole
+/// plate of `perf_drawing` never finished.
+#[test]
+fn fast_through_cuts_of_a_box_match_the_general_boolean() {
+    let _one = SWITCH.lock().unwrap_or_else(|e| e.into_inner());
+    let boxed = || PartDocument::with_box("Box1", [40.0, 30.0, 5.0]).unwrap();
+    let hole = |p: &mut PartDocument, x: Real, y: Real, r: Real| {
+        let j = sketch_on(p, "Box1:Top", |sk, at| {
+            sk.add_circle(at(x, y, 5.0), r).unwrap();
+        });
+        cut(p, j, None, |rg: &Region| {
+            rg.holes.is_empty() && rg.area() < PI * r * r * 1.01
+        });
+    };
+    let one = || {
+        let mut p = boxed();
+        hole(&mut p, 10.0, 12.0, 2.0);
+        p
+    };
+    assert!(both("box, one hole", &one), "box, one hole: no fast path");
+    let pattern = || {
+        let mut p = boxed();
+        hole(&mut p, 3.0, 3.0, 1.0);
+        p.add_pattern(grid("Extrusion1", 6, 5.0)).unwrap();
+        p
+    };
+    assert!(
+        both("box, 6 x 6 holes", &pattern),
+        "box, 6 x 6 holes: no fast path"
+    );
+    // a hole over the box's edge: the general path
+    let edge = || {
+        let mut p = boxed();
+        hole(&mut p, 0.5, 12.0, 2.0);
+        p
+    };
+    assert!(
+        !both("box, over the edge", &edge),
+        "over the edge took the fast path"
+    );
+}

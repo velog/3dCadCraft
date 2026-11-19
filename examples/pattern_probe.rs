@@ -131,8 +131,10 @@ fn main() {
         let setup = t0.elapsed().as_secs_f64();
         part.build_cache = Default::default();
         part.regenerate().unwrap();
+        let fast = cadcraft3d::kernel::exact::fast_cuts_done();
         let t1 = Instant::now();
         let id = part.add_pattern(def).unwrap();
+        let fast = cadcraft3d::kernel::exact::fast_cuts_done() - fast;
         let add = t1.elapsed().as_secs_f64();
         let t2 = Instant::now();
         let o = TessellationOptions::default();
@@ -163,7 +165,7 @@ fn main() {
             .count();
         println!(
             "{kind} {count:>6}: add_pattern {add:7.2} s, polylines {poly:5.2} s ({lines} edges), setup {setup:5.2} s, \
-             exact {}, sick {:?}, faces {faces}, named copies {named}, volume {v:.3} vs {expect:.3} (rel {:.1e}), measure {meas:.1} s",
+             exact {}, fast cuts {fast}, sick {:?}, faces {faces}, named copies {named}, volume {v:.3} vs {expect:.3} (rel {:.1e}), measure {meas:.1} s",
             part.exact,
             part.feature_health,
             ((v - expect) / expect).abs(),

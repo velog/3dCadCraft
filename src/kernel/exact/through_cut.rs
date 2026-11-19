@@ -394,8 +394,14 @@ pub(super) fn cut_through(
         .map(|i| i.and_then(|i| target.face_names.get(i).cloned().flatten()))
         .collect();
     let pl = plane_of(&tp.plane)?;
+    // The loops were checked above to lie apart, inside the outline (as `prism_between`'s
+    // straight sections): SMLib's full check of the swept solid finds nothing such an extrusion
+    // could get wrong, and it was most of the time (1024 holes: ~4.4 s of extrusion).
     let mut v = guarded("through cut", || {
-        sk::extrude(&pl, std::slice::from_ref(&region), tp.lo, tp.hi)
+        let (made, _) = solidcraft_kernel::validating(solidcraft_kernel::Validation::Off, || {
+            sk::extrude(&pl, std::slice::from_ref(&region), tp.lo, tp.hi)
+        });
+        made
     })?;
     if v.len() != 1 {
         return Ok(None);

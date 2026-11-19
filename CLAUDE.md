@@ -299,7 +299,8 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
 - **Many profiles in one cut**: `exact::union_apart` joins tools apart from each other into one
   (SolidCraft's fast path); never cut a body once per tool (36 holes took 30 s).
 - **Cuts straight through a prism** (spec 0.19 §3.2, Application Options › Part, on by default): an untapered
-  extrusion keeps its `through_cut::Prism` (plane, caps, region, face indices); a Cut whose tools pass through both
+  extrusion keeps its `through_cut::Prism` (plane, caps, region, face indices), and so does a Box (`box_prism`: without it
+  every hole pattern through a Box took the general Boolean, 1024 holes 10 s); a Cut whose tools pass through both
   caps, apart from one another, the outline and the holes, is the extrusion of the region with the tools' sections
   as holes (`exact::cut_through`, also in the pattern loop before `join_apart`) — no Boolean, the same names
   (`tests/through_cut.rs` compares every case with the general path). `transformed` keeps the prism only when the
