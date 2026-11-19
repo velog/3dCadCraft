@@ -20,6 +20,10 @@ const GRIP_PX: f32 = 8.0;
 /// How near a click must be to an anchor point, px.
 const ANCHOR_PX: f32 = 7.0;
 
+/// The arrows on the screen (grip, from, to), the anchor's place there and
+/// the mm per pixel.
+type Screen = ([(Grip, Pos2, Pos2); 2], Pos2, Real);
+
 /// What a grip edits.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Grip {
@@ -135,11 +139,7 @@ impl CadCraftApp {
 
     /// Screen ends of the arrows and the ring (centre, radius) with the mm
     /// per pixel there.
-    fn manip_screen(
-        &self,
-        f: &Frame3,
-        rect: Rect,
-    ) -> Option<([(Grip, Pos2, Pos2); 2], Pos2, Real)> {
+    fn manip_screen(&self, f: &Frame3, rect: Rect) -> Option<Screen> {
         let b = self.camera.project(&f.base, rect)?;
         let probe = self.camera.project(&(f.base + f.u * 1.0), rect)?;
         let probe_v = self.camera.project(&(f.base + f.v * 1.0), rect)?;
