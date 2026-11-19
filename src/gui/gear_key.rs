@@ -88,11 +88,9 @@ fn result_key<'a>(generator: &str, label: &'a str) -> &'a str {
         return label;
     }
     let a = label.split(" (").next().unwrap_or(label);
-    let a = a
-        .strip_prefix("Gear 1 ")
+    a.strip_prefix("Gear 1 ")
         .or_else(|| a.strip_prefix("Gear 2 "))
-        .unwrap_or(a);
-    a
+        .unwrap_or(a)
 }
 
 /// The pair from the Design page.
@@ -587,11 +585,10 @@ impl super::CadCraftApp {
         let g = pair.geometry()?;
         let asm_id = self.part_id;
         let mut parts = Vec::new();
-        for k in 0..2 {
+        for (k, &keys) in GEAR_KEYS.iter().enumerate() {
             if d.index(0, if k == 0 { "Gear 1" } else { "Gear 2" }) != 0 {
                 continue;
             }
-            let keys = GEAR_KEYS[k];
             let picked = d.refs.get(keys.0).is_some_and(|v| !v.is_empty());
             let (mut place, radius) = self.axis_placement(d, keys.0, keys.1, false)?;
             let bore = radius.map_or(0.0, |r| 2.0 * r);

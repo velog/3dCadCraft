@@ -533,10 +533,10 @@ mod tests {
             let c = asm_of(&p, a).constraint(mates[0]).unwrap().clone();
             value(&p, asm_of(&p, a), &c).unwrap()
         };
-        for (m, v) in [(mates[0], v1 + theta)] {
-            let c = asm_mut(&mut p, a).constraint_mut(m).unwrap();
+        {
+            let c = asm_mut(&mut p, a).constraint_mut(mates[0]).unwrap();
             c.locked = true;
-            c.value = v;
+            c.value = v1 + theta;
         }
         solve_apply(&mut p, a);
         let d1 = angle(&p, a, occ[0]) - before[0];
