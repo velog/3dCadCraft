@@ -214,7 +214,61 @@ mod imp {
         }
         let degree = degree.ok_or_else(not_one)?;
         knots.extend(std::iter::repeat_n(at + span, degree + 1));
-        Ok(Curve::Nurbs { degree, points, knots })
+        Ok(simple_knots(degree, &points, &knots).unwrap_or(Curve::Nurbs { degree, points, knots }))
+    }
+
+    /// How far (mm) two pieces' polar forms may differ and still be one smooth spline.
+    const SMOOTH_JOIN: f64 = 1e-7;
+
+    /// The polynomial Bézier pieces of [`joined`] (each joint a knot repeated `degree` times) as
+    /// the one spline with simple inner knots they are, where every joint is as smooth as that
+    /// (C^(degree-1): the pieces of a sketch's interpolation spline). `None` for rational pieces
+    /// or a less smooth joint. Offsets of a wall over the repeated knots (an oval's quarter) were
+    /// refused by SMLib's shell; the same curve on simple knots has fewer control points too.
+    fn simple_knots(degree: usize, points: &[[f64; 4]], knots: &[f64]) -> Option<Curve> {
+        if degree < 2 || points.iter().any(|q| (q[3] - 1.0).abs() > 1e-12) {
+            return None;
+        }
+        let m = points.len().checked_sub(1)? / degree;
+        if m < 2 || m * degree + 1 != points.len() {
+            return None;
+        }
+        // Span ends: the distinct knots.
+        let t: Vec<f64> = (0..=m).map(|k| knots.get(degree + k * degree).copied()).collect::<Option<_>>()?;
+        if t.windows(2).any(|w| !(w[1] > w[0])) {
+            return None;
+        }
+        let pieces: Vec<&[[f64; 4]]> = (0..m).map(|k| points.get(k * degree..=k * degree + degree)).collect::<Option<_>>()?;
+        let blossom = |b: &[[f64; 4]], at: &[f64]| -> Option<[f64; 3]> {
+            let mut q: Vec<[f64; 3]> = b.iter().map(|p| [p[0], p[1], p[2]]).collect();
+            for u in at {
+                q = q.windows(2).map(|w| [0, 1, 2].map(|i| w[0][i] * (1.0 - u) + w[1][i] * u)).collect();
+            }
+            (q.len() == 1).then(|| q[0])
+        };
+        let mut simple = vec![t[0]; degree + 1];
+        simple.extend_from_slice(t.get(1..m)?);
+        simple.extend(std::iter::repeat_n(t[m], degree + 1));
+        let mut out = Vec::with_capacity(m + degree);
+        for j in 0..m + degree {
+            let (lo, hi) = (simple[j], simple[j + degree + 1]);
+            let args = simple.get(j + 1..=j + degree)?;
+            let mut value: Option<[f64; 3]> = None;
+            for k in (0..m).filter(|k| t[*k + 1] > lo && t[*k] < hi) {
+                let local: Vec<f64> = args.iter().map(|u| (u - t[k]) / (t[k + 1] - t[k])).collect();
+                let q = blossom(pieces[k], &local)?;
+                if let Some(v) = value {
+                    let d = (0..3).map(|i| (q[i] - v[i]).powi(2)).sum::<f64>().sqrt();
+                    if d > SMOOTH_JOIN {
+                        return None;
+                    }
+                }
+                value = value.or(Some(q));
+            }
+            let v = value?;
+            out.push([v[0], v[1], v[2], 1.0]);
+        }
+        Some(Curve::Nurbs { degree, points: out, knots: simple })
     }
 
     /// A chain of sketch segments on `plane` as SMLib's curves, one each, exactly (lines, arcs,
@@ -1618,7 +1672,7 @@ mod imp {
                         all.extend(q.numbers.iter().copied());
                     }
                 }
-                Piece { seg: x.seg, numbers: all.into_iter().collect(), drawn: x.drawn, joins_previous: false }
+                Piece { seg: x.seg, numbers: all.into_iter().collect(), drawn: x.drawn, joins_previous: x.joins_previous }
             })
             .collect();
         let roles = roles(&body, start, Some(&last.0), &seeds(start, &columns, |q| q), &[], false)?;

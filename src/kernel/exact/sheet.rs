@@ -59,8 +59,10 @@ fn chains_of(chains: &[Vec<ProfileSegment>]) -> Result<(Vec<Vec<sg::Seg2>>, Vec<
     let mut out = Vec::new();
     for c in chains {
         let mut segs = Vec::new();
-        for s in c {
-            let pieces = seg2(&s.geometry)?;
+        // Curves joined by constraints, not by a shared point, end a hair apart.
+        let exact = super::closed_loop(c.iter().map(|s| s.geometry.clone()).collect());
+        for (s, g) in c.iter().zip(&exact) {
+            let pieces = seg2(g)?;
             names.extend(std::iter::repeat_n(s.name.clone(), pieces.len()));
             segs.extend(pieces);
         }

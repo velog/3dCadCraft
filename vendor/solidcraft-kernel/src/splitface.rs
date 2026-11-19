@@ -7,7 +7,8 @@
 //! unbounded where the tool is (a plane, a face's surface extended). A plane is one patch, so is a
 //! face's surface; a sketch curve is one patch per segment swept along the direction (a line a
 //! plane strip, an arc swept square to its sketch a cylinder strip, any other segment its exact
-//! rational Bézier extruded), an open curve's ends continued by lines past the body. SMLib cuts
+//! rational Bézier extruded; the Bézier pieces of one smooth spline joined again, [`smooth_run`]),
+//! an open curve's ends continued by lines past the body. SMLib cuts
 //! the faces where the patches meet them ([`solidcraft_smlib::Brep::split_faces`]), its own
 //! intersection curves trimmed to each face, and slices a body with one patch
 //! ([`solidcraft_smlib::Brep::split_body`]); the history is SMLib's own.
@@ -219,7 +220,14 @@ fn curve_patches(plane: &Plane, segs: &[Seg2], sweep: Vec3, reach: &Aabb3) -> Re
         line(a, b, &mut out)?;
     }
     let square = sweep.cross(plane.normal()).len() <= 1e-12;
-    for s in &segs {
+    let mut next = 0;
+    while let Some(s) = segs.get(next) {
+        if let Some((pts, knots, used)) = smooth_run(segs.get(next..).unwrap_or_default()) {
+            out.push(extruded(plane, &pts, &vec![1.0; pts.len()], &knots, sweep, reach)?);
+            next += used;
+            continue;
+        }
+        next += 1;
         match *s {
             Seg2::Line { a, b } => line(a, b, &mut out)?,
             Seg2::Arc { center, radius, start, sweep: turn } if square && radius.is_finite() && radius > 0.0 && turn.abs() <= TAU => {
@@ -232,7 +240,8 @@ fn curve_patches(plane: &Plane, segs: &[Seg2], sweep: Vec3, reach: &Aabb3) -> Re
             }
             ref s => {
                 for (pts, w) in beziers(s)? {
-                    out.push(extruded(plane, &pts, &w, sweep, reach)?);
+                    let knots = bezier_knots(pts.len().saturating_sub(1));
+                    out.push(extruded(plane, &pts, &w, &knots, sweep, reach)?);
                 }
             }
         }
@@ -241,6 +250,86 @@ fn curve_patches(plane: &Plane, segs: &[Seg2], sweep: Vec3, reach: &Aabb3) -> Re
         line(a, b, &mut out)?;
     }
     Ok(out)
+}
+
+/// The control points of a polynomial Bézier of degree two or more (`None`: anything else).
+fn polynomial(s: &Seg2) -> Option<Vec<Vec2>> {
+    let pts = match *s {
+        Seg2::Cubic { p0, p1, p2, p3 } => vec![p0, p1, p2, p3],
+        Seg2::Bezier { n, p } => p.get(..=usize::from(n))?.to_vec(),
+        _ => return None,
+    };
+    (pts.len() >= 3).then_some(pts)
+}
+
+/// The polar form of the Bézier `b` (over 0..1) at the parameters `at`, by de Casteljau.
+fn blossom(b: &[Vec2], at: &[f64]) -> Option<Vec2> {
+    let mut q = b.to_vec();
+    for t in at {
+        q = q.windows(2).map(|w| w[0] * (1.0 - *t) + w[1] * *t).collect();
+    }
+    (q.len() == 1).then(|| q[0])
+}
+
+/// How far (mm) two pieces' polar forms may differ and still be one spline.
+const SMOOTH_JOIN: f64 = 1e-7;
+
+/// The Bézier `pieces` of one degree as one clamped B-spline with simple inner knots: control
+/// points and knots. `None` where a joint is less smooth than that: every piece a control point
+/// reaches must give it the same polar form.
+fn fused(pieces: &[Vec<Vec2>]) -> Option<(Vec<Vec2>, Vec<f64>)> {
+    let p = pieces.first()?.len().checked_sub(1)?;
+    // The parameter spans follow from the end speeds, which a C1 joint has in common.
+    let (mut t, mut h) = (vec![0.0, 1.0], 1.0);
+    for pair in pieces.windows(2) {
+        let (out, into) = ((*pair[0].last()? - *pair[0].get(p - 1)?).len(), (*pair[1].get(1)? - *pair[1].first()?).len());
+        if out <= 1e-12 || into <= 1e-12 {
+            return None;
+        }
+        h *= into / out;
+        t.push(t.last()? + h);
+    }
+    let m = pieces.len();
+    let mut knots = vec![0.0; p + 1];
+    knots.extend_from_slice(t.get(1..m)?);
+    knots.extend(std::iter::repeat_n(*t.last()?, p + 1));
+    let mut points = Vec::with_capacity(m + p);
+    for j in 0..m + p {
+        let (lo, hi) = (knots[j], knots[j + p + 1]);
+        let args = knots.get(j + 1..=j + p)?;
+        let mut value: Option<Vec2> = None;
+        for k in (0..m).filter(|k| t[*k + 1] > lo && t[*k] < hi) {
+            let local: Vec<f64> = args.iter().map(|u| (u - t[k]) / (t[k + 1] - t[k])).collect();
+            let q = blossom(&pieces[k], &local)?;
+            if value.is_some_and(|v| (q - v).len() > SMOOTH_JOIN) {
+                return None;
+            }
+            value = value.or(Some(q));
+        }
+        points.push(value?);
+    }
+    Some((points, knots))
+}
+
+/// The longest run of two or more pieces at the start of `segs` that is one smooth spline, with
+/// how many pieces it takes. A sketch spline reaches the kernel in Bézier pieces; cut piece by
+/// piece, each end of an intersection curve is found on its own, and a loop of them has vertices
+/// a thicken or a patch cannot use (and takes one intersection per piece).
+fn smooth_run(segs: &[Seg2]) -> Option<(Vec<Vec2>, Vec<f64>, usize)> {
+    let mut pieces = vec![polynomial(segs.first()?)?];
+    let mut best = None;
+    for s in segs.get(1..)? {
+        let Some(b) = polynomial(s).filter(|b| Some(b.len()) == pieces.first().map(Vec::len)) else { break };
+        pieces.push(b);
+        let Some((points, knots)) = fused(&pieces) else { break };
+        best = Some((points, knots, pieces.len()));
+    }
+    best
+}
+
+/// The knots of a Bézier of degree `d` over 0..1.
+fn bezier_knots(d: usize) -> Vec<f64> {
+    std::iter::repeat_n(0.0, d + 1).chain(std::iter::repeat_n(1.0, d + 1)).collect()
 }
 
 /// A segment as rational Bézier pieces (control points and weights), exactly: an arc in pieces
@@ -273,10 +362,10 @@ fn beziers(s: &Seg2) -> Result<Vec<(Vec<Vec2>, Vec<f64>)>> {
     })
 }
 
-/// A rational Bézier piece in `plane` swept along `sweep` across `reach`, exactly: a spline of
-/// degree one along the sweep (u) and the piece's along the curve (v), so its normal is the
+/// A rational spline (`v_knots`) in `plane` swept along `sweep` across `reach`, exactly: a spline
+/// of degree one along the sweep (u) and the curve's along the curve (v), so its normal is the
 /// curve's left.
-fn extruded(plane: &Plane, pts: &[Vec2], w: &[f64], sweep: Vec3, reach: &Aabb3) -> Result<Patch> {
+fn extruded(plane: &Plane, pts: &[Vec2], w: &[f64], v_knots: &[f64], sweep: Vec3, reach: &Aabb3) -> Result<Patch> {
     let n = plane.normal().normalized().ok_or_else(|| invalid("a sketch plane with no normal"))?;
     // The sweep heights that take the sketch plane through the whole box.
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
@@ -286,8 +375,6 @@ fn extruded(plane: &Plane, pts: &[Vec2], w: &[f64], sweep: Vec3, reach: &Aabb3) 
         let h = (c - plane.origin).dot(n) / sweep.dot(n);
         (lo, hi) = (lo.min(h), hi.max(h));
     }
-    let degree = pts.len().saturating_sub(1);
-    let knots = |d: usize| std::iter::repeat_n(0.0, d + 1).chain(std::iter::repeat_n(1.0, d + 1)).collect::<Vec<f64>>();
     let homogeneous: Vec<Vec<[f64; 4]>> = [lo, hi]
         .iter()
         .map(|h| {
@@ -300,8 +387,9 @@ fn extruded(plane: &Plane, pts: &[Vec2], w: &[f64], sweep: Vec3, reach: &Aabb3) 
                 .collect()
         })
         .collect();
-    let surface = Surface::RationalSpline { u_knots: knots(1), v_knots: knots(degree), homogeneous };
-    Ok(Patch { surface, domain: [[0.0, 1.0], [0.0, 1.0]], flip: false })
+    let v_range = [v_knots.first().copied().unwrap_or(0.0), v_knots.last().copied().unwrap_or(1.0)];
+    let surface = Surface::RationalSpline { u_knots: bezier_knots(1), v_knots: v_knots.to_vec(), homogeneous };
+    Ok(Patch { surface, domain: [[0.0, 1.0], v_range], flip: false })
 }
 
 /// One patch ready to measure points against: its surface prepared once.

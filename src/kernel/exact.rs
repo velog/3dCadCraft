@@ -954,6 +954,7 @@ fn closed_loop(mut segs: Vec<super::extrude::Segment2>) -> Vec<super::extrude::S
     for i in 0..n {
         let start = joints[(i + n - 1) % n];
         let end = joints[i];
+        let (own_start, own_end) = (segs[i].start(), segs[i].end());
         match &mut segs[i] {
             S::Line { a, b } => {
                 if let Some(p) = start {
@@ -964,9 +965,11 @@ fn closed_loop(mut segs: Vec<super::extrude::Segment2>) -> Vec<super::extrude::S
                 }
             }
             S::Arc { c, r, a0, sweep } => {
-                let (Some(s), Some(e)) = (start, end) else {
+                if start.is_none() && end.is_none() {
                     continue;
-                };
+                }
+                // An open chain's last arc has a joint at one end only.
+                let (s, e) = (start.unwrap_or(own_start), end.unwrap_or(own_end));
                 let chord = e - s;
                 if chord.norm() <= 1e-12 {
                     continue;

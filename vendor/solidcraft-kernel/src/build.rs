@@ -991,6 +991,71 @@ pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
     loft_with_rails(sections, &[], RailFit::Scale)
 }
 
+/// [`loft`] with the pieces of one smooth curve (a sketch spline's Béziers) lofted as one wall: a
+/// piece joins the one before it where, in every section, both are free-form of one degree and
+/// meet tangentially. A closed loop of such pieces still gets four walls at least (runs of at
+/// most a quarter of its pieces), as a circle's quarter arcs do. A wall per Bézier made a
+/// 16-point oval loft of 16 tangent faces that SMLib's shell could not offset.
+pub fn loft_smooth(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    let _span = solidcraft_profile::span("kernel", "loft_smooth");
+    let reversed = loft_reversed(sections)?;
+    let numbered = sections.iter().map(|(p, _)| *p).zip(numbered::number_loops(sections.iter().map(|(_, l)| l))).collect::<Vec<_>>();
+    let loops = loft_numbered_loops(&numbered, reversed)?;
+    let first = if reversed { loops.len().saturating_sub(1) } else { 0 };
+    let count = loops.first().map_or(0, |(_, l)| l.lp.segs.len());
+    if count == 0 || loops.iter().any(|(_, l)| l.lp.segs.len() != count) {
+        return Err(KernelError::Invalid("loft sections do not match".into()));
+    }
+    // The directions a free-form piece leaves its start and reaches its end by (its control legs).
+    let legs = |s: &Seg2| -> Option<(Vec2, Vec2)> {
+        match *s {
+            Seg2::Cubic { p0, p1, p2, p3 } => Some((p1 - p0, p3 - p2)),
+            Seg2::Conic { a, apex, b, .. } => Some((apex - a, b - apex)),
+            Seg2::Bezier { n, p } => {
+                let n = usize::from(n);
+                Some((*p.get(1)? - *p.first()?, *p.get(n)? - *p.get(n.checked_sub(1)?)?))
+            }
+            Seg2::Line { .. } | Seg2::Arc { .. } => None,
+        }
+    };
+    let smooth = |s: &Seg2, t: &Seg2| {
+        let (Some(d), Some(e), Some((_, u)), Some((v, _))) = (free_form_degree(s), free_form_degree(t), legs(s), legs(t)) else { return false };
+        let (lu, lv) = (u.len(), v.len());
+        d == e && lu > 0.0 && lv > 0.0 && s.end().dist(t.start()) <= 1e-7 && u.cross(v).abs() <= 1e-6 * lu * lv && u.dot(v) > 0.0
+    };
+    let joins: Vec<bool> = (0..count)
+        .map(|i| {
+            i > 0
+                && loops.iter().all(|(_, l)| match (l.lp.segs.get(i - 1), l.lp.segs.get(i)) {
+                    (Some(s), Some(t)) => smooth(s, t),
+                    _ => false,
+                })
+        })
+        .collect();
+    let longest = count.div_ceil(4).max(1);
+    let mut capped = joins.clone();
+    let mut run = 1;
+    for (i, j) in joins.iter().enumerate() {
+        if *j && run < longest {
+            run += 1;
+        } else {
+            capped[i] = false;
+            run = 1;
+        }
+    }
+    let pieces: Vec<(Plane, Vec<crate::smlib_sweeps::Piece>)> = loops
+        .iter()
+        .map(|(p, l)| {
+            let mut ps = crate::smlib_sweeps::pieces([l]);
+            for (x, j) in ps.iter_mut().zip(&capped) {
+                x.joins_previous = *j;
+            }
+            (*p, ps)
+        })
+        .collect();
+    crate::smlib_sweeps::loft(&pieces, first)
+}
+
 /// A loft keeping the caller's pairing: segment `i` of every section goes to segment `i` of the
 /// next, so a twist the caller asked for stays (the plain [`loft`] matches corners by direction,
 /// which undoes it). The sections must run the same way round and have the same segment count.

@@ -1165,6 +1165,8 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 
 **Kernel foundation.** Requires NURBS surfaces and robust surface–surface intersection.
 
+**Yardstick products** (owner 2026-11-08, spec [5.4a](spec/5.4a-surface-workflow.md) §3, probe `tests/surface_goals.rs`): oil bottle, hair dryer, car bumper. 2026-11-19: lofts, Freeform skins, trims, a drop embossed, a grill and a split build; shells and Thicken of oval-spline lofts and trimmed skins are refused by the kernel (F20, F22); Loft Output Surface through ovals builds (F21).
+
 ## 5.5 Direct editing and Freeform — 🟡 (Freeform Plane + Edit Form) · L / XL
 
 **Specification:** [spec/5.5-freeform.md](spec/5.5-freeform.md)

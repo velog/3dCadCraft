@@ -1048,9 +1048,8 @@ pub(super) fn trim(
             .iter()
             .find(|s| &s.id == sid)
             .is_some_and(|ps| sketch_chains(ps).iter().any(|c| chain_closed(c))),
-        TrimTool::Surface(name) => {
-            sheet_named(sheets, name).is_ok_and(|t| t != i && distinct_names(&sheets[t]) > 1)
-        }
+        TrimTool::Surface(name) => sheet_named(sheets, name)
+            .is_ok_and(|t| t != i && several_walls(features, sketches, &sheets[t], name)),
         TrimTool::Plane(_) => false,
     };
     if !op.more.is_empty() || bounded {
@@ -1247,6 +1246,22 @@ fn sketch_chains(ps: &super::PartSketch) -> Vec<Vec<crate::kernel::Segment2>> {
                     .into_iter()
                     .collect::<Vec<_>>();
             }
+            // A closed spline (a drop, a logo's outline): one closed segment.
+            if let crate::sketch::Entity::Spline { points } = ent
+                && points.len() >= 3
+                && points.first() == points.last()
+            {
+                let at = |p| {
+                    sk.point(p)
+                        .map_or(nalgebra::Vector2::zeros(), |q| q.position.coords)
+                };
+                let (cv, knots) = sk.spline_def(e, &at);
+                return vec![crate::kernel::Segment2::Spline {
+                    points: cv.into_iter().map(nalgebra::Point2::from).collect(),
+                    reversed: false,
+                    knots,
+                }];
+            }
             let op = super::OpenProfile {
                 curves: vec![e],
                 flip: false,
@@ -1277,6 +1292,21 @@ fn distinct_names(s: &ExactSolid) -> usize {
     names.len()
 }
 
+/// Whether a tool surface is more than one extended face can stand for: walls of different
+/// names, or an extruded spline (its Bezier pieces are faces of one name; the first alone may not
+/// even reach the surface).
+fn several_walls(
+    features: &[super::Feature],
+    sketches: &[super::PartSketch],
+    tool: &ExactSolid,
+    name: &str,
+) -> bool {
+    distinct_names(tool) > 1
+        || (surface_ops::face_count(tool) > 1
+            && exact::walls_section(tool).is_none()
+            && extruded_outline(features, sketches, name).is_some())
+}
+
 /// Trim with several areas: surface `i` divided where the tool meets it (Split Face), then the
 /// pieces under the picked points removed (Invert Selection: every other piece removed).
 #[allow(clippy::too_many_arguments)]
@@ -1299,7 +1329,7 @@ fn trim_pieces(
             if t == i {
                 return Err(User("a surface cannot trim itself".into()));
             }
-            if distinct_names(&sheets[t]) > 1 {
+            if several_walls(features, sketches, &sheets[t], name) {
                 // Walls along one direction (a tube): cut along the walls only.
                 match exact::walls_section(&sheets[t]) {
                     Some((plane, curves)) => exact::SplitBy::Curves { plane, curves },
