@@ -51,6 +51,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [0.19-long-operations.md](0.19-long-operations.md) | Long operations: progress in the status bar, fast path for many through cuts, work off the main thread |
 | [0.20-large-models.md](0.20-large-models.md) | Large models: levels of detail, instancing, Undo with shared snapshots / deltas, parallel regeneration, OK in the background, hover and pick at scale (plan, all ⬜) |
 | [0.10-physical.md](0.10-physical.md) | Physical Properties: mass, volume, area, centre of gravity, inertia |
+| [0.7-api-mcp.md](0.7-api-mcp.md) | API for agents: the MCP server over stdio, tools, batches, progress / cancel, security |
 | [0.9-selection.md](0.9-selection.md) | Selection, filters, prehighlight, Select Other, context suggestions |
 | [0.15-context-menus-shortcuts.md](0.15-context-menus-shortcuts.md) | Right-click by object kind and place, marking menu, keys and aliases, alias field, command search (Alt+S), mouse, accessibility; plan of the groups |
 | [0.9a-selection-filters.md](0.9a-selection-filters.md) | One selection model: everything + filters, Select Priority, intersection with the command's selector, Shift + right-click menu |

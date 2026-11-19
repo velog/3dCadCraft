@@ -152,7 +152,11 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **Inventor equivalent.** Project files (`.ipj`), Pack and Go, Vault (partly).
 
-## 0.7 API for agents (JSON-RPC / MCP) — ⬜ · M
+## 0.7 API for agents (JSON-RPC / MCP) — 🟡 · M
+
+**Specification:** [spec/0.7-api-mcp.md](spec/0.7-api-mcp.md) · how to connect a client: [MCP.md](MCP.md)
+
+**State (2026-11-19).** Phase 1: `3dcadcraft-mcp` / `3dcadcraft --mcp` serve MCP over stdio — project new / open / save, Undo / Redo, atomic batches; sketches (line, rectangle, circle, arc, point, every constraint kind, DOF report); Extrude, Revolve, Hole, Fillet, Chamfer, Shell, Pattern; parameters; queries (feature tree with health, faces, edges, measure, physical properties, export STEP / STL / glTF); assemblies (place, Mate / Flush / Insert / Angle, solve). Calls run on a worker with progress, `status` and `cancel`. Not yet: the GUI hosting the server (the user watching and undoing agent steps), Component Library place, more features.
 
 **What it does.** External programs and AI agents drive 3DCadCraft **without a GUI**: they open projects, draw sketches, add constraints, extrude, read results (mass, volume, errors) and save.
 
