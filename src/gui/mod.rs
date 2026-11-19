@@ -691,6 +691,86 @@ impl std::ops::Deref for EdgeSet {
     }
 }
 
+/// What [`CadCraftApp::edge_under`] depends on besides the selection filter (checked before
+/// it): the pointer, the view's rectangle, the camera and the body (its key also covers hidden
+/// bodies and shown edges).
+#[derive(Clone, Debug, PartialEq)]
+struct HoverKey {
+    pos: [u32; 2],
+    rect: [u32; 4],
+    camera: [u64; 8],
+    projection: camera::Projection,
+    body: String,
+}
+
+impl HoverKey {
+    fn new(pos: egui::Pos2, rect: egui::Rect, cam: &OrbitCamera, body: String) -> Self {
+        Self {
+            pos: [pos.x.to_bits(), pos.y.to_bits()],
+            rect: [
+                rect.min.x.to_bits(),
+                rect.min.y.to_bits(),
+                rect.max.x.to_bits(),
+                rect.max.y.to_bits(),
+            ],
+            camera: [
+                cam.target.x.to_bits(),
+                cam.target.y.to_bits(),
+                cam.target.z.to_bits(),
+                cam.distance.to_bits(),
+                cam.yaw.to_bits(),
+                cam.pitch.to_bits(),
+                cam.fov_y.to_bits(),
+                cam.roll.to_bits(),
+            ],
+            projection: cam.projection,
+            body,
+        }
+    }
+}
+
+/// The visible edge within [`overlay::EDGE_PICK_PX`] of `pos` (eye ray `o + t·d`, `d` a unit
+/// vector): the edges near the ray, their segments on screen, and none hidden behind the face
+/// the ray hits first. One hover's work ([`CadCraftApp::edge_under`]).
+fn hover_edge(
+    picker: &PickCache,
+    edges: &EdgeSet,
+    map: &camera::ScreenMap,
+    pos: egui::Pos2,
+    origin: &Point3,
+    dir: &crate::kernel::Vector3,
+) -> Option<crate::kernel::EdgeId> {
+    let face_t = {
+        let _t = frame_trace::span("edge under: face ray");
+        picker.pick(origin, dir).map(|(_, t)| t)
+    };
+    let mut best: Option<(crate::kernel::EdgeId, f32)> = None;
+    for (e, pts) in edges.near_ray(origin, dir, map, overlay::EDGE_PICK_PX) {
+        for w in pts.windows(2) {
+            let (Some(a), Some(b)) = (map.project(&w[0]), map.project(&w[1])) else {
+                continue;
+            };
+            let ab = b - a;
+            let t = ((pos - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+            let d = (a + ab * t).distance(pos);
+            if d > overlay::EDGE_PICK_PX || best.is_some_and(|(_, bd)| bd <= d) {
+                continue;
+            }
+            // Hidden behind a face? The segment's point nearest the eye
+            // ray (the screen parameter is not the 3D one under
+            // perspective: on a long straight edge that put the point
+            // millimetres off and hid the edge).
+            let q = closest_on_segment(&w[0], &w[1], origin, dir);
+            let te = (q - origin).dot(dir) / dir.norm_squared();
+            if face_t.is_some_and(|ft| ft < te - 0.01 * te.abs().max(1.0)) {
+                continue;
+            }
+            best = Some((*e, d));
+        }
+    }
+    best.map(|(e, _)| e)
+}
+
 /// A drawn handle of an interpolation spline.
 struct SplineGrip {
     spline: EntityId,
@@ -1133,6 +1213,10 @@ struct CadCraftApp {
     trim_side: Option<(String, std::rc::Rc<trim_preview::Side>)>,
     /// Sampled visible edges of the body, keyed by a body signature.
     edge_cache: std::cell::RefCell<Option<(String, EdgePolylines)>>,
+    /// The last answer of [`CadCraftApp::edge_under`] and what it depended on: a frame with
+    /// the pointer, the camera and the body unchanged takes it again (spec 0.20 §3.6; on a
+    /// board of 612 bodies the search took 6–9 ms of every still frame).
+    edge_hover_memo: std::cell::RefCell<Option<(HoverKey, Option<crate::kernel::EdgeId>)>>,
     /// Picking data of the body (see [`PickCache`]).
     pick_cache: std::cell::RefCell<Option<(String, std::rc::Rc<PickCache>)>>,
     /// `body_key` of this frame: (caching on, key). `ui` turns it on and
@@ -1439,6 +1523,7 @@ impl CadCraftApp {
             select_other: None,
             rest: None,
             edge_cache: std::cell::RefCell::new(None),
+            edge_hover_memo: std::cell::RefCell::new(None),
             pick_cache: std::cell::RefCell::new(None),
             body_key_frame: std::cell::RefCell::new((false, None)),
             ref_hover: None,
@@ -3156,42 +3241,29 @@ impl CadCraftApp {
         if !self.cat_on(crate::command::selection::Category::Edge) {
             return None;
         }
+        let key = HoverKey::new(pos, rect, &self.camera, self.body_key());
+        if let Some((k, e)) = &*self.edge_hover_memo.borrow()
+            && *k == key
+        {
+            return *e;
+        }
         let (origin, dir) = self.camera.ray(pos, rect)?;
         // Unit direction: ray parameters are then mm, which the occlusion
         // tolerance below assumes (an unscaled ray let hidden edges through).
         let dir = dir.try_normalize(1e-12)?;
         let _t = frame_trace::span("edge under");
-        let face_t = {
-            let _t = frame_trace::span("edge under: face ray");
-            self.picker().pick(&origin, &dir).map(|(_, t)| t)
-        };
-        let mut best: Option<(crate::kernel::EdgeId, f32)> = None;
-        let map = self.camera.screen(rect);
+        let picker = self.picker();
         let edges = self.edge_polylines();
-        for (e, pts) in edges.near_ray(&origin, &dir, &map, overlay::EDGE_PICK_PX) {
-            for w in pts.windows(2) {
-                let (Some(a), Some(b)) = (map.project(&w[0]), map.project(&w[1])) else {
-                    continue;
-                };
-                let ab = b - a;
-                let t = ((pos - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
-                let d = (a + ab * t).distance(pos);
-                if d > overlay::EDGE_PICK_PX || best.is_some_and(|(_, bd)| bd <= d) {
-                    continue;
-                }
-                // Hidden behind a face? The segment's point nearest the eye
-                // ray (the screen parameter is not the 3D one under
-                // perspective: on a long straight edge that put the point
-                // millimetres off and hid the edge).
-                let q = closest_on_segment(&w[0], &w[1], &origin, &dir);
-                let te = (q - origin).dot(&dir) / dir.norm_squared();
-                if face_t.is_some_and(|ft| ft < te - 0.01 * te.abs().max(1.0)) {
-                    continue;
-                }
-                best = Some((*e, d));
-            }
-        }
-        best.map(|(e, _)| e)
+        let e = hover_edge(
+            &picker,
+            &edges,
+            &self.camera.screen(rect),
+            pos,
+            &origin,
+            &dir,
+        );
+        *self.edge_hover_memo.borrow_mut() = Some((key, e));
+        e
     }
 
     /// Draws the Select Other control and handles its arrows; returns
@@ -6619,7 +6691,8 @@ impl CadCraftApp {
                 }
             }
             if self.select_other.is_some() {
-                ui.ctx().request_repaint();
+                // No repaint of its own: its arrows, keys and the pointer are input, which
+                // repaints anyway (a repaint every frame kept a large model busy, spec 0.20 §3.6).
                 let accept = self.select_other_ui(ui, rect);
                 if let Some(so) = &self.select_other {
                     let cur = so.items[so.index].clone();
@@ -9347,6 +9420,101 @@ mod pick_tests {
         });
         eprintln!("edges near the ray among {}: {ms:.3} ms", set.len());
         assert!(ms < 2.0, "{ms} ms");
+    }
+
+    /// A whole hover on a board of 625 parts (250 000 triangles, 5000 edges), as
+    /// `edge_under` does it: the face ray, the edges near the ray, their segments on screen
+    /// (spec 0.20 §6.1, `docs/PERF.md`). Building the pick data from the triangles and edges
+    /// stays under 300 ms, one hover under 3 ms (a frame is 16 ms). Run alone in `xtask heavy`.
+    #[test]
+    fn hover_on_a_board_of_625_parts_within_budget() {
+        let budgets = std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_none();
+        let (tris, polys) = board(25);
+        let mut ids = slotmap::SlotMap::<EdgeId, ()>::with_key();
+        let lines: Vec<(EdgeId, Vec<Point3>)> =
+            polys.into_iter().map(|p| (ids.insert(()), p)).collect();
+        let build = median_ms(|| {
+            std::hint::black_box((
+                PickCache::from_parts(tris.clone(), Default::default()),
+                EdgeSet::new(lines.clone()),
+            ));
+        });
+        let cache = PickCache::from_parts(tris, Default::default());
+        let set = EdgeSet::new(lines);
+        let mut cam = OrbitCamera::default();
+        cam.fit(Point3::new(0.0, 0.0, 0.0), Point3::new(75.0, 75.0, 1.0));
+        let rect = Rect::from_min_max(pos2(250.0, 110.0), pos2(1100.0, 875.0));
+        let map = cam.screen(rect);
+        // the cursor along a diagonal: over tops, over edges, between parts
+        let at: Vec<_> = (0..40)
+            .map(|k| pos2(300.0 + k as f32 * 19.7, 160.0 + k as f32 * 17.3))
+            .collect();
+        let rays: Vec<_> = at
+            .iter()
+            .map(|p| {
+                let (o, d) = cam.ray(*p, rect).unwrap_or_else(|| panic!("no ray"));
+                (*p, o, d.normalize())
+            })
+            .collect();
+        let found = rays
+            .iter()
+            .filter(|(p, o, d)| super::hover_edge(&cache, &set, &map, *p, o, d).is_some())
+            .count();
+        assert!(found > 0 && found < rays.len(), "{found} hovers on an edge");
+        let hover = median_ms(|| {
+            for (p, o, d) in &rays {
+                std::hint::black_box(super::hover_edge(&cache, &set, &map, *p, o, d));
+            }
+        }) / rays.len() as f64;
+        eprintln!(
+            "hover on a board of 625 parts: pick data {build:.1} ms (budget 300), one hover {hover:.3} ms (budget 3)"
+        );
+        if budgets {
+            assert!(build < 300.0, "pick data {build} ms");
+            assert!(hover < 3.0, "{hover} ms a hover");
+        }
+    }
+
+    /// A still pointer over a still model asks nothing again: the hover's key is equal, and
+    /// moving the pointer, the camera or changing the body changes it.
+    #[test]
+    fn the_hover_key_changes_with_pointer_camera_and_body() {
+        use super::HoverKey;
+        let rect = Rect::from_min_max(pos2(250.0, 110.0), pos2(1100.0, 875.0));
+        let cam = OrbitCamera::default();
+        let k = HoverKey::new(pos2(500.0, 400.0), rect, &cam, "b1".into());
+        assert_eq!(
+            k,
+            HoverKey::new(pos2(500.0, 400.0), rect, &cam, "b1".into())
+        );
+        assert_ne!(
+            k,
+            HoverKey::new(pos2(501.0, 400.0), rect, &cam, "b1".into())
+        );
+        assert_ne!(
+            k,
+            HoverKey::new(pos2(500.0, 400.0), rect, &cam, "b2".into())
+        );
+        let mut moved = cam.clone();
+        moved.yaw += 1e-6;
+        assert_ne!(
+            k,
+            HoverKey::new(pos2(500.0, 400.0), rect, &moved, "b1".into())
+        );
+        let mut ortho = cam.clone();
+        ortho.projection = match cam.projection {
+            super::camera::Projection::Orthographic => super::camera::Projection::Perspective,
+            _ => super::camera::Projection::Orthographic,
+        };
+        assert_ne!(
+            k,
+            HoverKey::new(pos2(500.0, 400.0), rect, &ortho, "b1".into())
+        );
+        let wider = Rect::from_min_max(pos2(250.0, 110.0), pos2(1200.0, 875.0));
+        assert_ne!(
+            k,
+            HoverKey::new(pos2(500.0, 400.0), wider, &cam, "b1".into())
+        );
     }
 
     /// The map taken once projects as the camera does, and its ray to a point passes through it.

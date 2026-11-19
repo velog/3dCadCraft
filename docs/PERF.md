@@ -116,6 +116,20 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
 
 ## Log
 
+- 2026-11-19 — **Holes through a Box took the general Boolean** (ROADMAP K13). The fast path for Cuts straight through
+  a prism (spec 0.19 §3.2) needs the target's section, and a Box feature (`exact::box_named`) had none: every pattern
+  of holes through a Box went through SMLib's general Boolean (*1024 holes* 9.6–10.3 s, the 2 500-hole plate of
+  `perf_drawing` never finished, so its run died). A Box now carries its `through_cut::Prism` (the bottom rectangle,
+  walls Front / Right / Back / Left), and the through-cut extrusion runs under `Validation::Off` like `prism_between`
+  (its loops are checked apart and inside the outline first). `examples/pattern_probe hole` (debug, other agents
+  building): 100 holes 0.62 → 0.20 s, 1024 holes 9.6 → 1.91 s (budget 3 s), 2 500 holes 6.2 s, 5 041 holes 17.5 s
+  (budget 15 s: still over on that busy machine, to measure on the evening run). Same volume, faces and names as the
+  general path (`tests/through_cut.rs`).
+- 2026-11-19 — **Hover on a board of 625 parts** (`gui::pick_tests::hover_on_a_board_of_625_parts_within_budget`, run
+  alone in `xtask heavy` through `TIMED_GUI_UNIT`; spec 0.20 §6.1): 250 000 triangles, 5 000 edges; the pick data
+  built from them under 300 ms, one hover (face ray, edges near the ray, their segments on screen) under 3 ms. With a
+  still pointer, camera and body, `edge_under` now returns its last answer (`HoverKey`), and Select Other no longer
+  asks for a repaint every frame.
 - 2026-11-12 — **Rim teeth through a chamfer** (owner: OK froze the app). A revolved disc R30 × 10, Chamfer 2 on the
   top rim, one tooth 4 mm wide and exactly 2 mm deep on the revolve's seam: the kernel's Cut came out invalid, so the
   part was rebuilt faceted at every regeneration — debug 3.3 s for the tooth (chamfer) / 10 s (fillet), and its

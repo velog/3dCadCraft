@@ -114,6 +114,14 @@ const TIMED: &[&str] = &["boolean_identity", "oracle", "perf_drawing", "perf"];
 const TIMED_UNIT: &[&str] =
     &["part::exact::hollow_box::picking_edges_one_by_one_is_exact_or_refused"];
 
+/// GUI unit tests with a time budget (`cargo test --lib`, with the GUI): left out of the
+/// quick tier's `gui::` run and run alone in `heavy`, like [`TIMED_UNIT`].
+const TIMED_GUI_UNIT: &[&str] = &[
+    "gui::pick_tests::hover_on_a_board_of_625_parts_within_budget",
+    "gui::pick_tests::a_ray_tests_only_the_boxes_it_crosses",
+    "gui::pick_tests::the_edges_near_the_ray_include_every_edge_under_the_cursor",
+];
+
 /// Unit tests that take 3 s or more under a full parallel run (measured
 /// 2026-10-26), one exact name per line.
 const HEAVY_UNIT: &str = include_str!("heavy_unit_tests.txt");
@@ -172,7 +180,11 @@ fn quick_tests() -> bool {
     for t in &light {
         integ.extend(["--test", t.as_str()]);
     }
-    run(&unit, &[]) && run(&integ, &[]) && run(&["cargo", "test", "--lib", "gui::"], &[])
+    let mut gui = vec!["cargo", "test", "--lib", "gui::"];
+    for t in TIMED_GUI_UNIT {
+        gui.extend(["--skip", t]);
+    }
+    run(&unit, &[]) && run(&integ, &[]) && run(&gui, &[])
 }
 
 fn quick() -> bool {
@@ -213,8 +225,14 @@ fn heavy() -> bool {
     for t in MEDIUM {
         medium.extend(["--test", t]);
     }
+    let timed_gui = || {
+        TIMED_GUI_UNIT
+            .iter()
+            .all(|t| run(&["cargo", "test", "--lib", "--", "--exact", t], &[]))
+    };
     run(&unit, &[])
         && timed_unit()
+        && timed_gui()
         && run(&medium, &[])
         && TIMED.iter().all(|t| {
             run(
