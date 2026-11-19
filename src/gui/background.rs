@@ -186,6 +186,33 @@ impl CadCraftApp {
         }
     }
 
+    /// Values typed into an existing feature's Properties (`field`, expression): set and the part
+    /// rebuilt as one job and one Undo step; a value that cannot be set changes nothing.
+    pub(super) fn commit_feature_fields(&mut self, k: usize, commits: Vec<(&'static str, String)>) {
+        if commits.is_empty() {
+            return;
+        }
+        self.part_job(
+            "Edit Feature",
+            Some("Edit Feature"),
+            move |part| {
+                for (field, text) in commits {
+                    part.set_feature_field(k, field, &text)
+                        .map_err(|e| e.to_string())?;
+                }
+                part.regenerate()
+                    .map(|_| String::new())
+                    .map_err(|e| e.to_string())
+            },
+            |app, r| {
+                if let Err(e) = r {
+                    app.file_status = Some(Err(with_cmd("Edit Feature", e)));
+                }
+                app.scene_dirty = true;
+            },
+        );
+    }
+
     /// Once a frame: takes a finished job's result.
     pub(super) fn bg_tick(&mut self, ctx: &eframe::egui::Context) {
         let Some(job) = &self.bg else {

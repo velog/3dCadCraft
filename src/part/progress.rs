@@ -26,6 +26,8 @@ pub struct Snapshot {
     pub stage: Option<String>,
     /// How long the job has run.
     pub elapsed: Duration,
+    /// Cancelled: its result will be thrown away once the running step ends.
+    pub cancelled: bool,
 }
 
 impl Snapshot {
@@ -49,6 +51,9 @@ impl Snapshot {
         if let Some(stage) = &self.stage {
             s.push_str(", ");
             s.push_str(stage);
+        }
+        if self.cancelled {
+            s.push_str(" (cancelled, finishing the current step)");
         }
         s
     }
@@ -169,6 +174,10 @@ pub fn running() -> Vec<Snapshot> {
                 feature: st.feature.clone(),
                 stage: st.stage.clone(),
                 elapsed: st.started.elapsed(),
+                cancelled: st
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|f| f.load(Ordering::Relaxed)),
             })
         })
         .collect();

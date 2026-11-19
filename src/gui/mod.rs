@@ -1560,6 +1560,11 @@ impl CadCraftApp {
         } else if self.tab == Tab::Assemble {
             self.tab = Tab::Model;
         }
+        // An Edit Feature's checkpoint holds the part rolled back to the edited feature; with no
+        // command open after Undo nothing would end that rollback (an empty view).
+        if self.part().rollback.is_some() && !self.open_state().command_open() {
+            self.end_feature_edit();
+        }
         let n = self.part().sketches.len();
         if self.editing.is_some_and(|i| i >= n) {
             self.editing = None;
