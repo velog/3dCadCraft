@@ -1,6 +1,13 @@
-# Profile rail carriage, mm: width, height and length of HGH..CA from a Sorotec data sheet (Hiwin HG), the outline only.
-size,a,b,c
-15,34,28,60.5
-20,44,30,76.7
-25,48,40,84
-30,60,45,98.4
+# Profile rail carriage, square block (HG pattern, CA), mm: width a (W), height b from the rail's foot (H), length c (L), the gap under the block H1 and the rail it runs on (WR, HR), from the Hiwin HG/QH catalogue table 3.6 (via Almotion). Rows `(L ...)` keep the lengths of the Sorotec HGH data sheet, an earlier edition. The outline only: a block round the rail.
+size,a,b,c,H1,WR,HR
+15,34,28,61.4,4.3,15,15
+15 (L 60.5),34,28,60.5,4.3,15,15
+20,44,30,77.5,4.6,20,17.5
+20 (L 76.7),44,30,76.7,4.6,20,17.5
+25,48,40,84,5.5,23,22
+30,60,45,97.4,6,28,26
+30 (L 98.4),60,45,98.4,6,28,26
+35,70,55,112.4,7.5,34,29
+45,86,70,139.4,9.5,45,38
+55,100,80,166.7,13,53,44
+65,126,90,200.2,15,63,53

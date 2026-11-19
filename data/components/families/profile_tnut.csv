@@ -1,0 +1,10 @@
+# T-nut for aluminium strut profiles, turned into the slot, mm: Bosch Rexroth Aluminum Framing catalogue 8981 500 201 (12/09) section 4, T-Nuts (via Valin): slot 6 11.6 x 5.9 x 3, slot 8 16.5 x 7.9 x 4.5, slot 10 19.5 x 9.8 x 5.8 (length, width through the slot's opening, thickness), and the threads listed for each slot. The ridges and the tapered neck are left out; two opposite corners are cut for turning in.
+size,d,L,W,T
+6 M4,4,11.6,5.9,3
+8 M4,4,16.5,7.9,4.5
+8 M5,5,16.5,7.9,4.5
+8 M6,6,16.5,7.9,4.5
+10 M4,4,19.5,9.8,5.8
+10 M5,5,19.5,9.8,5.8
+10 M6,6,19.5,9.8,5.8
+10 M8,8,19.5,9.8,5.8

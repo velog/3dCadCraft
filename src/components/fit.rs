@@ -107,7 +107,11 @@ impl Fit {
             | Kind::Sprocket(_, _, _, _, d)
             | Kind::Pulley(_, _, _, _, _, d) => Fit::Over { bore: d },
             Kind::Spring(od, d, ..) => Fit::Over { bore: od - 2.0 * d },
-            Kind::Block(..) | Kind::Handle(..) | Kind::Hinge(..) => Fit::Manual,
+            Kind::Rail(..) | Kind::Carriage(..) | Kind::Handle(..) | Kind::Hinge(..) => Fit::Manual,
+            Kind::Support(d1, ..) => Fit::Over { bore: d1 },
+            Kind::JawCoupling(.., d) => Fit::Over { bore: d },
+            Kind::ClampCollar(d, ..) => Fit::Over { bore: d },
+            Kind::SlotNut(..) => Fit::Manual,
             Kind::Flange(f) => match f.neck {
                 Some(n) => Fit::Butt { diameter: n.pipe },
                 None if f.bore > 0.0 => Fit::Over { bore: f.bore },

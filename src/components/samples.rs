@@ -124,8 +124,13 @@ pub enum Kind {
     Pulley(Real, Real, Real, Real, Real, Real),
     /// Spring of round wire about Z: outside diameter, wire, free length, turns.
     Spring(Real, Real, Real, Real),
-    /// A plain block along Z: width (X), height (Y), length.
-    Block(Real, Real, Real),
+    /// A profile rail along Z, its section centred on the Z axis: width (X), height (Y), counterbore
+    /// diameter and depth, through hole, hole pitch, mass per metre (kg/m; sizes the side notches
+    /// standing for the ball grooves), length.
+    Rail(Real, Real, Real, Real, Real, Real, Real, Real),
+    /// A profile rail's carriage, placed on a rail of the same size at the same origin: width,
+    /// height above the rail's foot, length along Z, the gap under it, the rail's width and height.
+    Carriage(Real, Real, Real, Real, Real, Real),
     /// Bridge handle's outline along Z: bar, length, height.
     Handle(Real, Real, Real),
     /// Butt hinge's envelope, open: length, width, leaf.
@@ -159,6 +164,18 @@ pub enum Kind {
     /// Parallel pin with a tapped hole in its top end (ISO 8735): diameter,
     /// length, thread, thread depth.
     ThreadedPin(Real, Real, Real, Real),
+    /// A ball screw end support with a square housing, the shaft along Z through the origin: shaft
+    /// (bearing bore), length, width, height, shaft above the base, width and height of the raised
+    /// middle's shoulders, mounting hole pitch and hole.
+    Support(Real, Real, Real, Real, Real, Real, Real, Real, Real),
+    /// A curved-jaw coupling, the two hubs and the spider as one body along Z: outside, inside of the
+    /// jaws, overall length, hub length, gap each side of the spider, bore.
+    JawCoupling(Real, Real, Real, Real, Real, Real),
+    /// A one-piece clamp collar along Z, its slit on +X: bore, outside, width.
+    ClampCollar(Real, Real, Real),
+    /// A T-nut turned into a strut profile's slot, its threaded hole along Z: thread, length (X),
+    /// width (Y, through the slot's opening), thickness.
+    SlotNut(Real, Real, Real, Real),
 }
 
 /// The numbers of a pipe flange. Weld neck: weld end on the XY plane, the hub and
@@ -948,6 +965,30 @@ const TABLES: &[(&str, &str)] = &[
         "iso_8745",
         include_str!("../../data/components/families/iso_8745.csv"),
     ),
+    (
+        "support_bk",
+        include_str!("../../data/components/families/support_bk.csv"),
+    ),
+    (
+        "support_bf",
+        include_str!("../../data/components/families/support_bf.csv"),
+    ),
+    (
+        "jaw_coupling",
+        include_str!("../../data/components/families/jaw_coupling.csv"),
+    ),
+    (
+        "clamp_collar",
+        include_str!("../../data/components/families/clamp_collar.csv"),
+    ),
+    (
+        "profile_tnut",
+        include_str!("../../data/components/families/profile_tnut.csv"),
+    ),
+    (
+        "shaft_support_sk",
+        include_str!("../../data/components/families/shaft_support_sk.csv"),
+    ),
 ];
 
 /// A table's lines without comments, the first one the heading.
@@ -1240,7 +1281,18 @@ fn row_members(
         "compression_spring" | "extension_spring" => one((|| {
             Some(Kind::Spring(get("De")?, get("d")?, get("L0")?, get("n")?))
         })()),
-        "linear_rail" => per_length(&|l| Some(Kind::Block(get("a")?, get("b")?, l))),
+        "linear_rail" => per_length(&|l| {
+            Some(Kind::Rail(
+                get("a")?,
+                get("b")?,
+                get("D")?,
+                get("h")?,
+                get("d")?,
+                get("P")?,
+                get("kg")?,
+                l,
+            ))
+        }),
         "pneumatic_cylinder" => per_length(&|l| {
             Some(Kind::Cylinder(
                 get("bore")?,
@@ -1268,7 +1320,59 @@ fn row_members(
         "threaded_pin" => {
             per_length(&|l| Some(Kind::ThreadedPin(get("d")?, l, get("d2")?, get("t")?)))
         }
-        "linear_carriage" => one((|| Some(Kind::Block(get("a")?, get("b")?, get("c")?)))()),
+        "linear_carriage" => one((|| {
+            Some(Kind::Carriage(
+                get("a")?,
+                get("b")?,
+                get("c")?,
+                get("H1")?,
+                get("WR")?,
+                get("HR")?,
+            ))
+        })()),
+        "support_unit" => one((|| {
+            Some(Kind::Support(
+                get("d1")?,
+                get("L")?,
+                get("B")?,
+                get("H")?,
+                get("h")?,
+                get("B1")?,
+                get("H1")?,
+                get("P")?,
+                get("X")?,
+            ))
+        })()),
+        "clamp_collar" => one((|| {
+            Some(Kind::ClampCollar(get("d")?, get("D")?, get("b")?))
+        })()),
+        "profile_tnut" => one((|| {
+            Some(Kind::SlotNut(get("d")?, get("L")?, get("W")?, get("T")?))
+        })()),
+        // A shaft support's columns: base G thick and W wide, the body P wide up to F.
+        "shaft_support" => one((|| {
+            Some(Kind::Support(
+                get("D")?,
+                get("L")?,
+                get("W")?,
+                get("F")?,
+                get("h")?,
+                get("P")?,
+                get("G")?,
+                get("B")?,
+                get("S")?,
+            ))
+        })()),
+        // One member per bore: `GS14 bore 8`.
+        "jaw_coupling" => lengths
+            .iter()
+            .filter_map(|&d| {
+                Some((
+                    format!("{size} bore {d}"),
+                    Kind::JawCoupling(get("DH")?, get("dH")?, get("L")?, get("l1")?, get("s")?, d),
+                ))
+            })
+            .collect(),
         "clamp" => one((|| {
             let (d, t) = (get("d")?, get("s")?);
             Some(Kind::Washer(d, d + 2.0 * t, get("b")?))
@@ -1394,6 +1498,7 @@ pub fn all() -> Vec<Sample> {
             let get = |n: &str| -> Option<Real> { row.get(at(n)?)?.parse().ok() };
             let size = at("size").and_then(|i| row.get(i)).copied().unwrap_or("");
             let lengths: Vec<Real> = at("lengths")
+                .or_else(|| at("bores"))
                 .and_then(|i| row.get(i))
                 .map(|v| v.split(';').filter_map(|x| x.parse().ok()).collect())
                 .unwrap_or_default();
@@ -1463,7 +1568,12 @@ impl Sample {
     pub fn has_full(&self) -> bool {
         matches!(
             self.kind,
-            Kind::HexBolt(..) | Kind::PartThreadBolt(..) | Kind::HexNut(..) | Kind::Bearing(..)
+            Kind::HexBolt(..)
+                | Kind::PartThreadBolt(..)
+                | Kind::HexNut(..)
+                | Kind::Bearing(..)
+                | Kind::Rail(..)
+                | Kind::Support(..)
         ) || self.finish.is_some()
     }
 
@@ -1488,7 +1598,10 @@ impl Sample {
                 | Kind::BallKnob(..)
                 | Kind::Cup(..)
                 | Kind::Valve(..)
-                | Kind::Block(..)
+                | Kind::Rail(..)
+                | Kind::Carriage(..)
+                | Kind::Support(..)
+                | Kind::SlotNut(..)
                 | Kind::Handle(..)
                 | Kind::Hinge(..)
                 | Kind::PipeElbow(..)
@@ -1521,7 +1634,9 @@ impl Sample {
         let mut s = self.clone();
         s.kind = match self.kind {
             Kind::Rod(d, l) => Kind::Rod(d, l.min(8.0 * d)),
-            Kind::Block(a, b, l) => Kind::Block(a, b, l.min(3.0 * a.max(b))),
+            Kind::Rail(a, b, d1, h, d, p, kg, l) => {
+                Kind::Rail(a, b, d1, h, d, p, kg, l.min(6.0 * a))
+            }
             Kind::Shape(f, size, _) => Kind::Shape(f, size, 150.0),
             Kind::BallScrew(d, l) => Kind::BallScrew(d, l.min(8.0 * d)),
             k => k,
@@ -1590,7 +1705,13 @@ impl Sample {
             Kind::Sprocket(..) => "Sprocket",
             Kind::Pulley(..) => "V-belt pulley",
             Kind::Spring(..) => "Spring",
-            Kind::Block(..) => "Linear guide",
+            Kind::Rail(..) => "Profile rail",
+            Kind::Carriage(..) => "Profile rail carriage",
+            Kind::Support(..) if self.category.ends_with("Shaft Support") => "Shaft support",
+            Kind::Support(..) => "Ball screw support unit",
+            Kind::JawCoupling(..) => "Jaw coupling",
+            Kind::ClampCollar(..) => "Clamp collar",
+            Kind::SlotNut(..) => "Profile T-nut",
             Kind::Handle(..) => "Handle",
             Kind::Hinge(..) => "Hinge",
             Kind::Flange(..) => "Pipe flange",
@@ -1621,6 +1742,12 @@ impl Sample {
                 full_hex_bolt(d, l, s, k, Some(part_thread(d, l)))
             }
             (Detail::Full, Kind::HexNut(d, s, m)) => full_hex_nut(d, s, m),
+            (Detail::Full, Kind::Rail(a, b, cb, cbh, hole, pitch, kg, l)) => {
+                rail(a, b, cb, cbh, hole, pitch, kg, l, true)
+            }
+            (Detail::Full, Kind::Support(d1, l, b, h, axis, b1, h1, p, x)) => {
+                support(d1, l, b, h, axis, b1, h1, p, x, true)
+            }
             (Detail::Full, Kind::Bearing(d, od, b)) => {
                 full_bearing(d, od, b, self.bearing_style().unwrap_or(BearingStyle::Ball))
             }
@@ -1653,7 +1780,7 @@ impl Sample {
             {
                 "Aluminium 6063-T66"
             }
-            Kind::Cylinder(..) => "Aluminium 6063-T66",
+            Kind::Cylinder(..) | Kind::JawCoupling(..) => "Aluminium 6063-T66",
             Kind::Shape(..) => "Steel S235",
             _ => "Steel AISI 4140",
         }
@@ -1969,9 +2096,16 @@ fn standard_part(kind: Kind) -> Result<PartDocument, PartError> {
             }
             Kind::Pulley(dp, rise, w, depth, b, d) => pulley(dp, rise, w, depth, b, d),
             Kind::Spring(od, d, l, n) => spring(od, d, l, n),
-            Kind::Block(a, b, l) => {
-                prism_with_bore(rectangle(-a / 2.0, a / 2.0, -b / 2.0, b / 2.0), 0.0, l)
+            Kind::Rail(a, b, cb, cbh, hole, pitch, kg, l) => {
+                rail(a, b, cb, cbh, hole, pitch, kg, l, false)
             }
+            Kind::Carriage(w, h, l, h1, wr, hr) => carriage(w, h, l, h1, wr, hr),
+            Kind::Support(d1, l, b, h, axis, b1, h1, p, x) => {
+                support(d1, l, b, h, axis, b1, h1, p, x, false)
+            }
+            Kind::JawCoupling(dh, di, l, l1, s, d) => jaw_coupling(dh, di, l, l1, s, d),
+            Kind::ClampCollar(d, od, b) => clamp_collar(d, od, b),
+            Kind::SlotNut(d, l, w, t) => slot_nut(d, l, w, t),
             Kind::Handle(d, l, h) => handle(d, l, h),
             Kind::Hinge(a, b, s) => hinge(a, b, s),
             Kind::Flange(f) => flange(f, true),
@@ -2078,6 +2212,8 @@ fn simple_part(kind: Kind) -> Result<PartDocument, PartError> {
             tube(a, b, h)
         }
         Kind::Bearing(d, od, b) => tube(d, od, b),
+        Kind::JawCoupling(dh, _, l, _, _, d) => tube(d, dh, l),
+        Kind::ClampCollar(d, od, b) => tube(d, od, b),
         Kind::Flange(f) => flange(f, false),
         Kind::Gear(m, z, b, d) => tube(d, m * (Real::from(z) + 2.0), b),
         Kind::Sprocket(p, _, z, b, d) => {
@@ -3611,6 +3747,313 @@ fn ball_nut(
         bend: None,
         rolling: Vec::new(),
     })))?;
+    Ok(part)
+}
+
+/// Round holes cut down along -Y from the plane y = `top` at the points (x, z), `depth` deep, with a
+/// counterbore (diameter, depth) where given: one Cut for the counterbores and one for the holes.
+fn vertical_holes(
+    part: &mut PartDocument,
+    at: &[(Real, Real)],
+    top: Real,
+    d: Real,
+    depth: Real,
+    counterbore: Option<(Real, Real)>,
+) -> Result<(), PartError> {
+    let mut cuts = Vec::new();
+    if let Some((cd, ch)) = counterbore {
+        cuts.push((cd, ch));
+    }
+    cuts.push((d, depth));
+    for (dia, len) in cuts {
+        // The XZ plane's normal is -Y, its sketch x = X, y = Z: an offset of -top lies at y = top.
+        let w = part.add_work(hidden(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XZ),
+            distance: -top,
+        })))?;
+        let i = part.create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(w),
+                ..Default::default()
+            },
+            &options(),
+        )?;
+        for &(x, z) in at {
+            draw_loop(
+                &mut part.sketches[i].sketch,
+                Loop::Circle(Point2::new(x, z), dia / 2.0, false),
+            )?;
+        }
+        let sk = &part.sketches[i].sketch;
+        let down = sk.plane.normal.y > 0.0;
+        let profiles: Vec<ProfileRef> = sk
+            .regions()
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        if profiles.len() != at.len() {
+            return Err(bad("the holes overlap"));
+        }
+        let mut e = ExtrudeFeature::new(profiles, len);
+        e.operation = Operation::Cut;
+        if down {
+            e.direction = ExtentDirection::Flipped;
+        }
+        part.add_extrude(i, e)?;
+    }
+    Ok(())
+}
+
+/// A ball screw end support's square housing, or a round shaft's support, as one prism along Z with
+/// the shaft's bore, no Boolean: the base at y = -`axis`, full width up to the shoulders at `h1`,
+/// the middle `b1` wide above them. The Full level adds the two mounting holes down through the
+/// shoulders.
+#[allow(clippy::too_many_arguments)]
+fn support(
+    d1: Real,
+    l: Real,
+    b: Real,
+    h: Real,
+    axis: Real,
+    b1: Real,
+    h1: Real,
+    p: Real,
+    x: Real,
+    holes: bool,
+) -> Result<PartDocument, PartError> {
+    let (y0, ys, y1) = (-axis, h1 - axis, h - axis);
+    if !(d1 < b1 && b1 < b && d1 / 2.0 < axis.min(h - axis) && ys > y0 && ys < y1) {
+        return Err(bad("the support unit's housing does not hold its shaft"));
+    }
+    if !(p / 2.0 - x / 2.0 > b1 / 2.0 && p / 2.0 + x / 2.0 < b / 2.0) {
+        return Err(bad(
+            "the support unit's mounting holes do not lie on its shoulders",
+        ));
+    }
+    let c = |x: Real, y: Real| (Point2::new(x, y), 0.0);
+    let outline = Loop::Corners(vec![
+        c(-b / 2.0, y0),
+        c(b / 2.0, y0),
+        c(b / 2.0, ys),
+        c(b1 / 2.0, ys),
+        c(b1 / 2.0, y1),
+        c(-b1 / 2.0, y1),
+        c(-b1 / 2.0, ys),
+        c(-b / 2.0, ys),
+    ]);
+    let mut part = prism_with_bore(outline, d1, l)?;
+    if holes {
+        vertical_holes(
+            &mut part,
+            &[(-p / 2.0, l / 2.0), (p / 2.0, l / 2.0)],
+            ys,
+            x,
+            h1 + 1.0,
+            None,
+        )?;
+    }
+    Ok(part)
+}
+
+/// Steel's density in kg per metre of a 1 mm² section.
+const STEEL_KG_PER_M_MM2: Real = 7.85e-3;
+
+/// The side notch standing for a profile rail's ball grooves: its depth into the side and its
+/// height, sized so that the section with its holes spread over their pitch weighs `kg` per metre.
+pub fn rail_notch(
+    a: Real,
+    b: Real,
+    cb: Real,
+    cbh: Real,
+    hole: Real,
+    pitch: Real,
+    kg: Real,
+) -> (Real, Real) {
+    use std::f64::consts::PI;
+    let holes = PI / 4.0 * (cb * cb * cbh + hole * hole * (b - cbh)) / pitch;
+    let notch = ((a * b - kg / STEEL_KG_PER_M_MM2 - holes) / 2.0).max(0.0);
+    let depth = 0.15 * a;
+    (depth, (notch / depth).clamp(0.05 * b, 0.6 * b))
+}
+
+/// The counterbored holes of a profile rail `l` long at their pitch: centred along it, at least a
+/// counterbore's diameter from either end. Their positions along Z.
+pub fn rail_holes(l: Real, cb: Real, pitch: Real) -> Vec<Real> {
+    if l < 2.0 * cb {
+        return Vec::new();
+    }
+    let n = ((l - 2.0 * cb) / pitch).floor() as u32 + 1;
+    let first = l / 2.0 - pitch * Real::from(n - 1) / 2.0;
+    (0..n).map(|k| first + pitch * Real::from(k)).collect()
+}
+
+/// A profile rail as one prism along Z, its section centred on the axis, a notch on each side for
+/// the ball grooves. The Full level adds the counterbored holes from the top (`rail_holes`).
+#[allow(clippy::too_many_arguments)]
+fn rail(
+    a: Real,
+    b: Real,
+    cb: Real,
+    cbh: Real,
+    hole: Real,
+    pitch: Real,
+    kg: Real,
+    l: Real,
+    holes: bool,
+) -> Result<PartDocument, PartError> {
+    let (x, y) = (a / 2.0, b / 2.0);
+    let (e, g) = rail_notch(a, b, cb, cbh, hole, pitch, kg);
+    let top = y - 0.15 * b;
+    let bottom = top - g;
+    if !(cb < a - 2.0 * e && cbh < b && bottom > -y) {
+        return Err(bad("the rail's holes do not fit its section"));
+    }
+    let c = |x: Real, y: Real| (Point2::new(x, y), 0.0);
+    let outline = Loop::Corners(vec![
+        c(-x, -y),
+        c(x, -y),
+        c(x, bottom),
+        c(x - e, bottom),
+        c(x - e, top),
+        c(x, top),
+        c(x, y),
+        c(-x, y),
+        c(-x, top),
+        c(-x + e, top),
+        c(-x + e, bottom),
+        c(-x, bottom),
+    ]);
+    let mut part = prism_with_bore(outline, 0.0, l)?;
+    let at: Vec<(Real, Real)> = rail_holes(l, cb, pitch)
+        .into_iter()
+        .map(|z| (0.0, z))
+        .collect();
+    if holes && !at.is_empty() {
+        vertical_holes(&mut part, &at, y, hole, b + 1.0, Some((cb, cbh)))?;
+    }
+    Ok(part)
+}
+
+/// A profile rail's carriage as one prism along Z: a block round the rail, standing `h1` above the
+/// rail's foot, so a carriage and its rail share their origin (the rail's section is centred on it).
+fn carriage(
+    w: Real,
+    h: Real,
+    l: Real,
+    h1: Real,
+    wr: Real,
+    hr: Real,
+) -> Result<PartDocument, PartError> {
+    let (y0, yr, y1) = (h1 - hr / 2.0, hr / 2.0, h - hr / 2.0);
+    if !(wr < w && y0 < yr && yr < y1) {
+        return Err(bad("the carriage does not fit round its rail"));
+    }
+    let c = |x: Real, y: Real| (Point2::new(x, y), 0.0);
+    prism_with_bore(
+        Loop::Corners(vec![
+            c(-w / 2.0, y0),
+            c(-wr / 2.0, y0),
+            c(-wr / 2.0, yr),
+            c(wr / 2.0, yr),
+            c(wr / 2.0, y0),
+            c(w / 2.0, y0),
+            c(w / 2.0, y1),
+            c(-w / 2.0, y1),
+        ]),
+        0.0,
+        l,
+    )
+}
+
+/// A curved-jaw coupling as one stepped body along Z, no Boolean: two hubs `l1` long, the jaws and
+/// the spider between them with a shallow groove for each gap beside the spider, the bore through
+/// the hubs and the jaws' inside between them.
+fn jaw_coupling(
+    dh: Real,
+    di: Real,
+    l: Real,
+    l1: Real,
+    s: Real,
+    d: Real,
+) -> Result<PartDocument, PartError> {
+    let (r, ri, rb) = (dh / 2.0, di / 2.0, d / 2.0);
+    let rg = r - (r - ri) / 4.0;
+    if !(rb < rg && ri < rg && (rb - ri).abs() > 0.05 && 2.0 * (l1 + s) < l) {
+        return Err(bad("the coupling's bore does not fit its hubs"));
+    }
+    let runs = vec![
+        AxialRun::turned(&[(r, 0.0, ""), (r, l1, "Hub")], Some("GapFace")),
+        AxialRun::turned(&[(rg, l1, ""), (rg, l1 + s, "Gap")], Some("JawFace")),
+        AxialRun::turned(
+            &[(r, l1 + s, ""), (r, l - l1 - s, "Jaws")],
+            Some("JawFace2"),
+        ),
+        AxialRun::turned(
+            &[(rg, l - l1 - s, ""), (rg, l - l1, "Gap2")],
+            Some("GapFace2"),
+        ),
+        AxialRun::turned(&[(r, l - l1, ""), (r, l, "Hub2")], Some("End")),
+        AxialRun::turned(&[(rb, l, ""), (rb, l - l1, "Bore2")], Some("Step2")),
+        AxialRun::turned(&[(ri, l - l1, ""), (ri, l1, "Inside")], Some("Step")),
+        AxialRun::turned(&[(rb, l1, ""), (rb, 0.0, "Bore")], Some("Face")),
+    ];
+    let mut part = blank();
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs,
+        first_cap: None,
+        closed: true,
+        holes: Vec::new(),
+        tee: None,
+        bend: None,
+        rolling: Vec::new(),
+    })))?;
+    Ok(part)
+}
+
+/// A one-piece clamp collar as one prism along Z, no Boolean: a ring with a 1 mm slit across it on
+/// +X (the clamp screw is left out).
+fn clamp_collar(d: Real, od: Real, b: Real) -> Result<PartDocument, PartError> {
+    let (r0, r1, w) = (d / 2.0, od / 2.0, 0.5);
+    if !(w < r0 && r0 < r1) {
+        return Err(bad("the collar's bore does not fit inside it"));
+    }
+    let o = Point2::new(0.0, 0.0);
+    let at = |r: Real, y: Real| Point2::new((r * r - y * y).sqrt(), y);
+    prism_with_bore(
+        Loop::Path(vec![
+            (at(r0, w), None),
+            (at(r1, w), Some((o, true))),
+            (at(r1, -w), None),
+            (at(r0, -w), Some((o, false))),
+        ]),
+        0.0,
+        b,
+    )
+}
+
+/// A profile T-nut as one prism along Z with its threaded hole, no Boolean: a block `l` x `w` with
+/// two opposite corners cut, so it turns into the slot.
+fn slot_nut(d: Real, l: Real, w: Real, t: Real) -> Result<PartDocument, PartError> {
+    let spec = thread_spec(d, true)?;
+    let (x, y, c) = (l / 2.0, w / 2.0, 0.35 * w);
+    let rb = spec.minor / 2.0;
+    if rb + 0.3 >= y {
+        return Err(bad("the T-nut is too narrow for its thread"));
+    }
+    let k = |x: Real, y: Real| (Point2::new(x, y), 0.0);
+    let mut part = prism_with_bore(
+        Loop::Corners(vec![
+            k(-x + c, -y),
+            k(x, -y),
+            k(x, y - c),
+            k(x - c, y),
+            k(-x, y),
+            k(-x, -y + c),
+        ]),
+        spec.minor,
+        t,
+    )?;
+    add_thread(&mut part, spec, rb, Point3::new(rb, 0.0, t / 2.0))?;
     Ok(part)
 }
 

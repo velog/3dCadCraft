@@ -1,0 +1,18 @@
+# One-piece clamping shaft collar, mm: bore d, outside D, width b of Ruland MCL-...-F (black oxide steel) from its product pages and listings (MCL-7, 8, 10, 11, 12, 15, 20, 22, 25, 26, 40, 42, 50, 60), 16 and 35 from RS PRO listings (one-piece clamp collars). The slit is 1 mm; the clamp screw and its counterbore are left out.
+size,d,D,b
+7,7,18,9
+8,8,18,9
+10,10,24,9
+11,11,28,11
+12,12,28,11
+15,15,34,13
+16,16,34,13
+20,20,40,15
+22,22,42,15
+25,25,45,15
+26,26,48,15
+35,35,57,15
+40,40,60,15
+42,42,73,19
+50,50,78,19
+60,60,88,19

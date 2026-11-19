@@ -970,6 +970,9 @@ struct CadCraftApp {
     library_detail: String,
     /// Place from Library places by hand instead of Smart Drop.
     library_manual: bool,
+    /// Place from Library's History and Favorites (family and size), kept in the settings.
+    library_recent: Vec<String>,
+    library_favorites: Vec<String>,
     /// Bolted Connections' inputs as last seen (assembly, connection → a hash of
     /// their components' geometry and places): a change makes them again.
     bolt_keys: std::collections::HashMap<(crate::document::DocumentId, u32), u64>,
@@ -1405,6 +1408,8 @@ impl CadCraftApp {
             library_standard: None,
             library_detail: String::new(),
             library_manual: false,
+            library_recent: Vec::new(),
+            library_favorites: Vec::new(),
             bolt_keys: Default::default(),
             cmd_search: Default::default(),
             dim_display: Default::default(),

@@ -1,6 +1,6 @@
-# Self-clinching stud for sheet. Mm. Typed nominal values, not compared with a source yet.
+# Self-clinching flush-head stud for sheet, mm. Head diameter D: PEM FH (FH/FHS/FHA metric) catalogue listing, H of M3 4.6, M4 5.9, M5 6.5, M6 8.2. Head height k and the lengths are typed (the listing's first page shows lengths 6 to 15 for M3).
 size,d,D,k,lengths
-M3,3,4.8,1.1,6;8;10;12;16;20
-M4,4,6,1.3,8;10;12;16;20;25
-M5,5,6.8,1.5,10;12;16;20;25
-M6,6,8.1,1.5,12;16;20;25;30
+M3,3,4.6,1.1,6;8;10;12;16;20
+M4,4,5.9,1.3,8;10;12;16;20;25
+M5,5,6.5,1.5,10;12;16;20;25
+M6,6,8.2,1.5,12;16;20;25;30

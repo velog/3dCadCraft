@@ -1,0 +1,8 @@
+# Fixed-side ball screw support unit, square housing (the BK pattern most makers share), mm: TPI ball screw support unit catalogue, TBK series table 3.2 (TBK10 to TBK25, the same sizes as THK BK10 to BK25 in its table 2-1). d1 shaft, L housing length, B width, H height, h shaft centre above the base, B1 width of the raised middle above the shoulders at H1, P mounting hole pitch, X its through hole. The lock nut and the bearing housing's bore are left out.
+size,d1,L,B,H,h,B1,H1,P,X
+BK10,10,25,60,39,22,34,32.5,46,6.6
+BK12,12,25,60,43,25,34,32.5,46,6.6
+BK15,15,27,70,48,28,40,38,54,6.6
+BK17,17,35,86,64,39,50,55,68,9
+BK20,20,35,88,60,34,52,50,70,9
+BK25,25,42,106,80,48,64,70,85,11

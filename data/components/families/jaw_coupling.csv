@@ -1,0 +1,9 @@
+# Curved-jaw coupling with aluminium hubs (the GS pattern), mm: KTR ROTEX GS operating instructions (via Almotion), table 1 (sizes 9 to 38, hub material aluminium) and table 2 (finish bores up to the clamping hub's dmax). DH outside, dH inside of the jaws and spider, L overall, l1 hub length, s gap each side of the spider. Bores are a choice of common sizes between the table's dmin and dmax; a bore equal to dH is left out.
+size,DH,dH,L,l1,s,bores
+GS9,20,7.2,30,10,1,4;5;6;8;10
+GS12,25,8.5,34,11,1,4;5;6;8;10;12
+GS14,30,10.5,35,11,1.5,5;6;8;10;12;14;16
+GS19,40,18,66,25,2,6;8;10;12;14;15;16;19;20;22;24
+GS24,55,27,78,30,2,8;10;12;14;15;16;19;20;22;24;25;28
+GS28,65,30,90,35,2.5,10;12;14;15;16;19;20;22;24;25;28;32;35;38
+GS38,80,38,114,45,3,12;14;16;19;20;22;24;25;28;30;32;35;40;42;45
