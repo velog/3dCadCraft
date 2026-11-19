@@ -3434,6 +3434,9 @@ impl CadCraftApp {
         if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) {
             d.skel.notes = self.frame_list_notes(&d);
         }
+        if d.start_view.is_none() {
+            d.start_view = Some(self.camera.clone());
+        }
         let (cancel, ok) = if super::gear_key::in_window(&d) {
             // The machine-element generators work in a window of their own,
             // as Inventor's Design Accelerator dialogs (spec 6.2 §3.7).
@@ -3481,10 +3484,6 @@ impl CadCraftApp {
         } else {
             d.ui(ui)
         };
-        if d.start_view.is_none() {
-            d.start_view = Some(self.camera.clone());
-        }
-        let (cancel, ok) = d.ui(ui);
         self.simplify_preset_follow(&mut d);
         // A plastic command says why its definition cannot be built, before OK.
         if super::plastic::is_plastic(&d) {
