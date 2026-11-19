@@ -249,8 +249,9 @@ impl CadCraftApp {
                         let droppable = lib
                             .family
                             .is_some_and(|f| lib.catalog.fits(f).iter().any(|x| x.droppable()));
+                        // Replace keeps the component's place: no Smart Drop there.
                         ui.add_enabled(
-                            droppable || lib.family.is_none(),
+                            lib.replace.is_empty() && (droppable || lib.family.is_none()),
                             egui::Checkbox::new(&mut lib.smart, "Smart Drop"),
                         )
                         .on_hover_text("The size follows the hole or shaft under the cursor; a click places it with its relationships.")

@@ -991,3 +991,28 @@ fn support_units_and_couplings_build_at_every_level() {
         }
     }
 }
+
+/// Smart Drop's fits of the automation elements: couplings, collars and supports go over a shaft
+/// of their bore and carry that seat as a connection; rails, carriages and T-nuts go by hand.
+#[test]
+fn automation_elements_fit_by_their_bores() {
+    use cadcraft3d::components::fit::Fit;
+    let mut seen = 0;
+    for s in all() {
+        let bore = match s.kind {
+            Kind::JawCoupling(.., d) | Kind::ClampCollar(d, ..) | Kind::Support(d, ..) => d,
+            Kind::Rail(..) | Kind::Carriage(..) | Kind::SlotNut(..) => {
+                assert_eq!(Fit::of(&s.kind), Fit::Manual, "{}", s.designation());
+                continue;
+            }
+            _ => continue,
+        };
+        assert_eq!(Fit::of(&s.kind), Fit::Over { bore }, "{}", s.designation());
+        if seen % 15 == 0 {
+            let p = s.part().unwrap();
+            assert_eq!(p.connections.len(), 1, "{}", s.designation());
+        }
+        seen += 1;
+    }
+    assert!(seen > 80, "{seen} members");
+}
