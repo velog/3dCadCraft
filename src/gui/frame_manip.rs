@@ -17,6 +17,8 @@ use crate::part::frame::Library;
 const ARROW_PX: f32 = 46.0;
 /// How near the pointer must press to take a grip, px.
 const GRIP_PX: f32 = 8.0;
+/// How near a click must be to an anchor point, px.
+const ANCHOR_PX: f32 = 7.0;
 
 /// What a grip edits.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -60,6 +62,9 @@ struct Frame3 {
     base: Point3,
     /// The horizontal axis at Rotation Angle 0 (the ring's fixed reference).
     u0: Vector3,
+    /// The section's anchor points at the line's middle, in the order of
+    /// `Anchor::ALL` (the panel's Anchor list).
+    anchors: Vec<Point3>,
 }
 
 fn takes(d: &PartDialog) -> bool {
@@ -109,6 +114,14 @@ impl CadCraftApp {
         let base = mid + u * or.h_offset + v * or.v_offset;
         let flat = frame::Orientation { angle: 0.0, ..or };
         let u0 = frame::placement(s, p, q, &flat)?.transform_vector(&Vector3::x());
+        let half = (q - p).norm() / 2.0;
+        let anchors = frame::Anchor::ALL
+            .iter()
+            .map(|a| {
+                let (x, y) = a.point(s);
+                t.transform_point(&Point3::new(x, y, half))
+            })
+            .collect();
         Some(Frame3 {
             mid,
             dir,
@@ -116,6 +129,7 @@ impl CadCraftApp {
             v,
             base,
             u0,
+            anchors,
         })
     }
 
@@ -212,6 +226,25 @@ impl CadCraftApp {
                 Stroke::NONE,
             ));
         }
+        // The anchor points (Inventor's buttons on the section): a click
+        // takes that anchor, the current one is filled.
+        let current = d.index(0, "Anchor");
+        for (k, w) in f.anchors.iter().enumerate() {
+            let Some(q) = self.camera.project(w, rect) else {
+                continue;
+            };
+            let near = pointer.is_some_and(|p| p.distance(q) < ANCHOR_PX);
+            let c = if near {
+                scheme.handle_hot
+            } else {
+                scheme.handle
+            };
+            if k == current {
+                painter.circle_filled(q, 4.5, c);
+            } else {
+                painter.circle_stroke(q, 4.0, Stroke::new(1.5, c));
+            }
+        }
         let ring = self.ring_points(&f, rect, mm);
         painter.add(egui::Shape::line(
             ring.clone(),
@@ -232,6 +265,28 @@ impl CadCraftApp {
                 scheme.handle_hot,
             );
         }
+    }
+
+    /// A click on one of the section's anchor points: the panel's Anchor
+    /// takes it (`false`: no point there).
+    pub(super) fn frame_anchor_dot_click(&mut self, p: Pos2, rect: Rect) -> bool {
+        let Some(f) = self.part_planned.as_ref().and_then(|d| self.manip_frame(d)) else {
+            return false;
+        };
+        let hit = f
+            .anchors
+            .iter()
+            .enumerate()
+            .filter_map(|(k, w)| Some((k, self.camera.project(w, rect)?.distance(p))))
+            .filter(|(_, d)| *d < ANCHOR_PX)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((k, _)) = hit else {
+            return false;
+        };
+        if let Some(d) = self.part_planned.as_mut() {
+            d.set_index(0, "Anchor", k);
+        }
+        true
     }
 
     /// The grip under `p`.

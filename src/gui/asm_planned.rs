@@ -1939,6 +1939,10 @@ impl CadCraftApp {
         if self.frame_copy_click(p, rect) {
             return;
         }
+        // Insert Frame / Change: an anchor point of the section in the view.
+        if self.frame_anchor_dot_click(p, rect) {
+            return;
+        }
         // Insert Frame's Between Points: ends of edges and sketch lines.
         if self.frame_between_click(p, rect) {
             return;
