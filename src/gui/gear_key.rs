@@ -1174,6 +1174,8 @@ pub struct BearingList {
 struct BearingRow {
     family: usize,
     member: usize,
+    /// Outside diameter and width.
+    size: (f64, f64),
     label: String,
     category: String,
 }
@@ -1250,6 +1252,14 @@ impl super::CadCraftApp {
         let dia = d.num(0, "Diameter").unwrap_or(0.0);
         let category = d.index(0, "Category");
         let key = ((dia * 1000.0).round() as i64, category);
+        // The chosen bearing's sizes on show.
+        if let Some(&BearingRow { size: (od, w), .. }) = d.bearing.rows.get(d.bearing.chosen) {
+            for (row, v) in [("Outside Diameter", od), ("Width", w)] {
+                if d.num(0, row).is_some_and(|x| (x - v).abs() > 1e-9) {
+                    d.set_num(0, row, v);
+                }
+            }
+        }
         if d.bearing.key == Some(key) {
             return;
         }
@@ -1270,6 +1280,7 @@ impl super::CadCraftApp {
                 BearingRow {
                     family: f,
                     member: m,
+                    size: (od, w),
                     label: format!(
                         "{} ({}): {} × {} × {}",
                         fam.members[m].size,
