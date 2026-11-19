@@ -123,7 +123,7 @@ impl CadCraftApp {
         else {
             return;
         };
-        if a.cut.is_none() {
+        if a.cut.is_none() && a.outs.is_empty() {
             return;
         }
         let Some(v) = sheet.view(id) else {

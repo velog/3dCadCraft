@@ -3757,6 +3757,32 @@ fn a_pin_is_cut_in_one_section_and_whole_in_another() {
         vec!["o2/"]
     );
     assert!(dp::uncut(&[], StandardSection::Always, &std_leaves).is_empty());
+    // A break out through the middle of the front view leaves the pin whole
+    // unless it cuts every part (Section All Parts).
+    let front = ViewOrientation::Front.frame();
+    let square = vec![[-50.0, -20.0], [50.0, -20.0], [50.0, 30.0], [-50.0, 30.0]];
+    let cut_at = front.depth(&crate::kernel::Point3::origin());
+    let out_area = |every: bool| {
+        let a = hlr::Aligned {
+            parent: front,
+            line: [0.0, 0.0],
+            cut: None,
+            poly: Vec::new(),
+            unfold: false,
+            depth: None,
+            outs: vec![hlr::OutCut::new(vec![square.clone()], cut_at).every_part(every)],
+            uncut: vec!["o2/".into()],
+        };
+        let l = hlr::view_lines_with(&vm, &front, Some(&a));
+        l.section.iter().map(|lp| area(lp)).sum::<f64>()
+    };
+    close(out_area(false), 500.0, 2.0, "break out: the pin left whole");
+    close(
+        out_area(true),
+        700.0,
+        2.0,
+        "Section All Parts: the pin cut too",
+    );
     // Saved with the drawing; Default removes the entry.
     let json = serde_json::to_string(&d).unwrap();
     let back: DrawingDocument = serde_json::from_str(&json).unwrap();

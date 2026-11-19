@@ -1022,7 +1022,7 @@ pub fn view_lines_simplified(
         if !outs.is_empty() {
             kept = kept
                 .iter()
-                .flat_map(|k| clip_outs(k, outs, frame))
+                .flat_map(|k| clip_outs(k, outs, frame, whole))
                 .collect();
         }
         kept
@@ -1133,7 +1133,7 @@ pub fn view_lines_simplified(
             let polys = if outs.is_empty() {
                 polys
             } else {
-                cut_outs(polys, outs, &out_cells, frame, &mut out_cross)
+                cut_outs(polys, outs, &out_cells, frame, &mut out_cross, whole)
             };
             if nrm.dot(&t) <= 1e-12 * nrm.norm().max(1e-30) {
                 continue;
@@ -1651,6 +1651,9 @@ pub struct OutCut {
     /// The profile's box: lower left, upper right.
     lo: [f64; 2],
     hi: [f64; 2],
+    /// Section All Parts: it cuts the components a section leaves whole
+    /// too ([`Aligned::uncut`], spec 4.15).
+    pub every_part: bool,
 }
 
 /// The box of view-plane points: lower left, upper right.
@@ -1669,6 +1672,13 @@ fn boxes_meet(a: ([f64; 2], [f64; 2]), b: ([f64; 2], [f64; 2])) -> bool {
 }
 
 impl OutCut {
+    /// The same break out cutting every component (Section All Parts) or
+    /// not.
+    pub fn every_part(mut self, on: bool) -> Self {
+        self.every_part = on;
+        self
+    }
+
     /// A break out of `loops` (each closed or not; holes are loops inside
     /// others) cut at `depth`.
     pub fn new(loops: Vec<Vec<[f64; 2]>>, depth: f64) -> Self {
@@ -1722,6 +1732,7 @@ impl OutCut {
             tris,
             lo,
             hi,
+            every_part: false,
         }
     }
 
@@ -1858,7 +1869,12 @@ fn seg_cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> Option<f64> 
 }
 
 /// The parts of a 3D curve outside every break out's removed region.
-fn clip_outs(pts: &[Point3], outs: &[OutCut], frame: &ViewFrame) -> Vec<Vec<Point3>> {
+fn clip_outs(pts: &[Point3], outs: &[OutCut], frame: &ViewFrame, whole: bool) -> Vec<Vec<Point3>> {
+    // A component left whole is cut only by break outs that cut every part.
+    let outs: Vec<&OutCut> = outs.iter().filter(|o| !whole || o.every_part).collect();
+    if outs.is_empty() {
+        return vec![pts.to_vec()];
+    }
     let removed = |q: &Point3| {
         let v = frame.project(q);
         outs.iter()
@@ -1871,7 +1887,7 @@ fn clip_outs(pts: &[Point3], outs: &[OutCut], frame: &ViewFrame) -> Vec<Vec<Poin
         let (va, vb) = (frame.project(&a), frame.project(&b));
         let mut ts = vec![0.0, 1.0];
         let seg_box = box_of([&va, &vb]);
-        for o in outs {
+        for o in &outs {
             let (fa, fb) = (o.front(&a, frame), o.front(&b, frame));
             if fa * fb < 0.0 {
                 ts.push(fa / (fa - fb));
@@ -1925,10 +1941,14 @@ fn cut_outs(
     cells: &[Vec<Cell>],
     frame: &ViewFrame,
     cross: &mut [Vec<([f64; 2], [f64; 2])>],
+    whole: bool,
 ) -> Vec<Vec<Point3>> {
     let mut cur = polys;
     let mut scratch = Vec::new();
     for (i, o) in outs.iter().enumerate() {
+        if whole && !o.every_part {
+            continue;
+        }
         let mut next = Vec::new();
         for p in cur.into_iter().filter(|p| p.len() >= 3) {
             let (back, c) = clip_polygon(&p, &|q: &Point3| o.front(q, frame));

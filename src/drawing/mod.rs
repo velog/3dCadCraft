@@ -866,7 +866,11 @@ impl BreakOut {
                 break_out_sketch_plane(*line, &frame_of(*view)?, frame).ok()?
             }
         };
-        Some(hlr::OutCut::new(self.profile.clone(), depth).sloped(slope))
+        Some(
+            hlr::OutCut::new(self.profile.clone(), depth)
+                .sloped(slope)
+                .every_part(self.section_all),
+        )
     }
 }
 

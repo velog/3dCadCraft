@@ -49,6 +49,9 @@ pub(super) struct BoDraft {
     pub sketch: Option<Box<crate::drawing::view_sketch::ViewSketch>>,
     /// Edit Break Out: the break out's index in the view.
     pub edit: Option<usize>,
+    /// Section All Parts: the components a section leaves whole are cut
+    /// too (spec 4.15).
+    pub section_all: bool,
 }
 
 impl BoDraft {
@@ -64,6 +67,7 @@ impl BoDraft {
             to_sketch: None,
             sketch: None,
             edit: None,
+            section_all: false,
         }
     }
 
@@ -100,6 +104,7 @@ impl BoDraft {
             to_sketch,
             sketch: b.sketch.clone(),
             edit: Some(k),
+            section_all: b.section_all,
         }
     }
 
@@ -128,7 +133,7 @@ impl BoDraft {
         Some(BreakOut {
             profile: self.profile.clone(),
             depth,
-            section_all: false,
+            section_all: self.section_all,
             sketch: self.sketch.clone(),
             suppressed: false,
         })
@@ -327,10 +332,9 @@ impl CadCraftApp {
                         .on_disabled_hover_text(
                             "Planned: hidden edges shown for the pick (docs/spec/4.11-break-out.md)",
                         );
-                    ui.add_enabled(false, egui::Checkbox::new(&mut false, "Section All Parts"))
-                        .on_disabled_hover_text(
-                            "Planned: assemblies (docs/spec/4.11-break-out.md)",
-                        );
+                    ui.checkbox(&mut d.section_all, "Section All Parts").on_hover_text(
+                        "Assemblies: cut the components sections leave whole (fasteners, shafts) too",
+                    );
                     ui.separator();
                     ui.horizontal(|ui| {
                         let ready = d.break_out().is_some();
