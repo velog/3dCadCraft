@@ -1155,3 +1155,20 @@ fn a_surface_loft_through_ovals_builds() {
         "{names:?}"
     );
 }
+
+/// Writes the bottle's surface loft to `SURFACE_GOALS_OUT` for a look in the app.
+#[test]
+#[ignore = "writes a file for a visual check"]
+fn save_bottle_surface() {
+    let Ok(out) = std::env::var("SURFACE_GOALS_OUT") else {
+        return;
+    };
+    let mut p = PartDocument::default();
+    let ks = bottle_sections(&mut p);
+    let mut def = LoftFeature::new(ks.iter().map(|&k| section(&p, k)).collect());
+    def.output = Output::Surface;
+    p.add_loft(def).unwrap_or_else(|e| panic!("{e}"));
+    let mut project = cadcraft3d::document::Project::new("Bottle");
+    project.add_document("Bottle", cadcraft3d::document::DocumentData::Part(p));
+    project.save(std::path::Path::new(&out)).unwrap_or_else(|e| panic!("{e}"));
+}
