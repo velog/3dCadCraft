@@ -2144,6 +2144,22 @@ impl PartDialog {
         out
     }
 
+    /// The text of choice `i` of drop-down / radio row `label` of tab `ti`.
+    pub(super) fn choice_text(&self, ti: usize, label: &str, i: usize) -> String {
+        self.kind
+            .pages()
+            .get(ti)
+            .and_then(|p| {
+                p.1.iter().find_map(|r| match *r {
+                    Radio(l, opts, _) | Combo(l, opts, _) if l == label => {
+                        opts.get(i).map(|o| (*o).to_owned())
+                    }
+                    _ => None,
+                })
+            })
+            .unwrap_or_else(|| i.to_string())
+    }
+
     /// A panel of `kind` filled from stored values.
     pub(super) fn from_values(
         kind: impl Into<Planned>,
@@ -2768,7 +2784,9 @@ impl PartDialog {
             self.items.remove(k);
             self.active = Some(k);
         }
-        if let Some(g) = super::explain::generator_of(self) {
+        if let Some(g) = super::explain::generator_of(self)
+            && !super::gear_key::in_window(self)
+        {
             ui.separator();
             super::explain::pane(ui, g);
         }
@@ -2837,6 +2855,8 @@ impl PartDialog {
             Button("Insert Cylinder") if super::shaft::is_shaft(self) => {
                 super::shaft::sections_ui(self, ui);
             }
+            // In the generator's window the results have their own pane.
+            Button("Calculate") if super::gear_key::in_window(self) => {}
             Button("Calculate") if super::gear_key::is_spur(self) => {
                 super::gear_key::gear_ui(self, ui);
             }
@@ -2900,7 +2920,8 @@ impl PartDialog {
                 let off = self
                     .kind
                     .option_off(label, None)
-                    .or_else(|| super::bolted::row_off(self, at.0, label));
+                    .or_else(|| super::bolted::row_off(self, at.0, label))
+                    .or_else(|| super::gear_key::row_later(self, label));
                 let g = super::explain::generator_of(self);
                 let v = self.bools.entry(at).or_insert(on);
                 plabel(ui, "");
@@ -2955,7 +2976,8 @@ impl PartDialog {
                 let off = self
                     .kind
                     .option_off(label, None)
-                    .or_else(|| super::bolted::row_off(self, at.0, label));
+                    .or_else(|| super::bolted::row_off(self, at.0, label))
+                    .or_else(|| super::gear_key::row_later(self, label));
                 // Frame panels: the section table's lists (gui/frame.rs); Bolted
                 // Connection: the thread and library lists (gui/bolted.rs).
                 let list: Vec<String> = super::frame::frame_combo(self, at.0, label)
@@ -2986,7 +3008,8 @@ impl PartDialog {
                     || matches!(self.kind, Planned::Part(k)
                         if super::plastic::row_off(self, k, at.0, label))
                     || super::gear_key::guide_computes(self, at.0, label);
-                let why = super::bolted::row_off(self, at.0, label);
+                let why = super::bolted::row_off(self, at.0, label)
+                    .or_else(|| super::gear_key::row_later(self, label));
                 let v = self.nums.entry(at).or_insert(def);
                 let on = !off && why.is_none();
                 let r = ui.add_enabled_ui(on, |ui| {
@@ -3351,7 +3374,53 @@ impl CadCraftApp {
         if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) {
             d.skel.notes = self.frame_list_notes(&d);
         }
-        let (cancel, ok) = d.ui(ui);
+        let (cancel, ok) = if super::gear_key::in_window(&d) {
+            // The machine-element generators work in a window of their own,
+            // as Inventor's Design Accelerator dialogs (spec 6.2 §3.7).
+            ui.label(
+                RichText::new("The generator is open in its window")
+                    .weak()
+                    .italics(),
+            );
+            let status = match &self.file_status {
+                Some(Err(e)) => Some(e.clone()),
+                _ => None,
+            };
+            let ctx = ui.ctx().clone();
+            let mut open = true;
+            let mut res = (false, false);
+            let w = egui::Window::new(title)
+                .id(egui::Id::new("design_generator_window"))
+                .open(&mut open)
+                .resizable(true)
+                .collapsible(false)
+                .default_size([900.0, 600.0]);
+            self.layout
+                .place("design_generator", ctx.content_rect(), true, w)
+                .show(&ctx, |ui| {
+                    egui::Panel::bottom("design_generator_messages").show(ui, |ui| {
+                        super::gear_key::messages_strip(ui, status.as_deref());
+                    });
+                    ui.columns(2, |c| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("design_generator_inputs")
+                            .show(&mut c[0], |ui| {
+                                res = d.ui(ui);
+                            });
+                        egui::ScrollArea::vertical()
+                            .id_salt("design_generator_results")
+                            .show(&mut c[1], |ui| {
+                                super::gear_key::results_pane(&mut d, ui);
+                            });
+                    });
+                });
+            if !open {
+                res.0 = true;
+            }
+            res
+        } else {
+            d.ui(ui)
+        };
         self.simplify_preset_follow(&mut d);
         // A plastic command says why its definition cannot be built, before OK.
         if super::plastic::is_plastic(&d) {

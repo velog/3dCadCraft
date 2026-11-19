@@ -77,8 +77,108 @@ fn result_row(
         .iter()
         .find(|(k, _)| *k == key)
         .map(|(_, v)| v.as_str());
+    record(text.text(), n);
     let r = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
     super::explain::result_hover(r, generator, key, n);
+}
+
+/// One result line of a report: its text and the formula with the numbers.
+type ReportLine = (String, Option<String>);
+
+thread_local! {
+    /// The result lines drawn while a Calculation Report records (text,
+    /// formula with the numbers).
+    static RECORD: std::cell::RefCell<Option<Vec<ReportLine>>> =
+        const { std::cell::RefCell::new(None) };
+    /// The open Calculation Report: its title and the generator's panel
+    /// filled from the component's stored input.
+    static REPORT: std::cell::RefCell<Option<(String, PartDialog)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn record(text: &str, numbers: Option<&str>) {
+    RECORD.with(|r| {
+        if let Some(v) = r.borrow_mut().as_mut() {
+            v.push((text.to_owned(), numbers.map(str::to_owned)));
+        }
+    });
+}
+
+/// A warning line of the results (recorded for the report too).
+fn warning(ui: &mut egui::Ui, text: String) {
+    record(&text, None);
+    ui.colored_label(super::theme::tokens().warning, text);
+}
+
+fn html_escape(t: &str) -> String {
+    t.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// A stored value as text.
+fn value_text(d: &PartDialog, v: &crate::design::ElementValue) -> String {
+    match (v.num, v.index, v.check) {
+        (Some(n), ..) => format!("{n}"),
+        (_, Some(i), _) => d.choice_text(v.tab, &v.label, i),
+        (.., Some(c)) => {
+            if c {
+                "on".into()
+            } else {
+                "off".into()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// The Calculation Report as an HTML page: the inputs with their symbols and
+/// units, the results with each formula and its numbers, the method, the
+/// formulas and their sources (`design::explain`).
+fn report_html(title: &str, d: &PartDialog, lines: &[(String, Option<String>)]) -> String {
+    use crate::design::explain;
+    let g = super::explain::generator_of(d).unwrap_or("");
+    let mut h = String::new();
+    h.push_str("<!doctype html><html><head><meta charset=\"utf-8\"><title>");
+    h.push_str(&html_escape(title));
+    h.push_str("</title><style>body{font-family:sans-serif;margin:2em;max-width:60em}td,th{padding:2px 8px;text-align:left;vertical-align:top}code{white-space:pre-wrap}</style></head><body>");
+    h.push_str(&format!(
+        "<h1>{}</h1><p>{}</p>",
+        html_escape(title),
+        html_escape(explain::method(g))
+    ));
+    h.push_str("<h2>Inputs</h2><table><tr><th>Value</th><th>Symbol</th><th></th></tr>");
+    for v in d.values() {
+        let e = explain::input(g, &v.label);
+        h.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{} {}</td></tr>",
+            html_escape(&v.label),
+            html_escape(e.map_or("", |e| e.symbol)),
+            html_escape(&value_text(d, &v)),
+            html_escape(e.map_or("", |e| e.unit)),
+        ));
+    }
+    h.push_str("</table><h2>Results</h2><table>");
+    for (t, n) in lines {
+        h.push_str(&format!(
+            "<tr><td>{}</td><td><code>{}</code></td></tr>",
+            html_escape(t),
+            html_escape(n.as_deref().unwrap_or(""))
+        ));
+    }
+    h.push_str("</table><h2>Formulas and sources</h2><ul>");
+    for f in explain::formulas(g) {
+        h.push_str(&format!(
+            "<li><b>{}</b>: <code>{}</code><br>{}<br><i>{}</i> {}</li>",
+            html_escape(f.id),
+            html_escape(f.formula),
+            html_escape(f.symbols),
+            html_escape(f.source),
+            html_escape(f.limits)
+        ));
+    }
+    h.push_str("</ul><p><small>Made by 3DCadCraft from the component's stored input; the results are computed again from it.</small></p></body></html>");
+    h
 }
 
 /// The explanation's key of a result label: as it is, else without its
@@ -91,6 +191,94 @@ fn result_key<'a>(generator: &str, label: &'a str) -> &'a str {
     a.strip_prefix("Gear 1 ")
         .or_else(|| a.strip_prefix("Gear 2 "))
         .unwrap_or(a)
+}
+
+/// Whether panel `d` is drawn in the generator's own window (Spur Gears,
+/// Key, Bearing, Compression Spring; spec 6.2 §3.7).
+pub(super) fn in_window(d: &PartDialog) -> bool {
+    super::explain::generator_of(d).is_some()
+}
+
+/// The generator window's Results pane: the results of the panel's values
+/// (recomputed live), their explanations on hover, then the Explanations.
+pub(super) fn results_pane(d: &mut PartDialog, ui: &mut egui::Ui) {
+    ui.label(RichText::new("Results").strong());
+    egui::Grid::new("design_generator_results_grid")
+        .num_columns(2)
+        .show(ui, |ui| {
+            if is_spur(d) {
+                gear_ui(d, ui);
+            } else if is_key(d) {
+                key_ui(d, ui);
+            } else if is_bearing(d) {
+                bearing_ui(d, ui);
+            } else if is_spring(d) {
+                spring_ui(d, ui);
+            }
+        });
+    if let Some(g) = super::explain::generator_of(d) {
+        ui.separator();
+        super::explain::pane(ui, g);
+    }
+}
+
+/// The strip along the window's bottom (Inventor's Summary of Messages): the
+/// last error of an OK, else a hint.
+pub(super) fn messages_strip(ui: &mut egui::Ui, error: Option<&str>) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Messages").strong());
+        match error {
+            Some(e) => {
+                ui.colored_label(super::theme::tokens().error, e);
+            }
+            None => {
+                ui.label(
+                    RichText::new(
+                        "The results follow the values as you type; hover a result for its formula",
+                    )
+                    .weak(),
+                );
+            }
+        }
+    });
+}
+
+/// Why an option of Inventor's generator dialog is shown but off: its
+/// logic comes later (rule 15, spec 6.2-design-calculators §3.7).
+pub(super) fn row_later(d: &PartDialog, label: &str) -> Option<&'static str> {
+    let later: &[&str] = match d.kind {
+        Planned::Asm(AsmPlanned::SpurGear) => &[
+            "Internal",
+            "Size Type",
+            "Helix Angle Flip",
+            "Unit Correction Distribution",
+            "Input Type",
+            "Method of Strength Calculation",
+            "Type of Strength Calculation",
+            "Type of Load Calculation",
+            "Efficiency",
+            "Allowable Contact Stress (MPa)",
+            "Modulus of Elasticity (MPa)",
+            "Poisson's Ratio",
+        ],
+        Planned::Asm(AsmPlanned::Key) => &[
+            "Flip Key",
+            "Type of Strength Calculation",
+            "Allowed Pressure Hub (MPa)",
+        ],
+        Planned::Asm(AsmPlanned::Bearing) => {
+            &["Method of Calculation", "Operating Temperature (°C)"]
+        }
+        Planned::Asm(AsmPlanned::CompressionSpring) => &[
+            "Type of Strength Calculation",
+            "Minimum Load (N)",
+            "Installed Length (mm)",
+        ],
+        _ => &[],
+    };
+    later
+        .contains(&label)
+        .then_some("Interface only: the logic comes later (spec 6.2-design-calculators §3.7)")
 }
 
 /// Whether Spur Gears' Design Guide computes row `label` of tab `ti` (the
@@ -261,9 +449,14 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                         ),
                     ));
                 }
+                let need = n("Minimal Safety Factor (bending)", 1.5);
+                let fs = allowed / sb;
                 r.push((
                     format!("Gear {} Bending Stress (eq. 53)", k + 1),
-                    format!("J {j:.3}, {sb:.1} MPa, safety {:.2}", allowed / sb),
+                    format!(
+                        "J {j:.3}, {sb:.1} MPa, safety {fs:.2} {} {need:.2}",
+                        if fs >= need { "≥" } else { "< (too weak)" }
+                    ),
                 ));
             }
             let helical = pair.helix.abs() > 1e-9 && g.overlap_ratio > 2.0;
@@ -279,12 +472,14 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                         "Tooth Life L10".into(),
                         format!("{t10:.4e} million cycles, {:.0} h", hours(t10)),
                     ));
+                    let life_h = hours(life_at(g10, rel, GEAR_WEIBULL));
+                    let need_h = n("Required Life (h)", 10000.0);
                     r.push((
                         "Gear 1 Life (eq. 67, 70)".into(),
                         format!(
-                            "{:.0} h at {:.2} %",
-                            hours(life_at(g10, rel, GEAR_WEIBULL)),
-                            rel * 100.0
+                            "{life_h:.0} h at {:.2} % {} {need_h:.0} h required",
+                            rel * 100.0,
+                            if life_h >= need_h { "≥" } else { "< (too short)" }
                         ),
                     ));
                 }
@@ -293,7 +488,7 @@ pub(super) fn gear_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
         }
         rows(ui, crate::design::explain::GEARS, &r, &nums);
         for w in &g.warnings {
-            ui.colored_label(super::theme::tokens().warning, format!("Warning: {w}"));
+            warning(ui, format!("Warning: {w}"));
         }
         ui.label(
             RichText::new(
@@ -413,9 +608,10 @@ pub(super) fn bearing_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
         wrap(ui);
         let tok = super::theme::tokens();
         let need = n("Required Life (h)", 10000.0);
+        let extra = n("Factor of Additional Forces", 1.0);
         match bearing::check(
-            n("Radial Load (N)", 2000.0),
-            n("Axial Load (N)", 0.0),
+            n("Radial Load (N)", 2000.0) * extra,
+            n("Axial Load (N)", 0.0) * extra,
             n("Radial Factor X", 1.0),
             n("Axial Factor Y", 0.0),
             n("Basic Dynamic Load Rating C (N)", 14000.0),
@@ -431,11 +627,11 @@ pub(super) fn bearing_ui(d: &mut PartDialog, ui: &mut egui::Ui) {
                     (
                         "Equivalent Load Fe",
                         format!(
-                            "Fe = X·Fr + Y·Fa = {}·{} + {}·{} = {:.1} N",
+                            "Fe = X·Fr + Y·Fa = {}·{} + {}·{} = {:.1} N (loads × {extra})",
                             n("Radial Factor X", 1.0),
-                            n("Radial Load (N)", 2000.0),
+                            n("Radial Load (N)", 2000.0) * extra,
                             n("Axial Factor Y", 0.0),
-                            n("Axial Load (N)", 0.0),
+                            n("Axial Load (N)", 0.0) * extra,
                             b.fe
                         ),
                     ),
@@ -628,7 +824,8 @@ impl super::CadCraftApp {
                 continue;
             }
             let picked = d.refs.get(keys.0).is_some_and(|v| !v.is_empty());
-            let (mut place, radius) = self.axis_placement(d, keys.0, keys.1, false)?;
+            let flip = d.check(0, if k == 0 { "Flip 1" } else { "Flip 2" });
+            let (mut place, radius) = self.axis_placement(d, keys.0, keys.1, flip)?;
             let bore = radius.map_or(0.0, |r| 2.0 * r);
             let mut part = gear_parts::gear_part(&pair, &g, k, bore)?;
             part.regenerate().map_err(|e| e.to_string())?;
@@ -645,7 +842,7 @@ impl super::CadCraftApp {
             part.element = Some(element);
             if k == 1 && !picked {
                 // Beside gear 1 at the centre distance.
-                let (base, _) = self.axis_placement(d, "cyl1", "start1", false)?;
+                let (base, _) = self.axis_placement(d, "cyl1", "start1", d.check(0, "Flip 1"))?;
                 place = base
                     * Transform3::new(Vector3::new(g.center_distance, 0.0, 0.0), Vector3::zeros());
             }
@@ -1502,4 +1699,90 @@ fn spring_of(d: &PartDialog) -> spring::Spring {
 fn num(v: f64) -> String {
     let s = format!("{v:.3}");
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+impl super::CadCraftApp {
+    /// Calculation Report... of a generated element (component menu): the
+    /// generator's results computed again from the input the part keeps,
+    /// read-only, with Export HTML.
+    pub(super) fn element_report(&mut self, occ: u32) {
+        let Some((_, e)) = self.element_of(occ) else {
+            return;
+        };
+        let kind = match e.command.as_str() {
+            GEAR_ID => AsmPlanned::SpurGear,
+            KEY_ID => AsmPlanned::Key,
+            BEARING_ID => AsmPlanned::Bearing,
+            SPRING_ID => AsmPlanned::CompressionSpring,
+            _ => return,
+        };
+        let name = self
+            .assembly()
+            .and_then(|a| a.find(occ))
+            .map_or_else(String::new, |o| o.name.clone());
+        let d = PartDialog::from_values(kind, &e.values);
+        let title = format!("Calculation Report: {name} ({})", d.kind.title());
+        REPORT.with(|r| *r.borrow_mut() = Some((title, d)));
+    }
+
+    /// The Calculation Report window.
+    pub(super) fn calc_report_window(&mut self, ctx: &egui::Context) {
+        let Some((title, mut d)) = REPORT.with(|r| r.borrow().clone()) else {
+            return;
+        };
+        let mut open = true;
+        let mut export = false;
+        let w = egui::Window::new(title.as_str())
+            .id(egui::Id::new("calc_report_window"))
+            .open(&mut open)
+            .resizable(true)
+            .collapsible(false)
+            .default_size([620.0, 560.0]);
+        RECORD.with(|r| *r.borrow_mut() = Some(Vec::new()));
+        self.layout
+            .place("calc_report", ctx.content_rect(), true, w)
+            .show(ctx, |ui| {
+                egui::Panel::bottom("calc_report_buttons").show(ui, |ui| {
+                    export = ui
+                        .button("Export HTML...")
+                        .on_hover_text("Writes the report next to the assembly's file")
+                        .clicked();
+                });
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(RichText::new("Inputs").strong());
+                    egui::Grid::new("calc_report_inputs")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            for v in d.values() {
+                                ui.label(&v.label);
+                                ui.label(value_text(&d, &v));
+                                ui.end_row();
+                            }
+                        });
+                    ui.separator();
+                    results_pane(&mut d, ui);
+                });
+            });
+        let lines = RECORD.with(|r| r.borrow_mut().take()).unwrap_or_default();
+        if export {
+            let html = report_html(&title, &d, &lines);
+            let dir = std::path::Path::new(self.file_path.trim())
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map_or_else(std::env::temp_dir, std::path::Path::to_path_buf);
+            let stem: String = title
+                .trim_start_matches("Calculation Report: ")
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .collect();
+            let path = dir.join(format!("{stem}-calculation.html"));
+            self.file_status = Some(match std::fs::write(&path, html) {
+                Ok(()) => Ok(format!("Calculation Report: written to {}", path.display())),
+                Err(e) => Err(format!("Calculation Report: {e}")),
+            });
+        }
+        if !open {
+            REPORT.with(|r| *r.borrow_mut() = None);
+        }
+    }
 }

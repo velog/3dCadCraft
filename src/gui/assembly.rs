@@ -3176,6 +3176,13 @@ impl CadCraftApp {
             self.element_edit(ids[0]);
             ui.close();
         }
+        if ids.len() == 1
+            && self.element_of(ids[0]).is_some()
+            && ui.button("Calculation Report...").clicked()
+        {
+            self.element_report(ids[0]);
+            ui.close();
+        }
         if self.change_size_offered(ids) && ui.button("Change Size...").clicked() {
             self.change_size_start(ids);
             ui.close();

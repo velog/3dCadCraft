@@ -927,6 +927,257 @@ pub const INPUTS: &[Entry] = &[
         "Too low: conservative.",
         "Too high: the spring sets (shortens) or breaks."
     ),
+    // Options of Inventor's generator dialogs (spec §3.7)
+    e!(
+        GEARS,
+        "Internal",
+        "",
+        "",
+        "An internal gear pair (the wheel's teeth inside a ring).",
+        "Off for external spur gears.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Size Type",
+        "",
+        "",
+        "Whether the tooth size is given as a module (mm) or a diametral pitch (teeth per inch).",
+        "Module for metric gears; P = 25.4 / m.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Helix Angle Flip",
+        "",
+        "",
+        "Swaps the hand of the helix (left / right) of a helical pair.",
+        "Choose the hand that sends the axial force to the bearing meant to take it.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Unit Correction Distribution",
+        "",
+        "",
+        "How the total unit correction is shared between the gears.",
+        "In proportion to the teeth (ours), equally, or typed by you.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Input Type",
+        "",
+        "",
+        "Whether gear 2's teeth are typed or follow from the ratio.",
+        "Number of Teeth for a known pair.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Flip 1",
+        "",
+        "",
+        "Turns gear 1 round on its start plane (it grows to the other side).",
+        "On when the gear would stand outside its shaft section.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Flip 2",
+        "",
+        "",
+        "Turns gear 2 round on its start plane.",
+        "As Flip 1.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Method of Strength Calculation",
+        "",
+        "",
+        "The standard the strength check follows.",
+        "Lewis / AGMA 218.01 per NASA RP-1152 (free source); ISO 6336, DIN 3990 and ANSI/AGMA 2001 are not free and stay out.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Type of Strength Calculation",
+        "",
+        "",
+        "Check the gears as designed, or design the material or the geometry for the loads.",
+        "Check Calculation.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Type of Load Calculation",
+        "",
+        "",
+        "Which of power, torque and speed follows from the other two.",
+        "Torque from power and speed.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Efficiency",
+        "η",
+        "",
+        "The pair's efficiency (gear 2's torque over gear 1's times the ratio).",
+        "0.97–0.99 for a good spur or helical pair.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Allowable Contact Stress (MPa)",
+        "σH,all",
+        "MPa",
+        "The contact (Hertz) stress the flanks may take.",
+        "Through-hardened steel 600–900; case-hardened 1200–1500.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Modulus of Elasticity (MPa)",
+        "E",
+        "MPa",
+        "The gears' modulus for the contact stress.",
+        "Steel 206 000.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Poisson's Ratio",
+        "ν",
+        "",
+        "The gears' Poisson's ratio for the contact stress.",
+        "Steel 0.3.",
+        "—",
+        "—"
+    ),
+    e!(
+        GEARS,
+        "Required Life (h)",
+        "Lh",
+        "h",
+        "The hours gear 1's flanks must last; the life is checked against it.",
+        "Machines in one-shift use 10 000–20 000; continuous duty 40 000+.",
+        "Too low: pitting in service.",
+        "Too high: oversized gears."
+    ),
+    e!(
+        GEARS,
+        "Minimal Safety Factor (bending)",
+        "SF,min",
+        "",
+        "The bending safety each gear must reach.",
+        "1.2–1.5 for well-known loads; up to 2 with shocks.",
+        "Too low: tooth breakage risk.",
+        "Too high: oversized gears."
+    ),
+    e!(
+        KEY,
+        "Flip Key",
+        "",
+        "",
+        "Puts the key on the other side of the shaft.",
+        "Off.",
+        "—",
+        "—"
+    ),
+    e!(
+        KEY,
+        "Type of Strength Calculation",
+        "",
+        "",
+        "Check the key as typed, or design its length for the torque.",
+        "Check Calculation; the shortest standard length is shown anyway.",
+        "—",
+        "—"
+    ),
+    e!(
+        KEY,
+        "Allowed Pressure Hub (MPa)",
+        "pH,all",
+        "MPa",
+        "The pressure the hub's groove may take when the hub is weaker than the key.",
+        "Cast-iron hub 50–80; steel hub as the key.",
+        "—",
+        "—"
+    ),
+    e!(
+        BEARING,
+        "Method of Calculation",
+        "",
+        "",
+        "The method the life follows.",
+        "Basic life per NASA RP-1105 (free source); ISO 281's modified life is not in it.",
+        "—",
+        "—"
+    ),
+    e!(
+        BEARING,
+        "Factor of Additional Forces",
+        "fd",
+        "",
+        "Raises the loads for shocks and forces the calculation does not see.",
+        "1.0 smooth running; 1.2–1.5 gears and belts; 1.5–3 heavy shocks.",
+        "Too low: the bearing wears out early.",
+        "Too high: an oversized bearing."
+    ),
+    e!(
+        BEARING,
+        "Operating Temperature (°C)",
+        "t",
+        "°C",
+        "The bearing's running temperature; above about 120 °C its capacity falls.",
+        "Up to 100 °C for ordinary bearings.",
+        "—",
+        "—"
+    ),
+    e!(
+        SPRING,
+        "Type of Strength Calculation",
+        "",
+        "",
+        "Check the spring as typed, compute its working forces, or design its fitted dimensions.",
+        "Spring Check.",
+        "—",
+        "—"
+    ),
+    e!(
+        SPRING,
+        "Minimum Load (N)",
+        "P1",
+        "N",
+        "The load in the spring's fitted (pre-loaded) position.",
+        "Usually 20–50 % of the working load.",
+        "—",
+        "—"
+    ),
+    e!(
+        SPRING,
+        "Installed Length (mm)",
+        "L1",
+        "mm",
+        "The spring's length where it is fitted.",
+        "Between the solid length and the free length.",
+        "—",
+        "—"
+    ),
 ];
 
 /// Every result.
