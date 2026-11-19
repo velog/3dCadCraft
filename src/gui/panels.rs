@@ -5816,6 +5816,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 {
                     crate::kernel::exact::set_fast_cuts(self.fast_cuts);
                 }
+                ui.checkbox(&mut self.background_ok, "Build in the background")
+                    .on_hover_text(
+                        "OK, Rebuild All and edits build the part on a worker thread: the view stays usable, the status bar shows the progress and Esc cancels; off: the window waits until the part is built (spec 0.19 §3.3)",
+                    );
                 }
                 if tab == "Prompts" {
                 ui.label(RichText::new("Prompted Interaction").strong());

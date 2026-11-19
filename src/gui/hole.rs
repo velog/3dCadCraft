@@ -955,63 +955,60 @@ impl CadCraftApp {
         } else {
             "Hole"
         };
-        self.checkpoint(cmd);
-        let n_sketches = self.part().sketches.len();
-        let mut d = d;
-        // Edit Feature: the dimensions edited on the copy go into the sketch.
-        let old_sketch = d.sk.as_ref().and_then(|c| {
-            let ps = self.part_mut().sketches.get_mut(c.index)?;
-            Some((c.index, std::mem::replace(&mut ps.sketch, c.sketch.clone())))
-        });
-        if d.edit.is_some() && !d.points.is_empty() {
-            // Edit Feature: centres clicked on the face become Center Points
-            // of the hole's sketch.
-            // Their edge dimensions become dimensions of that sketch.
-            if let Some(i) = self
-                .part()
-                .sketches
-                .iter()
-                .position(|s| s.id == d.def.sketch)
-            {
-                let mut ids = Vec::new();
-                for p in &d.points {
-                    let ps = &mut self.part_mut().sketches[i];
-                    let q = ps.sketch.plane.project(p);
-                    ids.push(ps.sketch.add_center_point(q));
+        // Everything is built on a copy of the part, on a worker when the option is on (spec 0.19
+        // §3.3): the hole's sketch, its centres and dimensions too, so a failure leaves nothing
+        // behind.
+        let job = d.clone();
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                let mut d = job;
+                // Edit Feature: the dimensions edited on the copy go into the sketch.
+                if let Some(c) = &d.sk
+                    && let Some(ps) = part.sketches.get_mut(c.index)
+                {
+                    ps.sketch = c.sketch.clone();
                 }
-                if let Err(e) = d.add_dims(self.part_mut(), i, &ids) {
-                    self.file_status = Some(Err(format!("{cmd}: {e}")));
+                if d.edit.is_some() && !d.points.is_empty() {
+                    // Edit Feature: centres clicked on the face become Center Points
+                    // of the hole's sketch.
+                    // Their edge dimensions become dimensions of that sketch (a dimension
+                    // that cannot be added is left out; the hole is still made).
+                    if let Some(i) = part.sketches.iter().position(|s| s.id == d.def.sketch) {
+                        let mut ids = Vec::new();
+                        for p in &d.points {
+                            let ps = &mut part.sketches[i];
+                            let q = ps.sketch.plane.project(p);
+                            ids.push(ps.sketch.add_center_point(q));
+                        }
+                        let _ = d.add_dims(part, i, &ids);
+                        d.def.centers.extend(ids.into_iter().map(HoleCenter::Point));
+                        d.points.clear();
+                        d.dims.clear();
+                    }
                 }
-                d.def.centers.extend(ids.into_iter().map(HoleCenter::Point));
-                d.points.clear();
-                d.dims.clear();
-            }
-        }
-        let built = match d.edit {
-            Some(k) => self
-                .part_mut()
-                .replace_feature(k, Feature::Hole(d.def.clone())),
-            None => match d.build(self.part_mut()) {
-                Ok(def) => self.part_mut().add_hole(def),
-                Err(e) => Err(crate::part::PartError::Feature(e)),
+                match d.edit {
+                    Some(k) => part.replace_feature(k, Feature::Hole(d.def.clone())),
+                    None => match d.build(part) {
+                        Ok(def) => part.add_hole(def),
+                        Err(e) => Err(crate::part::PartError::Feature(e)),
+                    },
+                }
+                .map_err(|e| e.to_string())
             },
-        };
-        if built.is_err() {
-            if let Some((i, sk)) = old_sketch
-                && let Some(ps) = self.part_mut().sketches.get_mut(i)
-            {
-                ps.sketch = sk;
-            }
-            // The sketch made for the centres goes with the failure.
-            while self.part().sketches.len() > n_sketches {
-                let last = self.part().sketches.len() - 1;
-                let _ = self.part_mut().delete_sketch(last);
-            }
-            if let Some(k) = d.edit {
-                self.part_mut().rollback = Some(k);
-                let _ = self.part_mut().regenerate();
-            }
-        }
+            move |app, built| app.hole_done(d, keep_open, cmd, built),
+        );
+    }
+
+    /// Hole's OK once the part is built (or not).
+    fn hole_done(
+        &mut self,
+        d: HoleDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
         match built {
             Ok(_) => {
                 self.file_status = None;
@@ -1051,10 +1048,7 @@ impl CadCraftApp {
                     self.selection = super::Selection::Body;
                 }
             }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
+            Err(e) => self.file_status = Some(Err(super::background::with_cmd(cmd, e))),
         }
     }
 

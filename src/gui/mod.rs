@@ -34,6 +34,7 @@ mod asm_replace;
 mod asm_select;
 mod asm_select_modes;
 mod assembly;
+mod background;
 mod blend;
 mod bolted;
 mod bolted_ok;
@@ -809,6 +810,10 @@ struct CadCraftApp {
     thread_texture: bool,
     /// Application Options › Part › Fast path for many identical through cuts.
     fast_cuts: bool,
+    /// Application Options › Part › Build in the background (spec 0.19 §3.3); off in tests.
+    background_ok: bool,
+    /// The job building the part on a worker thread (spec 0.19 §3.3).
+    bg: Option<background::BgJob>,
     /// Application Options › Display: the projection at start.
     default_projection: camera::Projection,
     /// Application Options › Display: the visual style at start.
@@ -1283,6 +1288,8 @@ impl CadCraftApp {
             show_labels: true,
             thread_texture: true,
             fast_cuts: true,
+            background_ok: !cfg!(test),
+            bg: None,
             default_projection: Default::default(),
             default_visual_style: Default::default(),
             view_defaults_taken: false,
@@ -1570,6 +1577,9 @@ impl CadCraftApp {
     }
 
     fn undo(&mut self) {
+        if self.refuse_while_building("Undo") {
+            return;
+        }
         let label = self.history.undo_label().map(str::to_owned);
         if let Some(p) = self.history.undo(self.project.clone()) {
             self.diag.undo_redo("undo", label);
@@ -1579,6 +1589,9 @@ impl CadCraftApp {
     }
 
     fn redo(&mut self) {
+        if self.refuse_while_building("Redo") {
+            return;
+        }
         let label = self.history.redo_label().map(str::to_owned);
         if let Some(p) = self.history.redo(self.project.clone()) {
             self.diag.undo_redo("redo", label);
@@ -2275,24 +2288,35 @@ impl CadCraftApp {
             return;
         }
         let t = std::time::Instant::now();
-        let part = self.part_mut();
-        part.build_cache = Default::default();
-        let result = part.regenerate();
-        let failed = part.feature_health.len();
-        let n = part.features.len();
-        self.file_status = Some(match result {
-            Err(e) => Err(format!("Rebuild All: {e}")),
-            Ok(_) if failed > 0 => Err(format!(
-                "Rebuild All: {failed} of {n} features failed ({:.2} s)",
-                t.elapsed().as_secs_f64()
-            )),
-            Ok(_) => Ok(format!(
-                "Rebuild All: {n} features in {:.2} s",
-                t.elapsed().as_secs_f64()
-            )),
-        });
-        self.edge_cache.replace(None);
-        self.scene_dirty = true;
+        // On a copy, on a worker when the option is on (spec 0.19 §3.3); no Undo step: the data
+        // does not change.
+        self.part_job(
+            "Rebuild All",
+            None,
+            |part| {
+                part.build_cache = Default::default();
+                part.regenerate()
+                    .map(|_| String::new())
+                    .map_err(|e| e.to_string())
+            },
+            move |app, result| {
+                let failed = app.part().feature_health.len();
+                let n = app.part().features.len();
+                app.file_status = Some(match result {
+                    Err(e) => Err(background::with_cmd("Rebuild All", e)),
+                    Ok(_) if failed > 0 => Err(format!(
+                        "Rebuild All: {failed} of {n} features failed ({:.2} s)",
+                        t.elapsed().as_secs_f64()
+                    )),
+                    Ok(_) => Ok(format!(
+                        "Rebuild All: {n} features in {:.2} s",
+                        t.elapsed().as_secs_f64()
+                    )),
+                });
+                app.edge_cache.replace(None);
+                app.scene_dirty = true;
+            },
+        );
     }
 
     /// Builds only the features before `k` (Edit Feature).
@@ -2830,37 +2854,38 @@ impl CadCraftApp {
         };
         self.draft_preset_stamp(&mut d.def);
         let used = d.def.clone();
-        self.checkpoint(cmd);
-        let result = match (d.edit, d.def) {
-            (Some(k), DraftDef::Extrude(e)) => self
-                .part_mut()
-                .replace_feature(k, crate::part::Feature::Extrude(e)),
-            (Some(k), DraftDef::Revolve(r)) => self
-                .part_mut()
-                .replace_feature(k, crate::part::Feature::Revolve(r)),
-            (None, DraftDef::Extrude(e)) => self.part_mut().add_extrude(d.sketch, e),
-            (None, DraftDef::Revolve(r)) => self.part_mut().add_revolve(d.sketch, r),
-        };
-        if result.is_err()
-            && let Some(k) = d.edit
-        {
-            // Stay in the edit: rolled back again.
-            self.roll_back_to(k);
-        }
-        match result {
-            Ok(_) => {
-                self.selection = Selection::Body;
-                self.extrude = None;
-                self.target_pick = None;
-                self.file_status = None;
-                self.draft_preset_used(&used, d.edit.is_none());
-                self.scene_dirty = true;
-            }
-            Err(e) => {
-                self.history.cancel(); // nothing changed
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
-        }
+        let (edit, sketch, def) = (d.edit, d.sketch, d.def);
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3); a failed edit
+        // leaves the part as it is, still rolled back to the edited feature.
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match (edit, def) {
+                    (Some(k), DraftDef::Extrude(e)) => {
+                        part.replace_feature(k, crate::part::Feature::Extrude(e))
+                    }
+                    (Some(k), DraftDef::Revolve(r)) => {
+                        part.replace_feature(k, crate::part::Feature::Revolve(r))
+                    }
+                    (None, DraftDef::Extrude(e)) => part.add_extrude(sketch, e),
+                    (None, DraftDef::Revolve(r)) => part.add_revolve(sketch, r),
+                }
+                .map_err(|e| e.to_string())
+            },
+            move |app, result| match result {
+                Ok(_) => {
+                    app.selection = Selection::Body;
+                    app.extrude = None;
+                    app.target_pick = None;
+                    app.file_status = None;
+                    app.draft_preset_used(&used, edit.is_none());
+                    app.scene_dirty = true;
+                }
+                Err(e) if e.starts_with(cmd) => app.file_status = Some(Err(e)),
+                Err(e) => app.file_status = Some(Err(format!("{cmd}: {e}"))),
+            },
+        );
     }
 
     /// The manipulators shown now: the open dialog's, else the selected
@@ -4155,14 +4180,25 @@ impl CadCraftApp {
 
     /// Replaces feature `k` (Extrude or Revolve) and rebuilds the part.
     fn edit_feature(&mut self, k: usize, def: crate::part::Feature) {
-        self.checkpoint("Edit Feature");
-        if let Some(f) = self.part_mut().features.get_mut(k) {
-            *f = def;
-        }
-        if let Err(e) = self.part_mut().regenerate() {
-            self.file_status = Some(Err(e.to_string()));
-        }
-        self.scene_dirty = true;
+        // Rebuilt on a copy, on a worker when the option is on (spec 0.19 §3.3).
+        self.part_job(
+            "Edit Feature",
+            Some("Edit Feature"),
+            move |part| {
+                if let Some(f) = part.features.get_mut(k) {
+                    *f = def;
+                }
+                part.regenerate()
+                    .map(|_| String::new())
+                    .map_err(|e| e.to_string())
+            },
+            |app, r| {
+                if let Err(e) = r {
+                    app.file_status = Some(Err(e));
+                }
+                app.scene_dirty = true;
+            },
+        );
     }
 
     /// Replaces extrusion `k`'s options and rebuilds the part.
@@ -4661,6 +4697,12 @@ impl CadCraftApp {
     }
 
     fn apply(&mut self, action: Action) {
+        // While the part builds in the background only the view changes (spec 0.19 §3.3).
+        if self.building() && !background::allowed_while_building(action) {
+            let name = commands::by_action(action).map_or("This command", |c| c.name);
+            self.refuse_while_building(name);
+            return;
+        }
         // A drawing's view sketch takes the Sketch tab's commands.
         if self.is_drawing() && self.drw.sketch.is_some() && self.view_sketch_action(action) {
             return;
@@ -5584,6 +5626,11 @@ impl CadCraftApp {
         // ---- A0 (spec 0.15 §4.4): the panel key of this frame, see `keys`.
         keys::set_panel_key(ctx, None);
         self.tab_keys(ctx);
+        // Esc while the part builds in the background cancels that job, and only that.
+        if self.building() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+            self.bg_cancel();
+            return;
+        }
         // Esc ends a measure into a field, and only that.
         if self.measure_pick.is_some()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape))
@@ -9030,6 +9077,7 @@ impl eframe::App for CadCraftApp {
             let _t = frame_trace::span("home follow");
             self.home_follow_documents();
         }
+        self.bg_tick(&ctx);
         {
             let _t = frame_trace::span("shortcuts");
             self.shortcuts(&ctx);

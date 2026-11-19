@@ -467,6 +467,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   document opened with its spline wall missing (a hole, red behind it). `Project::rebuild_unmeshed_parts` rebuilds only
   such parts at open (`PartDocument::has_undrawable_faces`); rebuilding all would slow a large assembly. Never triangulate a flat face to ask (`BRep::face_is_undrawable` answers a plane whose boundary lies
   on it at once): a saved plate's cap with 1024 holes went through our ear clipping and the file did not open in 7 minutes.
+- **OK builds on a copy, maybe on a worker** (`gui/background.rs`, spec 0.19 §3.3): a command's OK calls `part_job(label,
+  checkpoint, work, then)` — `work` runs on a copy of the part (a worker with Application Options › Part › *Build in the
+  background*, at once in tests), the Undo checkpoint is recorded only when the copy is taken, and `then` does the panel's
+  follow-up (close / Apply / status) on the main thread. Never `checkpoint` + mutate + `history.cancel()` in a new OK, and
+  never touch the draft's part in `work`: it is a copy, and the live part must stay as it was on failure. While a job runs
+  `apply` refuses everything but view commands (`allowed_while_building`); a new path that changes the document outside
+  `apply` checks `refuse_while_building`. Esc cancels (`progress::cancelled` between features).
 - **`<Command>: OK (n ms)` in the log counts from when the command opened**, not the kernel's work: never read it as speed.
 - **Linked files load off the main thread where they can** (`LibCache::prefetch`, `ready`; `part_file` takes the worker's
   result or waits for it): a large file's parts took a second to rebuild (one part 0.77 s), so threads per part hardly

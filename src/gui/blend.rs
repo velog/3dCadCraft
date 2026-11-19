@@ -449,50 +449,49 @@ impl CadCraftApp {
             d.def.command()
         };
         self.preset_stamp(d.def.command(), &mut d.def);
-        self.checkpoint(cmd);
-        let built = match d.edit {
-            Some(k) => self
-                .part_mut()
-                .replace_feature(k, crate::part::Feature::Blend(d.def.clone())),
-            None => self.part_mut().add_blend(d.def.clone()),
-        };
-        if built.is_err()
-            && let Some(k) = d.edit
-        {
-            // Stay in the edit: rolled back again.
-            self.part_mut().rollback = Some(k);
-            let _ = self.part_mut().regenerate();
-        }
-        if built.is_ok() {
-            self.file_status = None;
-            self.preset_used(d.def.command(), &d.def, d.edit.is_none());
-        }
-        match built {
-            Ok(_) if d.edit.is_some() => {
-                self.scene_dirty = true;
-                self.blend_draft = None;
-                self.selection = super::Selection::Body;
-            }
-            Ok(_) => {
-                self.scene_dirty = true;
-                if keep_open {
-                    let mut next = d;
-                    next.def.edges.clear();
-                    next.def.sets.clear();
-                    next.def.variable.clear();
-                    next.def.full_round = None;
-                    next.set = 0;
-                    self.blend_draft = Some(next);
-                } else {
-                    self.blend_draft = None;
-                    self.selection = super::Selection::Body;
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3): a failed edit
+        // leaves the part as it is, still rolled back to the edited feature.
+        let (edit, def) = (d.edit, d.def.clone());
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, crate::part::Feature::Blend(def)),
+                    None => part.add_blend(def),
                 }
-            }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
-        }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| {
+                if built.is_ok() {
+                    app.file_status = None;
+                    app.preset_used(d.def.command(), &d.def, d.edit.is_none());
+                }
+                match built {
+                    Ok(_) if d.edit.is_some() => {
+                        app.scene_dirty = true;
+                        app.blend_draft = None;
+                        app.selection = super::Selection::Body;
+                    }
+                    Ok(_) => {
+                        app.scene_dirty = true;
+                        if keep_open {
+                            let mut next = d;
+                            next.def.edges.clear();
+                            next.def.sets.clear();
+                            next.def.variable.clear();
+                            next.def.full_round = None;
+                            next.set = 0;
+                            app.blend_draft = Some(next);
+                        } else {
+                            app.blend_draft = None;
+                            app.selection = super::Selection::Body;
+                        }
+                    }
+                    Err(e) => app.file_status = Some(Err(super::background::with_cmd(cmd, e))),
+                }
+            },
+        );
     }
 }
 

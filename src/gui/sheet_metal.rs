@@ -1042,22 +1042,40 @@ impl CadCraftApp {
         } else {
             d.title()
         };
-        self.checkpoint(cmd);
-        let mut part = self.part().clone();
-        match build(&mut part, d.feature.clone(), d.edit, d.sketch) {
-            Ok(id) => {
-                *self.part_mut() = part;
-                if let Some(name) = d.crumb.name.clone()
-                    && let Some(f) = self.part_mut().features.iter_mut().find(|f| f.id() == id)
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3).
+        let (feature, edit, sketch) = (d.feature.clone(), d.edit, d.sketch);
+        let name = d.crumb.name.clone();
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                let id = build(part, feature, edit, sketch).map_err(|e| e.to_string())?;
+                if let Some(name) = name
+                    && let Some(f) = part.features.iter_mut().find(|f| f.id() == id)
                 {
                     f.set_name(&name);
                 }
-                if d.edit.is_some() {
-                    self.part_mut().rollback = None;
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
+                if edit.is_some() {
+                    part.rollback = None;
+                    // a failing later feature is its health, as before
+                    let _ = part.regenerate();
                 }
+                Ok(id)
+            },
+            move |app, built| app.sm_done(d, keep_open, cmd, built),
+        );
+    }
+
+    /// A sheet metal command's OK once the part is built (or not).
+    fn sm_done(
+        &mut self,
+        d: SmDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
+        match built {
+            Ok(_) => {
                 self.file_status = None;
                 self.scene_dirty = true;
                 if keep_open && d.edit.is_none() {
@@ -1075,10 +1093,7 @@ impl CadCraftApp {
                     self.selection = super::Selection::Body;
                 }
             }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
+            Err(e) => self.file_status = Some(Err(super::background::with_cmd(cmd, e))),
         }
     }
 

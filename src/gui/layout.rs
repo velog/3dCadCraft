@@ -259,6 +259,8 @@ pub struct AppOptions {
     pub thread_texture: bool,
     /// Fast path for many identical through cuts (spec 0.19 §3.2).
     pub fast_cuts: bool,
+    /// OK, Rebuild All and edits build the part on a worker thread (spec 0.19 §3.3).
+    pub background_ok: bool,
     /// Dimension Display of sketches (Value, Name, Expression...).
     pub dim_display: crate::sketch::DimDisplay,
     /// A command's value and its editor next to the cursor.
@@ -376,6 +378,7 @@ impl Default for AppOptions {
             show_labels: true,
             thread_texture: true,
             fast_cuts: true,
+            background_ok: true,
             dim_display: Default::default(),
             cursor_value: true,
             constraint_ring: false,
@@ -1017,6 +1020,7 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             fast_cuts: self.fast_cuts,
+            background_ok: self.background_ok || cfg!(test),
             dim_display: self.dim_display,
             ui_theme: super::theme::current(),
             canvas_scheme: self.colors.active.clone(),
@@ -1082,6 +1086,7 @@ impl CadCraftApp {
         }
         self.internal_names = o.internal_names;
         self.fast_cuts = o.fast_cuts;
+        self.background_ok = o.background_ok && !cfg!(test);
         crate::kernel::exact::set_fast_cuts(o.fast_cuts);
         super::theme::set_current(o.ui_theme);
         self.colors.load(&o.canvas_scheme, o.canvas_gradient);
@@ -1424,7 +1429,9 @@ impl CadCraftApp {
                 inner.set_clip_rect(clip);
                 inner.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 let _t = super::frame_trace::span("browser");
-                self.browser(&mut inner);
+                // The browser only shows while the part builds (spec 0.19 §3.3).
+                let building = self.building();
+                inner.add_enabled_ui(!building, |ui| self.browser(ui));
                 ui.expand_to_include_rect(rect);
             });
             LayoutUi::note(&mut self.layout.s.browser_width, r.response.rect.width());
@@ -1452,7 +1459,17 @@ impl CadCraftApp {
                     .show(&mut inner, |ui| {
                         ui.set_max_width(ui.available_width());
                         let _t = super::frame_trace::span("properties");
-                        self.properties(ui)
+                        // While the part builds in the background the panel only shows
+                        // (spec 0.19 §3.3).
+                        if let Some(label) = self.bg.as_ref().map(|j| j.label.clone()) {
+                            ui.label(
+                                egui::RichText::new(format!("{label}: building... (Esc cancels)"))
+                                    .color(super::theme::tokens().warning),
+                            );
+                            ui.add_enabled_ui(false, |ui| self.properties(ui));
+                        } else {
+                            self.properties(ui)
+                        }
                     });
                 ui.expand_to_include_rect(rect);
             });

@@ -1381,6 +1381,11 @@ impl PartDocument {
         };
         let mut done3d: Vec<String> = Vec::new();
         for (j, f) in self.features.iter().enumerate().take(limit) {
+            // A cancelled background job (spec 0.19 §3.3) stops here: its
+            // result is thrown away, so the rest need not be built.
+            if progress::cancelled() {
+                break;
+            }
             // Sketches made at this point of the history follow the body as
             // it was then (Inventor), not the final one.
             for k in 0..self.sketches.len() {

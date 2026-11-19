@@ -179,18 +179,32 @@ impl CadCraftApp {
         } else {
             "Delete Face"
         };
-        self.checkpoint(cmd);
+        // Built on a copy, on a worker when the option is on (spec 0.19 §3.3): a failed edit
+        // leaves the part as it is, still rolled back to the edited feature.
         let f = BodyOpFeature::new(BodyOp::DeleteFace(d.def.clone()));
-        let built = match d.edit {
-            Some(k) => self.part_mut().replace_feature(k, Feature::BodyOp(f)),
-            None => self.part_mut().add_body_op(f),
-        };
-        if built.is_err()
-            && let Some(k) = d.edit
-        {
-            self.part_mut().rollback = Some(k);
-            let _ = self.part_mut().regenerate();
-        }
+        let edit = d.edit;
+        self.part_job(
+            cmd,
+            Some(cmd),
+            move |part| {
+                match edit {
+                    Some(k) => part.replace_feature(k, Feature::BodyOp(f)),
+                    None => part.add_body_op(f),
+                }
+                .map_err(|e| e.to_string())
+            },
+            move |app, built| app.delete_face_done(d, keep_open, cmd, built),
+        );
+    }
+
+    /// `commit_delete_face` once the part is built (or not).
+    fn delete_face_done(
+        &mut self,
+        d: DeleteDraft,
+        keep_open: bool,
+        cmd: &'static str,
+        built: Result<String, String>,
+    ) {
         match built {
             Ok(_) => {
                 self.file_status = None;
@@ -208,10 +222,7 @@ impl CadCraftApp {
                     self.selection = super::Selection::Body;
                 }
             }
-            Err(e) => {
-                self.history.cancel();
-                self.file_status = Some(Err(format!("{cmd}: {e}")));
-            }
+            Err(e) => self.file_status = Some(Err(super::background::with_cmd(cmd, e))),
         }
     }
 
