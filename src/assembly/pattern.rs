@@ -128,6 +128,16 @@ impl Anchor {
             .chain(self.orient.iter())
             .collect()
     }
+
+    /// [`Self::refs`], to change them (a reference moved into another
+    /// assembly's terms).
+    pub fn refs_mut(&mut self) -> Vec<&mut GeomRef> {
+        self.plane
+            .iter_mut()
+            .chain(std::iter::once(&mut self.point))
+            .chain(self.orient.iter_mut())
+            .collect()
+    }
 }
 
 /// A place's frame in assembly coordinates: origin, unit normal and the
@@ -349,6 +359,23 @@ impl Layout {
             Layout::Feature { .. } => Vec::new(),
         }
     }
+
+    /// [`Self::refs`], to change them (the pattern of a frame's members made
+    /// from its parent: `assembly::frame_sub::geom_down`).
+    pub fn refs_mut(&mut self) -> Vec<&mut GeomRef> {
+        match self {
+            Layout::Rectangular { column, row, .. } => {
+                std::iter::once(column).chain(row.as_mut()).collect()
+            }
+            Layout::Circular { axis, .. } => vec![axis],
+            Layout::Placements { reference, places } => reference
+                .refs_mut()
+                .into_iter()
+                .chain(places.iter_mut().flat_map(Anchor::refs_mut))
+                .collect(),
+            Layout::Feature { .. } => Vec::new(),
+        }
+    }
 }
 
 /// Element indices (from 2) and motions of a feature pattern's instances.
@@ -393,7 +420,7 @@ fn world(
 }
 
 /// A direction's unit vector (a line, an axis, a round edge's axis).
-fn direction(g: &Geom) -> Result<Vector3, String> {
+pub fn direction(g: &Geom) -> Result<Vector3, String> {
     match *g {
         Geom::Axis { d, .. } | Geom::Cylinder { d, .. } => Ok(d),
         Geom::Circle { n, .. } => Ok(n),
@@ -403,7 +430,7 @@ fn direction(g: &Geom) -> Result<Vector3, String> {
 }
 
 /// An axis: a point on it and its unit direction.
-fn axis_of(g: &Geom) -> Result<(Point3, Vector3), String> {
+pub fn axis_of(g: &Geom) -> Result<(Point3, Vector3), String> {
     match *g {
         Geom::Axis { p, d } | Geom::Cylinder { p, d, .. } => Ok((p, d)),
         Geom::Circle { c, n, .. } => Ok((c, n)),

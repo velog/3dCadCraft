@@ -120,67 +120,219 @@ pub(super) fn orientation(d: &PartDialog) -> Orientation {
     }
 }
 
-/// The picked curves as the panel takes them: with Merge Frame Members one
-/// member along all of them, else one member each.
-fn merged(d: &PartDialog, lines: Vec<Skeleton>) -> Vec<Skeleton> {
-    if d.check(0, "Merge Frame Members") && d.index(0, "Placement") == 0 && lines.len() > 1 {
-        vec![Skeleton::Chain(lines)]
-    } else {
-        lines
+/// The panel's lines and values as a set (`None`: the section table is
+/// empty).
+fn panel_set(d: &PartDialog) -> Option<super::part_planned::FrameSet> {
+    let options = insert_options(d)?;
+    let mut own = d.skel.own.clone();
+    own.resize(d.skeletons.len(), None);
+    let mut labels = d.picks.get("edges").cloned().unwrap_or_default();
+    labels.resize(d.skeletons.len(), "line".into());
+    Some(super::part_planned::FrameSet {
+        skeletons: d.skeletons.clone(),
+        own,
+        options,
+        labels,
+        merge: merge_on(d),
+        values: d.panel_values(),
+    })
+}
+
+/// Merge Frame Members is on (and the lines are picked as lines).
+fn merge_on(d: &PartDialog) -> bool {
+    d.check(0, "Merge Frame Members") && d.index(0, "Placement") == 0
+}
+
+/// Clears the panel's lines (the values stay for the next set).
+fn clear_lines(d: &mut PartDialog) {
+    d.skeletons.clear();
+    d.skel = Default::default();
+    d.picks.insert("edges", Vec::new());
+    d.refs.remove("edges");
+}
+
+/// Keeps what the panel holds: into the set it is working on (a set left
+/// without lines goes), else as a new set when it has lines. False: the
+/// section table is empty.
+fn stash(d: &mut PartDialog) -> bool {
+    let Some(set) = panel_set(d) else {
+        return false;
+    };
+    match d.frame_set_current.take() {
+        Some(k) if k < d.frame_sets.len() => {
+            if set.skeletons.is_empty() {
+                d.frame_sets.remove(k);
+            } else {
+                d.frame_sets[k] = set;
+            }
+        }
+        _ if !set.skeletons.is_empty() => d.frame_sets.push(set),
+        _ => {}
     }
+    true
 }
 
 /// The *+ Add Set* button: the picked lines with the panel's section and
-/// orientation become a set; the selection is cleared for the next one.
-/// The panel's note says what was kept.
+/// orientation become a set (or go back into the set the panel works on);
+/// the selection is cleared for the next one. The panel's note says what
+/// was kept.
 pub(super) fn add_set(d: &mut PartDialog) -> String {
-    if d.skeletons.is_empty() {
+    if !d.members.list.is_empty() {
+        return "+ Add Set: Edit Frame Members changes the checked members; Insert Frame keeps sets"
+            .into();
+    }
+    if d.skeletons.is_empty() && d.frame_set_current.is_none() {
         return "+ Add Set: select the lines of this set first".into();
     }
-    let Some(options) = insert_options(d) else {
+    let n = d.skeletons.len();
+    let k = d.frame_set_current.unwrap_or(d.frame_sets.len());
+    let Some(size) = insert_options(d).map(|o| o.size) else {
         return "+ Add Set: the section table is empty".into();
     };
-    let n = d.skeletons.len();
-    let text = format!(
-        "Set {}: {}, {n} line(s) kept",
-        d.frame_sets.len() + 1,
-        options.size
-    );
-    let lines = std::mem::take(&mut d.skeletons);
-    let mut own = std::mem::take(&mut d.skel).own;
-    own.resize(lines.len(), None);
-    let skeletons = merged(d, lines);
-    if skeletons.len() != own.len() {
-        own.clear();
-    }
-    d.frame_sets.push(super::part_planned::FrameSet {
-        skeletons,
-        own,
-        options,
-    });
-    d.picks.insert("edges", Vec::new());
-    text
+    stash(d);
+    clear_lines(d);
+    format!("Set {}: {size}, {n} line(s) kept", k + 1)
 }
 
-/// The kept sets above Insert Frame's panel: family, size and line count,
-/// each with an x that drops it.
+/// A click on set `j`: what the panel holds is kept (`stash`), then set
+/// `j`'s lines and values become the panel's (spec 6.1 §3.14).
+pub(super) fn select_set(d: &mut PartDialog, j: usize) {
+    if d.frame_set_current == Some(j) || j >= d.frame_sets.len() {
+        return;
+    }
+    let before = d.frame_sets.len();
+    let was = d.frame_set_current;
+    if !stash(d) {
+        return;
+    }
+    // A set emptied by the stash went out of the list before `j`.
+    let j = match was {
+        Some(k) if d.frame_sets.len() < before && k < j => j - 1,
+        _ => j,
+    };
+    let Some(set) = d.frame_sets.get(j).cloned() else {
+        return;
+    };
+    // The panel-wide options stay as they are now.
+    let keep = [NAMING, super::frame_list::REMOVE_OVERLAPS].map(|l| (l, d.check(0, l)));
+    d.set_panel_values(set.values);
+    for (l, v) in keep {
+        d.set_check(0, l, v);
+    }
+    clear_lines(d);
+    d.skeletons = set.skeletons;
+    d.skel.own = set.own;
+    d.skel.own.resize(d.skeletons.len(), None);
+    d.picks.insert("edges", set.labels);
+    d.frame_set_current = Some(j);
+    d.note = Some(format!(
+        "Set {}: its lines and values are in the panel; New set or + Add Set keeps the changes",
+        j + 1
+    ));
+}
+
+/// Drops set `i` (the one the panel works on: its lines go too).
+fn drop_set(d: &mut PartDialog, i: usize) {
+    if i >= d.frame_sets.len() {
+        return;
+    }
+    match d.frame_set_current {
+        Some(k) if k == i => {
+            d.frame_set_current = None;
+            clear_lines(d);
+        }
+        Some(k) if k > i => d.frame_set_current = Some(k - 1),
+        _ => {}
+    }
+    d.frame_sets.remove(i);
+}
+
+/// Lines, own placements and options of one set as OK places it.
+pub(super) type SetInput = (Vec<Skeleton>, Vec<Option<Orientation>>, InsertOptions);
+
+/// One set as OK places it: Merge Frame Members joins the lines into one
+/// chain (own placements then go).
+fn set_input(
+    lines: Vec<Skeleton>,
+    mut own: Vec<Option<Orientation>>,
+    merge: bool,
+    o: InsertOptions,
+) -> SetInput {
+    own.resize(lines.len(), None);
+    if merge && lines.len() > 1 {
+        return (vec![Skeleton::Chain(lines)], Vec::new(), o);
+    }
+    (lines, own, o)
+}
+
+/// Every set OK places, in the list's order: the kept ones, the one the
+/// panel works on with the panel's values `panel` (its stored copy is
+/// stale), a new one from the panel's lines last.
+pub(super) fn panel_sets(d: &PartDialog, panel: &InsertOptions) -> Vec<SetInput> {
+    let mut out = Vec::new();
+    let now = || {
+        set_input(
+            d.skeletons.clone(),
+            d.skel.own.clone(),
+            merge_on(d),
+            panel.clone(),
+        )
+    };
+    for (i, s) in d.frame_sets.iter().enumerate() {
+        if d.frame_set_current == Some(i) {
+            if !d.skeletons.is_empty() {
+                out.push(now());
+            }
+        } else {
+            out.push(set_input(
+                s.skeletons.clone(),
+                s.own.clone(),
+                s.merge,
+                s.options.clone(),
+            ));
+        }
+    }
+    if d.frame_set_current.is_none() && !d.skeletons.is_empty() {
+        out.push(now());
+    }
+    out
+}
+
+/// The sets above Insert Frame's panel: icon, size and line count, each
+/// with an x that drops it; a click on one makes it the panel's (the one
+/// being worked on is marked *editing*), *New set* keeps it and starts
+/// another.
 pub(super) fn sets_ui(ui: &mut egui::Ui, d: &mut PartDialog) {
     let mut drop = None;
-    egui::CollapsingHeader::new(format!("Sets ({})", d.frame_sets.len()))
+    let mut pick = None;
+    let mut fresh = false;
+    let current = d.frame_set_current;
+    let panel_size = insert_options(d).map(|o| o.size).unwrap_or_default();
+    let pending = current.is_none() && !d.skeletons.is_empty();
+    let n = d.frame_sets.len() + usize::from(pending);
+    egui::CollapsingHeader::new(format!("Sets ({n})"))
         .default_open(true)
         .show(ui, |ui| {
             for (i, s) in d.frame_sets.iter().enumerate() {
+                let editing = current == Some(i);
+                let (size, lines) = if editing {
+                    (panel_size.clone(), d.skeletons.len())
+                } else {
+                    (s.options.size.clone(), s.skeletons.len())
+                };
+                let mut text = format!("{}. {size} · {lines} line(s)", i + 1);
+                if editing {
+                    text.push_str(" · editing");
+                }
                 ui.horizontal(|ui| {
-                    ui.add(
-                        egui::Label::new(format!(
-                            "{}. {} · {} line(s)",
-                            i + 1,
-                            s.options.size,
-                            s.skeletons.len()
-                        ))
-                        .truncate(),
-                    )
-                    .on_hover_text(&s.options.family);
+                    super::panels::tree_icon(ui, super::icons::Icon::InsertFrame);
+                    let r = ui.selectable_label(editing, text).on_hover_text(format!(
+                        "{}: a click puts its lines and values into the panel to be changed",
+                        s.options.family
+                    ));
+                    if r.clicked() {
+                        pick = Some(i);
+                    }
                     if super::theme::glyph(ui, super::theme::Glyph::Close)
                         .on_hover_text("Drop this set")
                         .clicked()
@@ -189,9 +341,34 @@ pub(super) fn sets_ui(ui: &mut egui::Ui, d: &mut PartDialog) {
                     }
                 });
             }
+            if pending {
+                ui.horizontal(|ui| {
+                    super::panels::tree_icon(ui, super::icons::Icon::InsertFrame);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{}. {panel_size} · {} line(s) · new",
+                            d.frame_sets.len() + 1,
+                            d.skeletons.len()
+                        ))
+                        .strong(),
+                    );
+                });
+            }
+            if current.is_some()
+                && ui
+                    .button("New set")
+                    .on_hover_text("Keeps the set being edited and clears the panel for another")
+                    .clicked()
+            {
+                fresh = true;
+            }
         });
     if let Some(i) = drop {
-        d.frame_sets.remove(i);
+        drop_set(d, i);
+    } else if let Some(j) = pick {
+        select_set(d, j);
+    } else if fresh {
+        d.note = Some(add_set(d));
     }
 }
 
@@ -291,22 +468,10 @@ impl CadCraftApp {
     ) -> Result<bool, String> {
         let mut o = insert_options(d).ok_or("the section table is empty")?;
         o.orientation.align = self.frame_align(d)?;
-        // The kept sets, then the lines picked now (with the panel's section),
-        // each line with its own placement where the list gave it one.
-        let mut sets: Vec<(Vec<Skeleton>, Vec<Option<Orientation>>, InsertOptions)> = d
-            .frame_sets
-            .iter()
-            .map(|s| (s.skeletons.clone(), s.own.clone(), s.options.clone()))
-            .collect();
-        if !d.skeletons.is_empty() {
-            let lines = merged(d, d.skeletons.clone());
-            let mut own = d.skel.own.clone();
-            own.resize(d.skeletons.len(), None);
-            if lines.len() != own.len() {
-                own.clear();
-            }
-            sets.push((lines, own, o.clone()));
-        }
+        // The kept sets and the one the panel works on (with the panel's
+        // section), each line with its own placement where the list gave it
+        // one.
+        let mut sets = panel_sets(d, &o);
         let linked = self.frame_linked();
         // Remove Overlapping Members: of two lines on one another the shorter
         // goes (as long: the later one), a placed member too when a longer new
@@ -713,12 +878,15 @@ impl CadCraftApp {
     /// drawn from the section table each frame (no kernel work), corners
     /// uncut.
     fn frame_preview(&self, d: &PartDialog, painter: &egui::Painter, rect: Rect) {
-        // The kept sets with their own sections, then the lines picked now.
+        // The kept sets with their own sections, then the lines the panel
+        // holds (a set made the panel's again is drawn from the panel).
         let none: &[bool] = &[];
         let mut groups: Vec<PreviewGroup> = d
             .frame_sets
             .iter()
-            .map(|s| {
+            .enumerate()
+            .filter(|(i, _)| d.frame_set_current != Some(*i))
+            .map(|(_, s)| {
                 (
                     s.skeletons.as_slice(),
                     s.own.as_slice(),
@@ -906,9 +1074,8 @@ impl CadCraftApp {
         ) {
             return;
         }
-        if d.members.list.is_empty() {
-            self.frame_preview(d, painter, rect);
-        }
+        // Also Edit Frame Members: the members where OK would put them.
+        self.frame_preview(d, painter, rect);
         self.between_start_dot(d, painter, rect);
         for s in &d.skeletons {
             match s {
@@ -1772,5 +1939,97 @@ impl CadCraftApp {
         self.frame_set_selected(occs);
         self.scene_dirty = true;
         self.file_status = Some(Ok(msg));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(n: &str) -> Skeleton {
+        Skeleton::SketchLine {
+            occurrence: 1,
+            sub: Vec::new(),
+            sketch: n.into(),
+            line: Default::default(),
+        }
+    }
+
+    fn dialog() -> PartDialog {
+        PartDialog::new(Planned::Asm(AsmPlanned::InsertFrame))
+    }
+
+    fn size(d: &PartDialog) -> String {
+        insert_options(d).map(|o| o.size).unwrap_or_default()
+    }
+
+    /// Spec 6.1 §3.14: a kept set becomes the panel's again, with its lines
+    /// and values; what the panel held is kept as a set first; OK reads the
+    /// panel for the set it works on.
+    #[test]
+    fn a_kept_set_becomes_the_panels_again() {
+        let mut d = dialog();
+        d.pick_skeleton("a".into(), line("a"));
+        d.pick_skeleton("b".into(), line("b"));
+        d.set_index(0, "Size", 2);
+        let first = size(&d);
+        add_set(&mut d);
+        assert_eq!(d.frame_sets.len(), 1);
+        assert!(d.skeletons.is_empty());
+        d.pick_skeleton("c".into(), line("c"));
+        d.set_index(0, "Size", 4);
+        let second = size(&d);
+        assert_ne!(first, second);
+        select_set(&mut d, 0);
+        assert_eq!(d.frame_set_current, Some(0));
+        assert_eq!(
+            d.frame_sets.len(),
+            2,
+            "the panel's lines were kept as set 2"
+        );
+        assert_eq!(d.skeletons, vec![line("a"), line("b")]);
+        assert_eq!(
+            d.picks_of("edges").to_vec(),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
+        assert_eq!(size(&d), first);
+        // Changed in the panel: OK takes the panel's values for set 1.
+        d.set_index(0, "Size", 3);
+        let changed = size(&d);
+        let o = insert_options(&d).expect("options");
+        let sets = panel_sets(&d, &o);
+        assert_eq!(sets.len(), 2);
+        assert_eq!(sets[0].2.size, changed);
+        assert_eq!(sets[0].0.len(), 2);
+        assert_eq!(sets[1].2.size, second);
+        // Back to set 2: set 1 keeps the change.
+        select_set(&mut d, 1);
+        assert_eq!(d.skeletons, vec![line("c")]);
+        assert_eq!(size(&d), second);
+        assert_eq!(d.frame_sets[0].options.size, changed);
+        // Dropping set 1 keeps the panel on set 2 (now the first).
+        drop_set(&mut d, 0);
+        assert_eq!(d.frame_set_current, Some(0));
+        assert_eq!(d.frame_sets.len(), 1);
+        // New set: kept, panel cleared.
+        add_set(&mut d);
+        assert_eq!(d.frame_set_current, None);
+        assert!(d.skeletons.is_empty());
+        assert_eq!(d.frame_sets.len(), 1);
+    }
+
+    /// Merge Frame Members of a kept set joins its lines only at OK.
+    #[test]
+    fn a_merged_set_keeps_its_lines() {
+        let mut d = dialog();
+        d.set_check(0, "Merge Frame Members", true);
+        d.pick_skeleton("a".into(), line("a"));
+        d.pick_skeleton("b".into(), line("b"));
+        add_set(&mut d);
+        assert_eq!(d.frame_sets[0].skeletons.len(), 2);
+        let o = insert_options(&d).expect("options");
+        let sets = panel_sets(&d, &o);
+        assert_eq!(sets[0].0, vec![Skeleton::Chain(vec![line("a"), line("b")])]);
+        assert!(sets[0].1.is_empty());
     }
 }

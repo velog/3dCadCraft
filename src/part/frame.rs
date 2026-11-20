@@ -2267,6 +2267,14 @@ fn fillet(prev: Point2, p: Point2, next: Point2, r: Real) -> Corner {
     Corner::Round { a, b, c, ccw: left }
 }
 
+impl Loop {
+    /// The loop as points (arcs in `per_turn` steps a full turn), in its own
+    /// direction (section coordinates).
+    pub fn points(&self, per_turn: usize) -> Vec<Point2> {
+        polygon(self, per_turn)
+    }
+}
+
 /// The loop as a polygon (arcs in `per_turn` steps a full turn), in the
 /// loop's own direction.
 fn polygon(l: &Loop, per_turn: usize) -> Vec<Point2> {

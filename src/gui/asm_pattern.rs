@@ -23,6 +23,10 @@ const RECTANGULAR: usize = 1;
 const CIRCULAR: usize = 2;
 const PLACEMENTS: usize = 3;
 
+/// The tag of a frame member's pick in the Components selector (a member
+/// of a frame subassembly, patterned inside it: spec 6.1 §3.14).
+pub(super) const MEMBER_TAG: &str = "frame member";
+
 /// What the browser asked for.
 pub(super) enum PatternCmd {
     Select(u32),
@@ -143,6 +147,39 @@ impl CadCraftApp {
         }
     }
 
+    /// A frame member's pick for the Components selector, when the frame
+    /// is a subassembly of the active assembly.
+    pub(super) fn pattern_member_label(&self, id: u32) -> Option<String> {
+        self.frame_occ()?;
+        let o = self.frame_asm()?.find(id)?;
+        Some(format!("{} · {MEMBER_TAG}", o.name))
+    }
+
+    /// The frame members the Components selector holds (ids of the frame
+    /// assembly; empty unless the frame is a subassembly here).
+    fn pattern_members(&self, d: &PartDialog) -> Vec<u32> {
+        if self.frame_occ().is_none() {
+            return Vec::new();
+        }
+        let Some(a) = self.frame_asm() else {
+            return Vec::new();
+        };
+        d.picks_of("components")
+            .iter()
+            .filter(|w| w.ends_with(MEMBER_TAG))
+            .filter_map(|w| {
+                let name = w.split(" · ").next().unwrap_or(w);
+                a.occurrences.iter().find(|o| o.name == name).map(|o| o.id)
+            })
+            .collect()
+    }
+
+    /// The frame member's world placement (active assembly coordinates).
+    fn member_world(&self, id: u32) -> Option<Transform3> {
+        let t = self.frame_asm()?.find(id)?.transform;
+        Some(self.frame_place() * t)
+    }
+
     /// The occurrences the panel's Components selector holds.
     fn pattern_sources(&self, d: &PartDialog) -> Vec<u32> {
         let Some(a) = self.assembly() else {
@@ -150,6 +187,7 @@ impl CadCraftApp {
         };
         d.picks_of("components")
             .iter()
+            .filter(|w| !w.ends_with(MEMBER_TAG))
             .filter_map(|w| {
                 let name = w.split(" · ").next().unwrap_or(w);
                 a.occurrences.iter().find(|o| o.name == name).map(|o| o.id)
@@ -396,8 +434,19 @@ impl CadCraftApp {
     fn pattern_layout(&self, d: &PartDialog) -> Result<(Vec<u32>, Layout), String> {
         let a = self.assembly().ok_or("no assembly")?;
         let sources = self.pattern_sources(d);
+        let members = self.pattern_members(d);
+        if !members.is_empty() && !sources.is_empty() {
+            return Err("frame members are patterned apart from other components".into());
+        }
+        let in_frame = !members.is_empty();
+        let sources = if in_frame { members } else { sources };
         if sources.is_empty() {
             return Err("select the components to pattern".into());
+        }
+        if in_frame && d.tab() == ASSOCIATIVE {
+            return Err(
+                "an Associative pattern of frame members is made in the frame assembly".into(),
+            );
         }
         let r = |key: &str| d.refs.get(key).and_then(|v| v.first()).cloned();
         let count = |v: Option<f64>| v.unwrap_or(1.0).round().max(1.0) as u32;
@@ -471,6 +520,23 @@ impl CadCraftApp {
             Ok(v) => v,
             Err(e) => return fail(self, e),
         };
+        if !self.pattern_members(d).is_empty() {
+            if d.edit.is_some() {
+                return fail(
+                    self,
+                    "a pattern of frame members is edited in the frame assembly".into(),
+                );
+            }
+            return match self.pattern_members_ok(sources, &layout) {
+                Ok(msg) => {
+                    self.asm.pattern_preview = None;
+                    self.scene_dirty = true;
+                    self.file_status = Some(Ok(msg));
+                    true
+                }
+                Err(e) => fail(self, e),
+            };
+        }
         let Some(mut a) = self.assembly().cloned() else {
             return false;
         };
@@ -518,6 +584,40 @@ impl CadCraftApp {
         true
     }
 
+    /// OK of a pattern of frame members made from the parent (spec 6.1
+    /// §3.14): the layout in the frame assembly's terms, the pattern added
+    /// there, one Undo step; nothing changes on an error.
+    fn pattern_members_ok(&mut self, sources: Vec<u32>, layout: &Layout) -> Result<String, String> {
+        let linked = self.frame_linked();
+        let mut trial = self.project.clone();
+        let down = self.frame_layout_down(&mut trial, &linked, layout)?;
+        let doc = self.frame_doc();
+        let mut a = match trial.document(doc).map(|x| &x.data) {
+            Some(crate::document::DocumentData::Assembly(a)) => a.clone(),
+            _ => return Err("the frame assembly is missing".into()),
+        };
+        let snapshot = a.clone();
+        let local = |r: &GeomRef| self.asm_local_in(&snapshot, r);
+        let feature = |o: u32, id: &str| self.feature_instances_in(&snapshot, o, id);
+        let look = Lookup {
+            local: &local,
+            feature: &feature,
+        };
+        let id = a.add_pattern(sources, down, &look)?;
+        let (name, n) = a
+            .patterns
+            .iter()
+            .find(|p| p.id == id)
+            .map_or((String::new(), 0), |p| {
+                (p.name.clone(), p.elements.len() + 1)
+            });
+        if let Some(x) = trial.document_mut(doc) {
+            x.data = crate::document::DocumentData::Assembly(a);
+        }
+        self.frame_commit("Pattern Component", trial);
+        Ok(format!("{name}: {n} elements of frame members"))
+    }
+
     /// The copies the open Pattern panel would make (source, motion), for
     /// the see-through preview; none while the panel is incomplete.
     pub(super) fn pattern_preview_items(&self) -> Vec<(u32, Transform3)> {
@@ -533,6 +633,14 @@ impl CadCraftApp {
         };
         let Ok((sources, layout)) = self.pattern_layout(d) else {
             return Vec::new();
+        };
+        let in_frame = !self.pattern_members(d).is_empty();
+        let source_at = |id: u32| {
+            if in_frame {
+                self.member_world(id)
+            } else {
+                a.find(id).map(|o| o.transform)
+            }
         };
         let at = |id: u32| a.find(id).map(|o| o.transform);
         let local = |r: &GeomRef| self.asm_local_in(a, r);
@@ -565,7 +673,8 @@ impl CadCraftApp {
             .flat_map(|&(_, m)| {
                 sources
                     .iter()
-                    .filter_map(move |&s| a.find(s).map(|o| (s, m * o.transform)))
+                    .filter_map(|&s| source_at(s).map(|t| (s, m * t)))
+                    .collect::<Vec<_>>()
             })
             .collect()
     }
@@ -598,8 +707,18 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return;
         };
+        // Frame members: their parts are in the frame assembly.
+        let in_frame = self
+            .part_planned
+            .as_ref()
+            .is_some_and(|d| !self.pattern_members(d).is_empty());
         for (s, t) in self.pattern_preview_items() {
-            let Some(o) = a.find(s) else {
+            let o = if in_frame {
+                self.frame_asm().and_then(|f| f.find(s))
+            } else {
+                a.find(s)
+            };
+            let Some(o) = o else {
                 continue;
             };
             self.with_part(o.component, |p| {

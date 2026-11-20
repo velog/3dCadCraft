@@ -2074,6 +2074,22 @@ impl CadCraftApp {
             if let Some(next) = defs.get(1) {
                 d.active = Some(next.0);
             }
+        } else if kind == AsmPlanned::Pattern
+            && self.asm.sel.is_empty()
+            && let Some(first) = defs.first()
+        {
+            // Members of a frame subassembly selected: they are the sources.
+            let names: Vec<String> = self
+                .frame_selected()
+                .into_iter()
+                .filter_map(|m| self.pattern_member_label(m))
+                .collect();
+            if !names.is_empty() {
+                d.picks.entry(first.0).or_default().extend(names);
+                if let Some(next) = defs.get(1) {
+                    d.active = Some(next.0);
+                }
+            }
         }
         self.part_planned = Some(d);
     }
@@ -2128,6 +2144,19 @@ impl CadCraftApp {
             return;
         }
         if kinds.contains(&PickKind::Body) {
+            // Pattern Component: a member of a frame subassembly is picked
+            // itself, not the frame (spec 6.1 §3.14).
+            if self
+                .part_planned
+                .as_ref()
+                .is_some_and(|d| d.kind == Planned::Asm(AsmPlanned::Pattern))
+                && let Some(w) = member.and_then(|(m, _)| self.pattern_member_label(m))
+            {
+                if let Some(d) = self.part_planned.as_mut() {
+                    d.pick(w);
+                }
+                return;
+            }
             let hit = self.asm_pick_pub(p, rect);
             let what = hit.and_then(|(h, _)| self.occurrence_label(h.occurrence));
             if let (Some(w), Some(d)) = (what, self.part_planned.as_mut()) {

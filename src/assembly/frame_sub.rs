@@ -182,6 +182,26 @@ pub fn geom_down(
     Ok(out)
 }
 
+/// A Pattern Component layout picked in the parent, in the frame assembly's
+/// terms (spec 6.1 §3.14: a pattern of frame members made from the parent
+/// lives in the frame assembly). An Associative layout reads a part's
+/// feature pattern by occurrence and is refused.
+pub fn layout_down(
+    project: &mut Project,
+    linked: &Linked,
+    t: Target,
+    layout: &crate::assembly::pattern::Layout,
+) -> Result<crate::assembly::pattern::Layout, String> {
+    let mut out = layout.clone();
+    if matches!(out, crate::assembly::pattern::Layout::Feature { .. }) {
+        return Err("an Associative pattern of frame members is made in the frame assembly".into());
+    }
+    for r in out.refs_mut() {
+        *r = geom_down(project, linked, t, r)?;
+    }
+    Ok(out)
+}
+
 /// A skeleton line picked in the parent, in the frame assembly's terms.
 pub fn skeleton_down(
     project: &mut Project,
@@ -1010,5 +1030,80 @@ mod tests {
             let m = Point3::from((pts[0].coords + pts[pts.len() - 1].coords) / 2.0);
             assert!((m - (a + (b - a) / 2.0)).norm() < 1e-6, "{r:?}");
         }
+    }
+
+    /// Spec 6.1 §3.14: a Pattern Component of frame members made from the
+    /// parent: its direction (an edge of the skeleton box in the parent) is
+    /// moved onto the frame's reference occurrence, and the pattern built in
+    /// the frame assembly copies the members along it.
+    #[test]
+    fn a_pattern_of_members_from_the_parent_lives_in_the_frame() {
+        use crate::assembly::pattern::{Layout as PatternLayout, Lookup};
+        let (mut p, top) = project(Vector3::zeros());
+        let (t, occs) = insert(&mut p, top, Corners::default());
+        let linked = Linked::new();
+        let column = GeomRef::Edge {
+            occurrence: 1,
+            sub: Vec::new(),
+            edge: EdgeRef {
+                faces: ["Box1:Front".into(), "Box1:Top".into()],
+                hint: [200.0, 0.0, 200.0],
+            },
+        };
+        let layout = PatternLayout::Rectangular {
+            column: column.clone(),
+            column_flip: false,
+            column_count: 3,
+            column_spacing: 50.0,
+            row: None,
+            row_flip: false,
+            row_count: 1,
+            row_spacing: 0.0,
+        };
+        let down = layout_down(&mut p, &linked, t, &layout).unwrap();
+        let PatternLayout::Rectangular { column: c, .. } = &down else {
+            panic!("not rectangular");
+        };
+        // The frame's hidden Reference occurrence of the box.
+        let r = assembly(&p, t.doc).find(c.occurrence()).unwrap();
+        assert!(!r.visible && r.bom == Some(BomStructure::Reference));
+        // An Associative layout is refused.
+        let feature = PatternLayout::Feature {
+            occurrence: 1,
+            feature: "x".into(),
+        };
+        assert!(layout_down(&mut p, &linked, t, &feature).is_err());
+        let mut a = assembly(&p, t.doc).clone();
+        let before = a.occurrences.len();
+        let snapshot = p.clone();
+        let fa = a.clone();
+        let local = |r: &GeomRef| {
+            let o = fa.find(r.occurrence()).ok_or("no occurrence")?;
+            match snapshot.document(o.component.document).map(|d| &d.data) {
+                Some(DocumentData::Part(part)) => crate::assembly::relation::resolve_in(part, r),
+                _ => Err("no part".into()),
+            }
+        };
+        a.add_pattern(occs.clone(), down, &Lookup::geometry(&local))
+            .unwrap();
+        assert_eq!(a.occurrences.len(), before + 2 * occs.len());
+        let first = a.find(occs[0]).unwrap().transform.translation.vector;
+        let copies: Vec<Real> = a.patterns[0]
+            .elements
+            .iter()
+            .map(|e| {
+                (a.find(e.occurrences[0])
+                    .unwrap()
+                    .transform
+                    .translation
+                    .vector
+                    - first)
+                    .norm()
+            })
+            .collect();
+        assert!(
+            (copies[0] - 50.0).abs() < 1e-6 && (copies[1] - 100.0).abs() < 1e-6,
+            "{copies:?}"
+        );
     }
 }

@@ -306,6 +306,7 @@ impl CadCraftApp {
         }
         if d.kind == Planned::Asm(AsmPlanned::LengthenShorten) {
             self.lengthen_dots(d, painter, rect);
+            self.lengthen_preview(d, painter, rect, pointer);
         }
         if let Some(c) = d.members.current {
             self.anchor_dots(d, c, painter, rect, pointer);

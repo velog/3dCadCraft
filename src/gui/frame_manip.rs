@@ -69,13 +69,20 @@ struct Frame3 {
     /// The section's anchor points at the line's middle, in the order of
     /// `Anchor::ALL` (the panel's Anchor list).
     anchors: Vec<Point3>,
+    /// The section's outer outline at the line's middle.
+    outline: Vec<Point3>,
 }
+
+/// Smallest size of the anchor points' group on the screen, px: a section
+/// smaller than that on screen is drawn magnified about its centre, so its
+/// points can be told apart and clicked.
+const ANCHOR_SPAN_PX: f32 = 70.0;
 
 fn takes(d: &PartDialog) -> bool {
     matches!(
         d.kind,
         Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::FrameChange)
-    ) && d.members.list.is_empty()
+    )
 }
 
 impl CadCraftApp {
@@ -126,6 +133,11 @@ impl CadCraftApp {
                 t.transform_point(&Point3::new(x, y, half))
             })
             .collect();
+        let outline = s
+            .outline()
+            .iter()
+            .map(|p| t.transform_point(&Point3::new(p.x, p.y, half)))
+            .collect();
         Some(Frame3 {
             mid,
             dir,
@@ -134,7 +146,35 @@ impl CadCraftApp {
             base,
             u0,
             anchors,
+            outline,
         })
+    }
+
+    /// The anchor points and the outline on the screen, magnified about the
+    /// section's centre to [`ANCHOR_SPAN_PX`] when smaller (true then).
+    fn anchor_screen(&self, f: &Frame3, rect: Rect) -> Option<(Vec<Pos2>, Vec<Pos2>, bool)> {
+        let pts: Vec<Pos2> = f
+            .anchors
+            .iter()
+            .map(|w| self.camera.project(w, rect))
+            .collect::<Option<_>>()?;
+        let outline: Vec<Pos2> = f
+            .outline
+            .iter()
+            .filter_map(|w| self.camera.project(w, rect))
+            .collect();
+        let c = *pts.first()?;
+        let span = pts.iter().map(|p| p.distance(c)).fold(0.0f32, f32::max) * 2.0;
+        if span >= ANCHOR_SPAN_PX {
+            return Some((pts, outline, false));
+        }
+        let k = ANCHOR_SPAN_PX / span.max(1.0);
+        let grow = |p: &Pos2| c + (*p - c) * k;
+        Some((
+            pts.iter().map(grow).collect(),
+            outline.iter().map(grow).collect(),
+            true,
+        ))
     }
 
     /// Screen ends of the arrows and the ring (centre, radius) with the mm
@@ -227,22 +267,41 @@ impl CadCraftApp {
             ));
         }
         // The anchor points (Inventor's buttons on the section): a click
-        // takes that anchor, the current one is filled.
+        // takes that anchor, the current one is filled. A section small on
+        // the screen is drawn magnified with its outline (spec 6.1 §3.14).
         let current = d.index(0, "Anchor");
-        for (k, w) in f.anchors.iter().enumerate() {
-            let Some(q) = self.camera.project(w, rect) else {
-                continue;
-            };
-            let near = pointer.is_some_and(|p| p.distance(q) < ANCHOR_PX);
-            let c = if near {
-                scheme.handle_hot
-            } else {
-                scheme.handle
-            };
-            if k == current {
-                painter.circle_filled(q, 4.5, c);
-            } else {
-                painter.circle_stroke(q, 4.0, Stroke::new(1.5, c));
+        // Edit Frame Members draws the current member's own points.
+        let own_points = d.members.list.is_empty();
+        if let Some((pts, outline, grown)) = self.anchor_screen(&f, rect).filter(|_| own_points) {
+            if grown && outline.len() > 2 {
+                painter.add(egui::Shape::closed_line(
+                    outline,
+                    Stroke::new(1.5, scheme.handle.gamma_multiply(0.8)),
+                ));
+            }
+            let mut hot_name = None;
+            for (k, q) in pts.iter().enumerate() {
+                let near = pointer.is_some_and(|p| p.distance(*q) < ANCHOR_PX);
+                let c = if near {
+                    hot_name = super::frame_list::ANCHOR_NAMES.get(k).copied();
+                    scheme.handle_hot
+                } else {
+                    scheme.handle
+                };
+                if k == current {
+                    painter.circle_filled(*q, 4.5, c);
+                } else {
+                    painter.circle_stroke(*q, 4.0, Stroke::new(1.5, c));
+                }
+            }
+            if let (Some(n), Some(p)) = (hot_name, pointer) {
+                painter.text(
+                    p + egui::vec2(12.0, 12.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("Anchor: {n}"),
+                    egui::FontId::proportional(12.0),
+                    scheme.handle_hot,
+                );
             }
         }
         let ring = self.ring_points(&f, rect, mm);
@@ -273,11 +332,20 @@ impl CadCraftApp {
         let Some(f) = self.part_planned.as_ref().and_then(|d| self.manip_frame(d)) else {
             return false;
         };
-        let hit = f
-            .anchors
+        if self
+            .part_planned
+            .as_ref()
+            .is_some_and(|d| !d.members.list.is_empty())
+        {
+            return false;
+        }
+        let Some((pts, _, _)) = self.anchor_screen(&f, rect) else {
+            return false;
+        };
+        let hit = pts
             .iter()
             .enumerate()
-            .filter_map(|(k, w)| Some((k, self.camera.project(w, rect)?.distance(p))))
+            .map(|(k, q)| (k, q.distance(p)))
             .filter(|(_, d)| *d < ANCHOR_PX)
             .min_by(|a, b| a.1.total_cmp(&b.1));
         let Some((k, _)) = hit else {
