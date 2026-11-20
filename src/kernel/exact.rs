@@ -1642,6 +1642,37 @@ pub fn step_text_painted(
     guarded("STEP export", || sk::step_export_bodies(&list, &header))
 }
 
+/// IGES 5.3 text (millimetres) of `solids`, one named body each (bodies without a B-rep, mesh
+/// bodies, are refused by the writer).
+pub fn iges_text(solids: &[ExactSolid], product: &str) -> Result<String, String> {
+    let names: Vec<String> = solids
+        .iter()
+        .enumerate()
+        .map(|(i, s)| s.name.clone().unwrap_or_else(|| format!("Body{}", i + 1)))
+        .collect();
+    let list: Vec<sk::ExportBody> = solids
+        .iter()
+        .zip(&names)
+        .map(|(s, n)| sk::ExportBody {
+            name: n.clone(),
+            body: &s.body,
+            color: s.body.color(),
+        })
+        .collect();
+    let header = sk::StepHeader {
+        file_name: format!("{product}.igs"),
+        organization: "3DCadCraft".into(),
+        ..Default::default()
+    };
+    guarded("IGES export", || sk::iges_export_bodies(&list, &header))
+}
+
+/// IGES `text` restated as STEP text in millimetres (the kernel's IGES reader: solids, and
+/// surfaces sewn into shells), with the reader's warnings about what it could not read.
+pub fn iges_to_step(text: &str) -> Result<(String, Vec<String>), String> {
+    sk::iges_to_step(text)
+}
+
 /// Volumes of the bodies in STEP `text` (reads it back with the kernel's
 /// importer; for round-trip checks).
 pub fn step_volumes(text: &str) -> Result<Vec<Real>, String> {
@@ -6034,6 +6065,7 @@ pub mod surface_ops;
 pub mod sheet_metal;
 
 mod delete_face;
+pub mod distance;
 pub mod simplify;
 mod sweep;
 mod thicken;
