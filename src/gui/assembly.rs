@@ -92,9 +92,9 @@ pub(super) struct AsmUi {
     pub(super) variants: super::variants::VariantsUi,
     /// Selected occurrences (ids).
     pub sel: Vec<u32>,
-    /// The menu of a frame corner's glyph (frame, treatment, where; `true`
-    /// while the click that opened it is still being handled).
-    pub corner_menu: Option<(u32, usize, Pos2, bool)>,
+    /// The open panel of a frame joint's glyph, with its preview (spec 6.1
+    /// §3.14, `gui/frame_joints.rs`).
+    pub corner_menu: Option<super::frame_joints::JointEdit>,
     /// The open Create New Frame dialog (spec 6.1 §3.6a).
     pub frame_new: Option<super::frame_ctx::FrameNew>,
     /// Frame Generator Missing Member: members whose skeleton geometry is

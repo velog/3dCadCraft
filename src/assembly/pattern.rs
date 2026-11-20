@@ -128,6 +128,16 @@ impl Anchor {
             .chain(self.orient.iter())
             .collect()
     }
+
+    /// [`Self::refs`], to change them (a reference moved into another
+    /// assembly's terms).
+    pub fn refs_mut(&mut self) -> Vec<&mut GeomRef> {
+        self.plane
+            .iter_mut()
+            .chain(std::iter::once(&mut self.point))
+            .chain(self.orient.iter_mut())
+            .collect()
+    }
 }
 
 /// A place's frame in assembly coordinates: origin, unit normal and the
@@ -345,6 +355,23 @@ impl Layout {
                 .refs()
                 .into_iter()
                 .chain(places.iter().flat_map(Anchor::refs))
+                .collect(),
+            Layout::Feature { .. } => Vec::new(),
+        }
+    }
+
+    /// [`Self::refs`], to change them (the pattern of a frame's members made
+    /// from its parent: `assembly::frame_sub::geom_down`).
+    pub fn refs_mut(&mut self) -> Vec<&mut GeomRef> {
+        match self {
+            Layout::Rectangular { column, row, .. } => {
+                std::iter::once(column).chain(row.as_mut()).collect()
+            }
+            Layout::Circular { axis, .. } => vec![axis],
+            Layout::Placements { reference, places } => reference
+                .refs_mut()
+                .into_iter()
+                .chain(places.iter_mut().flat_map(Anchor::refs_mut))
                 .collect(),
             Layout::Feature { .. } => Vec::new(),
         }

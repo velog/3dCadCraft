@@ -236,6 +236,21 @@ impl CadCraftApp {
         }
     }
 
+    /// A Pattern Component layout of the parent in the frame document's
+    /// terms (`frame_sub::layout_down`).
+    pub(super) fn frame_layout_down(
+        &self,
+        trial: &mut Project,
+        linked: &Linked,
+        l: &crate::assembly::pattern::Layout,
+    ) -> Result<crate::assembly::pattern::Layout, String> {
+        let name = self.frame_skeleton_name();
+        match self.frame_target(&name) {
+            Some(t) => frame_sub::layout_down(trial, linked, t, l),
+            None => Ok(l.clone()),
+        }
+    }
+
     /// Treatments of a panel in the frame document's terms.
     pub(super) fn frame_treatments_down(
         &self,

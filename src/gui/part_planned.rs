@@ -1908,6 +1908,10 @@ pub(super) struct PartDialog {
     /// Insert Frame's sets kept by + Add Set: lines (with their labels) and
     /// the section, material and orientation they take.
     pub frame_sets: Vec<FrameSet>,
+    /// The set the panel is working on (index into `frame_sets`; `None`: a
+    /// new set, kept by + Add Set). Its entry in `frame_sets` is stale while
+    /// it is the panel's: readers go through `frame::panel_sets`.
+    pub frame_set_current: Option<usize>,
     /// Insert Frame as the edit of placed members: every member of their
     /// frame (the Members list), the ones edited, the one shown with its
     /// anchor points, each member's anchor (index into `Anchor::ALL`) and
@@ -1965,12 +1969,30 @@ pub struct SkeletonList {
 /// One set of Insert Frame (+ Add Set): its lines and options.
 #[derive(Clone, Debug)]
 pub struct FrameSet {
-    /// The skeleton lines.
+    /// The skeleton lines, as picked (Merge Frame Members joins them at OK).
     pub skeletons: Vec<crate::assembly::frame::Skeleton>,
     /// Each line's own placement (aligned with `skeletons`; empty: none).
     pub own: Vec<Option<crate::assembly::frame::Orientation>>,
     /// Section, material, orientation and Position of its members.
     pub options: crate::assembly::frame::InsertOptions,
+    /// The picks' labels (the Edges list's rows when the set is made the
+    /// panel's again).
+    pub labels: Vec<String>,
+    /// Merge Frame Members was on: one member along all the lines.
+    pub merge: bool,
+    /// The panel's values when the set was kept: a click on the set puts
+    /// them back (spec 6.1 §3.14).
+    pub values: PanelValues,
+}
+
+/// Every option value of a planned panel (by tab and row), so a panel can
+/// be put back as it was (Insert Frame's sets).
+#[derive(Clone, Debug, Default)]
+pub struct PanelValues {
+    bools: HashMap<(usize, usize), bool>,
+    indices: HashMap<(usize, usize), usize>,
+    nums: HashMap<(usize, usize), f64>,
+    texts: HashMap<(usize, usize), String>,
 }
 
 /// Insert Frame's edit of placed members (`PartDialog::members`).
@@ -1988,6 +2010,9 @@ pub struct MemberEditState {
     pub skeletons: Vec<crate::assembly::frame::Skeleton>,
     /// Zoom to this member next frame.
     pub zoom: Option<u32>,
+    /// The panel's values when it was filled from the first member: while
+    /// a value is unchanged, each member keeps its own (OK of an older set).
+    pub base: Option<crate::assembly::frame::InsertOptions>,
 }
 
 /// A chain of edges the right-click menu of an open command adds ([`CadCraftApp::chain_edges`]).
@@ -2109,6 +2134,7 @@ impl PartDialog {
             frame_edit: None,
             between_first: None,
             frame_sets: Vec::new(),
+            frame_set_current: None,
             members: MemberEditState::default(),
             skel: SkeletonList::default(),
             bolt: Default::default(),
@@ -2749,6 +2775,24 @@ impl PartDialog {
         }
     }
 
+    /// Every option value of the panel.
+    pub(super) fn panel_values(&self) -> PanelValues {
+        PanelValues {
+            bools: self.bools.clone(),
+            indices: self.indices.clone(),
+            nums: self.nums.clone(),
+            texts: self.texts.clone(),
+        }
+    }
+
+    /// Puts option values taken by [`Self::panel_values`] back.
+    pub(super) fn set_panel_values(&mut self, v: PanelValues) {
+        self.bools = v.bools;
+        self.indices = v.indices;
+        self.nums = v.nums;
+        self.texts = v.texts;
+    }
+
     /// Draws the panel body: whether Cancel or OK was pressed.
     fn ui(&mut self, ui: &mut egui::Ui) -> (bool, bool) {
         let pages = self.kind.pages();
@@ -2860,6 +2904,7 @@ impl PartDialog {
         self.skeletons.clear();
         self.skel = SkeletonList::default();
         self.frame_sets.clear();
+        self.frame_set_current = None;
         self.between_first = None;
         self.clicks.clear();
         self.active = Some(if self.index(0, "Placement") == 1 {
@@ -3058,6 +3103,13 @@ impl PartDialog {
                     r.response.on_disabled_hover_text(t);
                 }
                 ui.end_row();
+                // Frame panels: the section with its placement points
+                // under the Anchor list (spec 6.1 §3.14).
+                if label == "Anchor" && super::frame_anchor::shows(self) {
+                    super::panels::plabel(ui, "");
+                    super::frame_anchor::anchor_picker(ui, self);
+                    ui.end_row();
+                }
             }
             Num(label, def, unit) => {
                 super::explain::plabel_help(ui, label, super::explain::generator_of(self));

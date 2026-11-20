@@ -25,6 +25,9 @@ use crate::part::frame::{
 use crate::part::sweep::{PathGeom, edge_piece, ends, reversed, sketch_piece};
 use crate::part::{Feature, PartDocument};
 
+mod joints;
+pub use joints::{Joint, JointKind, JointType, joints, joints_in, set_joint};
+
 /// Which point of the section's box lies on the skeleton line.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Anchor {
@@ -2526,6 +2529,22 @@ pub fn edit_members(
     edit_members_in(project, linked, asm, edits, o, lib, None)
 }
 
+/// [`edit_members`] from a panel filled with `base` (Edit Frame Members):
+/// while the panel's section, material or appearance is still `base`'s,
+/// each member keeps its own — a member of an older set whose family is no
+/// longer in the library keeps its section when only its placement changes.
+pub fn edit_members_keeping(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    edits: &[MemberEdit],
+    o: &InsertOptions,
+    base: &InsertOptions,
+    lib: &Library,
+) -> Result<Solved, String> {
+    edit_members_in(project, linked, asm, edits, o, lib, Some(base))
+}
+
 /// [`edit_members`]; with `keep`, a member keeps its own section when `o`'s
 /// is `keep`'s, its material and appearance likewise ([`change_keeping`]).
 fn edit_members_in(
@@ -2540,10 +2559,11 @@ fn edit_members_in(
     if edits.is_empty() {
         return Err("select the frame members".into());
     }
+    // Needed only by a member that takes the panel's section.
     let chosen = lib
         .find(&o.family, &o.size)
-        .ok_or_else(|| format!("{} {} is not in the library", o.family, o.size))?
-        .clone();
+        .cloned()
+        .ok_or_else(|| format!("{} {} is not in the library", o.family, o.size));
     let same_section = keep.is_some_and(|b| b.family == o.family && b.size == o.size);
     let same_material = keep.is_some_and(|b| b.material == o.material);
     let set_look = match keep {
@@ -2577,7 +2597,7 @@ fn edit_members_in(
                 .document;
             let section = match same_section.then(|| m.section()).flatten() {
                 Some(s) => s,
-                None => chosen.clone(),
+                None => chosen.clone()?,
             };
             let material = if same_material {
                 part_material(project, doc)
@@ -6795,5 +6815,75 @@ mod tests {
             }
         }
         panic!("no edge at {at}");
+    }
+
+    /// Spec 6.1 §3.14: a corner of two members is a joint; each choice
+    /// replaces the pair's joint treatment, None leaves it uncut.
+    #[test]
+    fn a_joint_takes_each_treatment_in_turn() {
+        let (mut p, aid, _) = project();
+        let lk = Linked::new();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let (fid, m) = insert(&mut p, &lk, aid, &[x, y], &opts(), Library::builtin(), None).unwrap();
+        let js = joints_in(&p, &lk, aid);
+        assert_eq!(js.len(), 1, "{js:?}");
+        let j = &js[0];
+        assert_eq!(j.kind, JointKind::Corner);
+        assert_eq!(j.current, JointType::None);
+        assert!((j.at - Point3::new(0.0, 0.0, 200.0)).norm() < 1e-6, "{:?}", j.at);
+        for t in [
+            JointType::Miter,
+            JointType::FirstThrough,
+            JointType::SecondThrough,
+            JointType::None,
+        ] {
+            set_joint(&mut p, &lk, aid, fid, j.members, t, 1.0).unwrap();
+            let now = joints_in(&p, &lk, aid);
+            assert_eq!(now[0].current, t);
+            let n = asm(&p, aid).frames[0].treatments.len();
+            assert_eq!(n, usize::from(t != JointType::None));
+        }
+        // FirstThrough: the first member runs on.
+        set_joint(&mut p, &lk, aid, fid, j.members, JointType::FirstThrough, 0.0).unwrap();
+        assert!(matches!(
+            asm(&p, aid).frames[0].treatments[0],
+            Treatment::CornerJoint { a, .. } if a == m[0]
+        ));
+        // A joint of a member that is gone changes nothing.
+        let before = asm(&p, aid).frames[0].treatments.clone();
+        assert!(set_joint(&mut p, &lk, aid, fid, [m[0], 999], JointType::Miter, 0.0).is_err());
+        assert_eq!(asm(&p, aid).frames[0].treatments, before);
+    }
+
+    /// Spec 6.1 §3.14: a member of an older set whose family is no longer in
+    /// the library keeps its section when only its placement changes (Edit
+    /// Frame Members filled from it); without `base` the edit is refused.
+    #[test]
+    fn an_old_member_keeps_its_section_when_only_its_anchor_changes() {
+        let (mut p, aid, _) = project();
+        let lk = Linked::new();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let (_, m) = insert(&mut p, &lk, aid, &[x], &opts(), Library::builtin(), None).unwrap();
+        // The section's family as an older table named it.
+        if let Some(DocumentData::Assembly(a)) = p.document_mut(aid).map(|d| &mut d.data) {
+            a.frames[0].members[0].family = "SHS (old table)".into();
+        }
+        let mut panel = opts();
+        panel.family = "Old family not in the library".into();
+        let base = panel.clone();
+        let edit = MemberEdit {
+            occurrence: m[0],
+            skeleton: None,
+            orientation: Orientation {
+                anchor: Anchor::TopLeft,
+                ..Orientation::default()
+            },
+        };
+        assert!(edit_members(&mut p, &lk, aid, &[edit.clone()], &panel, Library::builtin()).is_err());
+        edit_members_keeping(&mut p, &lk, aid, &[edit], &panel, &base, Library::builtin()).unwrap();
+        let mm = &asm(&p, aid).frames[0].members[0];
+        assert_eq!(mm.orientation.anchor, Anchor::TopLeft);
+        assert_eq!(mm.size, "40x40x3");
     }
 }
