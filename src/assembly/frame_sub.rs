@@ -1091,8 +1091,19 @@ mod tests {
         let copies: Vec<Real> = a.patterns[0]
             .elements
             .iter()
-            .map(|e| (a.find(e.occurrences[0]).unwrap().transform.translation.vector - first).norm())
+            .map(|e| {
+                (a.find(e.occurrences[0])
+                    .unwrap()
+                    .transform
+                    .translation
+                    .vector
+                    - first)
+                    .norm()
+            })
             .collect();
-        assert!((copies[0] - 50.0).abs() < 1e-6 && (copies[1] - 100.0).abs() < 1e-6, "{copies:?}");
+        assert!(
+            (copies[0] - 50.0).abs() < 1e-6 && (copies[1] - 100.0).abs() < 1e-6,
+            "{copies:?}"
+        );
     }
 }

@@ -5,7 +5,7 @@
 //! treatments replaced, the frame solved; on an error nothing changes).
 
 use super::{
-    Corners, CornerType, Frame, Linked, Real, Solved, TeeJoint, Treatment, asm_mut, asm_of, joint,
+    CornerType, Corners, Frame, Linked, Real, Solved, TeeJoint, Treatment, asm_mut, asm_of, joint,
     skeleton_line, solve, tee,
 };
 use crate::document::{AssemblyDocument, DocumentId, Project};

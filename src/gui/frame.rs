@@ -326,12 +326,10 @@ pub(super) fn sets_ui(ui: &mut egui::Ui, d: &mut PartDialog) {
                 }
                 ui.horizontal(|ui| {
                     super::panels::tree_icon(ui, super::icons::Icon::InsertFrame);
-                    let r = ui
-                        .selectable_label(editing, text)
-                        .on_hover_text(format!(
-                            "{}: a click puts its lines and values into the panel to be changed",
-                            s.options.family
-                        ));
+                    let r = ui.selectable_label(editing, text).on_hover_text(format!(
+                        "{}: a click puts its lines and values into the panel to be changed",
+                        s.options.family
+                    ));
                     if r.clicked() {
                         pick = Some(i);
                     }
@@ -1984,9 +1982,16 @@ mod tests {
         assert_ne!(first, second);
         select_set(&mut d, 0);
         assert_eq!(d.frame_set_current, Some(0));
-        assert_eq!(d.frame_sets.len(), 2, "the panel's lines were kept as set 2");
+        assert_eq!(
+            d.frame_sets.len(),
+            2,
+            "the panel's lines were kept as set 2"
+        );
         assert_eq!(d.skeletons, vec![line("a"), line("b")]);
-        assert_eq!(d.picks_of("edges").to_vec(), vec!["a".to_owned(), "b".to_owned()]);
+        assert_eq!(
+            d.picks_of("edges").to_vec(),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
         assert_eq!(size(&d), first);
         // Changed in the panel: OK takes the panel's values for set 1.
         d.set_index(0, "Size", 3);

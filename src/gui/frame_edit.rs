@@ -933,28 +933,28 @@ impl CadCraftApp {
         };
         // Each member: its own placement from the lines list when it has one
         // (the rows follow `members.edit`), else the panel's with its anchor.
-        let edits: Vec<frame::MemberEdit> = d
-            .members
-            .edit
-            .iter()
-            .enumerate()
-            .map(|(i, &occurrence)| frame::MemberEdit {
-                occurrence,
-                skeleton: target.clone(),
-                orientation: d.skel.own.get(i).copied().flatten().unwrap_or(
-                    frame::Orientation {
-                        anchor: d
-                            .members
-                            .anchor
-                            .get(&occurrence)
-                            .and_then(|&k| frame::Anchor::ALL.get(k))
-                            .copied()
-                            .unwrap_or_default(),
-                        ..o.orientation
-                    },
-                ),
-            })
-            .collect();
+        let edits: Vec<frame::MemberEdit> =
+            d.members
+                .edit
+                .iter()
+                .enumerate()
+                .map(|(i, &occurrence)| frame::MemberEdit {
+                    occurrence,
+                    skeleton: target.clone(),
+                    orientation: d.skel.own.get(i).copied().flatten().unwrap_or(
+                        frame::Orientation {
+                            anchor: d
+                                .members
+                                .anchor
+                                .get(&occurrence)
+                                .and_then(|&k| frame::Anchor::ALL.get(k))
+                                .copied()
+                                .unwrap_or_default(),
+                            ..o.orientation
+                        },
+                    ),
+                })
+                .collect();
         let lib = Library::current();
         let r = match &d.members.base {
             Some(base) => frame::edit_members_keeping(

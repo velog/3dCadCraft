@@ -6825,13 +6825,18 @@ mod tests {
         let lk = Linked::new();
         let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
         let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
-        let (fid, m) = insert(&mut p, &lk, aid, &[x, y], &opts(), Library::builtin(), None).unwrap();
+        let (fid, m) =
+            insert(&mut p, &lk, aid, &[x, y], &opts(), Library::builtin(), None).unwrap();
         let js = joints_in(&p, &lk, aid);
         assert_eq!(js.len(), 1, "{js:?}");
         let j = &js[0];
         assert_eq!(j.kind, JointKind::Corner);
         assert_eq!(j.current, JointType::None);
-        assert!((j.at - Point3::new(0.0, 0.0, 200.0)).norm() < 1e-6, "{:?}", j.at);
+        assert!(
+            (j.at - Point3::new(0.0, 0.0, 200.0)).norm() < 1e-6,
+            "{:?}",
+            j.at
+        );
         for t in [
             JointType::Miter,
             JointType::FirstThrough,
@@ -6845,7 +6850,16 @@ mod tests {
             assert_eq!(n, usize::from(t != JointType::None));
         }
         // FirstThrough: the first member runs on.
-        set_joint(&mut p, &lk, aid, fid, j.members, JointType::FirstThrough, 0.0).unwrap();
+        set_joint(
+            &mut p,
+            &lk,
+            aid,
+            fid,
+            j.members,
+            JointType::FirstThrough,
+            0.0,
+        )
+        .unwrap();
         assert!(matches!(
             asm(&p, aid).frames[0].treatments[0],
             Treatment::CornerJoint { a, .. } if a == m[0]
@@ -6880,7 +6894,17 @@ mod tests {
                 ..Orientation::default()
             },
         };
-        assert!(edit_members(&mut p, &lk, aid, &[edit.clone()], &panel, Library::builtin()).is_err());
+        assert!(
+            edit_members(
+                &mut p,
+                &lk,
+                aid,
+                &[edit.clone()],
+                &panel,
+                Library::builtin()
+            )
+            .is_err()
+        );
         edit_members_keeping(&mut p, &lk, aid, &[edit], &panel, &base, Library::builtin()).unwrap();
         let mm = &asm(&p, aid).frames[0].members[0];
         assert_eq!(mm.orientation.anchor, Anchor::TopLeft);

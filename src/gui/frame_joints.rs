@@ -88,7 +88,12 @@ fn paint_icon(painter: &egui::Painter, q: Pos2, t: JointType, hot: bool) {
     };
     let ink = Stroke::new(1.6, Color32::WHITE);
     if t == JointType::None {
-        painter.circle(q, HALF - 1.0, Color32::from_black_alpha(90), Stroke::new(2.5, fill));
+        painter.circle(
+            q,
+            HALF - 1.0,
+            Color32::from_black_alpha(90),
+            Stroke::new(2.5, fill),
+        );
         painter.circle_filled(q, 2.0, fill);
         return;
     }
@@ -110,19 +115,55 @@ fn paint_icon(painter: &egui::Painter, q: Pos2, t: JointType, hot: bool) {
         JointType::FirstThrough | JointType::SecondThrough => {
             // One bar through, the other stopping at it.
             painter.line_segment([i.left_top(), i.right_top()], ink);
-            painter.line_segment([i.left_top() + Vec2::new(0.0, 3.0), i.right_top() + Vec2::new(0.0, 3.0)], ink);
+            painter.line_segment(
+                [
+                    i.left_top() + Vec2::new(0.0, 3.0),
+                    i.right_top() + Vec2::new(0.0, 3.0),
+                ],
+                ink,
+            );
             let x = i.center().x;
-            painter.line_segment([Pos2::new(x - 2.0, i.top() + 3.0), Pos2::new(x - 2.0, i.bottom())], ink);
-            painter.line_segment([Pos2::new(x + 2.0, i.top() + 3.0), Pos2::new(x + 2.0, i.bottom())], ink);
+            painter.line_segment(
+                [
+                    Pos2::new(x - 2.0, i.top() + 3.0),
+                    Pos2::new(x - 2.0, i.bottom()),
+                ],
+                ink,
+            );
+            painter.line_segment(
+                [
+                    Pos2::new(x + 2.0, i.top() + 3.0),
+                    Pos2::new(x + 2.0, i.bottom()),
+                ],
+                ink,
+            );
         }
         JointType::Notch => {
             // A bar with a cut-out where the other passes.
             let y = i.center().y;
             painter.line_segment([i.left_bottom(), i.right_bottom()], ink);
-            painter.line_segment([Pos2::new(i.left(), y), Pos2::new(i.center().x - 3.0, y)], ink);
-            painter.line_segment([Pos2::new(i.center().x + 3.0, y), Pos2::new(i.right(), y)], ink);
-            painter.line_segment([Pos2::new(i.center().x - 3.0, y), Pos2::new(i.center().x - 3.0, i.top())], ink);
-            painter.line_segment([Pos2::new(i.center().x + 3.0, y), Pos2::new(i.center().x + 3.0, i.top())], ink);
+            painter.line_segment(
+                [Pos2::new(i.left(), y), Pos2::new(i.center().x - 3.0, y)],
+                ink,
+            );
+            painter.line_segment(
+                [Pos2::new(i.center().x + 3.0, y), Pos2::new(i.right(), y)],
+                ink,
+            );
+            painter.line_segment(
+                [
+                    Pos2::new(i.center().x - 3.0, y),
+                    Pos2::new(i.center().x - 3.0, i.top()),
+                ],
+                ink,
+            );
+            painter.line_segment(
+                [
+                    Pos2::new(i.center().x + 3.0, y),
+                    Pos2::new(i.center().x + 3.0, i.top()),
+                ],
+                ink,
+            );
         }
         JointType::None => {}
     }
@@ -152,8 +193,15 @@ impl CadCraftApp {
         }
         for f in &a.frames {
             f.id.hash(&mut h);
-            format!("{:?}{:?}", f.treatments, f.members.iter().map(|m| (&m.skeleton, &m.section)).collect::<Vec<_>>())
-                .hash(&mut h);
+            format!(
+                "{:?}{:?}",
+                f.treatments,
+                f.members
+                    .iter()
+                    .map(|m| (&m.skeleton, &m.section))
+                    .collect::<Vec<_>>()
+            )
+            .hash(&mut h);
         }
         let key = h.finish();
         if let Some(v) = JOINTS.with(|c| {
@@ -327,10 +375,7 @@ impl CadCraftApp {
             return;
         };
         if e.error.is_some() {
-            self.file_status = Some(Err(format!(
-                "Frame Joint: {}",
-                e.error.unwrap_or_default()
-            )));
+            self.file_status = Some(Err(format!("Frame Joint: {}", e.error.unwrap_or_default())));
             if let Some(b) = e.before {
                 self.project = *b;
                 self.scene_dirty = true;
@@ -378,8 +423,10 @@ impl CadCraftApp {
                     ui.label(egui::RichText::new(format!("{a} · {b}")).small().weak());
                     for &t in JointType::choices(kind) {
                         ui.horizontal(|ui| {
-                            let (r, painter) =
-                                ui.allocate_painter(Vec2::splat(2.0 * HALF + 2.0), egui::Sense::hover());
+                            let (r, painter) = ui.allocate_painter(
+                                Vec2::splat(2.0 * HALF + 2.0),
+                                egui::Sense::hover(),
+                            );
                             paint_icon(&painter, r.rect.center(), t, false);
                             ui.radio_value(&mut choice, t, choice_label(t, kind, &a, &b));
                         });

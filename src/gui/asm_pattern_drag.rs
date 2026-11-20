@@ -113,7 +113,11 @@ impl CadCraftApp {
                     else {
                         continue;
                     };
-                    let dir = if d.check(RECTANGULAR, flip) { -dir } else { dir };
+                    let dir = if d.check(RECTANGULAR, flip) {
+                        -dir
+                    } else {
+                        dir
+                    };
                     let value = d.num(RECTANGULAR, field).unwrap_or(0.0);
                     out.push(Arrow {
                         tab: RECTANGULAR,

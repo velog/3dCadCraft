@@ -33,7 +33,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sk = PartDocument::with_box("Box1", [400.0, 300.0, 200.0])?;
     let sk = p.add_document("Skeleton", DocumentData::Part(sk));
     let mut a = AssemblyDocument::default();
-    a.place(DocRef::local(sk), "Skeleton:1", Transform3::identity(), true);
+    a.place(
+        DocRef::local(sk),
+        "Skeleton:1",
+        Transform3::identity(),
+        true,
+    );
     let top = p.add_document("Top", DocumentData::Assembly(a));
     let linked = Linked::new();
     let (frame, doc) = frame_sub::new_frame_assembly(&mut p, top, "Frame0001")?;

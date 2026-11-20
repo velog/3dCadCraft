@@ -177,8 +177,8 @@ impl CadCraftApp {
             let Some((a, b, _)) = self.end_arrow(&e, rect) else {
                 continue;
             };
-            let hot = held == Some(e.field)
-                || pointer.is_some_and(|p| seg_dist(p, a, b) <= GRIP_PX);
+            let hot =
+                held == Some(e.field) || pointer.is_some_and(|p| seg_dist(p, a, b) <= GRIP_PX);
             let c = if hot {
                 scheme.handle_hot
             } else {
