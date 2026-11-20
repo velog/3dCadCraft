@@ -6899,7 +6899,7 @@ mod tests {
                 &mut p,
                 &lk,
                 aid,
-                &[edit.clone()],
+                std::slice::from_ref(&edit),
                 &panel,
                 Library::builtin()
             )
