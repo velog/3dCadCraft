@@ -185,6 +185,15 @@ A fix (not about speed): a chamfer of a concave straight edge went the wrong way
 | `blend.rs` `edge_frame` | its convexity test could never fail (the directions were turned to pass it just before), so a concave edge got a convex edge's cutter; now each face's interior side comes from its boundary, as `blend_one` does | an L's inner edge, 1 mm: −102 mm³ → +15 mm³ (the same bug on the d4eeedb pin ends in a refusal there) |
 
 
+## `solidcraft-dynamics`
+
+SolidCraft `crates/dynamics` at main `61351c67` (2026-11-20, newer than our pin `c7dcab1`: +837 lines of
+motion links, drives and reactions), copied whole and unchanged; only `Cargo.toml` names its
+dependencies (`solidcore-record`, `solidcraft-geom` at our pins) instead of SolidCraft's workspace.
+It is a path dependency of `cadcraft3d-core` (it was never in our tree, so no `[patch]`), used by
+`assembly::dynamics` (spec 7.2). Drop the copy for a git dependency when the pin moves past
+`61351c67`.
+
 ## `solidcraft-doc`
 
 SolidCraft's document crate (`crates/doc`, same commit, MIT OR Apache-2.0, licence files in the

@@ -26,6 +26,10 @@ pub(super) struct StylesEditor {
     rename: Option<String>,
     /// Last refusal (delete in use …).
     error: Option<String>,
+    /// Patterns read from PAT files (Import PAT..., spec 4.6 §3.9).
+    pub patterns: Vec<crate::drawing::pat::PatPattern>,
+    /// Import PAT... was clicked: the file dialog opens after the window.
+    pat_request: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +52,8 @@ impl StylesEditor {
             tab: DimTab::Units,
             rename: None,
             error: None,
+            patterns: Vec::new(),
+            pat_request: false,
         }
     }
 }
@@ -240,7 +246,45 @@ impl CadCraftApp {
                 d.standard = standard;
             });
         }
+        let pat = std::mem::take(&mut ed.pat_request);
         self.drw.styles_editor = (open && !done).then_some(ed);
+        if pat {
+            self.open_dialog(super::files::DialogPurpose::ImportPat);
+        }
+    }
+
+    /// A PAT file was picked in the Style and Standard Editor: its patterns join the list the
+    /// hatch style's Pattern offers. Inch files (`acad.pat`, or a `;%UNITS=INCH` line) are read in
+    /// inches, others in mm.
+    pub(super) fn import_pat(&mut self, path: &std::path::Path) {
+        let read = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| {
+                let text = String::from_utf8_lossy(&b).into_owned();
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_ascii_lowercase());
+                let inch = name.as_deref() == Some("acad.pat")
+                    || text
+                        .lines()
+                        .any(|l| l.trim().eq_ignore_ascii_case(";%UNITS=INCH"));
+                crate::drawing::pat::read_pat(&text, if inch { 25.4 } else { 1.0 })
+            });
+        match (read, self.drw.styles_editor.as_mut()) {
+            (Ok(p), Some(ed)) => {
+                let n = p.len();
+                for q in p {
+                    ed.patterns.retain(|x| x.name != q.name);
+                    ed.patterns.push(q);
+                }
+                self.file_status = Some(Ok(format!(
+                    "{n} hatch patterns read from {}",
+                    path.display()
+                )));
+            }
+            (Ok(_), None) => {}
+            (Err(e), _) => self.file_status = Some(Err(format!("Import PAT: {e}"))),
+        }
     }
 }
 
@@ -607,8 +651,47 @@ fn style_pane(
                 .spacing([14.0, 6.0])
                 .show(ui, |ui| {
                     ui.label("Pattern");
-                    ui.add_enabled(false, egui::Label::new("Lines (ANSI 31)"))
-                        .on_disabled_hover_text("Named patterns are planned (spec 4.6 §3.9)");
+                    ui.horizontal(|ui| {
+                        let shown = if s.families.is_empty() {
+                            "Lines (ANSI 31)".to_owned()
+                        } else {
+                            s.pattern.clone()
+                        };
+                        egui::ComboBox::from_id_salt("hatch_pattern")
+                            .selected_text(shown)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(s.families.is_empty(), "Lines (ANSI 31)")
+                                    .clicked()
+                                {
+                                    s.families.clear();
+                                    s.pattern.clear();
+                                    s.angle = 45.0;
+                                }
+                                for p in &ed.patterns {
+                                    let on = s.pattern == p.name && !s.families.is_empty();
+                                    let r = ui.selectable_label(on, &p.name);
+                                    let r = if p.description.is_empty() {
+                                        r
+                                    } else {
+                                        r.on_hover_text(&p.description)
+                                    };
+                                    if r.clicked() {
+                                        s.pattern = p.name.clone();
+                                        s.families = p.families.clone();
+                                        s.angle = 0.0;
+                                        s.scale = 1.0;
+                                    }
+                                }
+                            });
+                        if ui
+                            .button("Import PAT...")
+                            .on_hover_text("Read hatch patterns from an AutoCAD PAT file")
+                            .clicked()
+                        {
+                            ed.pat_request = true;
+                        }
+                    });
                     ui.end_row();
                     ui.label("Angle");
                     ui.add(
@@ -617,10 +700,16 @@ fn style_pane(
                             .suffix("°"),
                     );
                     ui.end_row();
-                    mm(ui, "Spacing", &mut s.spacing, 0.3..=50.0);
-                    ui.label("Double");
-                    ui.checkbox(&mut s.double, "cross-hatched");
-                    ui.end_row();
+                    if s.families.is_empty() {
+                        mm(ui, "Spacing", &mut s.spacing, 0.3..=50.0);
+                        ui.label("Double");
+                        ui.checkbox(&mut s.double, "cross-hatched");
+                        ui.end_row();
+                    } else {
+                        ui.label("Scale");
+                        ui.add(ExprValue::new(&mut s.scale).range(0.01..=100.0));
+                        ui.end_row();
+                    }
                 });
             planned(
                 ui,

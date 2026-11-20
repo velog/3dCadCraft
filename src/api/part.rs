@@ -1322,15 +1322,24 @@ pub fn export(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
             "step" | "stp" => ExportFormat::Step,
             "stl" => ExportFormat::Stl,
             "glb" => ExportFormat::Glb,
-            _ => return Err(a.err("'format' must be step, stl or glb")),
+            "igs" | "iges" => ExportFormat::Iges,
+            "3mf" => ExportFormat::ThreeMf,
+            _ => return Err(a.err("'format' must be step, stl, glb or iges")),
         },
         None => ExportFormat::from_path(&path)
-            .ok_or_else(|| a.err("give 'format' or a .step / .stl / .glb path"))?,
+            .ok_or_else(|| a.err("give 'format' or a .step / .stl / .glb / .igs path"))?,
     };
     let bytes = match format {
         ExportFormat::Step => step_text(part, &name).map_err(|e| a.err(e))?.into_bytes(),
         ExportFormat::Stl => stl_bytes(&ExportMesh::of(part).map_err(|e| a.err(e))?, &name),
         ExportFormat::Glb => glb_bytes(&ExportMesh::of(part).map_err(|e| a.err(e))?, &name),
+        ExportFormat::Iges => crate::part::export::iges_text(part, &name)
+            .map_err(|e| a.err(e))?
+            .into_bytes(),
+        ExportFormat::ThreeMf => {
+            crate::part::export::threemf_bytes(&ExportMesh::of(part).map_err(|e| a.err(e))?, &name)
+                .map_err(|e| a.err(e))?
+        }
     };
     std::fs::write(&path, &bytes).map_err(|e| a.err(format!("{}: {e}", path.display())))?;
     Ok(json!({"path": path.display().to_string(), "bytes": bytes.len()}))

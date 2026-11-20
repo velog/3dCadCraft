@@ -114,6 +114,7 @@ impl CadCraftApp {
         // A frame joint's preview goes back first (it changed the project).
         self.joint_cancel();
         self.text_draft = None;
+        self.dxf_draft = None;
         self.finish_sketch();
         self.cancel_hole();
         self.cancel_extrude();

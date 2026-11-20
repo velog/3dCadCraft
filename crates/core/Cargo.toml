@@ -31,6 +31,9 @@ solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "
 # Sheet metal (5.6): SolidCraft's sheet body model (flat pattern, bends, flanges),
 # reached only through `kernel::exact::sheet_metal`. See ATTRIBUTION.md.
 solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+# Dynamic Simulation (7.2): SolidCraft's multibody dynamics crate, copied from its main
+# (vendor/README.md), reached only through `assembly::dynamics`. See ATTRIBUTION.md.
+solidcraft-dynamics = { path = "../../vendor/solidcraft-dynamics" }
 
 # --- Serialization (file format + JSON-RPC/MCP payloads) -------------------
 serde = { version = "1.0", features = ["derive", "rc"] }

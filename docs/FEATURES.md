@@ -556,7 +556,7 @@ Lines, splines and helices directly in space, plus intersection of surfaces and 
 ## 1.11 Blocks, insertion, images — ⬜ · M
 
 - **Sketch blocks:** groups of elements inserted many times, such as 2D kinematic diagrams.
-- **Insertion:** DXF and images (for tracing).
+- **Insertion:** DXF and images (for tracing). 🟡 2026-11-20: **Insert AutoCAD File** (`IAF`, [spec/1.11a](spec/1.11a-insert-dxf.md)): a DXF's layers, unit, joined ends, preview; images ⬜.
 - **Spreadsheet-driven points:** points from a table (for holes).
 
 ---
@@ -1094,7 +1094,7 @@ The Inventor 2027 API adds replacing the BOM view while **keeping the placement 
 
 ## 4.5 Export — 🟡 · M
 
-🟡 2026-10-26: PDF (krilla, vector, all / current / range of sheets, embedded font). DXF / SVG / print ⬜.
+🟡 2026-10-26: PDF (krilla, vector, all / current / range of sheets, embedded font). 🟡 2026-11-20: DXF per sheet (a layer per drawing layer, hidden / centre line types, texts), hatch patterns from PAT files in the Style and Standard Editor. SVG / print ⬜.
 
 PDF (vector, multi-sheet), DXF (per sheet), SVG and printing.
 
@@ -1363,9 +1363,9 @@ Parting line and parting surface, cores and cavities, runner system, cooling, ch
 
 Environments › Frame Analysis: the frames' straight members as beams, Static and Modal simulations; constraints, forces, continuous loads, moments, gravity, releases and rigid links; displacement, section forces and stresses in colour on the deformed frame, reactions, safety factor, Beam Detail diagrams, natural frequencies.
 
-## 7.2 Dynamic simulation — ⬜ · L
+## 7.2 Dynamic simulation — 🟡 · L
 
-Kinematics and dynamics of mechanisms derived from the joints (3.3): forces, moments, friction, springs, drivers, graphs of the quantities, export of the loads to FEA.
+**Specification:** [spec/7.2-dynamic-simulation.md](spec/7.2-dynamic-simulation.md). Kinematics and dynamics of mechanisms derived from the joints (3.3): forces, moments, friction, springs, drivers, graphs of the quantities, export of the loads to FEA. 🟡 2026-11-20, GUI-free: `assembly::dynamics` runs SolidCraft's multibody solver (vendored) on the assembly's joints, part masses, gravity, joint springs and loads (sample: a compound pendulum matching its analytic period). To do: the environment's GUI (player, grapher), constraint conversion, motors, contact, friction.
 
 ## 7.3 Rendering (Studio) — ⬜ · L
 
@@ -1412,7 +1412,7 @@ Inventor 2027 introduces *Autodesk Assistant* with similar capabilities.
 
 ## 7.7 Data exchange — 🟡 · XL
 
-**Specification:** [spec/7.7-export.md](spec/7.7-export.md), [spec/7.7a-import.md](spec/7.7a-import.md). Done: export to **STL** (binary, closed), **STEP** AP242 (exact surfaces) and **GLB** from File → Export and from the command line (`examples/export.rs`). **STEP import** 🟡 (2026-10-29, stage I1): 3D Model → Import (`IMP`) and File → Open of `.step` / `.stp` bring the file's solids and surface bodies in as one base feature (`Import1`, the file embedded, faces named by their STEP entity); `examples/step_info.rs` reports what a file gives. **STEP assemblies** 🟡 (I2): File → Open of an assembly file and Assemble → Place Imported CAD Files (`PIF`) make one document per product, placed as in the file. **Reference Model** 🟡 (I3): a part or an assembly opened from STEP follows its file; Update (Quick Access toolbar) reads it again and keeps the names of faces and components that stay (a window reports what changed), Break Link stops it. Bodies take the file's names and colours. **Export Face As** 🟡 (2026-11-06): the selected planar faces (one or several parallel ones) as DXF R12 (closed polylines with exact arcs, circles; layers OUTER / INNER) or SVG in mm, from the face's right-click menu or File → Export Face As (`FXF`). **Meshes** 🟡 (I4): File → Open / Import of **STL** (binary, ASCII) and **OBJ** bring mesh bodies (shown, measured, moved and exported; no modelling). To do: 3MF, mesh units, settings.
+**Specification:** [spec/7.7-export.md](spec/7.7-export.md), [spec/7.7a-import.md](spec/7.7a-import.md). Done: export to **STL** (binary, closed), **STEP** AP242 (exact surfaces) and **GLB** from File → Export and from the command line (`examples/export.rs`). **STEP import** 🟡 (2026-10-29, stage I1): 3D Model → Import (`IMP`) and File → Open of `.step` / `.stp` bring the file's solids and surface bodies in as one base feature (`Import1`, the file embedded, faces named by their STEP entity); `examples/step_info.rs` reports what a file gives. **STEP assemblies** 🟡 (I2): File → Open of an assembly file and Assemble → Place Imported CAD Files (`PIF`) make one document per product, placed as in the file. **Reference Model** 🟡 (I3): a part or an assembly opened from STEP follows its file; Update (Quick Access toolbar) reads it again and keeps the names of faces and components that stay (a window reports what changed), Break Link stops it. Bodies take the file's names and colours. **Export Face As** 🟡 (2026-11-06): the selected planar faces (one or several parallel ones) as DXF R12 (closed polylines with exact arcs, circles; layers OUTER / INNER) or SVG in mm, from the face's right-click menu or File → Export Face As (`FXF`). **Meshes** 🟡 (I4): File → Open / Import of **STL** (binary, ASCII) and **OBJ** bring mesh bodies (shown, measured, moved and exported; no modelling). **IGES** 🟡 (2026-11-20): File → Open / Import of `.igs` / `.iges` (the kernel's IGES reader restates it as STEP, which is embedded) and File → Export → IGES (`IGS`, IGES 5.3 B-rep of the solids). **3MF** 🟡 (2026-11-20): read (File → Open / Import, mesh bodies) and written (File → Export → 3MF, `3MF`, colours per appearance). To do: mesh units, settings.
 
 The table of formats is in [FILE_FORMAT.md, section 8](FILE_FORMAT.md#8-exchange-with-other-programs-not-the-native-format). **STEP AP242** has the highest priority, because exchange with every other CAD system goes through it.
 

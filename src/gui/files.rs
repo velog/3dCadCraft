@@ -49,6 +49,12 @@ pub(super) enum DialogPurpose {
     Extract(crate::document::DocumentId, crate::document::DocumentKind),
     /// 3D Model › Import: the STEP file (spec 7.7a).
     ImportCad,
+    /// Sketch › Insert AutoCAD File: a DXF drawing.
+    InsertDxf,
+    /// A drawing's File › Export › DXF (one file per sheet).
+    ExportDrawingDxf,
+    /// The Style and Standard Editor's Import PAT...: hatch patterns.
+    ImportPat,
     /// Home / Projects editor › Browse...: a design project (`.ccproj`).
     OpenProject,
     /// New Project: where `<name>.ccproj` goes (spec 0.6a §3.2).
@@ -72,24 +78,25 @@ const OPEN_EXTS: &[&str] = &[
     "ccdrw",
     "step",
     "stp",
+    "igs",
+    "iges",
     "stl",
     "obj",
+    "3mf",
 ];
 
-/// Files File → Open imports instead of opening (STEP, and meshes: STL, OBJ).
+/// Files File → Open imports instead of opening (STEP, IGES, and meshes: STL, OBJ).
 pub(super) fn is_import_file(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-        ["step", "stp", "stl", "obj"]
-            .iter()
-            .any(|x| e.eq_ignore_ascii_case(x))
-    })
+    crate::part::import::SourceKind::of(path).is_some()
 }
 
 /// Mesh files (STL, OBJ): imported as mesh bodies (spec 7.7a 3.14).
 pub(super) fn is_mesh_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("stl") || e.eq_ignore_ascii_case("obj"))
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        ["stl", "obj", "3mf"]
+            .iter()
+            .any(|x| e.eq_ignore_ascii_case(x))
+    })
 }
 
 impl DialogPurpose {
@@ -100,7 +107,7 @@ impl DialogPurpose {
             DialogPurpose::SaveFolder => "Save as Folder".into(),
             DialogPurpose::PackSource => "Pack and Go: Source File".into(),
             DialogPurpose::PackDestination => "Pack and Go: Destination Folder".into(),
-            DialogPurpose::Export(f) => format!("Export {}", f.extension().to_uppercase()),
+            DialogPurpose::Export(f) => format!("Export {}", f.label()),
             DialogPurpose::Diagnostics => "Save Diagnostics".into(),
             DialogPurpose::ExportOptions => "Export Application Options".into(),
             DialogPurpose::ImportOptions => "Import Application Options".into(),
@@ -120,6 +127,9 @@ impl DialogPurpose {
             DialogPurpose::LinkFile => "Link File".into(),
             DialogPurpose::InsertDocument => "Insert Document".into(),
             DialogPurpose::ImportCad => "Import".into(),
+            DialogPurpose::InsertDxf => "Insert AutoCAD File".into(),
+            DialogPurpose::ExportDrawingDxf => "Export DXF".into(),
+            DialogPurpose::ImportPat => "Import Hatch Patterns".into(),
             DialogPurpose::Extract(..) => "Save to Separate File".into(),
             DialogPurpose::OpenProject => "Open Project".into(),
             DialogPurpose::NewProject => "New Project".into(),
@@ -134,7 +144,9 @@ impl DialogPurpose {
             DialogPurpose::LinkFile | DialogPurpose::InsertDocument | DialogPurpose::PackSource => {
                 MODEL_EXTS
             }
-            DialogPurpose::ImportCad => &["step", "stp", "stl", "obj"],
+            DialogPurpose::ImportCad => &crate::part::import::SOURCE_EXTENSIONS,
+            DialogPurpose::InsertDxf | DialogPurpose::ExportDrawingDxf => &["dxf"],
+            DialogPurpose::ImportPat => &["pat"],
             // The active document's kind (`.ccpart`…) or the package.
             DialogPurpose::SaveAs => MODEL_EXTS,
             DialogPurpose::Extract(_, crate::document::DocumentKind::Part) => &["ccpart"],
@@ -148,6 +160,8 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Stl) => &["stl"],
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
             DialogPurpose::Export(ExportFormat::Glb) => &["glb"],
+            DialogPurpose::Export(ExportFormat::Iges) => &["igs", "iges"],
+            DialogPurpose::Export(ExportFormat::ThreeMf) => &["3mf"],
             DialogPurpose::Diagnostics => &["zip"],
             DialogPurpose::ExportOptions | DialogPurpose::ImportOptions => &["json"],
             DialogPurpose::Picture(_) => &["png", "jpg", "jpeg", "bmp"],
@@ -168,7 +182,9 @@ impl DialogPurpose {
             DialogPurpose::LinkFile | DialogPurpose::InsertDocument | DialogPurpose::PackSource => {
                 "3DCadCraft files"
             }
-            DialogPurpose::ImportCad => "STEP",
+            DialogPurpose::ImportCad => "STEP, IGES, STL, OBJ",
+            DialogPurpose::InsertDxf | DialogPurpose::ExportDrawingDxf => "DXF",
+            DialogPurpose::ImportPat => "Hatch patterns",
             DialogPurpose::SaveAs => "Part, Assembly, Drawing (one document) or Package (all)",
             DialogPurpose::Extract(_, k) | DialogPurpose::SaveTemplate(k) => {
                 crate::document::FileType::for_kind(k).name()
@@ -179,6 +195,8 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Stl) => "STL",
             DialogPurpose::Export(ExportFormat::Step) => "STEP",
             DialogPurpose::Export(ExportFormat::Glb) => "glTF binary",
+            DialogPurpose::Export(ExportFormat::Iges) => "IGES",
+            DialogPurpose::Export(ExportFormat::ThreeMf) => "3D Manufacturing Format",
             DialogPurpose::Diagnostics => "Zip archive",
             DialogPurpose::ExportOptions | DialogPurpose::ImportOptions => "Settings (JSON)",
             DialogPurpose::Picture(_) => "Pictures",
@@ -205,6 +223,8 @@ impl DialogPurpose {
                 | DialogPurpose::LinkFile
                 | DialogPurpose::InsertDocument
                 | DialogPurpose::ImportCad
+                | DialogPurpose::InsertDxf
+                | DialogPurpose::ImportPat
                 | DialogPurpose::OpenProject
                 | DialogPurpose::PackSource
         )
@@ -978,6 +998,7 @@ impl CadCraftApp {
             DialogPurpose::ExportDxf => format!("{stem}-flat.dxf"),
             DialogPurpose::ExportFace => format!("{stem}-face.dxf"),
             DialogPurpose::ExportPdf => format!("{stem}.pdf"),
+            DialogPurpose::ExportDrawingDxf => format!("{stem}.dxf"),
             DialogPurpose::ImportParams
             | DialogPurpose::ImportOptions
             | DialogPurpose::Picture(_)
@@ -985,6 +1006,8 @@ impl CadCraftApp {
             | DialogPurpose::LinkFile
             | DialogPurpose::InsertDocument
             | DialogPurpose::ImportCad
+            | DialogPurpose::InsertDxf
+            | DialogPurpose::ImportPat
             | DialogPurpose::OpenProject
             | DialogPurpose::PackSource => String::new(),
             DialogPurpose::PackDestination => format!("{stem} Package"),
@@ -1497,6 +1520,9 @@ impl CadCraftApp {
             DialogPurpose::LinkFile => self.docs_link_file(&path),
             DialogPurpose::InsertDocument => self.docs_insert_file(&path),
             DialogPurpose::ImportCad => self.import_file_picked(&path),
+            DialogPurpose::InsertDxf => self.insert_dxf_picked(&path),
+            DialogPurpose::ExportDrawingDxf => self.write_drawing_dxf(&path),
+            DialogPurpose::ImportPat => self.import_pat(&path),
             DialogPurpose::Extract(id, _) => self.docs_extract_to(id, &path),
             DialogPurpose::OpenProject => self.project_file_picked(&path, false),
             DialogPurpose::NewProject => self.project_file_picked(&path, true),
@@ -1700,14 +1726,30 @@ impl CadCraftApp {
                     self.open_pdf_export();
                     ui.close();
                 }
+                if ui
+                    .button("DXF...")
+                    .on_hover_text("Each sheet as a DXF in mm, a layer per drawing layer")
+                    .clicked()
+                {
+                    self.open_dialog(DialogPurpose::ExportDrawingDxf);
+                    ui.close();
+                }
                 return;
             }
             for (f, tip) in [
                 (ExportFormat::Stl, "Triangles in mm, for 3D printing"),
                 (ExportFormat::Step, "Exact B-rep for other CAD programs"),
                 (ExportFormat::Glb, "Binary glTF for viewers and the web"),
+                (
+                    ExportFormat::Iges,
+                    "IGES 5.3 trimmed surfaces for older CAD and CAM programs",
+                ),
+                (
+                    ExportFormat::ThreeMf,
+                    "3MF: triangles with colours, for 3D printing",
+                ),
             ] {
-                let label = format!("{}...", f.extension().to_uppercase());
+                let label = format!("{}...", f.label());
                 if ui.button(label).on_hover_text(tip).clicked() {
                     self.open_dialog(DialogPurpose::Export(f));
                     ui.close();

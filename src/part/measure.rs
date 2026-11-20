@@ -609,6 +609,12 @@ fn closest(a: &Geo, b: &Geo) -> Option<(Point3, Point3)> {
         (Geo::Points(p), Geo::Tris(t)) => pts_to_tris(p, t),
         (Geo::Tris(t), Geo::Points(p)) => pts_to_tris(p, t).map(|(x, y)| (y, x)),
         (Geo::Tris(t1), Geo::Tris(t2)) => {
+            // Every triangle against every other under a bounding volume hierarchy, exact
+            // triangle to triangle (edge against edge too: two crossed cylinders come nearest
+            // between their walls, at no vertex). Sampled vertices are the fallback.
+            if let Some(c) = crate::kernel::exact::distance::closest(t1, t2) {
+                return Some((c.a, c.b));
+            }
             let ab = pts_to_tris(&verts(t1), t2);
             let ba = pts_to_tris(&verts(t2), t1).map(|(x, y)| (y, x));
             [ab, ba]
@@ -721,6 +727,45 @@ mod tests {
             ])
             .unwrap();
             assert!(close(m.distance.unwrap().0, gap, 1e-6), "{:?}", m.distance);
+        }
+    }
+
+    /// Two blocks turned 45° about crossing axes come nearest between two of their edges, at
+    /// no vertex of either: the clearance is the gap between those skew edges exactly (sampled
+    /// vertices gave more).
+    #[test]
+    fn edge_to_edge_clearance_of_turned_blocks() {
+        use nalgebra::{Translation3, UnitQuaternion};
+        let p = PartDocument::with_box("Box1", [40.0, 10.0, 10.0]).unwrap();
+        let b = &p.body;
+        let half = std::f64::consts::FRAC_PI_4;
+        let s = 5.0 * std::f64::consts::SQRT_2; // centre to edge of a turned 10 x 10 section
+        for gap in [0.5, 3.0, 12.0] {
+            // The box's centre is at (20, 5, 5); move it to the origin before turning.
+            let a = Transform3::from_parts(
+                Translation3::new(0.0, 0.0, 0.0),
+                UnitQuaternion::from_axis_angle(&Vector3::x_axis(), half),
+            ) * Transform3::from_parts(
+                Translation3::new(-20.0, -5.0, -5.0),
+                UnitQuaternion::identity(),
+            );
+            let c = Transform3::from_parts(
+                Translation3::new(0.0, 0.0, 2.0 * s + gap),
+                UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::FRAC_PI_2)
+                    * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), half),
+            ) * Transform3::from_parts(
+                Translation3::new(-20.0, -5.0, -5.0),
+                UnitQuaternion::identity(),
+            );
+            let m = measure_placed(&[
+                (b, Target::Body("Box1".into()), a),
+                (b, Target::Body("Box1".into()), c),
+            ])
+            .unwrap();
+            let (d, pa, pb) = m.distance.unwrap();
+            assert!(close(d, gap, 1e-9), "{gap}: {d}");
+            // Both points in the middle of their edges, above the origin.
+            assert!(pa.coords.xy().norm() < 1e-6 && pb.coords.xy().norm() < 1e-6);
         }
     }
 

@@ -314,6 +314,19 @@ pub struct HatchStyle {
     pub spacing: f64,
     /// Cross-hatched (a second set at +90°).
     pub double: bool,
+    /// A pattern from a PAT file (spec 4.6 §3.9): its name, empty = plain lines.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub pattern: String,
+    /// The pattern's families, copied in (the drawing needs no PAT file); `angle` turns them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub families: Vec<super::pat::HatchFamily>,
+    /// The pattern's scale.
+    #[serde(skip_serializing_if = "is_one")]
+    pub scale: f64,
+}
+
+fn is_one(v: &f64) -> bool {
+    *v == 1.0
 }
 
 impl Default for HatchStyle {
@@ -323,6 +336,9 @@ impl Default for HatchStyle {
             angle: 45.0,
             spacing: 3.0,
             double: false,
+            pattern: String::new(),
+            families: Vec::new(),
+            scale: 1.0,
         }
     }
 }
@@ -669,6 +685,7 @@ impl DrawingStyles {
         l.on.then_some(super::sheet::Prim::Pen {
             color: l.color,
             plot: l.plot,
+            layer: l.name.clone(),
         })
     }
 

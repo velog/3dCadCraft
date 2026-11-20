@@ -76,6 +76,7 @@ pub mod split;
 pub mod standards;
 pub mod surface_op;
 pub mod sweep;
+pub mod threemf;
 pub mod thumbnail;
 pub mod units;
 pub mod variants;

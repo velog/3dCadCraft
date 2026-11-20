@@ -564,6 +564,7 @@ dependencies = [
  "slotmap",
  "solidcore-record",
  "solidcraft-doc",
+ "solidcraft-dynamics",
  "solidcraft-geom",
  "solidcraft-kernel",
  "sysinfo",
@@ -3264,6 +3265,17 @@ dependencies = [
  "solidcraft-sketch",
  "thiserror 2.0.21",
  "web-time",
+]
+
+[[package]]
+name = "solidcraft-dynamics"
+version = "0.45.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "solidcore-record",
+ "solidcraft-geom",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

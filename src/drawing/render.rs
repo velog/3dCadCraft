@@ -149,6 +149,7 @@ pub fn view_extras<'a>(
         l.on.then_some(Prim::Pen {
             color: l.color,
             plot: l.plot,
+            layer: l.name.clone(),
         })
     };
     let section_pen = st.pen(&st.defaults.section_layer);
@@ -235,6 +236,20 @@ pub fn view_extras<'a>(
                 .collect();
             for (turn, group) in groups {
                 let base = hs.angle + if turn { 90.0 } else { 0.0 };
+                if !hs.families.is_empty() {
+                    // A PAT pattern: every family, turned by the style's angle.
+                    for f in &hs.families {
+                        let segs = super::pat::family_segments(&group, f, base, hs.scale);
+                        for (a, b) in uncovered(segs, &cover) {
+                            out.push(Prim::Path {
+                                pts: vec![a, b],
+                                width: hatch_layer.weight,
+                                dashed: false,
+                            });
+                        }
+                    }
+                    continue;
+                }
                 let angles: &[f64] = if hs.double {
                     &[base, base + 90.0]
                 } else {

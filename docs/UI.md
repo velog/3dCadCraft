@@ -151,6 +151,7 @@ By default they are **as in Inventor**. Your own keys: **Tools → Customize →
 finds every command by its alias too):
 
 - 3D Model: CO Coil, RI Rib, CMB Combine, SPL Split, UCS UCS, BX Box, CY Cylinder, SPE Sphere, TOR Torus.
+- Sketch, Insert: IAF Insert AutoCAD File (a DXF drawing into the open sketch: layers, unit, joined ends).
 - Sketch, Format: CPT Center Point converts the selected points (Shift + click, or a box takes points on no curve too).
 - Sketch: TC Tangent Circle, AC Center Point Arc, RC / RCT Two / Three Point Center Rectangle, SL / SLO / SLC
   Center to Center / Overall / Center Point Slot, SLA / SLR Three Point / Center Point Arc Slot, SPV Control
@@ -171,8 +172,8 @@ finds every command by its alias too):
   UIB / UIP / UIR / UIS / UIV / UIT Browser / Properties / Ribbon / Status Bar / ViewCube / Axis Triad,
   UIL Reset UI Layout, UIM Minimize Ribbon.
 - Assembly: FIX Grounded, UPD Update, BOM Bill of Materials.
-- File / Help: NDW New Drawing, NAS New Assembly, SVF Save as Folder, SAT Save Copy As Template, PG Pack and Go, PJ Projects, FXF Export Face As, STL / STP / SGL Export STL / STEP /
-  GLB, SDG Save Diagnostics, SLG Open Logs Folder.
+- File / Help: NDW New Drawing, NAS New Assembly, SVF Save as Folder, SAT Save Copy As Template, PG Pack and Go, PJ Projects, FXF Export Face As, STL / STP / SGL / IGS / 3MF Export STL / STEP /
+  GLB / IGES / 3MF, SDG Save Diagnostics, SLG Open Logs Folder.
 
 E and H (3D Model) and L, D, O, X (sketch) have no longer alias starting with them, so they start at
 once (a test keeps it so).

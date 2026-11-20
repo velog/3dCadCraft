@@ -1,0 +1,21 @@
+[package]
+name = "solidcraft-dynamics"
+description = "SolidCraft multibody dynamics: rigid bodies, joint constraints, gravity and springs, integrated in time"
+version = "0.45.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+# Copied from SolidCraft main 61351c67 (crates/dynamics), unchanged; see vendor/README.md.
+
+[dependencies]
+solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "c7dcab172faf351d77983b78cdffe18059e35dda" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[lints.clippy]
+# As in SolidCraft's workspace: the copied code tests NaN-safe ranges this way.
+neg_cmp_op_on_partial_ord = "allow"

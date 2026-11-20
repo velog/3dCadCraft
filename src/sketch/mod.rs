@@ -43,6 +43,7 @@ mod shapes;
 mod solver;
 mod spline;
 
+pub mod dxf;
 pub mod fonts;
 pub mod text;
 pub use constraint::Constraint;

@@ -599,7 +599,7 @@ Apache-2.0; its kernel speed work moved to solidcore). In this order:
    (`tests/compat/names.json`), volume (oracle) and time (`tests/perf.rs`) before merging. Gains for free:
    Boolean / blend / shell / tessellation fixes, STEP import (Y-up, hyperbola / parabola, periodic
    B-splines, voids, large assemblies in parallel with instancing).
-2. **Kernel features to wire up**: IGES import, G2 fillets of straight edges, sweep guide rails / two
+2. **Kernel features to wire up**: IGES import (done 2026-11-20: File → Open / Import / Export; with it from SolidCraft: DXF in sketches and out of drawings, PAT hatches, 3MF, mesh distances in Measure, the STEP corpus test, Dynamic Simulation's solver), G2 fillets of straight edges, sweep guide rails / two
    rails / twist / end scale, surface Extend (natural / tangent / curvature), Untrim, surfaces through
    curve networks, boundary patches with G1/G2, continuity analysis, exact hidden lines for drawings
    (`geom/hlr`), clearance and version compare.

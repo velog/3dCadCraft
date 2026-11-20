@@ -27,8 +27,11 @@ const OPENED: &[&str] = &[
     "ccproj",
     "step",
     "stp",
+    "igs",
+    "iges",
     "stl",
     "obj",
+    "3mf",
 ];
 
 /// How often a shown folder is read again.

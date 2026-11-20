@@ -86,7 +86,7 @@ to, and an annotation whose edge is gone is marked (not deleted).
 |---|---|---|
 | Print | sheets to a printer, scale 1:1 or fit | ⬜ |
 | PDF | Current Sheet / All Sheets / Sheets in Range (From–To), Print Excluded Sheets, All Colors Black (images and shaded views stay coloured), Remove Object Line Weights, Vector Resolution (DPI of raster parts), Display Published File in Viewer | 🟡 File › Export › PDF... (or PDF in the command search): PDF Drawing Options (Current Sheet / All Sheets / Sheets in Range, Print Excluded Sheets, Remove Object Line Weights, Display Published File; All Colors Black is always true until colours come; Vector Resolution matters with raster views only) then the file name; one page per sheet at paper size, ISO line weights, hidden lines dashed, centre lines dash-dot, texts in an embedded subset of the UI font (Ubuntu Light: Latin + Cyrillic; final font choice open); waiting for a visual check |
-| DXF / DWG | per sheet, layers per object type | ⬜ (SolidCraft's DXF writer, `crates/io/src/dxf.rs`) |
+| DXF / DWG | per sheet, layers per object type | 🟡 File › Export › DXF... (2026-11-20): each sheet that prints its own DXF R12 file in mm (`<name>.dxf`, then `<name>-<sheet>.dxf`), from the same display list as the screen and the PDF (`drawing::dxf_out::sheet`): a DXF layer per drawing layer with its nearest AutoCAD colour, hidden lines on HIDDEN, centre lines on CENTER, texts as TEXT (`%%c`, `%%d`, `%%p`, `\U+XXXX`), arrowheads as SOLID; layers that do not plot are left out; test: written and read back with our DXF reader layer by layer; ⬜ DWG, R2000+ with true colours and line weights, arcs as arcs (view lines are polylines in the display list) |
 | SVG | (ours) | ⬜ |
 
 ## 4. Browser and editing behaviour
