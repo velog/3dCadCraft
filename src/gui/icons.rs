@@ -688,6 +688,10 @@ pub enum Icon {
     HideRelations,
     /// Degrees of Freedom (arrows round a block).
     DofGlyph,
+    /// Show Constraints: every constraint's glyph (two plates and a tag).
+    AsmShowConstraints,
+    /// Show Joints: every joint's glyph (a pin and a turn).
+    ShowJoints,
     /// Tube & Pipe (a bent pipe).
     TubePipe,
     /// Cable & Harness (wires to a plug).
@@ -4126,6 +4130,21 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             if icon == HideRelations {
                 p.line(&[(4.5, 1.0), (11.5, 7.5)], warn);
             }
+        }
+        AsmShowConstraints => {
+            p.block([1.0, 9.5, 14.0, 2.5, 1.5], ink, tint(ink, 40));
+            p.block([3.0, 12.0, 10.0, 3.0, 1.5], ink, tint(ink, 40));
+            p.rect(1.0, 1.5, 9.0, 7.0, acc);
+            p.text(5.0, 4.3, "M", 5.5, acc);
+            p.line(&[(9.0, 4.3), (12.0, 4.3), (12.0, 9.5)], acc);
+        }
+        ShowJoints => {
+            p.block([1.0, 10.0, 6.0, 5.0, 2.0], ink, tint(ink, 40));
+            p.block([9.0, 10.0, 6.0, 5.0, 2.0], ink, tint(ink, 40));
+            p.circle(8.0, 12.5, 1.5, acc);
+            p.rect(4.0, 1.0, 12.0, 6.5, acc);
+            p.text(8.0, 3.8, "Ro", 5.0, acc);
+            p.arc(8.0, 12.5, 3.5, 200.0, 340.0, hot);
         }
         DofGlyph => {
             p.block([5.0, 8.0, 5.0, 4.0, 2.0], ink, tint(ink, 40));

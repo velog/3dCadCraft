@@ -1962,6 +1962,8 @@ impl CadCraftApp {
             Action::AsmShowRel => self.show_relationships(),
             Action::AsmShowSick => self.show_sick_relationships(),
             Action::AsmHideRel => self.hide_relationships(),
+            Action::AsmShowCons => self.toggle_glyphs(false),
+            Action::AsmShowJoints => self.toggle_glyphs(true),
             Action::AsmDof => self.cons.glyphs.dof = !self.cons.glyphs.dof,
             Action::AsmUpdate => self.update_assembly(),
             Action::AsmJoint => self.start_joint(),
@@ -2536,12 +2538,17 @@ impl CadCraftApp {
             && pointer.is_some_and(|p| self.frame_corner_click(p, rect));
         // A relationship's glyph takes the click (spec 3.1 §3.2b).
         let glyph = pointer.and_then(|p| self.relation_glyph_at(p));
+        let member_glyph = pointer.and_then(|p| self.member_glyph_at(p));
         let glyph_click = primary_click
             && !corner_click
             && matches!(self.asm.tool, None | Some(AsmTool::ShowRel))
-            && glyph.is_some();
-        if glyph_click && let Some(id) = glyph {
-            self.relation_glyph_select(id);
+            && (glyph.is_some() || member_glyph.is_some());
+        if glyph_click {
+            if let Some(id) = glyph {
+                self.relation_glyph_select(id, ctrl);
+            } else if let Some(m) = member_glyph {
+                self.member_glyph_select(m);
+            }
         }
         if primary_click && !corner_click && !glyph_click {
             match self.asm.tool {
@@ -2596,6 +2603,13 @@ impl CadCraftApp {
             return;
         }
         if response.double_clicked_by(PointerButton::Primary)
+            && !constraining
+            && let Some(m) = member_glyph
+        {
+            self.edit_members_start(&[m]);
+            return;
+        }
+        if response.double_clicked_by(PointerButton::Primary)
             && self.asm.tool.is_none()
             && !constraining
             && let Some(p) = pointer
@@ -2627,7 +2641,9 @@ impl CadCraftApp {
         // Bolted Connection's length arrow takes its own drag.
         let bolt_grip = !on_cube
             && !modal
-            && (self.bolt_grip(ui, response, rect) || self.frame_grip(ui, response, rect));
+            && (self.bolt_grip(ui, response, rect)
+                || self.frame_grip(ui, response, rect)
+                || self.relation_glyph_grip(ui, response, rect));
         if response.drag_started_by(PointerButton::Primary)
             && !bolt_grip
             && !on_cube
@@ -2675,6 +2691,14 @@ impl CadCraftApp {
         let cube_menu = self.cube_context;
         if response.secondary_clicked() {
             self.asm.menu_at = ui.input(|i| i.pointer.interact_pos()).map(|p| (p, rect));
+            // A glyph's menu works on that glyph: it is selected first (rule 17).
+            if let Some((p, _)) = self.asm.menu_at {
+                if let Some(id) = self.relation_glyph_at(p) {
+                    self.relation_glyph_select(id, false);
+                } else if let Some(m) = self.member_glyph_at(p) {
+                    self.member_glyph_select(m);
+                }
+            }
             self.shift_rmb = ui.input(|i| i.modifiers.shift);
         }
         response.context_menu(|ui| {
@@ -2697,6 +2721,16 @@ impl CadCraftApp {
                     .and_then(|(p, _)| self.relation_glyph_at(p))
             {
                 self.relation_glyph_menu(ui, id);
+                return;
+            }
+            if self.cons.draft.is_none()
+                && let Some(m) = self.asm.menu_at.and_then(|(p, _)| self.member_glyph_at(p))
+            {
+                if ui.button("Edit Member...").clicked() {
+                    self.edit_members_start(&[m]);
+                    ui.close();
+                }
+                self.frame_member_menu(ui, &[m]);
                 return;
             }
             if self.cons.draft.is_some() {
@@ -2796,6 +2830,7 @@ impl CadCraftApp {
         self.constrain_view(&painter, rect, pointer.filter(|_| on_view), constrain_click);
         self.dof_glyphs(&painter, rect);
         self.relation_glyphs(&painter, rect, pointer.filter(|_| on_view));
+        self.relation_value_box(ui.ctx());
         if measuring || !self.measure.open {
             self.asm_measure_view(&painter, rect, pointer.filter(|_| on_view), measure_click);
         }

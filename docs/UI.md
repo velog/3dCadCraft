@@ -260,7 +260,7 @@ row is a selection (it lights up in the view under the cursor). **Use the curren
 panel, remembered): on, the offset is the distance the components have now; off, they snap together at 0.
 **The whole assembly command set** ([spec/3.0](spec/3.0-assembly-commands.md), interface only — OK disabled): tabs
 Assemble (Component: Place from Library **PFL**, Change Size **CSZ**, Place Imported CAD Files **PIF**, Create **CRC**, Replace
-**RC** / **RA**; Relationships: Assemble **ASM** (pick on the component to move, then where it goes), Show **SHR** (glyphs: click selects, double click edits, right click for its commands), Show Sick **SSR**, Hide All **HAR**; Pattern **PCO**,
+**RC** / **RA**; Relationships: Assemble **ASM** (pick on the component to move, then where it goes), Show **SHR** (glyphs: click selects, double click edits, right click for its commands), Show Sick **SSR**, Hide All **HAR**, Show Constraints **SHC** and Show Joints **SHJ** (on / off, also View › Visibility: every constraint's / joint's glyph and a `Fr` glyph per frame member; a selected glyph's value is typed next to it, a joint's glyph is dragged along its motion; right click: Edit, Lock, Limits, Drive, Flip, Suppress, Delete); Pattern **PCO**,
 Mirror **MIC**, Copy **CPC**; Productivity: Make Layout **MKL**, Create Derived Substitutes **CDS**; Simplify
 **SIM**), **Design** (Bolted Connection **BC**, Clevis / Secure / Radial Pin **CVP SCP RDP**, Insert Frame **IFR**,
 Insert End Cap **FEC**, Change **FCH**, Frame Member Info **FMN**, Miter **FMI**, Notch **FNO**, Corner Joint **FCJ**,

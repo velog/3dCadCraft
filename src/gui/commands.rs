@@ -2430,6 +2430,22 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::AsmHideRel)
         .tip("Hides every relationship glyph")
         .spec("3.1-assemblies.md"),
+    c("asm.show_cons", "Show Constraints", "Показване на ограниченията в сглобката", Icon::AsmShowConstraints)
+        .short("Constraints")
+        .alias(&["SHC"])
+        .at(&[A_RELATIONSHIPS, V_VIS])
+        .env(ASSEMBLY)
+        .run(Action::AsmShowCons)
+        .tip("On / off: the glyph of every constraint and of every frame member in the view; hover, click, drag and right click them")
+        .spec("3.1-assemblies.md"),
+    c("asm.show_joints", "Show Joints", "Показване на всички съединения", Icon::ShowJoints)
+        .short("Joints")
+        .alias(&["SHJ"])
+        .at(&[A_RELATIONSHIPS, V_VIS])
+        .env(ASSEMBLY)
+        .run(Action::AsmShowJoints)
+        .tip("On / off: the glyph of every joint in the view; drag a joint's glyph to move it along its free motion")
+        .spec("3.1-assemblies.md"),
     c("asm.features", "Assembly Features", "Елементи на сглобката", Icon::AsmFeatures)
         .run(Action::AsmFeatures)
         .alias(&["AF"])

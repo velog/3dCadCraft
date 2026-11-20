@@ -83,6 +83,10 @@ pub enum Action {
     AsmShowSick,
     /// Assemble › Hide All.
     AsmHideRel,
+    /// Show Constraints: every constraint's glyph, on or off.
+    AsmShowCons,
+    /// Show Joints: every joint's glyph, on or off.
+    AsmShowJoints,
     /// View › Degrees of Freedom: on or off.
     AsmDof,
     /// Assemble › Constrain: Mate / Flush, Angle, Insert.
@@ -344,6 +348,10 @@ pub struct State {
     pub rel_sick: bool,
     /// The free motions of the components are shown.
     pub asm_dof: bool,
+    /// Every constraint's glyph is shown.
+    pub rel_all: bool,
+    /// Every joint's glyph is shown.
+    pub rel_joints: bool,
 }
 
 /// Ribbon tabs of the part environment.
@@ -828,6 +836,8 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("asm.show_rel"),
                     c("asm.show_sick"),
                     c("asm.hide_rel"),
+                    c("asm.show_cons"),
+                    c("asm.show_joints"),
                 ],
             ),
             panel(
@@ -1434,9 +1444,8 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             ],
         )],
         Tab::View => vec![
-            panel(
-                "Visibility",
-                vec![
+            panel("Visibility", {
+                let mut v = vec![
                     split(
                         "Object Visibility",
                         items(&[
@@ -1453,10 +1462,15 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     } else {
                         c("sketch.dof").label("Degrees of Freedom")
                     },
-                    c("view.cog"),
-                    c("view.analysis_visibility"),
-                ],
-            ),
+                ];
+                if st.assembly {
+                    v.push(c("asm.show_cons"));
+                    v.push(c("asm.show_joints"));
+                }
+                v.push(c("view.cog"));
+                v.push(c("view.analysis_visibility"));
+                v
+            }),
             panel(
                 "Navigate",
                 vec![
@@ -1565,6 +1579,8 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 asm_tool: None,
                 rel_sick: false,
                 asm_dof: false,
+                rel_all: false,
+                rel_joints: false,
                 flat: false,
             };
             for tab in Tab::ALL {
@@ -2002,6 +2018,8 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                 | Action::AsmShowRel => st.asm_tool == Some(*action),
                 Action::AsmShowSick => st.rel_sick,
                 Action::AsmDof => st.asm_dof,
+                Action::AsmShowCons => st.rel_all,
+                Action::AsmShowJoints => st.rel_joints,
                 Action::Ui(UiCmd::CleanScreen) => st.clean,
                 Action::Ui(UiCmd::FullScreen) => st.full_screen,
                 _ => false,
