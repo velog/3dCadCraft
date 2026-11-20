@@ -156,13 +156,13 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **Specification:** [spec/0.7-api-mcp.md](spec/0.7-api-mcp.md) · how to connect a client: [MCP.md](MCP.md)
 
-**State (2026-11-19).** Phase 1: `3dcadcraft-mcp` / `3dcadcraft --mcp` serve MCP over stdio — project new / open / save, Undo / Redo, atomic batches; sketches (line, rectangle, circle, arc, point, every constraint kind, DOF report); Extrude, Revolve, Hole, Fillet, Chamfer, Shell, Pattern; parameters; queries (feature tree with health, faces, edges, measure, physical properties, export STEP / STL / glTF); assemblies (place, Mate / Flush / Insert / Angle, solve). Calls run on a worker with progress, `status` and `cancel`. Not yet: the GUI hosting the server (the user watching and undoing agent steps), Component Library place, more features.
+**State (2026-11-19).** Phase 1: `3dcadcraft-mcp` / `3dcadcraft --mcp` serve MCP over stdio — project new / open / save, Undo / Redo, atomic batches; sketches (line, rectangle, circle, arc, point, every constraint kind, DOF report); Extrude, Revolve, Hole, Fillet, Chamfer, Shell, Pattern; parameters; queries (feature tree with health, faces, edges, measure, physical properties, export STEP / STL / glTF); assemblies (place, Mate / Flush / Insert / Angle, solve). Calls run on a worker with progress, `status` and `cancel`. Phase 2 (2026-11-20): face / edge aliases (`Top`, `Extrusion1:+X`) and descriptions, `face_at`; an `ai` line per call in the action journal; `--read-only`; Mirror, work planes / axes / points, Sweep, Loft, Component Library list and place; the running app as the server (Tools › AI Connector, `3dcadcraft --mcp --attach`, one Undo step `AI: <command>` per call, refused while the user edits). Not yet: HTTP (Remote phase), per-command permissions, coil / rib / draft / thread tools.
 
 **What it does.** External programs and AI agents drive 3DCadCraft **without a GUI**: they open projects, draw sketches, add constraints, extrude, read results (mass, volume, errors) and save.
 
 **How it works.**
 - A standalone server (`--no-default-features`, without the graphics part) that translates JSON-RPC methods and **MCP tools** into commands (0.4).
-- Transport: stdio (the standard one for MCP) and a local socket.
+- Transport: stdio (the standard one for MCP); the running app listens on a local pipe for the `--attach` bridge.
 - Every agent action is an ordinary command, so it **can be undone**.
 - Responses are structured: IDs of the created elements, the solver report, body validity.
 

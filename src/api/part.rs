@@ -546,7 +546,11 @@ pub(super) fn operation(a: &Args, part: &PartDocument) -> Result<Operation, ApiE
     )
 }
 
-pub(super) fn profiles(part: &PartDocument, i: usize, a: &Args) -> Result<Vec<ProfileRef>, ApiError> {
+pub(super) fn profiles(
+    part: &PartDocument,
+    i: usize,
+    a: &Args,
+) -> Result<Vec<ProfileRef>, ApiError> {
     let ps = &part.sketches[i];
     let regions = ps.sketch.regions();
     let list = match a.get("profiles") {
@@ -877,7 +881,8 @@ pub fn face_name(body: &BRep, a: &Args, name: &str) -> Result<String, ApiError> 
 
 fn face_ref(body: &BRep, a: &Args, name: &str) -> Result<FaceRef, ApiError> {
     let name = face_name(body, a, name)?;
-    let p = face_point(body, &name).ok_or_else(|| a.err(format!("no face '{name}' (see faces)")))?;
+    let p =
+        face_point(body, &name).ok_or_else(|| a.err(format!("no face '{name}' (see faces)")))?;
     Ok(FaceRef {
         face: name,
         hint: [p.x, p.y, p.z],
@@ -1135,7 +1140,9 @@ pub fn face_at(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
     let info = names::faces(&part.body)
         .into_iter()
         .find(|f| f.name == hit.name);
-    let mut v = info.map(|f| f.detail()).unwrap_or_else(|| json!({"name": hit.name}));
+    let mut v = info
+        .map(|f| f.detail())
+        .unwrap_or_else(|| json!({"name": hit.name}));
     v["point"] = json!(p3(&hit.point));
     v["distance"] = json!(round(hit.distance));
     Ok(v)
@@ -1217,7 +1224,6 @@ pub fn edges(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
     }
     Ok(v)
 }
-
 
 fn target(body: &BRep, a: &Args, v: &Value) -> Result<crate::part::measure::Target, ApiError> {
     use crate::part::measure::Target;

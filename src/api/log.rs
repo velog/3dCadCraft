@@ -54,13 +54,7 @@ pub fn line(
 
 /// Writes the line of a call into the session's journal (nothing when none is open, as in
 /// tests). `status` is polled while work runs and is not logged.
-pub fn record(
-    via: Via,
-    tool: &Tool,
-    args: &Value,
-    result: &Result<Value, ApiError>,
-    ms: u128,
-) {
+pub fn record(via: Via, tool: &Tool, args: &Value, result: &Result<Value, ApiError>, ms: u128) {
     if tool.name == "status" {
         return;
     }

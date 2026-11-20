@@ -57,7 +57,13 @@ impl Running {
         } else {
             super::log::Via::Headless
         };
-        super::log::record(via, self.tool, &self.args, result, self.started.elapsed().as_millis());
+        super::log::record(
+            via,
+            self.tool,
+            &self.args,
+            result,
+            self.started.elapsed().as_millis(),
+        );
     }
 }
 
@@ -123,8 +129,8 @@ pub fn run(o: &Options) -> Result<(), String> {
         tools::call(&mut session, "project_open", &json!({ "path": path }))
             .map_err(|e| e.to_string())?;
     }
-    let r = serve(io::BufReader::new(io::stdin()), io::stdout(), session)
-        .map_err(|e| e.to_string());
+    let r =
+        serve(io::BufReader::new(io::stdin()), io::stdout(), session).map_err(|e| e.to_string());
     crate::diagnostics::finish();
     r
 }

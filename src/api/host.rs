@@ -50,10 +50,7 @@ pub fn endpoint_for_user() -> String {
     let user = std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_default();
-    let user: String = user
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
+    let user: String = user.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let leaf = format!("3dcadcraft-mcp-{user}-{}", std::process::id());
     if cfg!(windows) {
         leaf
@@ -144,7 +141,8 @@ pub fn connect(ticket: &Path, read_only: bool) -> Result<(BufReader<Half>, Half)
         .map_err(|e| e.to_string())?;
     let mut line = String::new();
     rd.read_line(&mut line).map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(line.trim()).map_err(|_| "the app did not answer".to_owned())?;
+    let v: Value =
+        serde_json::from_str(line.trim()).map_err(|_| "the app did not answer".to_owned())?;
     if let Some(r) = v.get("refused").and_then(Value::as_str) {
         return Err(format!("the app refused the connection: {r}"));
     }
@@ -163,7 +161,10 @@ pub fn attach(read_only: bool) -> Result<(), String> {
         .spawn(move || {
             for line in io::stdin().lock().lines() {
                 let Ok(line) = line else { break };
-                if writeln!(to_app, "{line}").and_then(|()| to_app.flush()).is_err() {
+                if writeln!(to_app, "{line}")
+                    .and_then(|()| to_app.flush())
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -179,7 +180,11 @@ pub fn attach(read_only: bool) -> Result<(), String> {
         match from_app.read_line(&mut line) {
             Ok(0) | Err(_) => break,
             Ok(_) => {
-                if out.write_all(line.as_bytes()).and_then(|()| out.flush()).is_err() {
+                if out
+                    .write_all(line.as_bytes())
+                    .and_then(|()| out.flush())
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -336,7 +341,12 @@ fn accept_loop(
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok(stream) => {
-                let (c, b, t, tx) = (clients.clone(), busy.clone(), token.to_owned(), calls.clone());
+                let (c, b, t, tx) = (
+                    clients.clone(),
+                    busy.clone(),
+                    token.to_owned(),
+                    calls.clone(),
+                );
                 let spawned = std::thread::Builder::new()
                     .name("ai-connection".into())
                     .spawn(move || {
@@ -377,7 +387,10 @@ fn connection(
         return Err(io::Error::other("a client sent a wrong token"));
     }
     let read_only = hello.get("read_only").and_then(Value::as_bool) == Some(true);
-    send(&mut sh, &json!({"welcome": "3dcadcraft", "version": env!("CARGO_PKG_VERSION")}))?;
+    send(
+        &mut sh,
+        &json!({"welcome": "3dcadcraft", "version": env!("CARGO_PKG_VERSION")}),
+    )?;
     ::log::info!("AI Connector: a client connected (read only: {read_only})");
     serve_connection(rd, sh, read_only, calls, busy)
 }
@@ -461,7 +474,10 @@ where
                 }
                 break;
             }
-            Event::Bad(e) => send(&mut out, &error(&Value::Null, -32700, &format!("parse error: {e}")))?,
+            Event::Bad(e) => send(
+                &mut out,
+                &error(&Value::Null, -32700, &format!("parse error: {e}")),
+            )?,
             Event::Done { seq: s, result } => {
                 if let Some(k) = internal.iter().position(|(q, _, _)| *q == s) {
                     let (_, id, what) = internal.remove(k);
@@ -559,7 +575,9 @@ fn stopped(t: &Tool) -> ApiError {
 fn resource_answer(id: &Value, what: &str, result: Result<Value, ApiError>) -> Value {
     match (what, result) {
         ("list", Ok(v)) => {
-            let mut list = vec![json!({"uri": "cadcraft://project", "name": "project", "title": "Project and documents", "mimeType": "application/json"})];
+            let mut list = vec![
+                json!({"uri": "cadcraft://project", "name": "project", "title": "Project and documents", "mimeType": "application/json"}),
+            ];
             for d in v["documents"].as_array().into_iter().flatten() {
                 if d["kind"] == "part"
                     && let Some(n) = d["name"].as_str()
@@ -588,26 +606,29 @@ fn handle<W: Write>(
     seq: &mut u64,
     internal: &mut Vec<(u64, Value, String)>,
 ) -> io::Result<Option<Waiting>> {
-    let (Some(method), Some(id)) = (msg.get("method").and_then(Value::as_str), msg.get("id").cloned())
-    else {
+    let (Some(method), Some(id)) = (
+        msg.get("method").and_then(Value::as_str),
+        msg.get("id").cloned(),
+    ) else {
         return Ok(None); // notifications and answers to nothing we asked
     };
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
-    let mut forward = |tool: &'static Tool, args: Value| -> Result<(u64, Arc<AtomicBool>), ApiError> {
-        *seq += 1;
-        let cancel = Arc::new(AtomicBool::new(false));
-        calls
-            .send(HostCall {
-                tool,
-                args,
-                read_only: mode.read_only,
-                cancel: cancel.clone(),
-                seq: *seq,
-                reply: tx.clone(),
-            })
-            .map_err(|_| stopped(tool))?;
-        Ok((*seq, cancel))
-    };
+    let mut forward =
+        |tool: &'static Tool, args: Value| -> Result<(u64, Arc<AtomicBool>), ApiError> {
+            *seq += 1;
+            let cancel = Arc::new(AtomicBool::new(false));
+            calls
+                .send(HostCall {
+                    tool,
+                    args,
+                    read_only: mode.read_only,
+                    cancel: cancel.clone(),
+                    seq: *seq,
+                    reply: tx.clone(),
+                })
+                .map_err(|_| stopped(tool))?;
+            Ok((*seq, cancel))
+        };
     match method {
         "initialize" => send(out, &reply(&id, initialize(&params)))?,
         "ping" => send(out, &reply(&id, json!({})))?,
@@ -624,7 +645,10 @@ fn handle<W: Write>(
             {
                 ("features", json!({"part": n}), uri.to_owned())
             } else {
-                send(out, &error(&id, -32002, &format!("resource not found: {uri}")))?;
+                send(
+                    out,
+                    &error(&id, -32002, &format!("resource not found: {uri}")),
+                )?;
                 return Ok(None);
             };
             let Some(t) = tools::find(tool) else {
@@ -652,7 +676,10 @@ fn handle<W: Write>(
                 send(out, &reply(&id, tool_result(e)))?;
                 return Ok(None);
             }
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             match forward(tool, args) {
                 Ok((s, cancel)) => {
                     return Ok(Some(Waiting {
@@ -668,7 +695,10 @@ fn handle<W: Write>(
                 Err(e) => send(out, &reply(&id, tool_result(Err(e))))?,
             }
         }
-        _ => send(out, &error(&id, -32601, &format!("method not found: {method}")))?,
+        _ => send(
+            out,
+            &error(&id, -32601, &format!("method not found: {method}")),
+        )?,
     }
     Ok(None)
 }
@@ -696,7 +726,10 @@ fn progress<W: Write>(out: &mut W, w: &mut Waiting) -> io::Result<()> {
     w.sent += 1;
     w.last = text.clone();
     let params = json!({"progressToken": token, "progress": w.sent, "message": text});
-    send(out, &json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": params}))
+    send(
+        out,
+        &json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": params}),
+    )
 }
 
 #[cfg(test)]
@@ -765,14 +798,16 @@ mod tests {
             assert_eq!(host.clients(), 1);
             drop(host);
         });
-        let msg = |id: u64, method: &str, params: Value| {
-            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})
-        };
+        let msg = |id: u64, method: &str, params: Value| json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let mut ask = |v: Value| -> Value {
             let _ = writeln!(wr, "{v}").and_then(|()| wr.flush());
             line(&mut rd)
         };
-        let init = ask(msg(1, "initialize", json!({"protocolVersion": "2025-06-18"})));
+        let init = ask(msg(
+            1,
+            "initialize",
+            json!({"protocolVersion": "2025-06-18"}),
+        ));
         assert_eq!(init["result"]["protocolVersion"], "2025-06-18", "{init}");
         let list = ask(msg(2, "tools/list", json!({})));
         let names: Vec<&str> = list["result"]["tools"]
@@ -781,14 +816,32 @@ mod tests {
             .flatten()
             .filter_map(|t| t["name"].as_str())
             .collect();
-        assert!(names.contains(&"extrude") && !names.contains(&"project_open"), "{names:?}");
-        let r = ask(msg(3, "tools/call", json!({"name": "document_new", "arguments": {"kind": "part", "name": "P"}})));
+        assert!(
+            names.contains(&"extrude") && !names.contains(&"project_open"),
+            "{names:?}"
+        );
+        let r = ask(msg(
+            3,
+            "tools/call",
+            json!({"name": "document_new", "arguments": {"kind": "part", "name": "P"}}),
+        ));
         assert_eq!(r["result"]["isError"], false, "{r}");
-        let r = ask(msg(4, "tools/call", json!({"name": "project_open", "arguments": {"path": "x.3dcadcraft"}})));
+        let r = ask(msg(
+            4,
+            "tools/call",
+            json!({"name": "project_open", "arguments": {"path": "x.3dcadcraft"}}),
+        ));
         assert_eq!(r["result"]["isError"], true, "{r}");
         let r = ask(msg(5, "resources/list", json!({})));
-        assert_eq!(r["result"]["resources"][1]["uri"], "cadcraft://part/P/features", "{r}");
-        let r = ask(msg(6, "tools/call", json!({"name": "status", "arguments": {}})));
+        assert_eq!(
+            r["result"]["resources"][1]["uri"], "cadcraft://part/P/features",
+            "{r}"
+        );
+        let r = ask(msg(
+            6,
+            "tools/call",
+            json!({"name": "status", "arguments": {}}),
+        ));
         assert_eq!(r["result"]["structuredContent"]["active"], "P", "{r}");
         done.store(true, Ordering::Relaxed);
         let _ = fwd.join();

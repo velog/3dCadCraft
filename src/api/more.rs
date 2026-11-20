@@ -14,9 +14,7 @@ use super::tools::{obj, part_prop};
 use crate::part::loft::{LoftFeature, LoftSection};
 use crate::part::pattern::{PatternFeature, PatternKind};
 use crate::part::sweep::{PathRef, SweepFeature};
-use crate::part::work::{
-    LineRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef,
-};
+use crate::part::work::{LineRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef};
 use crate::part::{OriginPlane, PartDocument, PlaneRef, PointRef};
 
 fn plane_prop() -> Value {
@@ -64,7 +62,9 @@ fn point_ref(part: &PartDocument, a: &Args, s: &str) -> Result<PointRef, ApiErro
     if part.work.points.contains_key(s) {
         return Ok(PointRef::Work(s.to_owned()));
     }
-    Err(a.err(format!("no point '{s}': give 'origin' or a work point (work_point)")))
+    Err(a.err(format!(
+        "no point '{s}': give 'origin' or a work point (work_point)"
+    )))
 }
 
 fn need<'a>(a: &'a Args, key: &str) -> Result<&'a str, ApiError> {
@@ -120,7 +120,11 @@ fn work_answer(part: &PartDocument, id: &str) -> Value {
     v
 }
 
-fn add_work(s: &mut Session, a: &Args, def: impl FnOnce(&PartDocument) -> Result<WorkDef, ApiError>) -> Result<Value, ApiError> {
+fn add_work(
+    s: &mut Session,
+    a: &Args,
+    def: impl FnOnce(&PartDocument) -> Result<WorkDef, ApiError>,
+) -> Result<Value, ApiError> {
     let part = part_mut(s, a)?;
     let def = def(part)?;
     let id = part
@@ -345,9 +349,12 @@ pub fn loft(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
         }
         let regions = ps.sketch.regions();
         let r = sec.opt_count("region")?.unwrap_or(0) as usize;
-        let region = regions
-            .get(r)
-            .ok_or_else(|| a.err(format!("section {n}: no region {r} in {} (see sketch_info)", ps.id)))?;
+        let region = regions.get(r).ok_or_else(|| {
+            a.err(format!(
+                "section {n}: no region {r} in {} (see sketch_info)",
+                ps.id
+            ))
+        })?;
         sections.push(LoftSection::Profile {
             sketch: ps.id.clone(),
             profile: crate::part::extrude::ProfileRef::of(region, region.interior_point()),
@@ -386,8 +393,10 @@ pub fn library(_: &mut Session, a: &Args) -> Result<Value, ApiError> {
             .iter()
             .find(|x| x.name.eq_ignore_ascii_case(f))
             .ok_or_else(|| a.err(format!("no family '{f}' (see library)")))?;
-        return Ok(json!({"family": fam.name, "category": fam.category, "standard": fam.standard,
-            "sizes": fam.members.iter().map(|m| m.size.clone()).collect::<Vec<_>>()}));
+        return Ok(
+            json!({"family": fam.name, "category": fam.category, "standard": fam.standard,
+            "sizes": fam.members.iter().map(|m| m.size.clone()).collect::<Vec<_>>()}),
+        );
     }
     let words: Vec<String> = a
         .opt_str("search")?
@@ -434,7 +443,12 @@ pub fn library_place(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
         .members
         .iter()
         .position(|m| m.size.eq_ignore_ascii_case(size))
-        .ok_or_else(|| a.err(format!("{} has no size '{size}' (see library {{family}})", fam.name)))?;
+        .ok_or_else(|| {
+            a.err(format!(
+                "{} has no size '{size}' (see library {{family}})",
+                fam.name
+            ))
+        })?;
     let doc_name = format!("{} {}", fam.name, fam.members[mi].size);
     s.assembly(a.cmd, a.opt_str("assembly")?)?;
     if !s.project.name_taken(&doc_name, None) {

@@ -88,7 +88,7 @@ The decisions that determine everything else are made now, while changing them i
 | Undo/Redo with snapshots and gesture coalescing (0.4) | ✅ |
 | Command enum for the API (0.4) | ⬜ |
 | Parameters and expressions (0.5) | ⬜ |
-| JSON-RPC/MCP server with the basic commands (0.7) | 🟡 2026-11-19: stdio server `3dcadcraft-mcp` with project, sketch, feature, query and assembly tools ([spec](spec/0.7-api-mcp.md), [how to connect](MCP.md)); the GUI hosting it (Ctrl+Z of agent steps) ⬜ |
+| JSON-RPC/MCP server with the basic commands (0.7) | 🟡 2026-11-19: stdio server `3dcadcraft-mcp` with project, sketch, feature, query and assembly tools ([spec](spec/0.7-api-mcp.md), [how to connect](MCP.md)); 2026-11-20: aliases, `face_at`, AI action log, `--read-only`, sweep / loft / mirror / work features / library, the GUI hosting it (Tools › AI Connector, `--attach`, Ctrl+Z of agent steps) |
 
 **Acceptance criteria:**
 - An agent over MCP creates a project and a sketch with constraints and saves a file that the GUI opens.
@@ -534,9 +534,11 @@ How 3DCadCraft is used at each stage. The steps marked ⬜ become possible with 
 3. The agent calls `create_sketch`, `add_rectangle`, `add_constraint`, `extrude`, `hole` and gets the IDs and the solver reports.
 4. The user sees the result in the GUI. Every step of the agent is undone with Ctrl+Z.
 
-State 2026-11-19: steps 1–3 work headless (`tests/mcp.rs::roadmap_plate_over_the_protocol`); the
-saved file opens in the GUI. Step 4 live (the GUI hosting the server) is next; cancel does not
-yet stop the kernel's work (the abandoned worker finishes and is thrown away).
+State 2026-11-20: steps 1–3 work headless (`tests/mcp.rs::roadmap_plate_over_the_protocol`); the
+saved file opens in the GUI. Step 4 live: with Tools › AI Connector › Allow AI connections the agent
+started as `3dcadcraft --mcp --attach` works on the open project, each call one Undo step
+`AI: <command>`. Headless, cancel does not yet stop the kernel's work (the abandoned worker finishes and
+is thrown away); in the app it cancels the background job like Esc.
 
 What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, see
 `SOLIDCRAFT_ISSUES.md`) — requirements for ours:
