@@ -1,0 +1,9 @@
+# <file under tests/step_corpus>  <why it cannot pass yet>
+# Each of these is fixed in SolidCraft's reader after our pin (c7dcab1): they pass when the
+# kernel pin moves (the kernel agent's work); the file names the upstream issue it came with.
+regressions/rod_doubled_edge.step  the bore rim's 1399-point B-spline: our tessellation refuses an edge of more than 20000 nodes (SolidCraft #4598)
+regressions/cylinder_rim_off_its_wall.step  a rim 0.2 um off its wall in a file of 0.01 um: the wall is left out, the body comes in open
+regressions/torus_patch_and_rest.step  a clockwise outer loop on a torus: the rest face read as the patch turned over, volume 0 (SolidCraft #17930)
+regressions/torus_patch_and_rest_revolved.step  faces on SURFACE_OF_REVOLUTION of a rational circle get no pcurves ("flat arrays"), no body (SolidCraft #17929)
+regressions/hole_round_revolved.step  the round on a SURFACE_OF_REVOLUTION gets no pcurves ("flat arrays"), no body (SolidCraft #17929)
+regressions/thread_crest_band.step  a face whose loop round a helical groove reaches every angle: no clear angle for its seam, the face is left out (SolidCraft #16930)
