@@ -687,7 +687,7 @@ pub enum Icon {
     /// Degrees of Freedom (arrows round a block).
     DofGlyph,
     /// Show Constraints: every constraint's glyph (two plates and a tag).
-    ShowConstraints,
+    AsmShowConstraints,
     /// Show Joints: every joint's glyph (a pin and a turn).
     ShowJoints,
     /// Tube & Pipe (a bent pipe).
@@ -4119,7 +4119,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
                 p.line(&[(4.5, 1.0), (11.5, 7.5)], warn);
             }
         }
-        ShowConstraints => {
+        AsmShowConstraints => {
             p.block([1.0, 9.5, 14.0, 2.5, 1.5], ink, tint(ink, 40));
             p.block([3.0, 12.0, 10.0, 3.0, 1.5], ink, tint(ink, 40));
             p.rect(1.0, 1.5, 9.0, 7.0, acc);

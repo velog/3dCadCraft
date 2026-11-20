@@ -2691,6 +2691,14 @@ impl CadCraftApp {
         let cube_menu = self.cube_context;
         if response.secondary_clicked() {
             self.asm.menu_at = ui.input(|i| i.pointer.interact_pos()).map(|p| (p, rect));
+            // A glyph's menu works on that glyph: it is selected first (rule 17).
+            if let Some((p, _)) = self.asm.menu_at {
+                if let Some(id) = self.relation_glyph_at(p) {
+                    self.relation_glyph_select(id, false);
+                } else if let Some(m) = self.member_glyph_at(p) {
+                    self.member_glyph_select(m);
+                }
+            }
             self.shift_rmb = ui.input(|i| i.modifiers.shift);
         }
         response.context_menu(|ui| {

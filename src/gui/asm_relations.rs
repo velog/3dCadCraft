@@ -305,16 +305,18 @@ impl CadCraftApp {
     /// The value relationship `c` has as the components stand (the cached ends'
     /// geometry, no face walk): an offset, an angle, a joint's turn or slide.
     fn relation_value_now(&mut self, c: &relation::Constraint) -> Option<Real> {
-        let a = self.relation_world(c.id, false, &c.a)?;
-        let b = self.relation_world(c.id, true, &c.b)?;
+        let (a, ta) = self.relation_local(c.id, false, &c.a)?;
+        let (b, tb) = self.relation_local(c.id, true, &c.b)?;
         let (a, b) = (
             relation::for_kind(c.kind, &c.a, a),
             relation::for_kind(c.kind, &c.b, b),
         );
-        if relation::is_axis_mate(c.kind, &a, &b) {
-            return relation::measure(c, &a.as_frame(), &b.as_frame());
+        // A joint's (or a Mate of axes') frame is taken in part coordinates before it
+        // moves: its x axis turns with the part.
+        if c.kind.is_joint() || relation::is_axis_mate(c.kind, &a, &b) {
+            return relation::measure(c, &a.as_frame().moved(&ta), &b.as_frame().moved(&tb));
         }
-        relation::measure(c, &a, &b)
+        relation::measure(c, &a.moved(&ta), &b.moved(&tb))
     }
 
     /// Is `c` a Mate / Flush of axes (its value is the turn about them)?
@@ -404,7 +406,8 @@ impl CadCraftApp {
         let Some((id, at)) = self.cons.glyphs.value_at else {
             return;
         };
-        if self.cons.glyphs.drag.is_some() || self.cons.draft.is_some() {
+        // A menu or popup open over the view (the glyph's own menu) stays readable.
+        if self.cons.glyphs.drag.is_some() || self.cons.draft.is_some() || ctx.any_popup_open() {
             return;
         }
         let Some(c) = self.assembly().and_then(|a| a.constraint(id)).cloned() else {
@@ -422,6 +425,10 @@ impl CadCraftApp {
             self.relation_value_now(&c).unwrap_or(c.value)
         };
         let mut v = if angle { now.to_degrees() } else { now };
+        if !held {
+            // A measured value: as many places as the field shows a typed one.
+            v = (v * 1e4).round() / 1e4;
+        }
         let before = v;
         let mut expr = if held { c.expr.clone() } else { None };
         let label = match c.kind.joint_value() {
@@ -747,7 +754,7 @@ impl CadCraftApp {
                 );
                 spots.push((r, c.id));
                 if self.cons.selected == Some(c.id) && self.cons.glyphs.value_at.is_none() {
-                    self.cons.glyphs.value_at = Some((c.id, r.right_top() + Vec2::new(4.0, 0.0)));
+                    self.cons.glyphs.value_at = Some((c.id, r.left_bottom() + Vec2::new(0.0, 4.0)));
                 }
                 if pointer.is_some_and(|p| r.contains(p)) {
                     under = Some(c.clone());

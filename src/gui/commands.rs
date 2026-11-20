@@ -2418,7 +2418,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::AsmHideRel)
         .tip("Hides every relationship glyph")
         .spec("3.1-assemblies.md"),
-    c("asm.show_cons", "Show Constraints", "Показване на всички ограничения", Icon::ShowConstraints)
+    c("asm.show_cons", "Show Constraints", "Показване на ограниченията в сглобката", Icon::AsmShowConstraints)
         .short("Constraints")
         .alias(&["SHC"])
         .at(&[A_RELATIONSHIPS, V_VIS])
