@@ -407,7 +407,11 @@ impl CadCraftApp {
                     });
                 });
             });
-        let elsewhere = ctx.input(|i| i.pointer.any_click()) && !r.response.hovered();
+        // A click outside the panel's rectangle (its widgets take their own).
+        let inside = ctx
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|p| r.response.rect.contains(p));
+        let elsewhere = ctx.input(|i| i.pointer.any_click()) && !inside;
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
             ok = true;
         }

@@ -13,7 +13,7 @@ use crate::part::frame::Library;
 use eframe::egui::{self, Pos2, Rect, Stroke, Vec2};
 
 /// Size of the picture, px.
-const SIZE: Vec2 = Vec2::new(150.0, 118.0);
+const SIZE: Vec2 = Vec2::new(150.0, 132.0);
 /// Radius of a point's button, px.
 const DOT: f32 = 5.0;
 
@@ -40,7 +40,11 @@ pub(super) fn anchor_picker(ui: &mut egui::Ui, d: &mut PartDialog) {
     let t = theme::tokens();
     painter.rect_filled(rect, 4.0, t.field);
     let (w, h) = sec.extent();
-    let area = rect.shrink2(Vec2::new(14.0, 12.0));
+    // The section above, the point's name in a row of its own below it.
+    let area = Rect::from_min_max(
+        rect.min + Vec2::new(14.0, 10.0),
+        rect.max - Vec2::new(14.0, 26.0),
+    );
     let scale = (area.width() as f64 / w.max(1e-6)).min(area.height() as f64 / h.max(1e-6));
     let c = area.center();
     let to = |x: f64, y: f64| Pos2::new(c.x + (x * scale) as f32, c.y - (y * scale) as f32);

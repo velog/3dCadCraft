@@ -177,6 +177,10 @@ fn stash(d: &mut PartDialog) -> bool {
 /// the selection is cleared for the next one. The panel's note says what
 /// was kept.
 pub(super) fn add_set(d: &mut PartDialog) -> String {
+    if !d.members.list.is_empty() {
+        return "+ Add Set: Edit Frame Members changes the checked members; Insert Frame keeps sets"
+            .into();
+    }
     if d.skeletons.is_empty() && d.frame_set_current.is_none() {
         return "+ Add Set: select the lines of this set first".into();
     }
