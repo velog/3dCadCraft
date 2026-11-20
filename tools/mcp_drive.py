@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Drive the 3DCadCraft MCP server with a script of tool calls (docs/MCP.md).
 
-    python tools/mcp_drive.py SERVER SCRIPT.json
+    python tools/mcp_drive.py SERVER SCRIPT.json [SERVER ARGS...]
 
-SERVER is the `3dcadcraft-mcp` binary; SCRIPT is a JSON list of [tool, arguments] pairs. The
-script initializes, runs every call in order, prints one line per answer and stops at the first
-tool error (exit code 1).
+SERVER is the `3dcadcraft-mcp` binary (or `3dcadcraft` with the arguments `--mcp --attach`);
+SCRIPT is a JSON list of [tool, arguments] pairs. The script initializes, runs every call in order,
+prints one line per answer and stops at the first tool error (exit code 1) unless
+MCP_DRIVE_CONTINUE=1 is set.
 """
 
 import json
+import os
 import subprocess
 import sys
 
@@ -17,7 +19,7 @@ def main():
     server, script = sys.argv[1], sys.argv[2]
     with open(script, encoding="utf-8") as f:
         calls = json.load(f)
-    p = subprocess.Popen([server], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
+    p = subprocess.Popen([server, *sys.argv[3:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
     ident = 0
 
     def request(method, params):
@@ -48,7 +50,8 @@ def main():
         print(f"{tool}: {text}")
         if res.get("isError") or "error" in r:
             code = 1
-            break
+            if os.environ.get("MCP_DRIVE_CONTINUE") != "1":
+                break
     p.stdin.close()
     p.wait(timeout=30)
     sys.exit(code)

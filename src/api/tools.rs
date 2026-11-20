@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::args::Args;
 use super::session::{ApiError, Session};
-use super::{asm, part};
+use super::{asm, more, part};
 use crate::document::{AssemblyDocument, DocumentData, Project};
 use crate::part::PartDocument;
 
@@ -303,6 +303,54 @@ static TOOLS: &[Tool] = &[
         run: part::pattern,
     },
     Tool {
+        name: "mirror",
+        command: "Mirror",
+        description: "Mirrors features about a plane: XY, XZ, YZ, a work plane or a planar face (name or alias).",
+        effect: Effect::Change,
+        schema: more::mirror_schema,
+        run: more::mirror,
+    },
+    Tool {
+        name: "work_plane",
+        command: "Work Plane",
+        description: "Adds a work plane: offset from a plane (distance mm), midplane of two planes, or at an angle (degrees) to a plane about a line. Returns its id (WorkPlane1) for sketch_create {plane}, mirror, other work features.",
+        effect: Effect::Change,
+        schema: more::work_plane_schema,
+        run: more::work_plane,
+    },
+    Tool {
+        name: "work_axis",
+        command: "Work Axis",
+        description: "Adds a work axis: where two planes meet, through a circular edge's centre, or square to a plane through a point (origin or a work point). Returns its id (WorkAxis1).",
+        effect: Effect::Change,
+        schema: more::work_axis_schema,
+        run: more::work_axis,
+    },
+    Tool {
+        name: "work_point",
+        command: "Work Point",
+        description: "Adds a work point: fixed at [x, y, z], where three planes meet, or where a line pierces a plane. Returns its id (WorkPoint1).",
+        effect: Effect::Change,
+        schema: more::work_point_schema,
+        run: more::work_point,
+    },
+    Tool {
+        name: "sweep",
+        command: "Sweep",
+        description: "Sweeps closed regions of a profile sketch along a path: curves of another sketch (path_sketch + path_curves handles) or model edges (path_edges). Operation as extrude.",
+        effect: Effect::Change,
+        schema: more::sweep_schema,
+        run: more::sweep,
+    },
+    Tool {
+        name: "loft",
+        command: "Loft",
+        description: "Lofts through two or more sections in order: {sketch, region} or {sketch, point} (a point only first or last). Sketch the sections on parallel work planes. Operation as extrude; closed=true joins the last to the first.",
+        effect: Effect::Change,
+        schema: more::loft_schema,
+        run: more::loft,
+    },
+    Tool {
         name: "parameters",
         command: "Parameters",
         description: "The part's parameters: sketch dimensions, feature values and user parameters, with value, unit and equation.",
@@ -335,7 +383,7 @@ static TOOLS: &[Tool] = &[
     Tool {
         name: "faces",
         command: "Faces",
-        description: "Faces by persistent name (e.g. Extrusion1:End) with their surface type; detail=true adds area, centre and the normal of planes. 'feature' keeps the faces of one feature.",
+        description: "Faces as [name, surface, alias, dir]: the persistent name (Extrusion1:End), surface type, a short alias when one exists (Top, Extrusion1:+X; any face argument accepts it) and a plane's outward normal (+X ... -Z, or a vector). detail=true adds area, centre, normal, radius. 'feature' keeps the faces of one feature. Answers always use persistent names.",
         effect: Effect::Read,
         schema: || {
             obj(
@@ -348,15 +396,23 @@ static TOOLS: &[Tool] = &[
     Tool {
         name: "edges",
         command: "Edges",
-        description: "Edges as 'FaceA|FaceB' (the faces they separate), with kind (line, circle, curve) and length. 'face' keeps the edges of one face.",
+        description: "Edges as [edge, kind, length, alias]: 'FaceA|FaceB' (the faces they separate), line / circle / curve, length, and 'AliasA|AliasB' when both faces have an alias (edge arguments accept aliases on either side, e.g. Top|+X). detail=true adds the middle point and a line's direction. 'face' keeps the edges of one face.",
         effect: Effect::Read,
         schema: || {
             obj(
-                json!({"part": part_prop(), "face": {"type": "string"}, "feature": {"type": "string"}}),
+                json!({"part": part_prop(), "face": {"type": "string"}, "feature": {"type": "string"}, "detail": {"type": "boolean"}}),
                 &[],
             )
         },
         run: part::edges,
+    },
+    Tool {
+        name: "face_at",
+        command: "Select Face",
+        description: "The face at a model point: with 'direction', the first face the ray from 'point' meets (like a click); without, the face nearest the point. Answers its persistent name, aliases, surface, centre, normal, the point on it and the distance.",
+        effect: Effect::Read,
+        schema: part::face_at_schema,
+        run: part::face_at,
     },
     Tool {
         name: "measure",
@@ -418,6 +474,22 @@ static TOOLS: &[Tool] = &[
         run: asm::solve,
     },
     Tool {
+        name: "library",
+        command: "Component Library",
+        description: "Component Library families as [category, family, standard, sizes]; 'search' filters by words, 'family' lists that family's sizes.",
+        effect: Effect::Read,
+        schema: more::library_schema,
+        run: more::library,
+    },
+    Tool {
+        name: "library_place",
+        command: "Place from Library",
+        description: "Places a Component Library member (family + size) in the active assembly at [x, y, z]: the member becomes a part document of the project (reused when placed again). Returns the occurrence.",
+        effect: Effect::Change,
+        schema: more::library_place_schema,
+        run: more::library_place,
+    },
+    Tool {
         name: "components",
         command: "Components",
         description: "The active assembly's components: occurrence name, part, position, grounded; and its relationships.",
@@ -427,9 +499,27 @@ static TOOLS: &[Tool] = &[
     },
 ];
 
+/// Whether `t` may run on `s`: a read-only server runs only reading tools (and, headless,
+/// `project_open`); the app's session refuses the tools that replace its project.
+pub fn allowed(s: &Session, t: &Tool) -> Result<(), String> {
+    if s.hosted && t.effect == Effect::Replace {
+        return Err("refused while attached to the app: open or start the project there".into());
+    }
+    if s.read_only && t.effect != Effect::Read && !(t.name == "project_open" && !s.hosted) {
+        return Err("refused, the server is read-only".into());
+    }
+    Ok(())
+}
+
+/// The tools `s` may run, in `tools/list` order.
+pub fn listed(s: &Session) -> Vec<&'static Tool> {
+    TOOLS.iter().filter(|t| allowed(s, t).is_ok()).collect()
+}
+
 /// Runs tool `t` on `work` (a copy of the session for a changing tool). On success a changing
 /// tool marks the copy dirty.
 pub fn run_on(work: &mut Session, t: &Tool, args: &Value) -> Result<Value, ApiError> {
+    allowed(work, t).map_err(|e| ApiError::new(t.command, e))?;
     let empty = json!({});
     let args = if args.is_null() { &empty } else { args };
     if !args.is_object() {
@@ -458,14 +548,23 @@ pub fn finish(session: &mut Session, t: &Tool, work: Session) {
 /// runs [`run_on`] on a worker thread and [`finish`] when it is done).
 pub fn call(session: &mut Session, name: &str, args: &Value) -> Result<Value, ApiError> {
     let t = find(name).ok_or_else(|| ApiError::new(name, "no such tool"))?;
-    if matches!(t.effect, Effect::Read | Effect::InPlace) {
-        return run_on(session, t, args);
-    }
-    let mut work = session.clone();
-    let r = run_on(&mut work, t, args);
-    if r.is_ok() {
-        finish(session, t, work);
-    }
+    let started = std::time::Instant::now();
+    let r = if matches!(t.effect, Effect::Read | Effect::InPlace) {
+        run_on(session, t, args)
+    } else {
+        let mut work = session.clone();
+        let r = run_on(&mut work, t, args);
+        if r.is_ok() {
+            finish(session, t, work);
+        }
+        r
+    };
+    let via = if session.hosted {
+        super::log::Via::App
+    } else {
+        super::log::Via::Headless
+    };
+    super::log::record(via, t, args, &r, started.elapsed().as_millis());
     r
 }
 

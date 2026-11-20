@@ -89,6 +89,8 @@ fn side(s: &Session, asm: &AssemblyDocument, a: &Args, key: &str) -> Result<Geom
         _ => return Err(a.err(format!("{occ} is not a part of this project"))),
     };
     if let Some(face) = side.opt_str("face")? {
+        let face = &super::names::resolve_face(&part.body, face)
+            .ok_or_else(|| a.err(format!("{occ} has no face '{face}'")))?;
         let p = face_point(&part.body, face)
             .ok_or_else(|| a.err(format!("{occ} has no face '{face}'")))?;
         return Ok(GeomRef::Face {
@@ -101,6 +103,7 @@ fn side(s: &Session, asm: &AssemblyDocument, a: &Args, key: &str) -> Result<Geom
     let edge = side
         .opt_str("edge")?
         .ok_or_else(|| a.err(format!("'{key}' needs 'face' or 'edge'")))?;
+    let edge = &super::names::resolve_edge(&part.body, edge);
     let (x, y) = edge
         .split_once('|')
         .ok_or_else(|| a.err("an edge is 'FaceA|FaceB'"))?;

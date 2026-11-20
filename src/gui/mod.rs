@@ -23,6 +23,7 @@
 //! Set `CADCRAFT3D_DEMO=rectangle|slot|tangents|lines` to start with a demo
 //! sketch on the box's top face.
 
+mod ai_connector;
 mod alias_input;
 mod asm_browser;
 mod asm_create;
@@ -900,6 +901,8 @@ struct CadCraftApp {
     background_ok: bool,
     /// The job building the part on a worker thread (spec 0.19 §3.3).
     bg: Option<background::BgJob>,
+    /// Tools › AI Connector: the app as an agent's MCP server (spec 0.7 §3.9).
+    ai: ai_connector::AiUi,
     /// Application Options › Assembly › Frame member file names (pattern).
     frame_member_naming: String,
     /// Application Options › Display: the projection at start.
@@ -1385,6 +1388,7 @@ impl CadCraftApp {
             fast_cuts: true,
             background_ok: !cfg!(test),
             bg: None,
+            ai: Default::default(),
             frame_member_naming: crate::assembly::frame::DEFAULT_NAMING.into(),
             default_projection: Default::default(),
             default_visual_style: Default::default(),
@@ -5007,6 +5011,7 @@ impl CadCraftApp {
             AppCmd::Help => self.open_help(),
             AppCmd::SaveDiagnostics => self.open_dialog(files::DialogPurpose::Diagnostics),
             AppCmd::OpenLogsFolder => self.open_logs_folder(),
+            AppCmd::AiConnector => self.ai.window = !self.ai.window,
             AppCmd::SliceGraphics => {
                 if self.editing.is_some() {
                     self.slice = !self.slice;
@@ -9197,6 +9202,7 @@ impl eframe::App for CadCraftApp {
             self.home_follow_documents();
         }
         self.bg_tick(&ctx);
+        self.ai_tick(&ctx);
         {
             let _t = frame_trace::span("shortcuts");
             self.shortcuts(&ctx);
@@ -9204,6 +9210,7 @@ impl eframe::App for CadCraftApp {
         {
             let _t = frame_trace::span("files and import windows");
             self.files_ui(&ctx);
+            self.ai_window(&ctx);
             self.import_ask_ui(&ctx);
             self.import_ui(&ctx);
             self.import_report_ui(&ctx);

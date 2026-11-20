@@ -174,6 +174,8 @@ pub enum AppCmd {
     SaveDiagnostics,
     /// Help → Open Logs Folder.
     OpenLogsFolder,
+    /// Tools › AI Connector: the window that allows AI agents to connect (spec 0.7 §3.9).
+    AiConnector,
     /// Slice Graphics (F7, in a sketch).
     SliceGraphics,
     /// Select All (Ctrl+A).
@@ -382,7 +384,11 @@ impl Command {
                     || (self.id.starts_with("file.") && !self.id.starts_with("file.export"))
                     || matches!(
                         self.id,
-                        "tools.undo" | "tools.redo" | "tools.options" | "tools.customize"
+                        "tools.undo"
+                            | "tools.redo"
+                            | "tools.options"
+                            | "tools.customize"
+                            | "tools.ai_connector"
                     )))
     }
 
@@ -1590,6 +1596,12 @@ pub static COMMANDS: &[Command] = &[
     c("tools.assistant", "AI Assistant", "AI асистент", Icon::Assistant)
         .at(&[T_AUTO])
         .todo("7.6"),
+    c("tools.ai_connector", "AI Connector", "Връзка с AI агент", Icon::AiConnector)
+        .alias(&["AIC"])
+        .run(Action::App(AppCmd::AiConnector))
+        .at(&[T_AUTO])
+        .tip("Let an AI agent (Claude Code, Claude Desktop) work on the open project: it connects with 3dcadcraft --mcp --attach, every change is one Undo step")
+        .spec("0.7-api-mcp.md"),
     c("tools.undo", "Undo", "Отмяна", Icon::Undo)
         .run(Action::Undo)
         .key("Ctrl+Z")

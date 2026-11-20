@@ -30,7 +30,18 @@ use crate::part::PartDocument;
 /// new feature's id) or the job failed (`Err` with the reason, the part unchanged).
 pub(super) type Then = Box<dyn FnOnce(&mut CadCraftApp, Result<String, String>)>;
 
-type Done = (PartDocument, Result<String, String>);
+type PartDone = (PartDocument, Result<String, String>);
+
+/// A worker's result: a part job's copy, or an AI call's session (spec 0.7 §3.9).
+pub(super) enum Done {
+    /// [`CadCraftApp::part_job`].
+    Part(Box<PartDone>),
+    /// [`CadCraftApp::ai_job`]: the session the tool ran on and its answer.
+    Ai(
+        Box<crate::api::Session>,
+        Result<serde_json::Value, crate::api::ApiError>,
+    ),
+}
 
 /// The running job.
 pub(super) struct BgJob {
@@ -44,6 +55,8 @@ pub(super) struct BgJob {
     cancel: Arc<AtomicBool>,
     then: Option<Then>,
     started: std::time::Instant,
+    /// The AI call this job runs (answered when it ends).
+    pub(super) ai: Option<crate::api::host::HostCall>,
 }
 
 impl BgJob {
@@ -87,7 +100,23 @@ fn build_now(
 ) -> Done {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(&mut trial)))
         .unwrap_or_else(|_| Err("internal error while building the part".into()));
-    (trial, r)
+    Done::Part(Box::new((trial, r)))
+}
+
+/// Runs AI tool `tool` on `work` here and now (a kernel panic becomes the error).
+pub(super) fn ai_now(
+    mut work: crate::api::Session,
+    tool: &'static crate::api::tools::Tool,
+    args: &serde_json::Value,
+) -> Done {
+    let r = crate::diagnostics::crash::guard(|| crate::api::tools::run_on(&mut work, tool, args))
+        .unwrap_or_else(|_| {
+            Err(crate::api::ApiError::new(
+                tool.command,
+                "internal error (the kernel stopped); nothing was changed",
+            ))
+        });
+    Done::Ai(Box::new(work), r)
 }
 
 /// Runs `work` on `trial` on a worker thread (64 MB stack, a cancellable progress reporter named
@@ -110,6 +139,26 @@ fn build_on_worker(
             let _ = tx.send(build_now(trial, work));
         })?;
     Ok((rx, cancel))
+}
+
+/// [`ai_now`] on a worker thread, like [`build_on_worker`].
+fn ai_on_worker(
+    work: crate::api::Session,
+    tool: &'static crate::api::tools::Tool,
+    args: serde_json::Value,
+    label: &str,
+    cancel: Arc<AtomicBool>,
+) -> std::io::Result<Receiver<Done>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let name = label.to_owned();
+    std::thread::Builder::new()
+        .name("ai-build".into())
+        .stack_size(64 << 20)
+        .spawn(move || {
+            let _progress = crate::part::progress::Reporter::install_cancellable(&name, cancel);
+            let _ = tx.send(ai_now(work, tool, &args));
+        })?;
+    Ok(rx)
 }
 
 /// `<Command>: <reason>` (0-ui), unless the reason already names the command (a result dropped
@@ -171,6 +220,7 @@ impl CadCraftApp {
             cancel,
             then: Some(Box::new(then)),
             started,
+            ai: None,
         };
         if !self.background_ok {
             let (_, rx) = std::sync::mpsc::channel();
@@ -183,6 +233,50 @@ impl CadCraftApp {
         match build_on_worker(trial, label, work) {
             Ok((rx, cancel)) => self.bg = Some(job(rx, cancel)),
             Err(e) => self.file_status = Some(Err(format!("{label}: could not start ({e})"))),
+        }
+    }
+
+    /// Runs AI tool `call` on `work` (a copy of the project) — on a worker when the option is on,
+    /// else at once — as the one background job; [`CadCraftApp::ai_take`] takes the result back
+    /// as one Undo step.
+    pub(super) fn ai_job(&mut self, call: crate::api::host::HostCall, work: crate::api::Session) {
+        let label = crate::api::host::job_label(call.tool);
+        let started = std::time::Instant::now();
+        let (doc, sig) = (self.part_id, self.part_signature());
+        let cancel = call.cancel.clone();
+        let tool = call.tool;
+        let args = call.args.clone();
+        let mut job = BgJob {
+            label: label.clone(),
+            checkpoint: None,
+            doc,
+            sig,
+            rx: std::sync::mpsc::channel().1,
+            cancel: cancel.clone(),
+            then: None,
+            started,
+            ai: Some(call),
+        };
+        if !self.background_ok {
+            let done = ai_now(work, tool, &args);
+            self.bg_finish(job, done);
+            return;
+        }
+        crate::diagnostics::activity(&format!("background {label}"));
+        match ai_on_worker(work, tool, args, &label, cancel) {
+            Ok(rx) => {
+                job.rx = rx;
+                self.bg = Some(job);
+            }
+            Err(e) => {
+                if let Some(c) = job.ai.take() {
+                    let e = Err(crate::api::ApiError::new(
+                        tool.command,
+                        format!("could not start ({e})"),
+                    ));
+                    self.ai_answer(c, e, started);
+                }
+            }
         }
     }
 
@@ -225,10 +319,19 @@ impl CadCraftApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(50));
                 return;
             }
-            Err(TryRecvError::Disconnected) => (
-                PartDocument::default(),
-                Err("internal error while building the part".into()),
-            ),
+            Err(TryRecvError::Disconnected) => match &job.ai {
+                Some(c) => Done::Ai(
+                    Box::default(),
+                    Err(crate::api::ApiError::new(
+                        c.tool.command,
+                        "internal error; nothing was changed",
+                    )),
+                ),
+                None => Done::Part(Box::new((
+                    PartDocument::default(),
+                    Err("internal error while building the part".into()),
+                ))),
+            },
         };
         if let Some(job) = self.bg.take() {
             self.bg_finish(job, done);
@@ -237,10 +340,17 @@ impl CadCraftApp {
 
     /// Esc while a job runs: the job stops where it can and its result is never taken.
     pub(super) fn bg_cancel(&mut self) -> bool {
-        let Some(job) = self.bg.take() else {
+        let Some(mut job) = self.bg.take() else {
             return false;
         };
         job.cancel.store(true, Ordering::Relaxed);
+        if let Some(c) = job.ai.take() {
+            let e = Err(crate::api::ApiError::new(
+                c.tool.command,
+                "cancelled; the project is as it was before the call",
+            ));
+            self.ai_answer(c, e, job.started);
+        }
         log::info!(
             "{}: cancelled after {:.1} s",
             job.label,
@@ -250,7 +360,27 @@ impl CadCraftApp {
         true
     }
 
-    fn bg_finish(&mut self, mut job: BgJob, (part, result): Done) {
+    fn bg_finish(&mut self, mut job: BgJob, done: Done) {
+        let (part, result) = match done {
+            Done::Part(d) => *d,
+            Done::Ai(work, result) => {
+                if let Some(call) = job.ai.take() {
+                    let result = if result.is_ok() && job.doc != self.part_id {
+                        Err(crate::api::ApiError::new(
+                            call.tool.command,
+                            "the user switched documents while it ran; nothing was changed",
+                        ))
+                    } else {
+                        result
+                    };
+                    if result.is_ok() {
+                        self.ai_take(call.tool, *work);
+                    }
+                    self.ai_answer(call, result, job.started);
+                }
+                return;
+            }
+        };
         let then = job.then.take();
         let result = match result {
             Ok(_) if job.doc != self.part_id || job.sig != self.part_signature() => {
@@ -288,6 +418,13 @@ mod tests {
         )
     }
 
+    fn part_of(d: Done) -> PartDone {
+        match d {
+            Done::Part(p) => *p,
+            Done::Ai(..) => panic!("a part job answered as an AI job"),
+        }
+    }
+
     fn names(p: &PartDocument) -> Vec<String> {
         let mut v: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
         v.sort();
@@ -300,9 +437,9 @@ mod tests {
     fn a_worker_builds_what_the_main_thread_builds() {
         let part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
         let add = |p: &mut PartDocument| p.add_blend(fillet()).map_err(|e| e.to_string());
-        let (now, r_now) = build_now(part.clone(), add);
+        let (now, r_now) = part_of(build_now(part.clone(), add));
         let (rx, _cancel) = build_on_worker(part.clone(), "test fillet", add).unwrap();
-        let (bg, r_bg) = rx.recv().unwrap();
+        let (bg, r_bg) = part_of(rx.recv().unwrap());
         assert_eq!(r_now, r_bg);
         assert!(r_now.is_ok());
         assert_eq!(now.features.len(), part.features.len() + 1);
@@ -324,11 +461,11 @@ mod tests {
             p.add_blend(bad).map_err(|e| e.to_string())
         })
         .unwrap();
-        let (_, r) = rx.recv().unwrap();
+        let (_, r) = part_of(rx.recv().unwrap());
         assert!(r.is_err());
-        let (_, r) = build_now(part.clone(), |_| -> Result<String, String> {
+        let (_, r) = part_of(build_now(part.clone(), |_| -> Result<String, String> {
             std::panic::panic_any("boom")
-        });
+        }));
         assert_eq!(r, Err("internal error while building the part".into()));
         assert_eq!(part.features.len(), 1);
     }
@@ -349,7 +486,7 @@ mod tests {
         .unwrap();
         cancel.store(true, Ordering::Relaxed);
         go.send(()).unwrap();
-        let (p, _) = rx.recv().unwrap();
+        let (p, _) = part_of(rx.recv().unwrap());
         // nothing was built: the loop stopped before the first feature
         assert_eq!(p.body.faces().count(), 0);
     }

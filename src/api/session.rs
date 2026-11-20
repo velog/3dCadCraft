@@ -59,6 +59,11 @@ pub struct Session {
     pub history: History<Snapshot>,
     /// The tools changed the project since it was opened or saved.
     pub dirty: bool,
+    /// Only reading tools run (`--read-only`, spec 0.7 §3.6).
+    pub read_only: bool,
+    /// The session is the running app's (spec 0.7 §3.9): the project tools that would replace
+    /// the user's project are refused.
+    pub hosted: bool,
 }
 
 impl Default for Session {
@@ -77,6 +82,8 @@ impl Clone for Session {
             active: self.active,
             history: History::new(1),
             dirty: self.dirty,
+            read_only: self.read_only,
+            hosted: self.hosted,
         }
     }
 }
@@ -91,6 +98,8 @@ impl Session {
             active,
             history: History::new(100),
             dirty: false,
+            read_only: false,
+            hosted: false,
         }
     }
 

@@ -1279,7 +1279,14 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             ),
             panel("Parameters", vec![c("tools.parameters").large()]),
             panel("Update", vec![c("tools.rebuild_all").large()]),
-            panel("Automation", vec![c("tools.rules"), c("tools.assistant")]),
+            panel(
+                "Automation",
+                vec![
+                    c("tools.rules"),
+                    c("tools.assistant"),
+                    c("tools.ai_connector"),
+                ],
+            ),
             panel("History", vec![c("tools.undo"), c("tools.redo")]),
         ],
         Tab::Manage => {

@@ -526,3 +526,280 @@ fn roadmap_plate_over_the_protocol() {
     let f = c.tool("features", json!({}));
     assert_eq!(f["features"][1]["id"], "Hole1");
 }
+
+/// Spec 0.7 §3.4a: aliases and descriptions of faces, aliases accepted everywhere, answers in
+/// persistent names, `face_at`.
+#[test]
+fn face_aliases_and_face_at() {
+    let mut s = plate(50.0, 30.0, 10.0);
+    let faces = ok(&mut s, "faces", json!({}));
+    let row = |name: &str| -> Value {
+        faces["faces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r[0] == name)
+            .unwrap_or_else(|| panic!("no {name} in {faces}"))
+            .clone()
+    };
+    assert_eq!(
+        row("Extrusion1:End"),
+        json!(["Extrusion1:End", "plane", "Top", "+Z"])
+    );
+    assert_eq!(row("Extrusion1:Start")[2], "Bottom");
+    assert_eq!(row("Extrusion1:Start")[3], "-Z");
+    let detail = ok(&mut s, "faces", json!({"detail": true}));
+    let top = detail["faces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Extrusion1:End")
+        .unwrap()
+        .clone();
+    let aliases: Vec<&str> = top["aliases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(aliases, ["Top", "+Z", "Extrusion1:Top", "Extrusion1:+Z"]);
+    // The +X side: one face of the feature with that normal.
+    let right = detail["faces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["dir"] == "+X")
+        .unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Aliases are accepted by face arguments; answers give persistent names.
+    let m = ok(&mut s, "measure", json!({"a": "face:Top", "b": "Bottom"}));
+    assert!((m["distance"].as_f64().unwrap() - 10.0).abs() < 1e-6, "{m}");
+    let m = ok(
+        &mut s,
+        "measure",
+        json!({"a": "Extrusion1:Left", "b": "+X"}),
+    );
+    assert!((m["distance"].as_f64().unwrap() - 50.0).abs() < 1e-6, "{m}");
+    let edges = ok(&mut s, "edges", json!({"face": "Top"}));
+    assert_eq!(edges["edges"].as_array().unwrap().len(), 4, "{edges}");
+    let e = edges["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e[3] == "Top|Right" || e[3] == "Right|Top")
+        .unwrap_or_else(|| panic!("no Top|Right alias in {edges}"))
+        .clone();
+    assert!(e[0].as_str().unwrap().contains(&right), "{e}");
+    let sk = ok(&mut s, "sketch_create", json!({"face": "Top"}));
+    assert_eq!(sk["origin"][2], 10.0, "{sk}");
+    let f = ok(
+        &mut s,
+        "fillet",
+        json!({"edges": ["Right|Top"], "radius": 2}),
+    );
+    assert_eq!(f["feature"], "Fillet1", "{f}");
+    let e = err(&mut s, "measure", json!({"a": "Nowhere"}));
+    assert!(e.contains("no face 'Nowhere'"), "{e}");
+    // face_at: a ray down onto the plate, and the nearest face to a point beside it.
+    let hit = ok(
+        &mut s,
+        "face_at",
+        json!({"point": [25, 15, 50], "direction": [0, 0, -1]}),
+    );
+    assert_eq!(hit["name"], "Extrusion1:End", "{hit}");
+    assert!(
+        (hit["distance"].as_f64().unwrap() - 40.0).abs() < 1e-6,
+        "{hit}"
+    );
+    assert_eq!(hit["point"], json!([25.0, 15.0, 10.0]));
+    let near = ok(&mut s, "face_at", json!({"point": [25, -7, 5]}));
+    assert_eq!(near["dir"], "-Y", "{near}");
+    assert!(
+        (near["distance"].as_f64().unwrap() - 7.0).abs() < 1e-6,
+        "{near}"
+    );
+    let e = err(
+        &mut s,
+        "face_at",
+        json!({"point": [25, 15, 50], "direction": [0, 0, 1]}),
+    );
+    assert!(e.contains("meets no face"), "{e}");
+}
+
+/// Spec 0.7 §3.3: work features, sketches on work planes, loft, sweep, mirror.
+#[test]
+fn work_features_loft_sweep_mirror() {
+    let mut s = Session::default();
+    ok(
+        &mut s,
+        "document_new",
+        json!({"kind": "part", "name": "Cone"}),
+    );
+    let axis = ok(
+        &mut s,
+        "work_axis",
+        json!({"method": "planes", "plane": "XZ", "plane2": "YZ"}),
+    );
+    assert_eq!(axis["feature"], "WorkAxis1", "{axis}");
+    assert_eq!(
+        axis["direction"].as_array().unwrap()[2]
+            .as_f64()
+            .unwrap()
+            .abs(),
+        1.0
+    );
+    let pt = ok(
+        &mut s,
+        "work_point",
+        json!({"method": "planes", "planes": ["XY", "XZ", "YZ"]}),
+    );
+    assert_eq!(pt["point"], json!([0.0, 0.0, 0.0]), "{pt}");
+    let wp = ok(&mut s, "work_plane", json!({"plane": "XY", "distance": 30}));
+    assert_eq!(wp["feature"], "WorkPlane1", "{wp}");
+    assert_eq!(wp["origin"][2], 30.0, "{wp}");
+    ok(&mut s, "sketch_create", json!({"plane": "XY"}));
+    ok(
+        &mut s,
+        "sketch_circle",
+        json!({"sketch": "Sketch1", "center": [0, 0], "radius": 10}),
+    );
+    let top = ok(&mut s, "sketch_create", json!({"plane": "WorkPlane1"}));
+    assert_eq!(top["origin"][2], 30.0, "{top}");
+    ok(
+        &mut s,
+        "sketch_circle",
+        json!({"sketch": "Sketch2", "center": [0, 0], "radius": 5}),
+    );
+    let l = ok(
+        &mut s,
+        "loft",
+        json!({"sections": [{"sketch": "Sketch1"}, {"sketch": "Sketch2"}]}),
+    );
+    assert_eq!(l["feature"], "Loft1", "{l}");
+    let frustum = PI * 30.0 / 3.0 * (100.0 + 50.0 + 25.0);
+    let v = volume(&mut s);
+    assert!(
+        (v - frustum).abs() < 0.01 * frustum,
+        "loft {v} vs {frustum}"
+    );
+    let e = err(&mut s, "loft", json!({"sections": [{"sketch": "Sketch1"}]}));
+    assert!(e.starts_with("Loft: "), "{e}");
+
+    // Sweep: a circle on XZ along a line on XY (a rod along +Y).
+    let mut s = Session::default();
+    ok(
+        &mut s,
+        "document_new",
+        json!({"kind": "part", "name": "Rod"}),
+    );
+    ok(&mut s, "sketch_create", json!({"plane": "XZ"}));
+    ok(
+        &mut s,
+        "sketch_circle",
+        json!({"sketch": "Sketch1", "center": [0, 0], "radius": 2}),
+    );
+    ok(&mut s, "sketch_create", json!({"plane": "XY"}));
+    let line = ok(
+        &mut s,
+        "sketch_line",
+        json!({"sketch": "Sketch2", "from": [0, 0], "to": [0, 40]}),
+    );
+    let sw = ok(
+        &mut s,
+        "sweep",
+        json!({"sketch": "Sketch1", "path_sketch": "Sketch2", "path_curves": [line["curves"][0]]}),
+    );
+    assert_eq!(sw["feature"], "Sweep1", "{sw}");
+    let rod = PI * 4.0 * 40.0;
+    let v = volume(&mut s);
+    assert!((v - rod).abs() < 0.01 * rod, "sweep {v} vs {rod}");
+
+    // Mirror a boss about a work plane through the middle of the plate.
+    let mut s = plate(50.0, 30.0, 10.0);
+    ok(&mut s, "sketch_create", json!({"face": "Top"}));
+    ok(
+        &mut s,
+        "sketch_circle",
+        json!({"sketch": "Sketch2", "center": [10, 15], "radius": 3}),
+    );
+    let boss = ok(
+        &mut s,
+        "extrude",
+        json!({"sketch": "Sketch2", "distance": 5}),
+    );
+    let before = volume(&mut s);
+    let mid = ok(&mut s, "work_plane", json!({"plane": "YZ", "distance": 25}));
+    let m = ok(
+        &mut s,
+        "mirror",
+        json!({"features": [boss["feature"]], "plane": mid["feature"]}),
+    );
+    assert!(m["feature"].as_str().unwrap().starts_with("Mirror"), "{m}");
+    let after = volume(&mut s);
+    let cyl = PI * 9.0 * 5.0;
+    assert!(
+        (after - before - cyl).abs() < 0.01 * cyl,
+        "mirror adds {}",
+        after - before
+    );
+    let e = err(
+        &mut s,
+        "mirror",
+        json!({"features": ["Nope1"], "plane": "XY"}),
+    );
+    assert!(e.contains("no feature 'Nope1'"), "{e}");
+}
+
+/// Spec 0.7 §3.6: a read-only session lists and runs only reading tools.
+#[test]
+fn read_only_runs_only_queries() {
+    let mut s = plate(20.0, 10.0, 5.0);
+    s.read_only = true;
+    let e = err(
+        &mut s,
+        "extrude",
+        json!({"sketch": "Sketch1", "distance": 5}),
+    );
+    assert_eq!(e, "Extrude: refused, the server is read-only");
+    let e = err(&mut s, "project_save", json!({"path": "x.3dcadcraft"}));
+    assert!(e.ends_with("read-only"), "{e}");
+    ok(&mut s, "faces", json!({}));
+    ok(&mut s, "physical", json!({}));
+    let names: Vec<&str> = cadcraft3d::api::tools::listed(&s)
+        .iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(
+        names.contains(&"faces") && names.contains(&"project_open"),
+        "{names:?}"
+    );
+    assert!(
+        !names.contains(&"extrude") && !names.contains(&"batch"),
+        "{names:?}"
+    );
+    // The app's session refuses replacing its project, also when not read-only.
+    s.read_only = false;
+    s.hosted = true;
+    let e = err(&mut s, "project_new", json!({}));
+    assert!(e.contains("attached to the app"), "{e}");
+}
+
+/// Spec 0.7 §3.5: the Component Library's families are listed.
+#[test]
+fn library_lists_families() {
+    let mut s = Session::default();
+    let all = ok(&mut s, "library", json!({}));
+    let n = all["families"].as_array().unwrap().len();
+    assert!(n > 5, "{all}");
+    let first = all["families"][0][1].as_str().unwrap().to_owned();
+    let fam = ok(&mut s, "library", json!({"family": first}));
+    assert!(!fam["sizes"].as_array().unwrap().is_empty(), "{fam}");
+    let e = err(
+        &mut s,
+        "library_place",
+        json!({"family": first, "size": "nope"}),
+    );
+    assert!(e.starts_with("Place from Library: "), "{e}");
+}

@@ -261,6 +261,8 @@ pub struct AppOptions {
     pub fast_cuts: bool,
     /// OK, Rebuild All and edits build the part on a worker thread (spec 0.19 §3.3).
     pub background_ok: bool,
+    /// Tools › AI Connector › Allow AI connections (spec 0.7 §3.9).
+    pub ai_connector: bool,
     /// File Naming Defaults › Frame Generator: the pattern of a new frame
     /// member's file name (spec 6.1 §3.7, `frame::names_from_pattern`).
     pub frame_member_naming: String,
@@ -386,6 +388,7 @@ impl Default for AppOptions {
             thread_texture: true,
             fast_cuts: true,
             background_ok: true,
+            ai_connector: false,
             frame_member_naming: crate::assembly::frame::DEFAULT_NAMING.into(),
             dim_display: Default::default(),
             cursor_value: true,
@@ -814,6 +817,7 @@ impl Saver {
 /// Floating windows that Escape closes when the pointer is over them.
 const ESCAPE_CLOSES: &[&str] = &[
     "options",
+    "ai_connector",
     "color_schemes",
     "parameters",
     "materials",
@@ -1031,6 +1035,7 @@ impl CadCraftApp {
             thread_texture: self.thread_texture,
             fast_cuts: self.fast_cuts,
             background_ok: self.background_ok || cfg!(test),
+            ai_connector: self.ai.allowed,
             frame_member_naming: self.frame_member_naming.clone(),
             dim_display: self.dim_display,
             ui_theme: super::theme::current(),
@@ -1100,6 +1105,9 @@ impl CadCraftApp {
         self.internal_names = o.internal_names;
         self.fast_cuts = o.fast_cuts;
         self.background_ok = o.background_ok && !cfg!(test);
+        if o.ai_connector != self.ai.allowed && !cfg!(test) {
+            self.ai_set_allowed(o.ai_connector);
+        }
         self.frame_member_naming = o.frame_member_naming;
         crate::kernel::exact::set_fast_cuts(o.fast_cuts);
         super::theme::set_current(o.ui_theme);
@@ -1231,6 +1239,7 @@ impl CadCraftApp {
     fn close_floating(&mut self, key: &str) {
         match key {
             "options" => self.show_options = false,
+            "ai_connector" => self.ai.window = false,
             "color_schemes" => self.colors.editor = false,
             "parameters" => self.show_params = false,
             "offset" => self.offset_edit = None,

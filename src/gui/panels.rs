@@ -5146,6 +5146,8 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             let editing = self.editing.is_some();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(format!("Mouse: {}", self.mouse.label()));
+                ui.separator();
+                self.ai_indicator(ui);
                 if let Some(note) = self.filter_override_note() {
                     ui.separator();
                     ui.label(RichText::new(note).color(super::theme::tokens().warning));

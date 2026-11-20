@@ -160,7 +160,7 @@ finds every command by its alias too):
   Point, CSE Constraint Settings, ESK Finish Sketch, QDR / QDS / QDT / QDL / QDV the demos.
 - Inspect / Tools / Manage: PPR Physical Properties, IVS Validate Solid, AO Application Options, TDS Document Settings, MAT Material,
   APP Appearance, ADJ Adjust, APC Clear, PRM Parameters, RBA Rebuild All, STE Styles Editor, UST Update
-  Styles, PUR Purge Styles.
+  Styles, PUR Purge Styles, AIC AI Connector (Tools › Automation; also the status bar's `AI`).
 - Manage › Documents / Storage (spec 0.6b; part, assembly and drawing, not in a sketch): DM Documents,
   NP / NA / ND / NPN New Part / Assembly / Drawing / Presentation in This File (a part takes sheet metal
   features at any time: one part type),

@@ -200,6 +200,8 @@ pub enum Icon {
     Rebuild,
     Rules,
     Assistant,
+    /// AI Connector: a plug joined to a chat bubble.
+    AiConnector,
     Undo,
     Redo,
     Home,
@@ -2206,6 +2208,16 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.fill(&[(5.0, 11.0), (4.0, 15.0), (8.0, 12.0)], acc);
             p.disc(6.0, 7.0, 0.9, hot);
             p.disc(10.0, 7.0, 0.9, hot);
+        }
+        AiConnector => {
+            // the agent (a bubble) joined by a cable to a plug
+            p.circle(11.0, 5.5, 4.0, acc);
+            p.disc(9.6, 5.5, 0.8, hot);
+            p.disc(12.4, 5.5, 0.8, hot);
+            p.line(&[(8.2, 8.6), (5.5, 11.0)], ink);
+            p.rect(2.0, 11.0, 7.0, 14.5, ink);
+            p.line(&[(3.4, 14.5), (3.4, 16.0)], ink);
+            p.line(&[(5.6, 14.5), (5.6, 16.0)], ink);
         }
         Rebuild => {
             p.rect(5.5, 5.5, 10.5, 10.5, ink);
