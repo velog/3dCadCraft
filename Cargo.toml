@@ -131,8 +131,8 @@ solidcraft-doc = { path = "vendor/solidcraft-doc" }
 solidcraft-kernel = { path = "vendor/solidcraft-kernel" }
 solidcraft-smlib = { path = "vendor/solidcraft-smlib" }
 
-# solidcore main (4edd24b, 2026-11-19) plus our speed fixes (local branch solidcore-update2,
-# 835a354, to be pushed to our fork velog/solidcore; vendor/README.md lists them). Drop it when
-# upstream has them. LOCAL PATH while the fork push waits for the owner's yes.
+# solidcore main (4edd24b, 2026-11-19) plus our speed fixes (835a354,
+# branch solidcore-update2 of our fork velog/solidcore; vendor/README.md lists them). Drop it when
+# upstream has them.
 [patch."https://github.com/tangency-labs/solidcore"]
-solidcore = { path = "G:/bs/score/crates/solidcore" }
+solidcore = { git = "https://github.com/velog/solidcore", rev = "835a3545f8fe8fdefd59d14d432c24b1344698a1" }
