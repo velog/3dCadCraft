@@ -5361,6 +5361,11 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         .as_ref()
                         .and_then(|e| e.tool)
                         .map_or("3D Sketch: pick a tool on the 3D Sketch tab, select points or lines (3D Move: M), or Finish 3D Sketch (Esc)", |t| t.prompt());
+                    // The drawing plane first: a long prompt is cut at the end.
+                    if let Some(plane) = self.sk3_plane_status() {
+                        ui.label(RichText::new(plane).color(super::theme::tokens().accent));
+                        ui.separator();
+                    }
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.thread_draft.is_some() => {

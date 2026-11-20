@@ -150,6 +150,7 @@ mod simplify;
 mod sketch3d;
 mod sketch3d_insert;
 mod sketch3d_other;
+mod sketch3d_plane;
 mod sketch3d_view;
 mod sketch_marking;
 mod sketch_text;
@@ -5746,6 +5747,18 @@ impl CadCraftApp {
             }
             return;
         }
+        // A 3D sketch: Shift+Space cycles the drawing plane, Ctrl+R turns
+        // Ortho on / off (before the user's keys: these belong to the tool).
+        if self.sketch3d.is_some() && ctx.memory(|m| m.focused().is_none()) {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, Key::Space)) {
+                self.sk3_cycle_plane();
+                return;
+            }
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::R)) {
+                self.sk3_toggle_ortho();
+                return;
+            }
+        }
         // The user's own key combinations come before the built-in keys.
         if !self.home.shown && self.user_key_shortcuts(ctx) {
             return;
@@ -8074,6 +8087,7 @@ impl CadCraftApp {
             self.draw_cursor_value(ui.ctx(), &painter, rect, pointer);
             self.draw_split_arrow(&painter, rect);
             self.draw_pattern_refs(&painter, rect);
+            self.sk3_draw_plane(&painter, rect, pointer.filter(|_| on_cube.is_none()));
             self.draw_sketches3d(&painter, rect, pointer);
             self.sk3_draw_view(&painter, rect, pointer);
             self.sk3_view_boxes(ui.ctx(), rect);

@@ -605,12 +605,12 @@ const TABLE: &[(&str, &str)] = &[
         "Rectangular Pattern: щракнете прав ръб или равнина за Direction 2 (по избор; крива: по нея), после OK",
     ),
     (
-        "3D Line: click a model vertex, a work point, a face or a point of the sketch, or type X / Y / Z and Add Point",
-        "3D Line: щракнете връх, работна точка, стена или точка от скицата, или въведете X / Y / Z и Add Point",
+        "3D Line: click a model vertex, a work point, a face, a point of the sketch or a place on the drawing plane, or type X / Y / Z and Add Point",
+        "3D Line: щракнете връх, работна точка, стена, точка от скицата или място в равнината на чертане, или въведете X / Y / Z и Add Point",
     ),
     (
-        "3D Point: click a model vertex, a work point or a face, or type X / Y / Z",
-        "3D Point: щракнете връх, работна точка или стена, или въведете X / Y / Z",
+        "3D Point: click a model vertex, a work point, a face or a place on the drawing plane, or type X / Y / Z",
+        "3D Point: щракнете връх, работна точка, стена или място в равнината на чертане, или въведете X / Y / Z",
     ),
     (
         "Bend: click the corner point of two lines (the radius is in the panel)",
