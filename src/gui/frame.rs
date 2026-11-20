@@ -1072,9 +1072,8 @@ impl CadCraftApp {
         ) {
             return;
         }
-        if d.members.list.is_empty() {
-            self.frame_preview(d, painter, rect);
-        }
+        // Also Edit Frame Members: the members where OK would put them.
+        self.frame_preview(d, painter, rect);
         self.between_start_dot(d, painter, rect);
         for s in &d.skeletons {
             match s {

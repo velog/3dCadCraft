@@ -1064,9 +1064,9 @@ mod tests {
         let PatternLayout::Rectangular { column: c, .. } = &down else {
             panic!("not rectangular");
         };
-        let reference = c.occurrence();
-        assert_ne!(reference, 1);
-        assert!(assembly(&p, t.doc).find(reference).is_some());
+        // The frame's hidden Reference occurrence of the box.
+        let r = assembly(&p, t.doc).find(c.occurrence()).unwrap();
+        assert!(!r.visible && r.bom == Some(BomStructure::Reference));
         // An Associative layout is refused.
         let feature = PatternLayout::Feature {
             occurrence: 1,

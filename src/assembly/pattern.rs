@@ -420,7 +420,7 @@ fn world(
 }
 
 /// A direction's unit vector (a line, an axis, a round edge's axis).
-fn direction(g: &Geom) -> Result<Vector3, String> {
+pub fn direction(g: &Geom) -> Result<Vector3, String> {
     match *g {
         Geom::Axis { d, .. } | Geom::Cylinder { d, .. } => Ok(d),
         Geom::Circle { n, .. } => Ok(n),
@@ -430,7 +430,7 @@ fn direction(g: &Geom) -> Result<Vector3, String> {
 }
 
 /// An axis: a point on it and its unit direction.
-fn axis_of(g: &Geom) -> Result<(Point3, Vector3), String> {
+pub fn axis_of(g: &Geom) -> Result<(Point3, Vector3), String> {
     match *g {
         Geom::Axis { p, d } | Geom::Cylinder { p, d, .. } => Ok((p, d)),
         Geom::Circle { c, n, .. } => Ok((c, n)),

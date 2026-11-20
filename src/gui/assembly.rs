@@ -106,6 +106,10 @@ pub(super) struct AsmUi {
     pub frame_naming: Option<super::frame::FrameNaming>,
     /// The frame panel's manipulator being dragged (`gui/frame_manip.rs`).
     pub frame_grip: Option<super::frame_manip::Held>,
+    /// The Lengthen/Shorten arrow being dragged (`gui/frame_drag.rs`).
+    pub frame_end_grip: Option<super::frame_drag::EndHeld>,
+    /// The Pattern Component handle being dragged (`gui/asm_pattern_drag.rs`).
+    pub pattern_grip: Option<super::asm_pattern_drag::PatternHeld>,
     /// The occurrence under the cursor.
     pub hover: Option<u32>,
     /// The open command.
@@ -2627,7 +2631,10 @@ impl CadCraftApp {
         // Bolted Connection's length arrow takes its own drag.
         let bolt_grip = !on_cube
             && !modal
-            && (self.bolt_grip(ui, response, rect) || self.frame_grip(ui, response, rect));
+            && (self.bolt_grip(ui, response, rect)
+                || self.frame_grip(ui, response, rect)
+                || self.lengthen_grip(ui, response, rect)
+                || self.pattern_grip(ui, response, rect));
         if response.drag_started_by(PointerButton::Primary)
             && !bolt_grip
             && !on_cube
@@ -2806,6 +2813,7 @@ impl CadCraftApp {
         self.design_follow();
         self.bolt_preview(&painter, rect, pointer.filter(|_| on_view));
         self.pattern_place_overlay(&painter, rect, pointer.filter(|_| on_view));
+        self.pattern_handles_draw(&painter, rect, pointer.filter(|_| on_view));
         self.bolt_view_menu(&ctx);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_manip_draw(&painter, rect, pointer.filter(|_| on_view));

@@ -82,7 +82,7 @@ fn takes(d: &PartDialog) -> bool {
     matches!(
         d.kind,
         Planned::Asm(AsmPlanned::InsertFrame | AsmPlanned::FrameChange)
-    ) && d.members.list.is_empty()
+    )
 }
 
 impl CadCraftApp {
@@ -270,7 +270,9 @@ impl CadCraftApp {
         // takes that anchor, the current one is filled. A section small on
         // the screen is drawn magnified with its outline (spec 6.1 §3.14).
         let current = d.index(0, "Anchor");
-        if let Some((pts, outline, grown)) = self.anchor_screen(&f, rect) {
+        // Edit Frame Members draws the current member's own points.
+        let own_points = d.members.list.is_empty();
+        if let Some((pts, outline, grown)) = self.anchor_screen(&f, rect).filter(|_| own_points) {
             if grown && outline.len() > 2 {
                 painter.add(egui::Shape::closed_line(
                     outline,
@@ -330,6 +332,13 @@ impl CadCraftApp {
         let Some(f) = self.part_planned.as_ref().and_then(|d| self.manip_frame(d)) else {
             return false;
         };
+        if self
+            .part_planned
+            .as_ref()
+            .is_some_and(|d| !d.members.list.is_empty())
+        {
+            return false;
+        }
         let Some((pts, _, _)) = self.anchor_screen(&f, rect) else {
             return false;
         };
