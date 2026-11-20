@@ -905,6 +905,10 @@ enum TargetOwner {
     Feature(usize),
 }
 
+/// Hidden runs of drawn model polylines per polyline key, valid for one camera, view and body
+/// (`CadCraftApp::visible_memo`).
+type VisibleMemo = (Option<HoverKey>, std::collections::HashMap<u64, Vec<bool>>);
+
 /// Top-level application state.
 struct CadCraftApp {
     project: Project,
@@ -1284,7 +1288,7 @@ struct CadCraftApp {
     edge_hover_memo: std::cell::RefCell<Option<(HoverKey, Option<crate::kernel::EdgeId>)>>,
     /// Which runs of a drawn model polyline are hidden, for the camera, view and body of the
     /// key (`select.rs::draw_visible_polyline`).
-    visible_memo: std::cell::RefCell<(Option<HoverKey>, std::collections::HashMap<u64, Vec<bool>>)>,
+    visible_memo: std::cell::RefCell<VisibleMemo>,
     /// The view is moving this frame (a navigation drag, the wheel a moment ago, the View
     /// Cube): nothing is picked or prehighlighted under the cursor until it stops, as in
     /// Inventor (owner 2026-11-20: orbiting over a large model dropped the frame rate).
