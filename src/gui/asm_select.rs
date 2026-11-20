@@ -318,6 +318,7 @@ impl CadCraftApp {
         alpha: Option<f32>,
         looks: &HashMap<String, Appearance>,
         with_hover: bool,
+        lit_only: bool,
     ) {
         let whole = if let Some(c) = self.frame_tint(o.id) {
             Some(c)
@@ -366,6 +367,19 @@ impl CadCraftApp {
                 .as_deref()
                 .and_then(|n| looks.get(n).cloned());
             for l in crate::assembly::tree::leaves_in(&self.project, &linked, o, o.component, sub) {
+                // The hover overlay needs only the parts it lights: a frame member's hover
+                // packed every part of the frame (11 parts, 170 ms in a debug build).
+                if lit_only
+                    && whole.is_none()
+                    && self.frame_leaf_tint(o.id, &l.path).is_none()
+                    && !subs
+                        .iter()
+                        .copied()
+                        .chain(hover)
+                        .any(|s| s.sub() == l.path.as_slice())
+                {
+                    continue;
+                }
                 let inner = &l.occurrence.looks;
                 let leaf_over = |name: Option<&str>| FaceOver {
                     look: own.clone().or_else(|| {
@@ -494,20 +508,29 @@ impl CadCraftApp {
         let key = self.occurrence_scene_key(base, &o, &place, alpha, true);
         if let Some(k) = key
             && let Some(g) = HOVER_OVERLAY.with(|c| {
-                c.borrow()
-                    .as_ref()
-                    .filter(|(x, _)| *x == k)
-                    .map(|(_, g)| g.clone())
+                let mut c = c.borrow_mut();
+                let at = c.iter().position(|(x, _)| *x == k)?;
+                // The most recent last: the oldest goes first when the list is full.
+                let hit = c.remove(at);
+                let g = hit.1.clone();
+                c.push(hit);
+                Some(g)
             })
         {
             return (*g).clone();
         }
         let mut g = super::renderer::SceneGeometry::default();
         g.tints_show_through = self.colors.enhanced;
-        self.add_occurrence_mesh(&mut g, &o, &place, alpha, &looks, true);
+        self.add_occurrence_mesh(&mut g, &o, &place, alpha, &looks, true, true);
         let lifted = std::rc::Rc::new(g.lifted());
         if let Some(k) = key {
-            HOVER_OVERLAY.with(|c| *c.borrow_mut() = Some((k, lifted.clone())));
+            HOVER_OVERLAY.with(|c| {
+                let mut c = c.borrow_mut();
+                if c.len() >= HOVER_OVERLAYS_KEPT {
+                    c.remove(0);
+                }
+                c.push((k, lifted.clone()));
+            });
         }
         (*lifted).clone()
     }
@@ -922,7 +945,12 @@ impl CadCraftApp {
 }
 
 thread_local! {
-    /// The last prehighlight overlay and what it showed.
-    static HOVER_OVERLAY: std::cell::RefCell<Option<(u64, std::rc::Rc<super::renderer::SceneGeometry>)>> =
-        const { std::cell::RefCell::new(None) };
+    /// The last prehighlight overlays and what they showed, the most recent last: the cursor
+    /// going back and forth between a frame member and the skeleton rebuilt a frame's overlay
+    /// (170-210 ms, the owner's frame stuttered while orbiting) on every change.
+    static HOVER_OVERLAY: std::cell::RefCell<Vec<(u64, std::rc::Rc<super::renderer::SceneGeometry>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// Prehighlight overlays kept ([`HOVER_OVERLAY`]).
+const HOVER_OVERLAYS_KEPT: usize = 8;

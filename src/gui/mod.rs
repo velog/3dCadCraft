@@ -697,6 +697,45 @@ impl std::ops::Deref for EdgeSet {
     }
 }
 
+/// How long after the wheel's last step the view still counts as moving (s): a wheel zoom
+/// comes in steps a few frames apart, and the hover between them was thrown away.
+const WHEEL_REST_S: f64 = 0.2;
+
+/// What tells [`view_moving`] that the view moves this frame.
+#[derive(Clone, Copy, Debug, Default)]
+struct NavInput {
+    /// A drag with the middle button (pan, or orbit with Shift, in both mouse presets).
+    middle_drag: bool,
+    /// A drag with the left button.
+    primary_drag: bool,
+    /// A drag with the right button.
+    secondary_drag: bool,
+    /// F2 / F3 / F4 held (Inventor: a left drag pans, zooms, orbits).
+    fkey: bool,
+    /// The previous frame navigated by a drag (a Classic left / right drag).
+    was_dragging: bool,
+    /// A button went down or up this frame: a click must find what is under the cursor.
+    button_event: bool,
+    /// Seconds since the wheel last zoomed.
+    since_wheel: f64,
+    /// The View Cube is dragged or turns the view.
+    cube: bool,
+    /// A sketch is open: its tools follow the cursor through a wheel zoom.
+    sketching: bool,
+}
+
+/// Whether the view is moving, so that nothing is picked under the cursor this frame
+/// (Inventor suspends prehighlight while the view moves and brings it back when it stops).
+fn view_moving(n: NavInput) -> bool {
+    if n.cube || n.middle_drag || (n.primary_drag && n.fkey) {
+        return true;
+    }
+    if n.was_dragging && (n.primary_drag || n.secondary_drag) {
+        return true;
+    }
+    !n.button_event && !n.sketching && n.since_wheel < WHEEL_REST_S
+}
+
 /// What [`CadCraftApp::edge_under`] depends on besides the selection filter (checked before
 /// it): the pointer, the view's rectangle, the camera and the body (its key also covers hidden
 /// bodies and shown edges).
@@ -1232,6 +1271,17 @@ struct CadCraftApp {
     /// the pointer, the camera and the body unchanged takes it again (spec 0.20 §3.6; on a
     /// board of 612 bodies the search took 6–9 ms of every still frame).
     edge_hover_memo: std::cell::RefCell<Option<(HoverKey, Option<crate::kernel::EdgeId>)>>,
+    /// Which runs of a drawn model polyline are hidden, for the camera, view and body of the
+    /// key (`select.rs::draw_visible_polyline`).
+    visible_memo: std::cell::RefCell<(Option<HoverKey>, std::collections::HashMap<u64, Vec<bool>>)>,
+    /// The view is moving this frame (a navigation drag, the wheel a moment ago, the View
+    /// Cube): nothing is picked or prehighlighted under the cursor until it stops, as in
+    /// Inventor (owner 2026-11-20: orbiting over a large model dropped the frame rate).
+    view_moving: bool,
+    /// The previous frame orbited, panned or zoomed by a drag ([`Self::nav_moving`]).
+    nav_dragging: bool,
+    /// When the wheel last zoomed (egui time, s).
+    last_wheel: f64,
     /// Picking data of the body (see [`PickCache`]).
     pick_cache: std::cell::RefCell<Option<(String, std::rc::Rc<PickCache>)>>,
     /// `body_key` of this frame: (caching on, key). `ui` turns it on and
@@ -1544,6 +1594,10 @@ impl CadCraftApp {
             rest: None,
             edge_cache: std::cell::RefCell::new(None),
             edge_hover_memo: std::cell::RefCell::new(None),
+            visible_memo: Default::default(),
+            view_moving: false,
+            nav_dragging: false,
+            last_wheel: f64::NEG_INFINITY,
             pick_cache: std::cell::RefCell::new(None),
             body_key_frame: std::cell::RefCell::new((false, None)),
             ref_hover: None,
@@ -6382,6 +6436,31 @@ impl CadCraftApp {
         } else {
             None
         };
+        // A moving view picks nothing under the cursor (Inventor suspends prehighlight while
+        // the view moves): the hover's work ran on every frame of an orbit over a large model.
+        let now = ui.input(|i| i.time);
+        if scrolled {
+            self.last_wheel = now;
+        }
+        self.view_moving = view_moving(NavInput {
+            middle_drag: response.dragged_by(PointerButton::Middle),
+            primary_drag: response.dragged_by(PointerButton::Primary),
+            secondary_drag: response.dragged_by(PointerButton::Secondary),
+            fkey: ui.input(|i| i.key_down(Key::F2) || i.key_down(Key::F3) || i.key_down(Key::F4)),
+            was_dragging: self.nav_dragging,
+            button_event: ui.input(|i| i.pointer.any_pressed() || i.pointer.any_released()),
+            since_wheel: now - self.last_wheel,
+            cube: cube_drag || self.view_cube.animating(),
+            sketching: self.editing.is_some() || self.sketch3d.is_some(),
+        });
+        if self.view_moving && now - self.last_wheel < WHEEL_REST_S {
+            // The hover comes back once the wheel rests.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(WHEEL_REST_S));
+        }
+        // The pointer as the cube and the wheel's zoom see it; `pointer` is what may be picked.
+        let nav_pointer = pointer;
+        let pointer = pointer.filter(|_| !self.view_moving);
 
         if self.is_assembly() {
             // The ViewCube: clicks and its menu, as in a part.
@@ -6401,7 +6480,7 @@ impl CadCraftApp {
                 frame,
                 rect,
                 &response,
-                pointer,
+                nav_pointer,
                 on_cube.is_some(),
                 cube_drag,
             );
@@ -6412,7 +6491,7 @@ impl CadCraftApp {
             }
             if self.layout.visible(layout::Element::ViewCube) {
                 let cube_active = self.view_cube.dragging();
-                viewcube::draw(&painter, &self.camera, rect, pointer, cube_active);
+                viewcube::draw(&painter, &self.camera, rect, nav_pointer, cube_active);
             }
             return;
         }
@@ -7773,6 +7852,7 @@ impl CadCraftApp {
         if !matches!(nav, Nav::Orbit) {
             self.nav_orbit_end();
         }
+        self.nav_dragging = !matches!(nav, Nav::None);
         match nav {
             Nav::Orbit => {
                 let press = ui.input(|i| i.pointer.press_origin());
@@ -7828,7 +7908,7 @@ impl CadCraftApp {
         if response.hovered() && !(self.select_other.is_some() && ui.input(|i| i.modifiers.shift)) {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
-                self.nav_zoom(scroll, pointer, rect);
+                self.nav_zoom(scroll, nav_pointer, rect);
             }
         }
         if response.double_clicked_by(PointerButton::Middle)
@@ -8759,7 +8839,7 @@ impl CadCraftApp {
         }
         if self.layout.visible(layout::Element::ViewCube) {
             let cube_active = self.view_cube.dragging();
-            viewcube::draw(&painter, &self.camera, rect, pointer, cube_active);
+            viewcube::draw(&painter, &self.camera, rect, nav_pointer, cube_active);
         }
     }
 
@@ -9543,6 +9623,74 @@ mod pick_tests {
         if budgets {
             assert!(build < 300.0, "pick data {build} ms");
             assert!(hover < 3.0, "{hover} ms a hover");
+        }
+    }
+
+    /// The view counts as moving during a navigation drag, the View Cube and a moment after the
+    /// wheel, and not when a button goes down or up (a click must find what is under the cursor),
+    /// nor on the wheel while a sketch is open (its tools follow the cursor).
+    #[test]
+    fn hover_rests_while_the_view_moves() {
+        use super::{NavInput, WHEEL_REST_S, view_moving};
+        let still = NavInput {
+            since_wheel: f64::INFINITY,
+            ..Default::default()
+        };
+        assert!(!view_moving(still));
+        for n in [
+            NavInput {
+                middle_drag: true,
+                ..still
+            },
+            NavInput {
+                primary_drag: true,
+                fkey: true,
+                ..still
+            },
+            NavInput {
+                primary_drag: true,
+                was_dragging: true,
+                ..still
+            },
+            NavInput {
+                secondary_drag: true,
+                was_dragging: true,
+                ..still
+            },
+            NavInput {
+                cube: true,
+                ..still
+            },
+            NavInput {
+                since_wheel: 0.05,
+                ..still
+            },
+        ] {
+            assert!(view_moving(n), "{n:?}");
+        }
+        // a left drag that is no navigation (a box selection, a dragged point)
+        assert!(!view_moving(NavInput {
+            primary_drag: true,
+            ..still
+        }));
+        // the wheel at rest again, a click right after it, a sketch open
+        for n in [
+            NavInput {
+                since_wheel: WHEEL_REST_S + 0.01,
+                ..still
+            },
+            NavInput {
+                since_wheel: 0.05,
+                button_event: true,
+                ..still
+            },
+            NavInput {
+                since_wheel: 0.05,
+                sketching: true,
+                ..still
+            },
+        ] {
+            assert!(!view_moving(n), "{n:?}");
         }
     }
 

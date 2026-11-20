@@ -1616,6 +1616,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.
 
+- **A moving view picks nothing** (`gui/mod.rs::view_moving`, Inventor's behaviour): during a navigation drag, a View Cube
+  drag / turn and 0.2 s after a wheel step the viewport's `pointer` is `None` for every hover and pick (the wheel's zoom and
+  the cube keep `nav_pointer`). A new navigation gesture sets `nav_dragging`; a new hover reads `pointer`, never
+  `response.hover_pos()`. The assembly's hover overlay is kept per key (8) and packs only the parts it lights
+  (`add_occurrence_mesh(.., lit_only)`): a frame member's hover packed the whole frame (210 ms) on every change.
 - **`egui::Context` is not re-entrant**: asking it anything (`cumulative_frame_nr`) inside `ctx.data_mut(|d| ..)` deadlocks, and a
   debug build panics after 10 s ("Failed to acquire RwLock read"). Read first, then lock.
 - **Display meshes are cached** (`material::cached_mesh`, thread-local, by `body_signature` + solid): a scene rebuild runs on every hover

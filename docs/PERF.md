@@ -125,6 +125,19 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
   building): 100 holes 0.62 → 0.20 s, 1024 holes 9.6 → 1.91 s (budget 3 s), 2 500 holes 6.2 s, 5 041 holes 17.5 s
   (budget 15 s: still over on that busy machine, to measure on the evening run). Same volume, faces and names as the
   general path (`tests/through_cut.rs`).
+- 2026-11-20 — **Hover while the view moves** (owner: orbiting with the cursor over a profile of his frame stutters;
+  spec 0.20 §3.6). Measured in the app (debug build, busy machine, `CADCRAFT3D_SLOW_FRAME_MS=0`, a scripted drag of
+  40 steps; CPU work of a frame). *The owner's frame* (TerasaIvan, 6 members + skeleton), orbit with the cursor over a
+  member: 5 frames of 210-220 ms each (the hover overlay packed all 11 parts of the frame on every change between
+  member and skeleton) → max 28 ms, median 2 ms; a hover sweep across the members: 5 frames ≥ 50 ms (223 ms) → none
+  (max 34 ms). *Plate with 1024 holes*: orbit over the plate median 9 / p90 23 ms → 2 / 5 ms (over empty space 2 ms
+  before and after), a wheel zoom over it 22 ms every frame → median 2 ms. Changes: nothing is picked or
+  prehighlighted while a navigation drag, a View Cube drag / turn or a wheel step (0.2 s) moves the view
+  (`gui/mod.rs::view_moving`, as Inventor); the last 8 assembly hover overlays are kept and an overlay packs only the
+  parts it lights; `PickMesh::hit` tests the ray against the part's box first (`assembly::ray_meets_box`; new case
+  `tests/perf.rs::assembly_hover_on_625_parts_within_budget`, budget 1 ms a pick); a lit / selected model polyline
+  keeps which of its runs are hidden while the camera and the body stay (`draw_visible_polyline`: 17-25 ms a frame on
+  the plate). Models: `examples/frame_grid.rs`, `examples/pattern_probe.rs` with `CADCRAFT3D_PROBE_SAVE`.
 - 2026-11-19 — **Hover on a board of 625 parts** (`gui::pick_tests::hover_on_a_board_of_625_parts_within_budget`, run
   alone in `xtask heavy` through `TIMED_GUI_UNIT`; spec 0.20 §6.1): 250 000 triangles, 5 000 edges; the pick data
   built from them under 300 ms, one hover (face ray, edges near the ray, their segments on screen) under 3 ms. With a

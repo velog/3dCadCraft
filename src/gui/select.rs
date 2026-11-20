@@ -38,6 +38,23 @@ pub(super) enum SelItem {
 /// How many hidden-line tests one drawn polyline gets at most.
 const HIDDEN_TESTS: usize = 24;
 
+/// A polyline's identity for [`CadCraftApp::draw_visible_polyline`]'s memo: its length and
+/// a few of its points, bit for bit.
+fn polyline_key(pts: &[crate::kernel::Point3]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    pts.len().hash(&mut h);
+    let n = pts.len();
+    for k in [0, n / 3, n / 2, (2 * n) / 3, n.saturating_sub(1)] {
+        if let Some(p) = pts.get(k) {
+            for c in [p.x, p.y, p.z] {
+                c.to_bits().hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
 impl CadCraftApp {
     /// What Properties shows: the feature of the face, edge or vertex picked
     /// in the view (Inventor), else the browser's selection.
@@ -1071,15 +1088,34 @@ impl CadCraftApp {
         let map = self.camera.screen(rect);
         let n = pts.len().saturating_sub(1);
         let run = n.div_ceil(HIDDEN_TESTS).max(1);
-        let mut hidden = false;
-        for (i, w) in pts.windows(2).enumerate() {
-            if i % run == 0 {
-                // The middle of this run of segments.
-                let k = (i + run / 2).min(n.saturating_sub(1));
-                let (a, b) = (pts[k], pts[k + 1]);
-                hidden = self.point_hidden_in(&(a + (b - a) * 0.5), &map);
+        // Which runs are hidden, kept while the camera, the view and the body stay: a lit
+        // edge on a plate of 1024 holes cast its 24 rays on every frame (20-25 ms).
+        let view = super::HoverKey::new(egui::Pos2::ZERO, rect, &self.camera, self.body_key());
+        let line = polyline_key(pts);
+        let known = {
+            let mut memo = self.visible_memo.borrow_mut();
+            if memo.0.as_ref() != Some(&view) {
+                *memo = (Some(view), std::collections::HashMap::new());
             }
-            if hidden {
+            memo.1.get(&line).cloned()
+        };
+        let runs = known.unwrap_or_else(|| {
+            let runs: Vec<bool> = (0..n.div_ceil(run))
+                .map(|r| {
+                    // The middle of this run of segments.
+                    let k = (r * run + run / 2).min(n.saturating_sub(1));
+                    let (a, b) = (pts[k], pts[k + 1]);
+                    self.point_hidden_in(&(a + (b - a) * 0.5), &map)
+                })
+                .collect();
+            let mut memo = self.visible_memo.borrow_mut();
+            if memo.1.len() < 4096 {
+                memo.1.insert(line, runs.clone());
+            }
+            runs
+        });
+        for (i, w) in pts.windows(2).enumerate() {
+            if runs.get(i / run).copied().unwrap_or(false) {
                 continue;
             }
             if let (Some(a), Some(b)) = (map.project(&w[0]), map.project(&w[1])) {
