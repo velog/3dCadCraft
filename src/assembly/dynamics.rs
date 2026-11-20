@@ -194,7 +194,7 @@ pub fn simulate(
                     o.name
                 ))
             })?;
-            if !(m.mass > 0.0) {
+            if m.mass.is_nan() || m.mass <= 0.0 {
                 return Err(fail(format!(
                     "{}: its mass is 0 (give the part a material with a density)",
                     o.name
@@ -250,10 +250,10 @@ pub fn simulate(
     for c in &joints {
         let (ia, ib) = (c.a.occurrence(), c.b.occurrence());
         let fa = frame_of(
-            &super::relation::for_kind(c.kind, &c.a, local(&c.a).map_err(&fail)?).as_frame(),
+            &super::relation::for_kind(c.kind, &c.a, local(&c.a).map_err(fail)?).as_frame(),
         );
         let fb = frame_of(
-            &super::relation::for_kind(c.kind, &c.b, local(&c.b).map_err(&fail)?).as_frame(),
+            &super::relation::for_kind(c.kind, &c.b, local(&c.b).map_err(fail)?).as_frame(),
         );
         use ConstraintKind::*;
         let kind = match (c.kind, c.locked) {

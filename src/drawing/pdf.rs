@@ -85,7 +85,7 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
             pb.finish()
         };
         for prim in &page.prims {
-            if let Prim::Pen { color, plot: p } = prim {
+            if let Prim::Pen { color, plot: p, .. } = prim {
                 let c = if opts.all_black { [0, 0, 0] } else { *color };
                 ink = rgb::Color::new(c[0], c[1], c[2]).into();
                 layer_ink = ink.clone();

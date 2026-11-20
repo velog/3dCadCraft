@@ -1916,6 +1916,82 @@ impl CadCraftApp {
     }
 }
 
+impl CadCraftApp {
+    /// File › Export › DXF of a drawing (spec 4.5): every sheet that prints, each its own file
+    /// (Inventor's DXF export writes one file per sheet): `path` for the first, `<stem>-<sheet>`
+    /// beside it for the others.
+    pub(super) fn write_drawing_dxf(&mut self, path: &std::path::Path) {
+        let Some(doc) = self.drawing().cloned() else {
+            return;
+        };
+        let indices: Vec<usize> = (0..doc.sheets.len())
+            .filter(|&i| !doc.sheets[i].exclude_from_printing)
+            .collect();
+        if indices.is_empty() {
+            self.file_status = Some(Err("Export DXF: no sheet to export".into()));
+            return;
+        }
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "drawing".into());
+        let mut written = Vec::new();
+        for (k, &i) in indices.iter().enumerate() {
+            let sheet = &doc.sheets[i];
+            let lines = self.sheet_lines(None, &doc, i);
+            let title = self.title_values(&doc, i);
+            let props = self.field_props(&doc, i);
+            let prims = crate::drawing::render::sheet_list_with(
+                &doc,
+                i,
+                &|f| {
+                    title
+                        .iter()
+                        .find(|(k, _)| *k == f)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default()
+                },
+                &|f| props.get(f),
+                &|id| lines.get(&id).cloned(),
+                &self.bom_tables(&doc, i),
+            );
+            let text = crate::drawing::dxf_out::sheet(&prims, sheet.dims());
+            let target = if k == 0 {
+                path.to_path_buf()
+            } else {
+                let name: String = sheet
+                    .name
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                path.with_file_name(format!("{stem}-{name}.dxf"))
+            };
+            let tmp = target.with_extension("dxf.tmp");
+            let r = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &target));
+            if let Err(e) = r {
+                self.file_status = Some(Err(format!("Export DXF: {}: {e}", target.display())));
+                return;
+            }
+            written.push(target);
+        }
+        self.file_status = Some(Ok(match written.as_slice() {
+            [one] => format!("Exported the sheet to {}", one.display()),
+            many => format!(
+                "Exported {} sheets, one file each, to {}",
+                many.len(),
+                path.parent()
+                    .map_or(String::new(), |p| p.display().to_string())
+            ),
+        }));
+    }
+}
+
 /// A circle edge counts as a whole circle (diameter) when it closes or is a
 /// half (the kernel splits circles into halves); smaller arcs get a radius.
 fn whole_circle(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> bool {

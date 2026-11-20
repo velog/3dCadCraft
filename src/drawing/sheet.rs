@@ -187,6 +187,8 @@ pub enum Prim {
         color: [u8; 3],
         /// Printed and published.
         plot: bool,
+        /// The layer's name (a DXF export's layer).
+        layer: String,
     },
     /// A colour for what follows (a formatted run, a background fill);
     /// `None` returns to the layer's pen.

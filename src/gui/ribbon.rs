@@ -1178,6 +1178,7 @@ fn tab_panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         sk("sketch.center_point").mini(),
                     ],
                 ),
+                panel("Insert", vec![sk("sketch.insert_acad")]),
                 panel("Exit", vec![sk("sketch.finish").large()]),
             ];
             // Outside a sketch every tool is grey: this is the way in.

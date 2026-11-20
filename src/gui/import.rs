@@ -17,7 +17,7 @@ use super::part_planned::PartDialog;
 use crate::part::import::ImportOp;
 use crate::part::{BodyOp, BodyOpFeature};
 
-/// The STEP text of `path` (a mesh's coordinates in mm).
+/// The text an Import of `path` embeds (STEP; IGES as STEP; a mesh's coordinates in mm).
 fn read_step(path: &Path) -> Result<Arc<str>, String> {
     read_scaled(path, 1.0)
 }
@@ -26,13 +26,8 @@ fn read_step(path: &Path) -> Result<Arc<str>, String> {
 /// mm: meshes carry no unit).
 fn read_scaled(path: &Path, scale: f64) -> Result<Arc<str>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    // Meshes (STL, OBJ) become the OBJ text a mesh import embeds (spec 7.7a 3.14), in mm.
-    if crate::gui::files::is_mesh_file(path) {
-        let name = path.display().to_string();
-        return crate::part::import::mesh_text(&bytes, &name, scale).map(Into::into);
-    }
-    // STEP is ASCII (ISO 10303-21); stray bytes in comments or names must not stop it.
-    Ok(String::from_utf8_lossy(&bytes).into())
+    // STEP as it is, IGES restated as STEP, meshes (STL, OBJ) as OBJ text in mm (spec 7.7a).
+    crate::part::import::source_text(path, &bytes, scale).map(Into::into)
 }
 
 /// The length units a mesh file may be in, and their size in mm.
@@ -239,7 +234,11 @@ impl CadCraftApp {
                                 .on_hover_text("A one-time copy: the file is not read again");
                         });
                         ui.end_row();
-                        if mesh {
+                        if mesh && name.to_ascii_lowercase().ends_with(".3mf") {
+                            ui.label("Length Units");
+                            ui.label("from the file (3MF states its unit)");
+                            ui.end_row();
+                        } else if mesh {
                             ui.label("Length Units");
                             egui::ComboBox::from_id_salt("import_mesh_unit")
                                 .selected_text(MESH_UNITS.get(o.unit).map_or("mm", |u| u.0))

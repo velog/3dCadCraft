@@ -133,9 +133,10 @@ impl CadCraftApp {
             && (self.tools.pattern_dialog.is_some()
                 || self.tools.has_dialog()
                 || self.tools.edit_pattern.is_some());
-        let open: [(bool, &'static str); 33] = [
+        let open: [(bool, &'static str); 34] = [
             (self.fa_tool_open(), "Frame Analysis"),
             (self.text_draft.is_some(), "Text"),
+            (self.dxf_draft.is_some(), "Insert AutoCAD File"),
             (self.import_ask.is_some(), "Import Options"),
             (self.drw_open(), "Drawing View"),
             (matches!(self.mode, super::Mode::PickPlane(_)), "Pick Plane"),

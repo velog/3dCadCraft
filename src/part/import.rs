@@ -175,6 +175,50 @@ pub struct UpdateReport {
 /// The first line of the OBJ text a mesh import embeds.
 const MESH_HEADER: &str = "# 3DCadCraft mesh import";
 
+/// The kinds of file an Import reads, by extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceKind {
+    /// STEP (`.step`, `.stp`): embedded as it is.
+    Step,
+    /// IGES (`.igs`, `.iges`): restated as STEP text by the kernel's IGES reader, then embedded.
+    Iges,
+    /// A mesh (`.stl`, `.obj`): embedded as OBJ text ([`mesh_text`]).
+    Mesh,
+}
+
+impl SourceKind {
+    /// The kind a path's extension names (`None`: not a file Import reads).
+    pub fn of(path: &std::path::Path) -> Option<Self> {
+        let e = path.extension()?.to_str()?.to_ascii_lowercase();
+        match e.as_str() {
+            "step" | "stp" => Some(SourceKind::Step),
+            "igs" | "iges" => Some(SourceKind::Iges),
+            "stl" | "obj" | "3mf" => Some(SourceKind::Mesh),
+            _ => None,
+        }
+    }
+}
+
+/// Every extension Import reads (lower case, without the dot).
+pub const SOURCE_EXTENSIONS: [&str; 7] = ["step", "stp", "igs", "iges", "stl", "obj", "3mf"];
+
+/// The text an Import of `path` embeds, from the file's `bytes`: STEP as it is, IGES restated as
+/// STEP (millimetres), a mesh as OBJ text with its coordinates times `scale` (its unit in mm).
+pub fn source_text(path: &std::path::Path, bytes: &[u8], scale: Real) -> Result<String, String> {
+    match SourceKind::of(path).unwrap_or(SourceKind::Step) {
+        SourceKind::Mesh => mesh_text(bytes, &path.display().to_string(), scale),
+        // IGES and STEP are ASCII; stray bytes in comments or names must not stop them.
+        SourceKind::Iges => {
+            let (step, warnings) = exact::iges_to_step(&String::from_utf8_lossy(bytes))?;
+            for w in warnings.iter().take(5) {
+                log::warn!("IGES {}: {w}", path.display());
+            }
+            Ok(step)
+        }
+        SourceKind::Step => Ok(String::from_utf8_lossy(bytes).into_owned()),
+    }
+}
+
 /// Whether an import's text is a mesh (OBJ) rather than STEP.
 fn is_mesh_text(text: &str) -> bool {
     text.trim_start().starts_with(MESH_HEADER)
@@ -194,11 +238,23 @@ const MESH_LIMIT: usize = 5_000_000;
 /// in mm, one `o` per solid / object; normals and textures dropped). `scale`: millimetres per
 /// file unit. `file` names the file in errors and decides OBJ by its extension.
 pub fn mesh_text(bytes: &[u8], file: &str, scale: Real) -> Result<String, String> {
-    let obj = file.to_ascii_lowercase().ends_with(".obj");
-    let objects = if obj {
-        parse_obj(&String::from_utf8_lossy(bytes))?
+    let lower = file.to_ascii_lowercase();
+    let obj = lower.ends_with(".obj");
+    // 3MF states its own unit: its coordinates come in mm already.
+    let (objects, scale) = if lower.ends_with(".3mf") {
+        let objects = super::threemf::read(bytes)?
+            .into_iter()
+            .map(|o| MeshObject {
+                name: o.name,
+                positions: o.positions,
+                triangles: o.triangles,
+            })
+            .collect();
+        (objects, 1.0)
+    } else if obj {
+        (parse_obj(&String::from_utf8_lossy(bytes))?, scale)
     } else {
-        parse_stl(bytes)?
+        (parse_stl(bytes)?, scale)
     };
     let mut out = String::from(MESH_HEADER);
     out.push('\n');

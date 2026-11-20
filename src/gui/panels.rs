@@ -1538,6 +1538,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             self.text_panel(ui);
             return;
         }
+        if self.editing.is_some() && self.dxf_draft.is_some() {
+            self.insert_dxf_panel(ui);
+            return;
+        }
         if self.editing.is_some() && self.tools.pattern_dialog.is_some() {
             self.pattern_dialog_panel(ui);
             return;

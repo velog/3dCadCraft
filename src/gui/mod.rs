@@ -107,6 +107,7 @@ mod i18n;
 mod icons;
 mod if_builder;
 mod import;
+mod insert_dxf;
 mod interference;
 mod inventor_keys;
 mod iprops;
@@ -1101,6 +1102,8 @@ struct CadCraftApp {
     tools: SketchTools,
     /// The Text command's panel.
     text_draft: Option<sketch_text::TextDraft>,
+    /// Insert AutoCAD File's panel (spec 1.11a).
+    dxf_draft: Option<insert_dxf::DxfDraft>,
     /// The last text's options (the next one starts with them).
     last_text: Option<crate::sketch::text::TextSpec>,
     /// Line tool: dragging from a curve end (point, start position in
@@ -1484,6 +1487,7 @@ impl CadCraftApp {
             colors: theme::ColorsUi::default(),
             tools: SketchTools::default(),
             text_draft: None,
+            dxf_draft: None,
             last_text: None,
             arc_drag: None,
             dragging_entity: None,
@@ -4993,6 +4997,7 @@ impl CadCraftApp {
             AppCmd::PackAndGo => self.open_pack_and_go(),
             AppCmd::Export(f) => self.open_dialog(files::DialogPurpose::Export(f)),
             AppCmd::ExportFace => self.export_face_start(),
+            AppCmd::InsertDxf => self.insert_dxf_start(),
             AppCmd::Help => self.open_help(),
             AppCmd::SaveDiagnostics => self.open_dialog(files::DialogPurpose::Diagnostics),
             AppCmd::OpenLogsFolder => self.open_logs_folder(),
@@ -8345,6 +8350,7 @@ impl CadCraftApp {
         }
         self.text_take_click();
         self.text_preview(&painter, rect);
+        self.insert_dxf_preview(&painter, rect);
         // A double click on a text edits it (spec 1.11).
         if self.tools.tool == Tool::Select
             && self.text_draft.is_none()

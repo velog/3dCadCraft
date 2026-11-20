@@ -21,11 +21,21 @@ pub enum ExportFormat {
     Step,
     /// Binary glTF 2.0.
     Glb,
+    /// IGES 5.3 B-rep (trimmed surfaces, manifold solid).
+    Iges,
+    /// 3MF (3D Manufacturing Format): triangles in mm with colours, for 3D printing.
+    ThreeMf,
 }
 
 impl ExportFormat {
     /// Every format, for menus.
-    pub const ALL: [ExportFormat; 3] = [ExportFormat::Stl, ExportFormat::Step, ExportFormat::Glb];
+    pub const ALL: [ExportFormat; 5] = [
+        ExportFormat::Stl,
+        ExportFormat::Step,
+        ExportFormat::Glb,
+        ExportFormat::Iges,
+        ExportFormat::ThreeMf,
+    ];
 
     /// The file extension (without the dot).
     pub fn extension(self) -> &'static str {
@@ -33,6 +43,19 @@ impl ExportFormat {
             ExportFormat::Stl => "stl",
             ExportFormat::Step => "step",
             ExportFormat::Glb => "glb",
+            ExportFormat::Iges => "igs",
+            ExportFormat::ThreeMf => "3mf",
+        }
+    }
+
+    /// The format's name in menus and titles (`IGES`, `3MF`…).
+    pub fn label(self) -> &'static str {
+        match self {
+            ExportFormat::Stl => "STL",
+            ExportFormat::Step => "STEP",
+            ExportFormat::Glb => "GLB",
+            ExportFormat::Iges => "IGES",
+            ExportFormat::ThreeMf => "3MF",
         }
     }
 
@@ -43,6 +66,8 @@ impl ExportFormat {
             "stl" => Some(ExportFormat::Stl),
             "step" | "stp" => Some(ExportFormat::Step),
             "glb" => Some(ExportFormat::Glb),
+            "igs" | "iges" => Some(ExportFormat::Iges),
+            "3mf" => Some(ExportFormat::ThreeMf),
             _ => None,
         }
     }
@@ -349,6 +374,66 @@ pub fn step_text(part: &PartDocument, name: &str) -> Result<String, String> {
     crate::kernel::exact::step_text_painted(&solids, name, &paint)
 }
 
+/// A 3MF package of the mesh: one object per appearance (its colour the object's material),
+/// each with only the vertices it uses.
+pub fn threemf_bytes(m: &ExportMesh, name: &str) -> Result<Vec<u8>, String> {
+    let groups: Vec<(std::ops::Range<usize>, Option<[u8; 3]>)> = if m.groups.is_empty() {
+        vec![(0..m.triangles.len(), None)]
+    } else {
+        m.groups
+            .iter()
+            .map(|g| (g.triangles.clone(), Some(g.appearance.color)))
+            .collect()
+    };
+    let mut objects = Vec::new();
+    let mut colors = Vec::new();
+    for (k, (range, color)) in groups.into_iter().enumerate() {
+        let mut map: std::collections::HashMap<u32, u32> = Default::default();
+        let mut o = super::threemf::Object3mf {
+            name: if k == 0 {
+                name.to_owned()
+            } else {
+                format!("{name} {}", k + 1)
+            },
+            ..Default::default()
+        };
+        for t in &m.triangles[range] {
+            let t = t.map(|i| {
+                *map.entry(i).or_insert_with(|| {
+                    o.positions.push(m.positions[i as usize]);
+                    o.positions.len() as u32 - 1
+                })
+            });
+            o.triangles.push(t);
+        }
+        if !o.triangles.is_empty() {
+            objects.push(o);
+            colors.push(color);
+        }
+    }
+    super::threemf::write(&objects, &colors)
+}
+
+/// IGES text of the part's exact solids (surface bodies are construction geometry, as for STEP).
+pub fn iges_text(part: &PartDocument, name: &str) -> Result<String, String> {
+    if part.exact_bodies.0.is_empty() {
+        return Err(
+            "IGES needs the exact kernel (this part was built with the faceted one)".into(),
+        );
+    }
+    let solids: Vec<crate::kernel::exact::ExactSolid> = part
+        .exact_bodies
+        .0
+        .iter()
+        .filter(|s| !s.is_open() && !s.is_mesh())
+        .cloned()
+        .collect();
+    if solids.is_empty() {
+        return Err("IGES: the part has no solid with exact geometry".into());
+    }
+    crate::kernel::exact::iges_text(&solids, name)
+}
+
 /// The file content for `format`.
 pub fn export_bytes(
     part: &PartDocument,
@@ -359,6 +444,8 @@ pub fn export_bytes(
         ExportFormat::Stl => stl_bytes(&ExportMesh::of(part)?, name),
         ExportFormat::Glb => glb_bytes(&ExportMesh::of(part)?, name),
         ExportFormat::Step => step_text(part, name)?.into_bytes(),
+        ExportFormat::Iges => iges_text(part, name)?.into_bytes(),
+        ExportFormat::ThreeMf => threemf_bytes(&ExportMesh::of(part)?, name)?,
     })
 }
 
@@ -381,7 +468,7 @@ pub fn export(part: &PartDocument, name: &str, path: &Path) -> Result<ExportForm
 
 fn export_file(part: &PartDocument, name: &str, path: &Path) -> Result<ExportFormat, String> {
     let format = ExportFormat::from_path(path)
-        .ok_or("the file name must end in .stl, .step / .stp or .glb")?;
+        .ok_or("the file name must end in .stl, .step / .stp, .glb, .igs / .iges or .3mf")?;
     let bytes = export_bytes(part, name, format)?;
     let tmp = path.with_extension(format!("{}.tmp", format.extension()));
     std::fs::write(&tmp, &bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
@@ -573,6 +660,58 @@ mod tests {
             "{} vs {want}",
             vols[0]
         );
+    }
+
+    /// IGES: written from the exact bodies (rounded box: planes, cylinders, spheres), read back
+    /// through the kernel's IGES reader (IGES → STEP → bodies) with the same volume.
+    #[test]
+    fn iges_round_trip_volume() {
+        let part = rounded_box();
+        let text = iges_text(&part, "Part1").unwrap();
+        // Column 73 of every record is its section letter; the Start section comes first.
+        assert_eq!(
+            text.lines().next().and_then(|l| l.chars().nth(72)),
+            Some('S')
+        );
+        assert!(
+            text.lines().all(|l| l.len() == 80),
+            "IGES records are 80 columns"
+        );
+        let (step, warnings) = crate::kernel::exact::iges_to_step(&text).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let vols = crate::kernel::exact::step_volumes(&step).unwrap();
+        assert_eq!(vols.len(), 1);
+        let want = ExportMesh::of(&part).unwrap().volume();
+        assert!(
+            (vols[0] - want).abs() < 2e-3 * want,
+            "{} vs {want}",
+            vols[0]
+        );
+        assert_eq!(
+            ExportFormat::from_path(Path::new("x.IGES")),
+            Some(ExportFormat::Iges)
+        );
+    }
+
+    /// 3MF: the package read back has the part's triangles and volume.
+    #[test]
+    fn threemf_round_trip_volume() {
+        let part = rounded_box();
+        let m = ExportMesh::of(&part).unwrap();
+        let bytes = threemf_bytes(&m, "Part1").unwrap();
+        let back = super::super::threemf::read(&bytes).unwrap();
+        let tris: usize = back.iter().map(|o| o.triangles.len()).sum();
+        assert_eq!(tris, m.triangles.len());
+        let v: Real = back
+            .iter()
+            .flat_map(|o| {
+                o.triangles.iter().map(|t| {
+                    let [a, b, c] = t.map(|i| o.positions[i as usize].coords);
+                    a.dot(&b.cross(&c)) / 6.0
+                })
+            })
+            .sum();
+        assert!((v - m.volume()).abs() < 1e-6 * m.volume(), "{v}");
     }
 
     #[test]

@@ -168,6 +168,8 @@ pub enum AppCmd {
     Export(ExportFormat),
     /// Export Face As: the selected planar faces as DXF / SVG.
     ExportFace,
+    /// Sketch › Insert AutoCAD File: a DXF drawing into the open sketch.
+    InsertDxf,
     /// Help (F1): the spec of what the user is doing.
     Help,
     /// Help → Save Diagnostics.
@@ -428,6 +430,7 @@ const S_MODIFY: Place = Place::Ribbon("Sketch", "Modify");
 const S_PATTERN: Place = Place::Ribbon("Sketch", "Pattern");
 const S_CONSTRAIN: Place = Place::Ribbon("Sketch", "Constrain");
 const S_FORMAT: Place = Place::Ribbon("Sketch", "Format");
+const S_INSERT: Place = Place::Ribbon("Sketch", "Insert");
 const S_DEMO: Place = HELP;
 const S_START: Place = Place::Ribbon("Sketch", "Sketch");
 const S_EXIT: Place = Place::Ribbon("Sketch", "Exit");
@@ -1264,6 +1267,14 @@ pub static COMMANDS: &[Command] = &[
         .at(&[S_CREATE])
         .tip("Text in any installed font; its letters are profiles for Extrude, Emboss and the others")
         .spec("1.11-sketch-text.md"),
+    c("sketch.insert_acad", "Insert AutoCAD File", "Вмъкване на AutoCAD файл", Icon::InsertDxf)
+        .inv("ACAD")
+        .alias(&["IAF"])
+        .run(Action::App(AppCmd::InsertDxf))
+        .at(&[S_INSERT])
+        .env(SKETCH)
+        .tip("A DXF drawing into the sketch: choose its layers and unit; ends that meet are joined into profiles")
+        .spec("1.11a-insert-dxf.md"),
     t("sketch.select", Tool::Select, "Select", "Избор", Icon::Select)
         .key("Esc")
         .bound()
@@ -3129,6 +3140,18 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::App(AppCmd::Export(ExportFormat::Glb)))
         .at(&[FILE])
         .tip("Binary glTF for viewers and the web")
+        .spec("7.7-export.md"),
+    c("file.export_iges", "Export IGES", "Износ в IGES", Icon::ExportIges)
+        .alias(&["IGS"])
+        .run(Action::App(AppCmd::Export(ExportFormat::Iges)))
+        .at(&[FILE])
+        .tip("IGES 5.3 trimmed surfaces for older CAD and CAM programs")
+        .spec("7.7-export.md"),
+    c("file.export_3mf", "Export 3MF", "Износ в 3MF", Icon::Export3mf)
+        .alias(&["3MF"])
+        .run(Action::App(AppCmd::Export(ExportFormat::ThreeMf)))
+        .at(&[FILE])
+        .tip("3MF: triangles with colours, for 3D printing")
         .spec("7.7-export.md"),
     c("file.export_face", "Export Face As", "Износ на лице (DXF / SVG)", Icon::ExportFace)
         .alias(&["FXF"])

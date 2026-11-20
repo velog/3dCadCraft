@@ -265,6 +265,12 @@ pub enum Icon {
     SmExportFlat,
     /// Export Face As: a face seen in 3D, out to a flat drawing.
     ExportFace,
+    /// Export IGES: a trimmed curved patch going out of the file.
+    ExportIges,
+    /// Insert AutoCAD File: a drawing sheet coming into the sketch.
+    InsertDxf,
+    /// Export 3MF: a printed part on its build plate, out of the file.
+    Export3mf,
     Drawing,
     // drawings
     BaseView,
@@ -2517,6 +2523,33 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.circle(12.0, 4.2, 1.0, ink);
             p.line(&[(6.0, 8.0), (7.5, 5.5)], hot);
             p.head((8.3, 4.2), (0.5, -0.9), hot);
+        }
+        InsertDxf => {
+            // A sheet with a drawn outline and a circle, and the arrow into the sketch below.
+            p.rect(1.5, 1.5, 10.5, 9.5, ink);
+            p.line(&[(3.0, 8.0), (3.0, 4.0), (6.5, 3.0), (9.0, 6.0)], acc);
+            p.circle(6.0, 6.5, 1.2, acc);
+            p.line(&[(12.0, 6.0), (12.0, 11.5)], hot);
+            p.head((12.0, 12.8), (0.0, 1.0), hot);
+            p.line(&[(2.0, 14.5), (15.0, 14.5)], ink);
+        }
+        Export3mf => {
+            // A part standing on the build plate, layer lines on it, the arrow out.
+            p.line(&[(1.0, 14.5), (11.0, 14.5)], ink);
+            p.rect(3.0, 7.0, 9.0, 14.0, acc);
+            p.line(&[(3.0, 9.5), (9.0, 9.5)], ink);
+            p.line(&[(3.0, 12.0), (9.0, 12.0)], ink);
+            p.line(&[(10.5, 4.0), (14.5, 4.0)], hot);
+            p.head((15.5, 4.0), (1.0, 0.0), hot);
+        }
+        ExportIges => {
+            // A curved patch with a trimmed corner, and the arrow out of it.
+            p.line(&[(1.5, 13.5), (3.5, 8.0), (7.0, 5.5)], acc);
+            p.line(&[(7.0, 5.5), (10.0, 8.5), (9.0, 14.5)], acc);
+            p.line(&[(9.0, 14.5), (5.0, 15.0), (1.5, 13.5)], acc);
+            p.line(&[(3.5, 11.5), (6.5, 9.5), (8.5, 11.0)], ink);
+            p.line(&[(10.5, 4.0), (14.5, 4.0)], hot);
+            p.head((15.5, 4.0), (1.0, 0.0), hot);
         }
         Drawing => {
             p.rect(2.0, 2.0, 14.0, 14.0, ink);

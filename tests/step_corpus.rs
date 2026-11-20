@@ -239,7 +239,7 @@ fn check(c: &Case) -> Result<(), String> {
         }
         Reads => {}
         Solid => {
-            if solids.iter().any(|s| s.is_open()) || !(volume > 0.0) {
+            if solids.iter().any(|s| s.is_open()) || volume.is_nan() || volume <= 0.0 {
                 return Err(format!("not a closed solid (volume {volume})"));
             }
         }

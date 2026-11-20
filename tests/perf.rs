@@ -1681,6 +1681,12 @@ fn speed_budgets() {
                 cadcraft3d::part::export::ExportFormat::Glb => {
                     "export GLB of the filleted hollow box"
                 }
+                cadcraft3d::part::export::ExportFormat::Iges => {
+                    "export IGES of the filleted hollow box"
+                }
+                cadcraft3d::part::export::ExportFormat::ThreeMf => {
+                    "export 3MF of the filleted hollow box"
+                }
             },
             200.0,
             median_ms(3, || {

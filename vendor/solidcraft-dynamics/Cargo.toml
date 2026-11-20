@@ -15,3 +15,7 @@ thiserror = "2"
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[lints.clippy]
+# As in SolidCraft's workspace: the copied code tests NaN-safe ranges this way.
+neg_cmp_op_on_partial_ord = "allow"
