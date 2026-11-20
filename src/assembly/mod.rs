@@ -306,7 +306,7 @@ impl PickMesh {
 /// triangle lying in a face of the box must still be hit). Slab test.
 pub fn ray_meets_box(o: &Point3, d: &Vector3, lo: &Point3, hi: &Point3) -> bool {
     let pad = 1e-6 * (hi - lo).norm().max(1.0);
-    let (mut t0, mut t1) = (0.0 as Real, Real::INFINITY);
+    let (mut t0, mut t1): (Real, Real) = (0.0, Real::INFINITY);
     for k in 0..3 {
         let (a, b) = (lo[k] - pad, hi[k] + pad);
         if d[k].abs() < 1e-300 {

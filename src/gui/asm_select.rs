@@ -309,7 +309,9 @@ impl CadCraftApp {
 
     /// Adds occurrence `o` placed at `place` to the scene: its overrides,
     /// and the selection / prehighlight tint (whole, or the selected
-    /// feature's / face's faces only).
+    /// feature's / face's faces only). `lit_only` (the hover overlay) leaves out the parts of a
+    /// subassembly that nothing lights.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn add_occurrence_mesh(
         &self,
         g: &mut super::renderer::SceneGeometry,
