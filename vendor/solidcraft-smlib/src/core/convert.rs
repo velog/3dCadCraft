@@ -502,7 +502,22 @@ const NURBS_EXPORT: EdgeExport = EdgeExport {
 /// fails the export.
 fn classify_edge_curve(k: &Kernel, c: Option<&Curve>, ivl: &Extent1d) -> Result<EdgeExport> {
     let Some(c) = c else { return Ok(NURBS_EXPORT) };
-    Ok(classify(k, c, ivl).map_err(sc("ClassifyEdgeCurve"))?.unwrap_or(NURBS_EXPORT))
+    let e = classify(k, c, ivl).map_err(sc("ClassifyEdgeCurve"))?.unwrap_or(NURBS_EXPORT);
+    // A circle the import's circle test cannot find (an arc under about 1e-6 of its radius) goes
+    // as its NURBS, so every edge written as a circle reads back as one (SolidCraft 1a649f8, #19254).
+    if e.ty == CURVE_CIRCLE_I {
+        let part = bspline_curve_part(k, c)?.ok_or_else(|| bad("a conic that is not a B-spline"))?;
+        if !circle_test_finds(k, &part)? {
+            return Ok(NURBS_EXPORT);
+        }
+    }
+    Ok(e)
+}
+
+/// Whether SMLib's own circle test (`SmCircle::IsNurbCurveCircle`) finds a circle in `nurbs`.
+fn circle_test_finds(k: &Kernel, nurbs: &BSplineCurve) -> Result<bool> {
+    let test = Curve::from(nurbs.clone_exact());
+    Ok(answer(Ellipse::is_nurb_curve_circle(k, &test, None)).map_err(sc("SmCircle::IsNurbCurveCircle"))?.flatten().is_some())
 }
 
 fn classify(k: &Kernel, c: &Curve, ivl: &Extent1d) -> std::result::Result<Option<EdgeExport>, SolidError> {
@@ -2045,12 +2060,8 @@ fn make_edge_curve(k: &Kernel, ty: i64, d_min: f64, d_max: f64, e: &EdgeIn<'_>, 
         } else {
             (get3(e.ellipse_center, i)?, get3(e.ellipse_axis, i)?, get3(e.ellipse_ref, i)?, get(e.ellipse_x, i)?, get(e.ellipse_y, i)?)
         };
-        if circle {
-            let test = Curve::from(nurbs.clone_exact());
-            let is_circle = answer(Ellipse::is_nurb_curve_circle(k, &test, None)).map_err(sc("SmCircle::IsNurbCurveCircle"))?.flatten();
-            if is_circle.is_none() {
-                return Err(bad("a circle NURBS SMLib's circle test rejects"));
-            }
+        if circle && !circle_test_finds(k, &nurbs)? {
+            return Err(bad("a circle NURBS SMLib's circle test rejects"));
         }
         let domain = conic_domain_of_nurbs(&nurbs, o, &mut z, &mut x, rx, ry).ok_or_else(|| bad("a conic NURBS off its conic"))?;
         let opts = EllipseOptions { dim: 3, nurb: Some(&nurbs), inside_out: false };

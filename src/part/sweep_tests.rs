@@ -677,8 +677,11 @@ fn profile_too_big_for_the_bend_is_refused() {
 #[test]
 fn spline_sweep_then_shell_and_fillet() {
     for r in [8.0, 10.0, 6.0, 12.0, 17.721586226130526] {
-        // Shell: the kernel offsets analytic faces only, and the walls along
-        // a spline are B-spline surfaces: a clear refusal, part unchanged.
+        // Shell 1.5 inwards, the end cap open (solidcore offsets the spline
+        // walls since 2026-11): a tube of the profile's ring along the path,
+        // closed by the start cap. Pappus on the planar path: the cavity is
+        // the inner circle swept over the path less the cap's thickness
+        // (measured 0.03-0.06 % above it at the five radii).
         let (mut p, a, b) = circle_and_spline(r, (0.0, 0.0), OriginPlane::YZ, &SESSION_PATH);
         let len = square_len(&path_geom(&p, b));
         sweep_of(&mut p, a, b, |_| {}).unwrap();
@@ -686,10 +689,11 @@ fn spline_sweep_then_shell_and_fillet() {
         let mut def = crate::part::shell::ShellFeature::new(1.5);
         def.remove
             .push(crate::part::shell::face_ref(&p.body, end, None).unwrap());
-        let e = p.add_shell(def).unwrap_err().to_string();
-        assert!(e.contains("free-form faces"), "{e}");
-        assert_eq!(p.features.len(), 1);
-        assert_vol(&p, PI * r * r * len, 5e-3);
+        let t = 1.5;
+        let shelled = PI * r * r * len - PI * (r - t) * (r - t) * (len - t);
+        p.add_shell(def).unwrap();
+        assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+        assert_vol(&p, shelled, 1e-3);
 
         // Fillet: the start cap's round edge, radius 1.
         let (mut p, a, b) = circle_and_spline(r, (0.0, 0.0), OriginPlane::YZ, &SESSION_PATH);

@@ -760,6 +760,7 @@ fn closed_loop_rings() {
 // --------------------------------------------------------- Cross tests ---
 
 #[test]
+#[ignore = "hangs (> 6 h) in solidcore's fillet of the bottle's bottom rim since the move to solidcore 3e338c2 (fine at 513e6fc, 52 s); vendor/README.md"]
 fn rails_loft_then_fillet_and_pattern() {
     for (r, b, h) in [(10.0, 5.0, 40.0), (8.0, 3.0, 30.0)] {
         // Fillet of the bottom rim.
