@@ -6571,3 +6571,56 @@ fn background_ok_leaves_the_frame_free() {
     assert!(within(start_ms, 5.0), "{start_ms:.2} ms > 5 ms");
     assert!(within(frame_ms, 1.0), "{frame_ms:.3} ms > 1 ms");
 }
+
+/// Hover in an assembly (spec 0.20 §3.6, rule 20): the ray under the cursor against a board of
+/// 625 plates with a hole (`assembly::pick_among`, as `asm_pick` does on every frame the cursor
+/// moves over the view). Each part's triangles are tested only when the ray meets its box: all
+/// of them were tested on every hover.
+#[test]
+fn assembly_hover_on_625_parts_within_budget() {
+    use cadcraft3d::assembly::{PickMesh, pick_among};
+    use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+    use cadcraft3d::kernel::{Transform3, Vector3};
+    let part = box_with_circle([8.0, 8.0, 2.0], 4.0, 4.0, 1.5, true, 1.0);
+    let mesh = Arc::new(PickMesh::of(&part));
+    let mut a = AssemblyDocument::default();
+    let r = DocRef::local(DocumentId::new_random());
+    for i in 0..25 {
+        for j in 0..25 {
+            a.place(
+                r,
+                "Plate",
+                Transform3::translation(i as Real * 10.0, j as Real * 10.0, 0.0),
+                true,
+            );
+        }
+    }
+    // Rays from above at a slant, across the board: over plates, holes and gaps.
+    let rays: Vec<(Point3, Vector3)> = (0..40)
+        .map(|k| {
+            let x = 3.0 + k as Real * 6.1;
+            (
+                Point3::new(x, x * 0.9, 400.0),
+                Vector3::new(0.1, -0.05, -1.0).normalize(),
+            )
+        })
+        .collect();
+    let pick =
+        |(o, d): &(Point3, Vector3)| pick_among(&a, o, d, &|_| Some(mesh.clone()), &|_| true);
+    let hits = rays.iter().filter(|r| pick(r).is_some()).count();
+    assert!(
+        hits > 0 && hits < rays.len(),
+        "{hits} of {} rays hit",
+        rays.len()
+    );
+    let ms = median_ms(5, || {
+        for r in &rays {
+            std::hint::black_box(pick(r));
+        }
+    }) / rays.len() as f64;
+    println!(
+        "assembly hover, 625 parts ({} triangles each): {ms:.3} ms a pick",
+        mesh.triangles().len()
+    );
+    assert!(within(ms, 1.0), "{ms:.3} ms a pick > 1 ms");
+}

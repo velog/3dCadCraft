@@ -9,6 +9,9 @@
 //! cargo run --release --no-default-features --example pattern_probe -- boss 30
 //! cargo run --release --no-default-features --example pattern_probe -- circ 1000
 //! ```
+//!
+//! With `CADCRAFT3D_PROBE_SAVE=<dir>` each part is also saved there as `<kind><count>.3dcadcraft`
+//! (a large model to open in the app, e.g. for the hover timings of `docs/PERF.md`).
 
 use std::f64::consts::PI;
 use std::time::Instant;
@@ -170,5 +173,14 @@ fn main() {
             part.feature_health,
             ((v - expect) / expect).abs(),
         );
+        if let Some(dir) = std::env::var_os("CADCRAFT3D_PROBE_SAVE") {
+            let path = std::path::Path::new(&dir).join(format!("{kind}{count}.3dcadcraft"));
+            let mut project = cadcraft3d::document::Project::new("Probe");
+            project.add_document("Part1", cadcraft3d::document::DocumentData::Part(part));
+            match project.save(&path) {
+                Ok(()) => println!("saved {}", path.display()),
+                Err(e) => println!("save {}: {e}", path.display()),
+            }
+        }
     }
 }

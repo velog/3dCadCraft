@@ -267,6 +267,13 @@ impl PickMesh {
 
     /// The nearest face the ray `o + t·d` (t > 0, part coordinates) hits.
     pub fn hit(&self, o: &Point3, d: &Vector3) -> Option<(FaceId, Real)> {
+        // A ray that misses the box misses every triangle: a hover over a board of 625
+        // parts tested all 250 000 triangles every frame (spec 0.20 §3.6).
+        if let Some((lo, hi)) = self.bbox
+            && !ray_meets_box(o, d, &lo, &hi)
+        {
+            return None;
+        }
         let mut best: Option<(FaceId, Real)> = None;
         for (f, [a, b, c]) in &self.tris {
             // Möller–Trumbore.
@@ -294,6 +301,33 @@ impl PickMesh {
         }
         best
     }
+}
+
+/// Whether the ray `o + t·d` (t > 0) passes through the box `lo..hi`, grown by a hair (a
+/// triangle lying in a face of the box must still be hit). Slab test.
+pub fn ray_meets_box(o: &Point3, d: &Vector3, lo: &Point3, hi: &Point3) -> bool {
+    let pad = 1e-6 * (hi - lo).norm().max(1.0);
+    let (mut t0, mut t1): (Real, Real) = (0.0, Real::INFINITY);
+    for k in 0..3 {
+        let (a, b) = (lo[k] - pad, hi[k] + pad);
+        if d[k].abs() < 1e-300 {
+            if o[k] < a || o[k] > b {
+                return false;
+            }
+            continue;
+        }
+        let inv = 1.0 / d[k];
+        let (mut ta, mut tb) = ((a - o[k]) * inv, (b - o[k]) * inv);
+        if ta > tb {
+            std::mem::swap(&mut ta, &mut tb);
+        }
+        t0 = t0.max(ta);
+        t1 = t1.min(tb);
+        if t0 > t1 {
+            return false;
+        }
+    }
+    true
 }
 
 /// What a ray hits in an assembly.
@@ -382,6 +416,63 @@ pub fn bounding_box(project: &Project, asm: &AssemblyDocument) -> Option<(Point3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The box test before the triangles: rays through, beside, behind, along a face, and
+    /// square to an axis.
+    #[test]
+    fn a_ray_meets_a_box_only_where_it_passes() {
+        let (lo, hi) = (Point3::new(0.0, 0.0, 0.0), Point3::new(10.0, 5.0, 2.0));
+        let down = Vector3::new(0.0, 0.0, -1.0);
+        assert!(ray_meets_box(&Point3::new(5.0, 2.0, 50.0), &down, &lo, &hi));
+        assert!(!ray_meets_box(
+            &Point3::new(11.0, 2.0, 50.0),
+            &down,
+            &lo,
+            &hi
+        ));
+        // the box behind the eye
+        assert!(!ray_meets_box(
+            &Point3::new(5.0, 2.0, -5.0),
+            &down,
+            &lo,
+            &hi
+        ));
+        // the eye inside
+        assert!(ray_meets_box(&Point3::new(5.0, 2.0, 1.0), &down, &lo, &hi));
+        // along the top face, and on its edge
+        let along = Vector3::new(1.0, 0.0, 0.0);
+        assert!(ray_meets_box(
+            &Point3::new(-5.0, 2.0, 2.0),
+            &along,
+            &lo,
+            &hi
+        ));
+        assert!(ray_meets_box(
+            &Point3::new(-5.0, 5.0, 2.0),
+            &along,
+            &lo,
+            &hi
+        ));
+        assert!(!ray_meets_box(
+            &Point3::new(-5.0, 2.0, 2.1),
+            &along,
+            &lo,
+            &hi
+        ));
+        // slanted: through a corner region and past it
+        let slant = Vector3::new(1.0, 1.0, -1.0).normalize();
+        assert!(ray_meets_box(&Point3::new(0.0, 0.0, 3.0), &slant, &lo, &hi));
+        assert!(!ray_meets_box(
+            &Point3::new(0.0, 5.0, 8.0),
+            &slant,
+            &lo,
+            &hi
+        ));
+        // a part's picking mesh: a hit inside the box, nothing beside it
+        let m = PickMesh::of(&PartDocument::with_box("Box1", [20.0, 10.0, 5.0]).unwrap());
+        assert!(m.hit(&Point3::new(5.0, 5.0, 50.0), &down).is_some());
+        assert!(m.hit(&Point3::new(25.0, 5.0, 50.0), &down).is_none());
+    }
 
     fn project() -> (Project, DocumentId, DocumentId) {
         let mut p = Project::new("p");

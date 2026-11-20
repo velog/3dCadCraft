@@ -2346,7 +2346,7 @@ impl CadCraftApp {
                     let _t = super::frame_trace::span("occurrence packed");
                     let mut own = super::renderer::SceneGeometry::default();
                     own.tints_show_through = g.tints_show_through;
-                    self.add_occurrence_mesh(&mut own, o, &place, alpha, &looks, with_hover);
+                    self.add_occurrence_mesh(&mut own, o, &place, alpha, &looks, with_hover, false);
                     std::rc::Rc::new(own)
                 });
                 g.append(&own);
@@ -2463,8 +2463,11 @@ impl CadCraftApp {
                 }
             }
         }
+        // A moving view picks nothing under the cursor (`view_moving`).
         let hit = match (pointer, on_cube, modal) {
-            (Some(p), false, false) if self.asm.drag.is_none() => self.asm_pick(p, rect),
+            (Some(p), false, false) if self.asm.drag.is_none() && !self.view_moving => {
+                self.asm_pick(p, rect)
+            }
             _ => None,
         };
         // Feature priority / Select Faces and Edges take a feature, face or
@@ -3103,21 +3106,29 @@ impl CadCraftApp {
         } else {
             self.nav_orbit_end();
         }
+        let mut moved = orbit;
         if !cube_drag {
-            match self.mouse {
+            moved |= match self.mouse {
                 MousePreset::Inventor if left && f2 => {
-                    self.camera.pan(delta.x, delta.y, rect.height())
+                    self.camera.pan(delta.x, delta.y, rect.height());
+                    true
                 }
-                MousePreset::Inventor if left && f3 => self.camera.zoom(-delta.y * 3.0),
+                MousePreset::Inventor if left && f3 => {
+                    self.camera.zoom(-delta.y * 3.0);
+                    true
+                }
                 MousePreset::Inventor if middle && !shift => {
-                    self.camera.pan(delta.x, delta.y, rect.height())
+                    self.camera.pan(delta.x, delta.y, rect.height());
+                    true
                 }
                 MousePreset::Classic if right || middle => {
-                    self.camera.pan(delta.x, delta.y, rect.height())
+                    self.camera.pan(delta.x, delta.y, rect.height());
+                    true
                 }
-                _ => {}
-            }
+                _ => false,
+            };
         }
+        self.nav_dragging = moved;
         if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {

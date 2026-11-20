@@ -592,7 +592,6 @@ impl ViewCube {
     }
 
     /// Is a transition running?
-    #[cfg(test)]
     pub fn animating(&self) -> bool {
         self.anim.is_some()
     }
