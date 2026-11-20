@@ -1,12 +1,15 @@
 //! 3DCadCraft desktop application entry point.
 //!
 //! Usage: `3dcadcraft [PROJECT]`, where PROJECT is a `.3dcadcraft` file or an
-//! unpacked project folder; `3dcadcraft --mcp` serves MCP on stdin / stdout instead.
+//! unpacked project folder; `3dcadcraft --mcp [--read-only] [--attach] [PROJECT]` serves MCP on
+//! stdin / stdout instead (spec 0.7).
 
 fn main() -> eframe::Result {
     // `3dcadcraft --mcp`: the MCP server for AI agents on stdin / stdout, no window (spec 0.7).
     if std::env::args().nth(1).as_deref() == Some("--mcp") {
-        if let Err(e) = cadcraft3d::api::mcp::serve_stdio() {
+        let api = cadcraft3d::api::mcp::Options::parse(std::env::args().skip(1))
+            .and_then(|o| cadcraft3d::api::mcp::run(&o));
+        if let Err(e) = api {
             eprintln!("3dcadcraft --mcp: {e}");
         }
         return Ok(());

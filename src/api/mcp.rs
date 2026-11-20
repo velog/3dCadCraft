@@ -45,6 +45,20 @@ struct Running {
     token: Option<Value>,
     sent: u64,
     last: String,
+    args: Value,
+    started: std::time::Instant,
+}
+
+impl Running {
+    /// Writes the call's line into the action journal (spec 0.7 §3.6a).
+    fn log(&self, session: &Session, result: &Result<Value, ApiError>) {
+        let via = if session.hosted {
+            super::log::Via::App
+        } else {
+            super::log::Via::Headless
+        };
+        super::log::record(via, self.tool, &self.args, result, self.started.elapsed().as_millis());
+    }
 }
 
 const STACK: usize = 64 << 20;
@@ -56,6 +70,63 @@ pub fn serve_stdio() -> io::Result<()> {
         io::stdout(),
         Session::default(),
     )
+}
+
+/// The server's command line (after `--mcp`, or the arguments of `3dcadcraft-mcp`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// `--read-only`: only reading tools (spec 0.7 §3.6).
+    pub read_only: bool,
+    /// `--attach`: forward to the running app (spec 0.7 §3.9).
+    pub attach: bool,
+    /// A project to open first (headless).
+    pub project: Option<String>,
+}
+
+impl Options {
+    /// Reads `args` (without the program name); `--mcp` is skipped.
+    pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Self, String> {
+        let mut o = Self::default();
+        for a in args {
+            match a.as_str() {
+                "--mcp" => {}
+                "--read-only" => o.read_only = true,
+                "--attach" => o.attach = true,
+                s if s.starts_with("--") => return Err(format!("unknown option {s}")),
+                _ if o.project.is_some() => return Err(format!("one project only ({a})")),
+                _ => o.project = Some(a),
+            }
+        }
+        Ok(o)
+    }
+}
+
+/// Runs the server as a program: the diagnostics session (log + journal, nothing on stdout),
+/// then the bridge to the app (`--attach`, falling back to headless when no app accepts) or the
+/// headless server on stdin / stdout.
+pub fn run(o: &Options) -> Result<(), String> {
+    crate::diagnostics::start(crate::diagnostics::root());
+    if o.attach {
+        match super::host::attach(o.read_only) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                ::log::warn!("--attach: {e}; serving headless");
+                eprintln!("3dcadcraft --mcp --attach: {e}; serving headless");
+            }
+        }
+    }
+    let mut session = Session {
+        read_only: o.read_only,
+        ..Session::default()
+    };
+    if let Some(path) = &o.project {
+        tools::call(&mut session, "project_open", &json!({ "path": path }))
+            .map_err(|e| e.to_string())?;
+    }
+    let r = serve(io::BufReader::new(io::stdin()), io::stdout(), session)
+        .map_err(|e| e.to_string());
+    crate::diagnostics::finish();
+    r
 }
 
 /// Serves MCP: messages from `input`, answers to `output`, work on `session`.
@@ -124,6 +195,7 @@ where
                 if result.is_ok() {
                     tools::finish(&mut session, r.tool, *work);
                 }
+                r.log(&session, &result);
                 send(&mut output, &reply(&r.id, tool_result(result)))?;
             }
             Event::In(msg) => {
@@ -137,14 +209,15 @@ where
                     Busy::Handled => {}
                     Busy::Queue => queue.push_back(msg),
                     Busy::Cancel { answer } => {
-                        if let Some(r) = running.take()
-                            && answer
-                        {
-                            let e = ApiError::new(
+                        if let Some(r) = running.take() {
+                            let e = Err(ApiError::new(
                                 r.tool.command,
                                 "cancelled; the project is as it was before the call",
-                            );
-                            send(&mut output, &reply(&r.id, tool_result(Err(e))))?;
+                            ));
+                            r.log(&session, &e);
+                            if answer {
+                                send(&mut output, &reply(&r.id, tool_result(e)))?;
+                            }
                         }
                     }
                 }
@@ -225,30 +298,9 @@ fn handle<W: Write>(
     };
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
     let answer = match method {
-        "initialize" => {
-            let asked = params
-                .get("protocolVersion")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let version = PROTOCOL_VERSIONS
-                .iter()
-                .find(|v| **v == asked)
-                .unwrap_or(&PROTOCOL_VERSIONS[0]);
-            Ok(json!({
-                "protocolVersion": version,
-                "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
-                "serverInfo": {"name": "3dcadcraft", "title": "3DCadCraft", "version": env!("CARGO_PKG_VERSION")},
-                "instructions": INSTRUCTIONS,
-            }))
-        }
+        "initialize" => Ok(initialize(&params)),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({"tools": tools::tools().iter().map(|t| json!({
-            "name": t.name,
-            "title": t.command,
-            "description": t.description,
-            "inputSchema": (t.schema)(),
-            "annotations": {"readOnlyHint": t.effect == Effect::Read, "destructiveHint": false, "openWorldHint": false},
-        })).collect::<Vec<_>>()})),
+        "tools/list" => Ok(tools_list(session)),
         "resources/list" => Ok(json!({"resources": resources(session)})),
         "resources/read" => {
             let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
@@ -265,6 +317,17 @@ fn handle<W: Write>(
                 return Ok(None);
             };
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+            if let Err(e) = tools::allowed(session, tool) {
+                let e = Err(ApiError::new(tool.command, e));
+                let via = if session.hosted {
+                    super::log::Via::App
+                } else {
+                    super::log::Via::Headless
+                };
+                super::log::record(via, tool, &args, &e, 0);
+                send(out, &reply(&id, tool_result(e)))?;
+                return Ok(None);
+            }
             if tool.effect == Effect::InPlace || tool.name == "status" || tool.name == "cancel" {
                 let r = tools::call(session, name, &args);
                 send(out, &reply(&id, tool_result(r)))?;
@@ -273,6 +336,7 @@ fn handle<W: Write>(
             *seq += 1;
             let job = *seq;
             let mut work = session.clone();
+            let logged = args.clone();
             let tx = tx.clone();
             let spawned = std::thread::Builder::new()
                 .name(format!("mcp-{name}"))
@@ -304,6 +368,8 @@ fn handle<W: Write>(
                 token: params.pointer("/_meta/progressToken").cloned(),
                 sent: 0,
                 last: String::new(),
+                args: logged,
+                started: std::time::Instant::now(),
             }));
         }
         _ => Err((-32601, format!("method not found: {method}"))),
@@ -315,10 +381,39 @@ fn handle<W: Write>(
     Ok(None)
 }
 
+/// The answer to `initialize` (the client's protocol version when we speak it).
+pub(crate) fn initialize(params: &Value) -> Value {
+    let asked = params
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let version = PROTOCOL_VERSIONS
+        .iter()
+        .find(|v| **v == asked)
+        .unwrap_or(&PROTOCOL_VERSIONS[0]);
+    json!({
+        "protocolVersion": version,
+        "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
+        "serverInfo": {"name": "3dcadcraft", "title": "3DCadCraft", "version": env!("CARGO_PKG_VERSION")},
+        "instructions": INSTRUCTIONS,
+    })
+}
+
+/// The answer to `tools/list`: the tools `s` may run.
+pub(crate) fn tools_list(s: &Session) -> Value {
+    json!({"tools": tools::listed(s).iter().map(|t| json!({
+        "name": t.name,
+        "title": t.command,
+        "description": t.description,
+        "inputSchema": (t.schema)(),
+        "annotations": {"readOnlyHint": t.effect == Effect::Read, "destructiveHint": false, "openWorldHint": false},
+    })).collect::<Vec<_>>()})
+}
+
 const INSTRUCTIONS: &str = "3DCadCraft: parametric CAD (mm, degrees in arguments). Typical part: document_new {kind: part}, sketch_create {plane: XY}, sketch_rectangle, sketch_constrain (dimensions), extrude, then faces / edges to find persistent names (Extrusion1:End) for hole, fillet, shell and sketches on faces. Every changing call is one Undo step; batch makes several atomic. Errors read '<Command>: <reason>' and change nothing. Answers are compact; pass detail=true where offered. Save with project_save {path: x.3dcadcraft}.";
 
 /// A tool's outcome as an MCP `CallToolResult`.
-fn tool_result(r: Result<Value, ApiError>) -> Value {
+pub(crate) fn tool_result(r: Result<Value, ApiError>) -> Value {
     match r {
         Ok(v) => json!({
             "content": [{"type": "text", "text": v.to_string()}],
@@ -385,16 +480,16 @@ fn read_resource(s: &mut Session, uri: &str) -> Option<String> {
     }
 }
 
-fn reply(id: &Value, result: Value) -> Value {
+pub(crate) fn reply(id: &Value, result: Value) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-fn error(id: &Value, code: i64, message: &str) -> Value {
+pub(crate) fn error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
 /// One message, one line (serde_json writes no raw newline inside).
-fn send<W: Write>(out: &mut W, v: &Value) -> io::Result<()> {
+pub(crate) fn send<W: Write>(out: &mut W, v: &Value) -> io::Result<()> {
     let mut line = v.to_string();
     line.push('\n');
     out.write_all(line.as_bytes())?;

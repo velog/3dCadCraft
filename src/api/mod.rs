@@ -15,7 +15,11 @@
 
 pub mod args;
 pub mod asm;
+pub mod host;
+pub mod log;
 pub mod mcp;
+pub mod more;
+pub mod names;
 pub mod part;
 pub mod session;
 pub mod tools;

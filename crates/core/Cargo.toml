@@ -44,6 +44,9 @@ png = "0.18"
 krilla = { version = "0.8.2", default-features = false, features = ["simple-text"] }
 # Globally unique, copy-safe identities for projects and documents.
 uuid = { version = "1", features = ["v4", "serde"] }
+# The running app's local endpoint for AI agents (spec 0.7 §3.9): named pipes on Windows, Unix
+# sockets elsewhere, without `unsafe` in our code (0BSD OR Apache-2.0).
+interprocess = { version = "2.2", default-features = false }
 
 # Glyph outlines of sketch text, advance widths of the drawing font (MIT OR Apache-2.0).
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
