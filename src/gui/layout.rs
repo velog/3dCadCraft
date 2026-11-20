@@ -1365,6 +1365,8 @@ impl CadCraftApp {
                 asm_tool: self.asm_tool_action(),
                 rel_sick: self.cons.glyphs.sick,
                 asm_dof: self.cons.glyphs.dof,
+                rel_all: self.cons.glyphs.all,
+                rel_joints: self.cons.glyphs.joints,
                 flat: self.sm.flat,
             };
             if !self.tab.shown_in(&state) {

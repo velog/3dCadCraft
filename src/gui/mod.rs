@@ -4834,6 +4834,8 @@ impl CadCraftApp {
             | Action::AsmShowRel
             | Action::AsmShowSick
             | Action::AsmHideRel
+            | Action::AsmShowCons
+            | Action::AsmShowJoints
             | Action::AsmDof
             | Action::AsmUpdate
             | Action::AsmJoint

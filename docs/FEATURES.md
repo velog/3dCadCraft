@@ -844,7 +844,7 @@ surface lofts, a tube swept along a spline (Pappus). **Specification:** [spec/2.
 
 **Specification:** [spec/3.1-assemblies.md](spec/3.1-assemblies.md) (3.1–3.3)
 
-Also done: **Assemble** (the first selection moves to the second, the type follows from what was picked), **Mate** of vertices, relationship glyphs (**Show**, **Show Sick**, **Hide All**) and **Degrees of Freedom** as arrows and arcs in the view (§3.2a, §3.2b).
+Also done: **Assemble** (the first selection moves to the second, the type follows from what was picked), **Mate** of vertices, relationship glyphs (**Show**, **Show Sick**, **Hide All**, the switches **Show Constraints** and **Show Joints** with in-place values, Lock / Flip / Drive from the glyph and joint glyphs dragged along their motion) and **Degrees of Freedom** as arrows and arcs in the view (§3.2a, §3.2b).
 
 **What it does.** Places parts and subassemblies in an assembly: from the same project, from a linked library (Link) or as a copy (Append). The first component is usually **grounded**.
 
