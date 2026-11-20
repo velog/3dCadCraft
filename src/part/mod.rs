@@ -3525,15 +3525,48 @@ impl PartDocument {
         plane: PlaneRef,
         opts: &SketchOptions,
     ) -> Result<(), PartError> {
-        let ps = self
-            .sketches
-            .get_mut(index)
-            .ok_or(PartError::NoSketch(index))?;
+        if index >= self.sketches.len() {
+            return Err(PartError::NoSketch(index));
+        }
+        let saved = self.clone();
+        let result = self.redefine_sketch_in_order(index, plane, opts);
+        if result.is_err() {
+            *self = saved;
+        }
+        result
+    }
+
+    /// [`Self::redefine_sketch`] without the restore on failure. A work
+    /// plane built after the sketch is brought before it first (Inventor
+    /// does the same): the sketch moves down below the plane when none of
+    /// its features comes before the plane, else the plane moves up above
+    /// the sketch (refused when the plane needs something after it).
+    fn redefine_sketch_in_order(
+        &mut self,
+        index: usize,
+        plane: PlaneRef,
+        opts: &SketchOptions,
+    ) -> Result<(), PartError> {
+        if let PlaneRef::Work(id) = &plane
+            && let Some(w) = self.feature_index(id)
+            && let Some(p) = self.sketches[index].after_features
+            && w >= p
+        {
+            let sketch_id = self.sketches[index].id.clone();
+            if self.consumers(&sketch_id).iter().all(|&c| c > w) {
+                self.sketches[index].after_features = Some(w + 1);
+            } else {
+                self.move_feature(w, p)?;
+                self.sketches[index].after_features = Some(p + 1);
+            }
+            self.regenerate()?;
+        }
+        let ps = &mut self.sketches[index];
         let placement = SketchPlacement {
             plane,
             ..Default::default()
         };
-        let resolved = placement.resolve(&self.body, &ps.sketch.plane)?;
+        let resolved = placement.resolve_with(&self.body, &self.work, &ps.sketch.plane)?;
         clear_projections(ps);
         ps.placement = placement;
         ps.sketch.plane = resolved;
@@ -4076,6 +4109,44 @@ mod tests {
         // Front face: x = +X, y = +Z, plane y = 0 → (10, 0, 5).
         assert_relative_eq!(world(ps, p), Point3::new(10.0, 0.0, 5.0), epsilon = 1e-9);
         assert_eq!(ps.projections.len(), 5, "re-projected from the new face");
+    }
+
+    #[test]
+    fn redefine_onto_a_later_work_plane() {
+        let mut part = part();
+        let opts = SketchOptions::default();
+        let i = part
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap();
+        let p = part.sketches[i].sketch.add_point(Point2::new(10.0, 5.0));
+        let w = part
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Face("Box1:Top".into()),
+                distance: 5.0,
+            })))
+            .unwrap();
+        part.redefine_sketch(i, PlaneRef::Work(w.clone()), &opts)
+            .unwrap();
+        part.regenerate().unwrap();
+        let ps = &part.sketches[i];
+        assert!(ps.health.is_none(), "{:?}", ps.health);
+        let k = part.feature_index(&w).unwrap();
+        assert!(
+            ps.after_features.unwrap() > k,
+            "the sketch follows the plane"
+        );
+        let top = world(ps, p).z;
+        let before = world(
+            &{
+                let mut q = part.clone();
+                q.sketches[i].placement = SketchPlacement::on_face("Box1:Top");
+                q.regenerate().unwrap();
+                q.sketches[i].clone()
+            },
+            p,
+        )
+        .z;
+        assert_relative_eq!(top - before, 5.0, epsilon = 1e-6);
     }
 
     #[test]

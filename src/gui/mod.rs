@@ -1757,9 +1757,19 @@ impl CadCraftApp {
                 self.checkpoint("Redefine Sketch");
                 let plane = self.take_context_plane(plane);
                 if let Err(e) = self.part_mut().redefine_sketch(i, plane, &opts) {
-                    self.file_status = Some(Err(e.to_string()));
+                    self.history.cancel();
+                    self.file_status = Some(Err(format!("Redefine Sketch: {e}")));
+                } else {
+                    self.solve();
+                    // The features built on the sketch follow its new plane
+                    // now (an open sketch updates them on Finish Sketch).
+                    if self.editing != Some(i)
+                        && let Err(e) = self.part_mut().regenerate()
+                    {
+                        self.file_status = Some(Err(format!("Redefine Sketch: {e}")));
+                    }
+                    self.scene_dirty = true;
                 }
-                self.solve();
             }
         }
     }
