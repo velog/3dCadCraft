@@ -9,9 +9,10 @@ use serde_json::{Map, Value, json};
 use slotmap::Key;
 
 use super::args::{Args, p3, point2, point3, round};
+use super::names;
 use super::session::{ApiError, Session};
 use super::tools::{obj, part_prop};
-use crate::kernel::{BRep, EdgeId, Point3, Real, Surface, TessellationOptions};
+use crate::kernel::{BRep, EdgeId, Point3, Real, TessellationOptions};
 use crate::part::blend::{BlendFeature, EdgeRef, edge_ref};
 use crate::part::draft::PullRef;
 use crate::part::extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, default_profiles};
@@ -48,25 +49,25 @@ pub fn ch(c: ConstraintId) -> String {
     format!("c{}", idx(c))
 }
 
-fn find_point(sk: &Sketch, h: &str) -> Option<PointId> {
+pub(super) fn find_point(sk: &Sketch, h: &str) -> Option<PointId> {
     sk.points().map(|(id, _)| id).find(|id| ph(*id) == h)
 }
 
-fn find_curve(sk: &Sketch, h: &str) -> Option<EntityId> {
+pub(super) fn find_curve(sk: &Sketch, h: &str) -> Option<EntityId> {
     sk.entities().map(|(id, _)| id).find(|id| eh(*id) == h)
 }
 
-fn part_mut<'s>(s: &'s mut Session, a: &Args) -> Result<&'s mut PartDocument, ApiError> {
+pub(super) fn part_mut<'s>(s: &'s mut Session, a: &Args) -> Result<&'s mut PartDocument, ApiError> {
     let name = a.opt_str("part")?;
     s.part_mut(a.cmd, name)
 }
 
-fn part_ref<'s>(s: &'s Session, a: &Args) -> Result<&'s PartDocument, ApiError> {
+pub(super) fn part_ref<'s>(s: &'s Session, a: &Args) -> Result<&'s PartDocument, ApiError> {
     let name = a.opt_str("part")?;
     s.part(a.cmd, name)
 }
 
-fn sketch_index(p: &PartDocument, a: &Args) -> Result<usize, ApiError> {
+pub(super) fn sketch_index(p: &PartDocument, a: &Args) -> Result<usize, ApiError> {
     let s = a.str("sketch")?;
     p.sketches
         .iter()
@@ -74,7 +75,7 @@ fn sketch_index(p: &PartDocument, a: &Args) -> Result<usize, ApiError> {
         .ok_or_else(|| a.err(format!("no sketch '{s}'")))
 }
 
-fn perr(a: &Args, e: impl std::fmt::Display) -> ApiError {
+pub(super) fn perr(a: &Args, e: impl std::fmt::Display) -> ApiError {
     a.err(e.to_string())
 }
 
@@ -89,7 +90,7 @@ fn point_arg(sk: &mut Sketch, a: &Args, key: &str) -> Result<PointId, ApiError> 
     }
 }
 
-fn sk_prop() -> Value {
+pub(super) fn sk_prop() -> Value {
     json!({"type": "string", "description": "Sketch id (Sketch1)"})
 }
 
@@ -143,8 +144,8 @@ pub fn sketch_create_schema() -> Value {
     obj(
         json!({
             "part": part_prop(),
-            "plane": {"type": "string", "enum": ["XY", "XZ", "YZ"], "description": "Origin plane (default XY)"},
-            "face": {"type": "string", "description": "A planar face's persistent name instead of a plane"},
+            "plane": {"type": "string", "description": "Origin plane XY (default), XZ, YZ, or a work plane (WorkPlane1)"},
+            "face": {"type": "string", "description": "A planar face's persistent name or alias (Extrusion1:Top, +Z) instead of a plane"},
         }),
         &[],
     )
@@ -152,15 +153,27 @@ pub fn sketch_create_schema() -> Value {
 
 /// `sketch_create`.
 pub fn sketch_create(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
-    let placement = match a.opt_str("face")? {
+    let face = match a.opt_str("face")? {
+        Some(f) => Some(face_name(&part_ref(s, a)?.body, a, f)?),
+        None => None,
+    };
+    let plane = a.opt_str("plane")?.unwrap_or("XY");
+    let placement = match face {
         Some(f) => SketchPlacement::on_face(f),
-        None => SketchPlacement::on_origin_plane(
-            match a.choice("plane", &["XY", "XZ", "YZ"], "XY")? {
-                "XZ" => OriginPlane::XZ,
-                "YZ" => OriginPlane::YZ,
-                _ => OriginPlane::XY,
-            },
-        ),
+        None if part_ref(s, a)?.work.planes.contains_key(plane) => SketchPlacement {
+            plane: crate::part::PlaneRef::Work(plane.to_owned()),
+            ..Default::default()
+        },
+        None => SketchPlacement::on_origin_plane(match plane.to_ascii_uppercase().as_str() {
+            "XY" => OriginPlane::XY,
+            "XZ" => OriginPlane::XZ,
+            "YZ" => OriginPlane::YZ,
+            _ => {
+                return Err(a.err(format!(
+                    "'plane' must be XY, XZ, YZ or a work plane, not '{plane}'"
+                )));
+            }
+        }),
     };
     let part = part_mut(s, a)?;
     let i = part
@@ -517,7 +530,7 @@ pub fn sketch_info(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
 
 // ---- features ----------------------------------------------------------------
 
-fn operation(a: &Args, part: &PartDocument) -> Result<Operation, ApiError> {
+pub(super) fn operation(a: &Args, part: &PartDocument) -> Result<Operation, ApiError> {
     let first = part.body.solids().next().is_none();
     Ok(
         match a.choice(
@@ -533,7 +546,7 @@ fn operation(a: &Args, part: &PartDocument) -> Result<Operation, ApiError> {
     )
 }
 
-fn profiles(part: &PartDocument, i: usize, a: &Args) -> Result<Vec<ProfileRef>, ApiError> {
+pub(super) fn profiles(part: &PartDocument, i: usize, a: &Args) -> Result<Vec<ProfileRef>, ApiError> {
     let ps = &part.sketches[i];
     let regions = ps.sketch.regions();
     let list = match a.get("profiles") {
@@ -557,7 +570,7 @@ fn profiles(part: &PartDocument, i: usize, a: &Args) -> Result<Vec<ProfileRef>, 
 }
 
 /// What a new feature answers: its id and the part's state.
-fn feature_answer(part: &PartDocument, id: &str) -> Value {
+pub(super) fn feature_answer(part: &PartDocument, id: &str) -> Value {
     let mut v = json!({
         "feature": id,
         "solids": part.body.solids().filter(|(_, s)| !s.open).count(),
@@ -626,7 +639,7 @@ pub fn revolve_schema() -> Value {
     )
 }
 
-fn origin_axis(s: &str) -> Option<usize> {
+pub(super) fn origin_axis(s: &str) -> Option<usize> {
     match s.to_ascii_uppercase().as_str() {
         "X" => Some(0),
         "Y" => Some(1),
@@ -721,9 +734,7 @@ pub fn hole(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
         spec.termination = Termination::ThroughAll;
     }
     let part = part_mut(s, a)?;
-    if part.body.find_face(&face).is_none() {
-        return Err(a.err(format!("no face '{face}' (see faces)")));
-    }
+    let face = face_name(&part.body, a, &face)?;
     let (i, ids) = part
         .create_hole_sketch(&face, &centers)
         .map_err(|e| perr(a, e))?;
@@ -753,7 +764,7 @@ fn edge_groups(body: &BRep) -> BTreeMap<String, Vec<(EdgeId, EdgeRef)>> {
 }
 
 /// The edges an agent named (`FaceA|FaceB` in either order, or an edge's own name).
-fn edges_named(
+pub(super) fn edges_named(
     body: &BRep,
     a: &Args,
     names: &[String],
@@ -761,6 +772,7 @@ fn edges_named(
     let groups = edge_groups(body);
     let mut out = Vec::new();
     for n in names {
+        let n = &names::resolve_edge(body, n);
         let key = match n.split_once('|') {
             Some((x, y)) => {
                 let mut v = [x.trim().to_owned(), y.trim().to_owned()];
@@ -858,10 +870,16 @@ pub fn face_point(body: &BRep, name: &str) -> Option<Point3> {
     best.map(|(_, p)| p)
 }
 
+/// The persistent name of face `name` (a name or an alias, spec 0.7 §3.4a).
+pub fn face_name(body: &BRep, a: &Args, name: &str) -> Result<String, ApiError> {
+    names::resolve_face(body, name).ok_or_else(|| a.err(format!("no face '{name}' (see faces)")))
+}
+
 fn face_ref(body: &BRep, a: &Args, name: &str) -> Result<FaceRef, ApiError> {
-    let p = face_point(body, name).ok_or_else(|| a.err(format!("no face '{name}' (see faces)")))?;
+    let name = face_name(body, a, name)?;
+    let p = face_point(body, &name).ok_or_else(|| a.err(format!("no face '{name}' (see faces)")))?;
     Ok(FaceRef {
-        face: name.to_owned(),
+        face: name,
         hint: [p.x, p.y, p.z],
     })
 }
@@ -1066,77 +1084,61 @@ pub fn tree(part: &PartDocument) -> Value {
     })
 }
 
-fn surface_kind(body: &BRep, f: &crate::kernel::Face) -> &'static str {
-    match body.surface(f.facet_of.unwrap_or(f.surface)) {
-        Some(Surface::Plane(_)) => "plane",
-        Some(Surface::Cylinder(_)) => "cylinder",
-        Some(Surface::Cone(_)) => "cone",
-        Some(Surface::Sphere(_)) => "sphere",
-        Some(Surface::Torus(_)) => "torus",
-        _ => "free-form",
-    }
-}
-
-/// A face name's kind, area, area-weighted centre and (planes) normal.
-type FaceSum = (
-    &'static str,
-    Real,
-    nalgebra::Vector3<Real>,
-    Option<[Real; 3]>,
-);
-
 /// `faces`.
 pub fn faces(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
     let filter = a.opt_str("feature")?;
     let detail = a.flag("detail")?;
     let part = part_ref(s, a)?;
-    let body = &part.body;
-    // name → (kind, area, weighted centre, normal of a plane)
-    let mut by: BTreeMap<String, FaceSum> = BTreeMap::new();
-    for (_, f) in body.faces() {
-        let Some(name) = &f.name else { continue };
-        if let Some(p) = filter
-            && !(name == p
-                || name.starts_with(&format!("{p}:"))
-                || name.starts_with(&format!("{p}#")))
-        {
-            continue;
-        }
-        let kind = surface_kind(body, f);
-        let e = by
-            .entry(name.clone())
-            .or_insert((kind, 0.0, nalgebra::Vector3::zeros(), None));
-        if let Some(m) = &f.mesh {
-            for t in &m.triangles {
-                if let (Some(p), Some(q), Some(r)) = (
-                    m.positions.get(t[0] as usize),
-                    m.positions.get(t[1] as usize),
-                    m.positions.get(t[2] as usize),
-                ) {
-                    let n = (q - p).cross(&(r - p));
-                    let ar = n.norm() / 2.0;
-                    e.1 += ar;
-                    e.2 += (p.coords + q.coords + r.coords) / 3.0 * ar;
-                    if kind == "plane" && e.3.is_none() && ar > 0.0 {
-                        let n = n / (2.0 * ar);
-                        e.3 = Some([round(n.x), round(n.y), round(n.z)]);
-                    }
-                }
-            }
-        }
-    }
-    let list: Vec<Value> = by
-        .into_iter()
-        .map(|(name, (kind, area, c, n))| {
-            if detail {
-                let c = if area > 0.0 { c / area } else { c };
-                json!({"name": name, "surface": kind, "area": round(area), "center": [round(c.x), round(c.y), round(c.z)], "normal": n})
-            } else {
-                json!([name, kind])
-            }
+    let list: Vec<Value> = names::faces(&part.body)
+        .iter()
+        .filter(|f| {
+            filter.is_none_or(|p| {
+                f.name == p
+                    || f.name.starts_with(&format!("{p}:"))
+                    || f.name.starts_with(&format!("{p}#"))
+            })
         })
+        .map(|f| if detail { f.detail() } else { f.row() })
         .collect();
-    Ok(json!({"faces": list}))
+    let mut v = json!({"faces": list});
+    if !detail {
+        v["columns"] = json!(["face", "surface", "alias", "dir"]);
+    }
+    Ok(v)
+}
+
+/// Schema of `face_at`.
+pub fn face_at_schema() -> Value {
+    obj(
+        json!({"part": part_prop(),
+               "point": {"type": "array", "items": {"type": "number"}, "description": "[x, y, z] mm"},
+               "direction": {"type": "array", "items": {"type": "number"}, "description": "[dx, dy, dz]: the first face the ray from the point meets; without it the face nearest the point"}}),
+        &["point"],
+    )
+}
+
+/// `face_at`.
+pub fn face_at(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
+    let o = point3(a, a.get("point").unwrap_or(&Value::Null), "point")?;
+    let d = match a.get("direction") {
+        Some(v) => Some(point3(a, v, "direction")?.coords),
+        None => None,
+    };
+    let part = part_ref(s, a)?;
+    let hit = names::face_at(&part.body, &o, d.as_ref()).ok_or_else(|| {
+        a.err(if d.is_some() {
+            "the ray meets no face"
+        } else {
+            "the part has no faces"
+        })
+    })?;
+    let info = names::faces(&part.body)
+        .into_iter()
+        .find(|f| f.name == hit.name);
+    let mut v = info.map(|f| f.detail()).unwrap_or_else(|| json!({"name": hit.name}));
+    v["point"] = json!(p3(&hit.point));
+    v["distance"] = json!(round(hit.distance));
+    Ok(v)
 }
 
 fn polyline_length(pts: &[Point3]) -> Real {
@@ -1147,25 +1149,34 @@ fn polyline_length(pts: &[Point3]) -> Real {
 pub fn edges(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
     let face = a.opt_str("face")?;
     let feature = a.opt_str("feature")?;
+    let detail = a.flag("detail")?;
     let part = part_ref(s, a)?;
     let body = &part.body;
+    let face = match face {
+        Some(f) => Some(face_name(body, a, f)?),
+        None => None,
+    };
+    let alias: BTreeMap<String, String> = names::faces(body)
+        .into_iter()
+        .filter_map(|f| f.alias().map(str::to_owned).map(|x| (f.name, x)))
+        .collect();
     let opts = TessellationOptions::default();
     let list: Vec<Value> = edge_groups(body)
         .into_iter()
         .filter(|(_, g)| {
             g.first().is_some_and(|(_, r)| {
-                face.is_none_or(|f| r.faces.iter().any(|x| x == f))
+                face.as_ref().is_none_or(|f| r.faces.iter().any(|x| x == f))
                     && feature
                         .is_none_or(|p| r.faces.iter().any(|x| x.starts_with(&format!("{p}:"))))
             })
         })
         .map(|(key, g)| {
             let straight = g.iter().all(|(e, _)| body.edge_direction(*e).is_some());
-            let length: Real = g
+            let samples: Vec<Vec<Point3>> = g
                 .iter()
                 .filter_map(|(e, _)| body.sample_edge(*e, &opts).ok())
-                .map(|p| polyline_length(&p))
-                .sum();
+                .collect();
+            let length: Real = samples.iter().map(|p| polyline_length(p)).sum();
             let kind = if straight {
                 "line"
             } else if g.iter().any(|(e, _)| {
@@ -1177,11 +1188,36 @@ pub fn edges(s: &mut Session, a: &Args) -> Result<Value, ApiError> {
             } else {
                 "curve"
             };
-            json!([key, kind, round(length)])
+            let ali = key
+                .split_once('|')
+                .and_then(|(x, y)| Some(format!("{}|{}", alias.get(x)?, alias.get(y)?)));
+            if !detail {
+                return json!([key, kind, round(length), ali]);
+            }
+            let mut v = json!({"edge": key, "kind": kind, "length": round(length), "alias": ali});
+            if let Some(m) = samples
+                .first()
+                .and_then(|p| crate::part::select::polyline_middle(p))
+            {
+                v["middle"] = json!(p3(&m));
+            }
+            if let Some(d) = g
+                .first()
+                .and_then(|(e, _)| body.edge_direction(*e))
+                .and_then(|d| d.try_normalize(1e-12))
+            {
+                v["direction"] = json!([round(d.x), round(d.y), round(d.z)]);
+            }
+            v
         })
         .collect();
-    Ok(json!({"edges": list, "columns": ["edge", "kind", "length"]}))
+    let mut v = json!({"edges": list});
+    if !detail {
+        v["columns"] = json!(["edge", "kind", "length", "alias"]);
+    }
+    Ok(v)
 }
+
 
 fn target(body: &BRep, a: &Args, v: &Value) -> Result<crate::part::measure::Target, ApiError> {
     use crate::part::measure::Target;
@@ -1194,11 +1230,11 @@ fn target(body: &BRep, a: &Args, v: &Value) -> Result<crate::part::measure::Targ
     let (kind, name) = s.split_once(':').unwrap_or(("", s));
     // Face names hold ':' too (Extrusion1:End): only a known prefix is taken off.
     Ok(match kind {
-        "face" => Target::Face(name.to_owned()),
+        "face" => Target::Face(face_name(body, a, name)?),
         "vertex" => Target::Vertex(name.to_owned()),
         "body" => Target::Body(name.to_owned()),
         "edge" => Target::Edge(edges_named(body, a, &[name.to_owned()])?[0].0),
-        _ => Target::Face(s.to_owned()),
+        _ => Target::Face(face_name(body, a, s)?),
     })
 }
 
