@@ -120,10 +120,10 @@ impl Tool3 {
     pub(super) fn prompt(self) -> &'static str {
         match self {
             Tool3::Line => {
-                "3D Line: click a model vertex, a work point, a face or a point of the sketch, or type X / Y / Z and Add Point"
+                "3D Line: click a model vertex, a work point, a face, a point of the sketch or a place on the drawing plane, or type X / Y / Z and Add Point"
             }
             Tool3::Point => {
-                "3D Point: click a model vertex, a work point or a face, or type X / Y / Z"
+                "3D Point: click a model vertex, a work point, a face or a place on the drawing plane, or type X / Y / Z"
             }
             Tool3::Bend => "Bend: click the corner point of two lines (the radius is in the panel)",
             Tool3::Coincident => "Coincident: click two points of the 3D sketch",
@@ -217,6 +217,12 @@ pub(super) struct Sk3dEdit {
     pub other: Option<super::sketch3d_other::Sk3Other>,
     /// Where and since when the cursor rests (Select Other).
     pub rest: Option<(Pos2, f64)>,
+    /// The drawing plane (Shift+Space cycles it; `gui/sketch3d_plane.rs`).
+    pub plane: crate::part::sketch3d_plane::DrawPlane,
+    /// Ortho (Ctrl+R): a point on the plane always goes onto one of its axes.
+    pub ortho: bool,
+    /// Align to Plane waits for the click on a plane.
+    pub align_pick: bool,
 }
 
 impl Sk3dEdit {
@@ -241,6 +247,9 @@ impl Sk3dEdit {
             ins: Default::default(),
             other: None,
             rest: None,
+            plane: Default::default(),
+            ortho: false,
+            align_pick: false,
         }
     }
 }
@@ -531,7 +540,17 @@ impl CadCraftApp {
         if let Some(c) = self.sk3_other_choice(p, Want3::Select) {
             return (matches!(c, Cand3::Line(_)) == lines).then(|| c.hit());
         }
-        self.sk3_candidates(p, rect, want).first().map(|c| c.hit())
+        // Points, model vertices and faces win; empty space is the drawing
+        // plane's point (Line, Point, Arc, Spline, Helix).
+        self.sk3_candidates(p, rect, want)
+            .first()
+            .map(|c| c.hit())
+            .or_else(|| {
+                (!lines)
+                    .then(|| self.sk3_plane_point(p, rect))
+                    .flatten()
+                    .map(|(q, _)| Hit3::At(q, false))
+            })
     }
 
     /// A click in the view while the 3D sketch is open.
@@ -542,7 +561,7 @@ impl CadCraftApp {
     }
 
     fn sketch3d_click_at(&mut self, p: Pos2, rect: Rect, ctrl: bool) {
-        if self.sk3_gizmo_click(p, rect) {
+        if self.sk3_align_click(p, rect) || self.sk3_gizmo_click(p, rect) {
             return;
         }
         let Some(tool) = self.sketch3d.as_ref().and_then(|e| e.tool) else {
@@ -980,6 +999,56 @@ impl CadCraftApp {
             && ui.input(|i| i.key_pressed(egui::Key::Delete))
         {
             delete_cons = true;
+        }
+        if matches!(
+            e.tool,
+            Some(Tool3::Line | Tool3::Point | Tool3::Arc | Tool3::Spline | Tool3::Helix)
+        ) {
+            psection(ui, "sk3_plane", "Drawing Plane", |ui| {
+                use crate::part::sketch3d_plane::DrawPlane;
+                plabel(ui, "Plane");
+                ui.horizontal(|ui| {
+                    for (pl, tip) in [
+                        (DrawPlane::Xy, "The XY plane through the last point"),
+                        (DrawPlane::Xz, "The XZ plane through the last point"),
+                        (DrawPlane::Yz, "The YZ plane through the last point"),
+                    ] {
+                        let on = e.plane == pl && !e.align_pick;
+                        if ui
+                            .selectable_label(on, pl.label())
+                            .on_hover_text(format!("{tip} (Shift+Space cycles)"))
+                            .clicked()
+                        {
+                            e.plane = pl;
+                            e.align_pick = false;
+                        }
+                    }
+                });
+                ui.end_row();
+                plabel(ui, "");
+                let aligned = matches!(e.plane, DrawPlane::Aligned { .. });
+                if ui
+                    .selectable_label(
+                        e.align_pick || aligned,
+                        if aligned {
+                            format!("Aligned: {}", e.plane.label())
+                        } else {
+                            "Align to Plane".to_owned()
+                        },
+                    )
+                    .on_hover_text(
+                        "Click, then a planar face, a work or an origin plane: the points go onto it",
+                    )
+                    .clicked()
+                {
+                    e.align_pick = !e.align_pick;
+                }
+                ui.end_row();
+                plabel(ui, "Ortho");
+                ui.checkbox(&mut e.ortho, "")
+                    .on_hover_text("Ctrl+R: the point always goes onto one of the plane's axes through the last point");
+                ui.end_row();
+            });
         }
         if matches!(
             e.tool,

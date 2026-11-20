@@ -71,6 +71,7 @@ pub mod simplify;
 pub mod sketch3d;
 pub mod sketch3d_curves;
 pub mod sketch3d_derived;
+pub mod sketch3d_plane;
 pub mod split;
 pub mod standards;
 pub mod surface_op;
