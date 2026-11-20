@@ -6,7 +6,7 @@
 //!
 //! A beam's local axes are `x` along it (start to end), and its section's
 //! horizontal and vertical axes `u`, `v` with `u × v = x`. Loads inside a
-//! beam split it at their stations ([`Model::mesh`]); between two stations the
+//! beam split it at their stations (`Model::mesh`); between two stations the
 //! only span load is a uniform one, for which the end displacements and the
 //! particular solution give the exact curve, so results do not depend on how
 //! finely a beam is divided (static analysis).

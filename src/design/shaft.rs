@@ -96,7 +96,7 @@ pub struct Section {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyway: Option<f64>,
     /// An ISO metric coarse thread over the whole cylinder (a cosmetic
-    /// thread of the part, M<d>).
+    /// thread of the part, `M<d>`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thread: bool,
 }

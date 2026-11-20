@@ -512,7 +512,7 @@ impl Section {
 
     /// The chamber and cavities of a T-slot section that give its published
     /// area: the chamber's width is scanned between its narrowest (floor as
-    /// wide as the opening) and its widest (a web of [`TSLOT_WEB`] left at the
+    /// wide as the opening) and its widest (a web of `TSLOT_WEB` left at the
     /// corners), the cavities between cells take what is left, each up to the
     /// web it must keep. Without a published area the chamber is the middle
     /// of its range and there are no cavities.

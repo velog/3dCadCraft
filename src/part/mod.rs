@@ -1082,7 +1082,7 @@ pub struct PartDocument {
     /// While set (runtime only, inside [`PartDocument::regenerate`]): a feature the exact kernel
     /// fails is that feature's health and the build goes on exactly, instead of the whole part
     /// being rebuilt faceted. Set for parts the faceted kernel cannot rebuild well (see
-    /// [`PartDocument::faceted_rebuilds_well`]).
+    /// `PartDocument::faceted_rebuilds_well`).
     #[serde(skip)]
     pub kernel_failures_are_health: bool,
     /// Edit Feature rolls the part back: only the features before this
