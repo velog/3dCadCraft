@@ -40,7 +40,7 @@ impl CadCraftApp {
         if !self.sk3_draws_on_plane() {
             return None;
         }
-        let e = self.sketch3d.as_ref()?;
+        let e = self.sketch3d.as_ref().filter(|e| !e.align_pick)?;
         let (o, d) = self.camera.ray(p, rect)?;
         let through = self.sk3_plane_through();
         let q = e.plane.ray_point(through, o, d)?;
@@ -211,8 +211,9 @@ impl CadCraftApp {
             ));
         }
         painter.text(
-            sq + egui::vec2(SQUARE_PX * 0.6, SQUARE_PX * 0.6),
-            Align2::LEFT_TOP,
+            // Above the cursor: the value next to it sits below.
+            sq + egui::vec2(SQUARE_PX * 0.6, -SQUARE_PX * 0.6),
+            Align2::LEFT_BOTTOM,
             text,
             FontId::proportional(12.0),
             col,

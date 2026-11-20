@@ -107,6 +107,10 @@ impl CadCraftApp {
             && let Some(t) = e.tool
         {
             use super::sketch3d::Tool3;
+            // Align to Plane waits for a plane (rule 19).
+            if e.align_pick {
+                return Some(vec![K::PlanarFace, K::Plane]);
+            }
             return Some(match t {
                 // Project to Surface's Curves: a click takes a 2D sketch.
                 Tool3::ProjectSurface if !e.ins.pick_faces => vec![K::Sketch, K::SketchCurve],
