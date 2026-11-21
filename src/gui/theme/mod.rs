@@ -445,7 +445,8 @@ mod tests {
 
     #[test]
     fn the_background_gradient_is_soft_and_lets_lines_show() {
-        let c = canvas();
+        // The default scheme, not `canvas()`: the Colors tab tests set the shared one meanwhile.
+        let c = scheme::CanvasColors::light();
         assert!(luminance(c.background_top) > luminance(c.background_bottom));
         assert!(contrast(c.background_top, c.background_bottom) < 1.5);
         // Dark edges and sketch lines stand out on both ends.

@@ -656,8 +656,10 @@ mod tests {
         "Delete Features",
         "Rename",
         "Edit Form",
+        "Frame Joint",
         // A window of choices before a file is read: no picks.
         "Import Options",
+        "Insert AutoCAD File",
     ];
 
     /// Rule 21: a new command in `open_state` has to say which it is, and
