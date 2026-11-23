@@ -3195,6 +3195,7 @@ dependencies = [
 [[package]]
 name = "solidcore"
 version = "1.0.1"
+source = "git+https://github.com/velog/solidcore?rev=8d3797f1d9bc11b8330746eb75e170ed404c7d58#8d3797f1d9bc11b8330746eb75e170ed404c7d58"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
